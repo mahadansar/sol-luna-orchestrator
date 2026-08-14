@@ -482,7 +482,9 @@ async function runOne(
       claimed: result.workerClaimedStatus,
       durationSeconds: result.durationSeconds,
       threadId: result.workerThreadId,
-      outputTokens: result.usage?.outputTokens ?? null,
+      model: result.model,
+      effort: result.effort,
+      usage: result.usage,
     });
   } catch (error) {
     task.state = "failed";

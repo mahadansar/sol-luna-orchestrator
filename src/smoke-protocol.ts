@@ -10,7 +10,12 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const serverEntry = path.join(here, "server.js");
+
+// Overridable so the same protocol checks can be pointed at a packed install
+// rather than the source tree — proving what an npm user actually receives.
+const serverEntry = process.env.SOL_LUNA_SMOKE_SERVER
+  ? path.resolve(process.env.SOL_LUNA_SMOKE_SERVER)
+  : path.join(here, "server.js");
 
 const check = (label: string, fn: () => void): void => {
   try {

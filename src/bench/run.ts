@@ -273,19 +273,22 @@ function readTelemetry(eventsFile: string, offset: number): Telemetry {
 
       case "worker.completed":
         delegations.push({
-          effort: "",
+          effort: String(parsed.effort ?? ""),
           verdict: String(parsed.verdict ?? ""),
           attempt: 1,
           durationSeconds: Number(parsed.durationSeconds ?? 0),
+          // Batch workers now report full usage. Older event files only carried
+          // `outputTokens`, so fall back rather than dropping historical runs.
           usage:
-            typeof parsed.outputTokens === "number"
+            (parsed.usage as DelegationRecord["usage"] | undefined) ??
+            (typeof parsed.outputTokens === "number"
               ? {
                   inputTokens: 0,
                   cachedInputTokens: 0,
                   outputTokens: parsed.outputTokens,
                   reasoningOutputTokens: 0,
                 }
-              : null,
+              : null),
         });
         break;
 

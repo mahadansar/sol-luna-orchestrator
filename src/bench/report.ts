@@ -216,6 +216,34 @@ function main(): void {
   }
   lines.push("");
 
+  // --- Per-run usage breakdown ---------------------------------------------
+  lines.push("## Usage by run");
+  lines.push("");
+  lines.push(
+    "| Task | Arm | Rep | Wall-clock | Sol in | Sol cached | Sol out | Luna in | Luna out | Workers |",
+  );
+  lines.push("|---|---|---|---|---|---|---|---|---|---|");
+
+  for (const record of data.records) {
+    const sol = record.supervisorUsage;
+    const lunaIn = sum(
+      record.delegations.map((delegation) => delegation.usage?.inputTokens ?? 0),
+    );
+    const lunaOut = sum(
+      record.delegations.map((delegation) => delegation.usage?.outputTokens ?? 0),
+    );
+    const cell = (value: number | undefined): string =>
+      value === undefined ? "n/a" : String(value);
+
+    lines.push(
+      `| ${record.taskId} | ${record.arm} | ${record.repetition} | ` +
+        `${record.durationSeconds}s | ${cell(sol?.inputTokens)} | ` +
+        `${cell(sol?.cachedInputTokens)} | ${cell(sol?.outputTokens)} | ` +
+        `${lunaIn || "-"} | ${lunaOut || "-"} | ${record.workerCount ?? 0} |`,
+    );
+  }
+  lines.push("");
+
   lines.push("## Measurement notes");
   lines.push("");
   lines.push(
@@ -223,13 +251,14 @@ function main(): void {
       "it includes delegation and integration overhead.",
   );
   lines.push(
-    "- Supervisor tokens come from the Codex SDK's `turn.completed` event. Worker " +
-      "tokens come from the orchestrator's own delegation telemetry.",
+    "- All token counts come from the Codex SDK's `turn.completed` event: the " +
+      "supervisor's directly, each worker's via the orchestrator's telemetry. " +
+      "Input, cached input, output and reasoning tokens are recorded for both.",
   );
   lines.push(
-    "- For batch (`delegate_tasks`) runs only worker OUTPUT tokens are recorded, so " +
-      "the input-token column understates the orchestrated arms. It is reported as " +
-      "measured rather than estimated.",
+    "- Rows showing `n/a` had no usage reported for that turn (a cancelled or " +
+      "failed run). Runs recorded before v0.4.0 captured worker output tokens " +
+      "only, so their Luna input column reads `-`.",
   );
   lines.push(
     "- Pass/fail is decided by the harness after the agent stops: task checks must " +
@@ -237,8 +266,11 @@ function main(): void {
       "grades itself.",
   );
   lines.push(
-    "- **Cost in currency is not measurable here.** The API exposes token counts, " +
-      "not prices, and the arms use different models at different efforts.",
+    "- **Cost in currency is not reported.** Token counts are measured; prices are " +
+      "not exposed by the API, and these models are used through a Codex " +
+      "subscription whose billing is not a function of token counts. Multiplying " +
+      "these numbers by a price list would produce a figure that looks precise and " +
+      "means nothing.",
   );
   lines.push(
     "- Sample sizes are small. Treat these as directional, not statistically " +

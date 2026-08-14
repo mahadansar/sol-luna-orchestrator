@@ -47,6 +47,13 @@ interface EventRecord {
   kept?: boolean;
   effort?: string;
   verdict?: string;
+  model?: string;
+  usage?: {
+    inputTokens: number;
+    cachedInputTokens: number;
+    outputTokens: number;
+    reasoningOutputTokens: number;
+  } | null;
 }
 
 async function readEvents(): Promise<EventRecord[]> {
@@ -160,6 +167,44 @@ async function main(): Promise<void> {
     );
     assert.ok(overlapping, "no two worker execution windows overlapped in time");
   });
+
+  // --- Telemetry: full usage per worker, not output tokens alone ----------
+  const completed = events.filter((event) => event.type === "worker.completed");
+
+  check("every worker reported complete token usage", () => {
+    assert.equal(completed.length, 3, "expected three worker.completed events");
+
+    for (const event of completed) {
+      assert.ok(event.usage, `${event.taskId}: no usage recorded`);
+      assert.ok(
+        event.usage.inputTokens > 0,
+        `${event.taskId}: input tokens missing (got ${event.usage.inputTokens})`,
+      );
+      assert.ok(event.usage.outputTokens > 0, `${event.taskId}: output tokens missing`);
+      assert.equal(typeof event.usage.cachedInputTokens, "number");
+      assert.equal(typeof event.usage.reasoningOutputTokens, "number");
+    }
+  });
+
+  check("each worker's model and effort are recorded alongside usage", () => {
+    for (const event of completed) {
+      assert.match(event.model ?? "", /luna/, `${event.taskId}: model missing`);
+      assert.ok(
+        ["medium", "high", "xhigh"].includes(event.effort ?? ""),
+        `${event.taskId}: effort missing (got ${event.effort})`,
+      );
+    }
+  });
+
+  const totalIn = completed.reduce((sum, e) => sum + (e.usage?.inputTokens ?? 0), 0);
+  const totalOut = completed.reduce((sum, e) => sum + (e.usage?.outputTokens ?? 0), 0);
+  const totalCached = completed.reduce(
+    (sum, e) => sum + (e.usage?.cachedInputTokens ?? 0),
+    0,
+  );
+  console.log(
+    `    measured Luna usage: ${totalIn} in (${totalCached} cached), ${totalOut} out`,
+  );
 
   // --- Isolation: one worktree per task, all cleaned up --------------------
   check("a separate worktree was created for each task", () => {

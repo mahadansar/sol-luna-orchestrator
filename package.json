@@ -1,6 +1,6 @@
 {
   "name": "sol-luna-orchestrator",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "MCP server that lets a supervising OpenAI Codex agent delegate bounded implementation tasks to isolated worker threads, with file-scope enforcement and independently verified results.",
   "type": "module",
   "license": "MIT",
@@ -9,17 +9,26 @@
     "node": ">=20.10.0"
   },
   "bin": {
-    "sol-luna-orchestrator": "dist/server.js"
+    "sol-luna-orchestrator": "dist/cli.js",
+    "sol-luna-orchestrator-mcp": "dist/server.js"
   },
   "main": "dist/server.js",
   "files": [
     "dist/**/*.js",
     "dist/**/*.js.map",
+    "!dist/**/*.test.js",
+    "!dist/**/*.test.js.map",
+    "!dist/selftest.js",
+    "!dist/selftest.js.map",
+    "!dist/smoke-*.js",
+    "!dist/smoke-*.js.map",
+    "!dist/bench/**",
     "README.md",
     "SECURITY.md",
     "SOL_RULES.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "examples/codex-config.toml"
   ],
   "repository": {
     "type": "git",
@@ -43,10 +52,12 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/server.js",
+    "cli": "node dist/cli.js",
     "dev": "tsx src/server.ts",
     "format": "prettier --write \"src/**/*.ts\" \"*.md\" \"bench/*.md\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"*.md\" \"bench/*.md\"",
-    "test": "npm run build && node --test dist/selftest.js dist/security.test.js dist/parallel.test.js",
+    "test": "npm run build && node --test dist/selftest.js dist/security.test.js dist/parallel.test.js dist/cli.test.js",
+    "smoke:cli": "npm run build && node dist/smoke-cli.js",
     "smoke": "npm run build && node dist/smoke-protocol.js",
     "smoke:live": "npm run build && node dist/smoke-live.js",
     "smoke:isolation": "npm run build && node dist/smoke-isolation.js",

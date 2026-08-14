@@ -49,7 +49,20 @@ export type OrchestratorEvent =
       claimed: string;
       durationSeconds: number;
       threadId: string | null;
-      outputTokens: number | null;
+      model: string;
+      effort: string;
+      /**
+       * Full usage as reported by the Codex SDK's `turn.completed` event, or
+       * null when the turn produced none (a cancelled or crashed worker).
+       * Recorded in full rather than output-only so a parallel batch can be
+       * costed the same way a single delegation can.
+       */
+      usage: {
+        inputTokens: number;
+        cachedInputTokens: number;
+        outputTokens: number;
+        reasoningOutputTokens: number;
+      } | null;
     }
   | { type: "worker.failed"; batchId: string; taskId: string; reason: string }
   | { type: "worker.cancelled"; batchId: string; taskId: string }

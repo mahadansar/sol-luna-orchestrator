@@ -6,6 +6,46 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-14
+
+One-command setup, and full usage telemetry for parallel batches.
+
+### Added
+
+- `sol-luna-orchestrator` CLI with `init`, `doctor`, `status`, `uninstall` and
+  `version`. Setup is now a single command instead of hand-editing TOML.
+- Split bins: `sol-luna-orchestrator` is the user CLI, and
+  `sol-luna-orchestrator-mcp` is the stdio server Codex launches. Running the
+  CLI can no longer accidentally start a server that waits forever on a pipe.
+- `doctor` checks Node, git, Codex, authentication, registration, the resolved
+  server path, both required settings, verification mode and logging — each with
+  the command that fixes it. `--json` for automation. No model calls.
+- `init` is idempotent: it inspects first, repairs only what is wrong, and
+  reports `Already configured` otherwise. `--dry-run`, `--force`, `--log`.
+- `init` refuses to register an install running from an npx cache, which npm can
+  evict, leaving a config that breaks silently later (`--allow-ephemeral` to
+  override).
+- A surgical TOML editor that changes only the keys this project owns, keeping
+  comments, formatting, key order and unrelated tables byte-identical.
+- Batch worker telemetry now records full usage (input, cached input, output and
+  reasoning tokens) plus model and effort, not output tokens alone.
+- CLI lifecycle smoke test (`npm run smoke:cli`) covering eight scenarios against
+  a real Codex CLI and isolated `CODEX_HOME` directories. No model calls.
+
+### Changed
+
+- Registration no longer uses `codex mcp add` / `codex mcp remove`. Measured
+  against codex-cli 0.147.0, adding a server round-trips the whole config: it
+  deleted the comment above an unrelated `context7` table and rewrote that
+  server's `startup_timeout_sec = 15` as `15.0`. Editing only our own keys avoids
+  mutating configuration that belongs to other tools.
+- Published package excludes tests, benchmarks and smoke scripts.
+
+### Fixed
+
+- TOML basic-string escapes (`\n`, `\t`, `\uXXXX`) were decoded as their literal
+  letter, so a quoted table name did not survive a read/write round trip.
+
 ## [0.3.0] - 2026-08-14
 
 Parallel orchestration.
@@ -128,7 +168,8 @@ Initial working version, verified end to end.
   `default_tools_approval_mode = "approve"` (not `"auto"`), or delegation is
   cancelled.
 
-[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/mahadansar/sol-luna-orchestrator/releases/tag/v0.4.0
 [0.3.0]: https://github.com/mahadansar/sol-luna-orchestrator/releases/tag/v0.3.0
 [0.2.0]: https://github.com/mahadansar/sol-luna-orchestrator/releases/tag/v0.2.0
 [0.1.0]: https://github.com/mahadansar/sol-luna-orchestrator/releases/tag/v0.1.0

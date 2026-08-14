@@ -28,6 +28,59 @@ delegate_tasks({
 Two ideas do most of the work here: **a worker's `PASS` is a claim, not a
 conclusion**, and **not every task should be delegated**.
 
+## Quick start
+
+Prerequisite: [OpenAI Codex](https://developers.openai.com/codex) installed and
+authenticated (`codex login`).
+
+```bash
+npm install -g sol-luna-orchestrator
+sol-luna-orchestrator init
+```
+
+Then open Codex, select **GPT-5.6 Sol at High effort**, and work normally.
+
+```
+You're the supervisor. src/auth/, src/payments/ and src/search/ each need their
+failing tests fixed, and they don't touch each other. Use delegate_tasks in
+parallel mode with one worker per module and a disjoint scope each. Pick each
+worker's effort yourself, then review the diffs and run the full suite.
+```
+
+`init` registers the MCP server with Codex and applies the two settings Codex
+needs for delegation to work at all. It changes only the keys it owns — your
+comments, formatting and other MCP servers are left exactly as they were. Run it
+twice and it says `Already configured`.
+
+```bash
+sol-luna-orchestrator doctor      # diagnose, with the fix for anything broken
+sol-luna-orchestrator status      # short summary
+sol-luna-orchestrator uninstall   # remove this project's entry, nothing else
+```
+
+## Should I use this?
+
+Honest answer, from this project's own measurements:
+
+**Use Sol directly when** the task is small, touches one or few files, has no
+useful decomposition, or when explaining it would take longer than doing it. On
+small tasks delegation measured ~2.3x slower and ~3.5x the tokens, with no
+quality difference.
+
+**Orchestration is worth considering when** a task has two or more genuinely
+independent workstreams, when you want an enforced file scope per unit of work,
+when you want verification re-run independently of the agent claiming it passed,
+or when one long session would lose coherence.
+
+**What the benchmarks have and have not shown.** Parallel delegation beat
+sequential delegation in every task and every repetition (median 155s vs 248s).
+Orchestrated execution has **not** yet beaten Sol High working alone on any
+fixture in the suite — solo was ~63s. No token saving and no cost saving has been
+demonstrated; orchestration used more tokens in every measured configuration.
+The fixtures are small by construction, which is exactly the regime that favours
+solo, so the crossover point is unknown rather than proven absent. Details in
+[`bench/RESULTS.md`](bench/RESULTS.md).
+
 ## Why it exists
 
 Not because delegation is always cheaper. On small tasks it measurably is not —
@@ -134,63 +187,69 @@ The red boxes are what separates this from a plain "spawn subagents" tool: a
 batch is refused before it starts if the scopes collide, and worker output is
 treated as evidence to be checked rather than as a result.
 
-## Quick start
-
-### Prerequisites
+## Requirements
 
 - **Node.js ≥ 20.10**
-- **git ≥ 2.20** — only needed for parallel batches, which use `git worktree`.
 - **OpenAI Codex CLI**, logged in (`codex login`). Built against `codex-cli 0.147.0`.
+- **git ≥ 2.20** — only for parallel batches, which use `git worktree`.
 - Access to `gpt-5.6-sol` and `gpt-5.6-luna`. Check with
   `codex exec -m gpt-5.6-luna "say ok"`.
 
-### 1. Build
+`sol-luna-orchestrator doctor` verifies all of this and tells you what to do
+about anything missing.
+
+## Advanced installation
+
+`init` is the supported path. These notes are for people who want to know what it
+does, or who prefer to do it themselves.
+
+### From a clone
 
 ```bash
 git clone https://github.com/mahadansar/sol-luna-orchestrator.git
 cd sol-luna-orchestrator
-npm install
-npm run build
-npm test          # unit, security and orchestration tests; no model calls
+npm install && npm run build
+node dist/cli.js init
 ```
 
-### 2. Register with Codex
+### What init writes
 
-```bash
-codex mcp add sol-luna-orchestrator -- node "$(pwd)/dist/server.js"
-```
-
-### 3. Add the required settings
-
-`codex mcp add` cannot set these, so add them to `~/.codex/config.toml` under
-`[mcp_servers.sol-luna-orchestrator]`. **Both are required** — delegation is
-broken without them:
+One table in `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`):
 
 ```toml
+[mcp_servers.sol-luna-orchestrator]
+command = "/path/to/node"
+args = ["/path/to/sol-luna-orchestrator/dist/server.js"]
 tool_timeout_sec = 3600                   # default is 60s; delegations take minutes
 default_tools_approval_mode = "approve"   # "auto" does NOT work here
+startup_timeout_sec = 30
+
+[mcp_servers.sol-luna-orchestrator.env]
+SOL_LUNA_LOG = "/path/to/sol-luna-orchestrator.log"
 ```
 
-A complete annotated example is in [`examples/codex-config.toml`](examples/codex-config.toml).
+Both of the first two settings are required and were found the hard way: Codex's
+60s default tool timeout aborts every delegation mid-flight, and
+`default_tools_approval_mode` must be `"approve"` — `"auto"`, despite the name,
+makes non-interactive runs cancel the call.
 
-### 4. Verify Codex sees it
+A fully annotated example is in [`examples/codex-config.toml`](examples/codex-config.toml).
 
-```bash
-codex mcp get sol-luna-orchestrator
-```
+### Why init edits the file directly
 
-### 5. Run Codex as the supervisor
+`init` does not use `codex mcp add`. That command round-trips the whole config:
+measured against codex-cli 0.147.0, adding a server deleted the comment above an
+unrelated `context7` table and rewrote that server's `startup_timeout_sec = 15`
+as `15.0`. `init` edits only the keys it owns, so comments, formatting, key order
+and other servers survive byte for byte. Every write is atomic and leaves a
+`config.toml.sol-luna-backup`.
 
-```bash
-codex -m gpt-5.6-sol -c model_reasoning_effort="high"
-```
+### Installing without a global install
 
-### 6. Try a parallel delegation
-
-> You're the supervisor. `src/auth/`, `src/payments/` and `src/search/` each need
-> their failing tests fixed, and they don't touch each other. Use `delegate_tasks`
-> in parallel mode with one worker per module and a disjoint scope each. Pick each
-> worker's effort yourself. Then review the diffs and run the full suite.
+`npx sol-luna-orchestrator init` works, but `init` will refuse to register a
+package running from an npx cache: npm can evict that directory, leaving a Codex
+config that points at nothing. Install it properly, or pass `--allow-ephemeral`
+if you understand the trade.
 
 ## Tools
 
@@ -244,6 +303,42 @@ separation is the core of the security model.
 | `SOL_LUNA_SERVER_NAME`            | `sol-luna-orchestrator` | **Must match** the name registered in Codex                    |
 | `SOL_LUNA_LOG`                    | —                       | Tee diagnostics to a file (best troubleshooting signal)        |
 | `SOL_LUNA_EVENTS`                 | —                       | JSONL telemetry: batches, workers, worktrees, conflicts        |
+
+## Usage telemetry
+
+Set `SOL_LUNA_EVENTS=/path/to/events.jsonl` and every run appends structured
+records: batch start and finish, each worker's start, completion, effort and
+model, worktree creation and removal, verification outcomes, scope and
+integration conflicts.
+
+Per worker, the following are recorded exactly as the Codex SDK reports them on
+`turn.completed`:
+
+| Field                   | Meaning                                   |
+| ----------------------- | ----------------------------------------- |
+| `inputTokens`           | Prompt tokens for that worker's turn      |
+| `cachedInputTokens`     | Portion of the input served from cache    |
+| `outputTokens`          | Tokens the worker generated               |
+| `reasoningOutputTokens` | Reasoning portion of the output           |
+| `model`, `effort`       | Which model and effort that worker ran at |
+| `durationSeconds`       | Wall-clock for that worker                |
+
+The supervisor's own usage is not visible to this server — Codex does not report
+the parent turn to an MCP server it launched. The benchmark harness records it
+separately because it drives the supervisor itself. Anything unavailable is
+written as `null` rather than zero, so absent data is never mistaken for free.
+
+### Cost
+
+- **Token counts are measured.** They come from the API, per turn, per worker.
+- **No currency figure is produced, by design.** Prices are not exposed through
+  this integration.
+- **Your Codex subscription is not a function of token counts.** Multiplying
+  tokens by a public price list would produce an API-equivalent number that has
+  no relationship to what you are actually billed.
+- If you want an estimate, export the JSONL and apply your own pricing — the raw
+  per-worker numbers are all there.
+- Nothing in this project claims a cost saving, because none has been measured.
 
 ## Supervisor effort
 
@@ -455,11 +550,12 @@ low-effort model will cheerfully claim it has a tool it does not have.
 Not built yet — listed as intent, not as features:
 
 - Automatic retry with effort escalation, driven by `previousAttempts`
-- Cost telemetry, if reliable pricing data becomes available
-- A larger benchmark suite, and a defensible break-even threshold
+- A larger benchmark suite with fixtures big enough to locate the break-even
+  point between solo and orchestrated execution
 - Optional worker continuation (resuming a worker thread for follow-up work)
 - Verification executed inside the Codex sandbox rather than beside it
 - Live end-to-end verification on Linux and macOS
+- Publishing to npm
 
 ## License
 
