@@ -651,29 +651,36 @@ low-effort model will cheerfully claim it has a tool it does not have.
 
 Not built yet — listed as intent, not as features:
 
-- **Bounding the slowest worker.** The crossover investigation made the
-  slow-worker tail a strong candidate for the dominant remaining
-  parallel-latency constraint at six independent streams. Ideas worth measuring:
-  a per-task wall-clock budget that re-delegates rather than waits, returning
-  partial results while a straggler continues, or feeding observed worker
-  duration back into effort selection. Two Tier C repetitions do not
-  characterize the tail distribution; none of this is built, and any of it could
-  fail to help.
+- **Live orchestration activity and worker visibility.** Plan
+  `sol-luna-orchestrator activity`, `activity --watch`, and `activity --json` to
+  show the Sol supervisor, active batch and mode, Luna workers, task, model,
+  effort, state, elapsed time, current and peak concurrency, and useful
+  verification or worktree status. Supervisor state would report only what the
+  MCP/orchestrator actually knows; it cannot observe Sol activity after an MCP
+  call returns. A focused `workers` command or alias may also be considered.
+- **Characterize and bound slow-worker tails.** V6 found no observed latency
+  crossover, but the six-worker runs showed substantial straggler effects. A
+  clearly labelled counterfactual suggests that reducing worker-tail latency
+  could materially improve parallel performance. First gather targeted
+  additional Tier C forced-parallel repetitions to characterize the tail more
+  reliably. If confirmed, investigate bounded execution, re-delegation, or
+  related mitigation. Two Tier C repetitions do not establish the tail
+  distribution.
+- **Optional worker continuation** — letting the supervisor resume an existing
+  Luna thread for bounded follow-up or revision work instead of always starting a
+  fresh worker. Supervision, file scope and the no-recursive-delegation guarantee
+  would have to hold for the resumed turn exactly as they do for the first.
 - **Fixtures larger than one supervisor context.** Every suite so far fits
   comfortably in a single Sol session, which structurally favours solo. Finding
   out whether that changes needs workloads big enough to strain one session —
   which is also where deterministic grading becomes hard, so it is a real
   research problem rather than a bigger fixture file.
-- **Optional worker continuation** — letting the supervisor resume an existing
-  Luna thread for bounded follow-up or revision work instead of always starting a
-  fresh worker. Supervision, file scope and the no-recursive-delegation guarantee
-  would have to hold for the resumed turn exactly as they do for the first.
 - **Sandboxed verification** — investigating whether verification commands can
   run inside the Codex sandbox rather than in the orchestrator's own process.
   Today they run beside it, with your user's permissions; see
   [Security](#security). Whether this is achievable depends on upstream Codex
   capabilities and is not committed to.
-- Automatic retry with effort escalation, driven by `previousAttempts`
+- Automatic retry with reasoned effort escalation, driven by `previousAttempts`
 - Live end-to-end verification on Linux and macOS
 
 ## License
