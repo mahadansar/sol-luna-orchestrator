@@ -30,6 +30,8 @@ the documentation updates its results forced.
 
 ### Changed
 
+- Clarified benchmark math and interpretation, and made adaptive delegation —
+  including zero workers — explicit in the product positioning.
 - Benchmark documentation now reports the crossover investigation: **no latency
   or token crossover at four or six independent streams**, and going from four to
   six made orchestration relatively worse. `bench/RESULTS.md`, the README

@@ -34,10 +34,11 @@ in `bench/results/*.json`.
    fixtures at roughly twice the module depth still favoured the supervisor
    alone, and going from four streams to six made orchestration relatively
    _worse_ (+46% → +108%). Stream count is not the road to break-even.
-7. **The obstacle is straggler variance, and it is now measured.** Orchestrated
-   wall-clock is `slowest worker + ~70s`; the slowest of six workers ran 3.5× the
-   median. Fixed orchestration cost is almost entirely the supervisor — worktree
-   setup and integration together are ~1.2s.
+7. **The slow-worker tail is a strong candidate for the dominant remaining
+   parallel-latency constraint.** Orchestrated wall-clock is
+   `slowest worker + ~70s`; the slowest of six workers ran 3.5× the median in one
+   Tier C repetition. Fixed orchestration cost is almost entirely the supervisor
+   — worktree setup and integration together are ~1.2s.
 8. **Free choice declined to delegate in 6 of 6 scale runs** and was the fastest
    arm on two of three fixtures.
 
@@ -212,13 +213,18 @@ Every arm passed every run: 19/19. The `par-forced` row for `scale-svckit` has
 three runs because a pilot run of that exact cell was made first to prove the
 harness plumbing, and it is reported rather than discarded.
 
+There was **no token crossover**. Against `solo-high`, `par-forced` used about
+5.1× the known tokens on Tier B and 4.8× on Tier C. The ratios were not uniform:
+`adaptive` used about 1.5× and 1.7× on those tiers, while the coupled fixture was
+about 1.7× for `par-forced` and 0.7× for `adaptive`.
+
 ### Crossover verdict
 
-| Fixture       | Streams | Solo median | Best orchestrated | Delta     | Latency crossover | Token crossover |
-| ------------- | ------- | ----------- | ----------------- | --------- | ----------------- | --------------- |
-| scale-svckit  | 4       | 171.5s      | 250s              | **+46%**  | NO                | NO              |
-| scale-datakit | 6       | 189.5s      | 394.5s            | **+108%** | NO                | NO              |
-| scale-coupled | 1       | 113.5s      | 240s              | **+111%** | NO                | NO              |
+| Fixture       | Streams | Solo median | Forced-parallel median | Delta     | Latency crossover | Token crossover |
+| ------------- | ------- | ----------- | ---------------------- | --------- | ----------------- | --------------- |
+| scale-svckit  | 4       | 171.5s      | 250s                   | **+46%**  | NO                | NO              |
+| scale-datakit | 6       | 189.5s      | 394.5s                 | **+108%** | NO                | NO              |
+| scale-coupled | 1       | 113.5s      | 347s                   | **+206%** | NO                | NO              |
 
 **No latency crossover, and no token crossover, at any size tested.** Going from
 four streams to six moved orchestration _further_ from the baseline, not closer.
@@ -242,9 +248,9 @@ creation and integration together are ~1.2s, so the serialized worktree setup
 introduced in 0.5.1 costs nothing measurable. Essentially all fixed overhead is
 the supervisor: ~37s writing contracts and ~32s reviewing results.
 
-**And the critical path is one worker.** Parallel wall-clock is
-`slowest worker + ~70s`, so the arm is decided by the worst individual worker,
-not the average one.
+**The observed critical path runs through the slowest worker.** Parallel
+wall-clock is `slowest worker + ~70s` in these runs, making the slow-worker tail
+a strong candidate for the dominant remaining parallel-latency constraint.
 
 ### The straggler effect
 
@@ -256,21 +262,20 @@ not the average one.
 | scale-datakit | 1   | 401s  | 81, 83, 94, 95, **181, 333**   | 94.5   | 333 | **3.5**    |
 | scale-datakit | 2   | 388s  | 52, 79, 108, 122, **229, 315** | 115    | 315 | **2.7**    |
 
-The dispersion widens with worker count: median max/median ratio is 1.5 at four
-workers and 3.1 at six. That is the expected shape of a maximum over more draws,
-and it is why adding streams hurt instead of helping — **solo cost grows
-sublinearly in stream count (171.5s at four modules, 189.5s at six) while
-parallel cost is a maximum whose expectation grows as workers are added.** The
-curves diverge.
+The observed dispersion widens with worker count: median max/median ratio is 1.5
+at four workers and 3.1 at six. That is consistent with the expected shape of a
+maximum over more draws, and helps explain why adding streams hurt in these
+runs. Solo cost grew sublinearly (171.5s at four modules, 189.5s at six), while
+parallel cost followed the slowest worker. Two Tier C repetitions are not enough
+to characterize the tail distribution.
 
 > **Counterfactual, clearly labelled as such.** Had every worker in the six-stream
 > runs finished at that run's _median_ worker time, parallel would have completed
 > in about 163s and 188s — median ~176s, against a solo median of 189.5s. That is
-> a crossover. It did not happen, and this is arithmetic on measured numbers
-> rather than an observed result, but it locates the obstacle precisely: at six
-> independent streams the workload is already large enough for parallel
-> orchestration to win **if worker latency were consistent**. Straggler variance,
-> not overhead and not decomposition cost, is what stands in the way.
+> faster than the solo median. It did not happen, and this is arithmetic on
+> measured numbers rather than an observed result. It suggests that the
+> slow-worker tail may dominate the remaining parallel-latency gap on this
+> fixture; it does not establish a crossover or identify a sole blocker.
 
 ### The coupled control
 
@@ -351,8 +356,9 @@ threshold, and inventing one would be dishonest. What it supports is a qualitati
 rule, which is what the README and `SOL_RULES.md` state:
 
 - Tiny or single-file work → do it yourself.
-- Substantial bounded work where an enforced scope and independent verification
-  matter → delegate one task, accepting that it costs time.
+- Substantial bounded work where declared worker scope, post-execution
+  scope-violation detection, and independent verification matter → delegate one
+  task, accepting that it costs time.
 - Several genuinely independent, substantial workstreams → parallel, because
   parallel is reliably faster than sequential when delegating at all.
 
@@ -365,12 +371,13 @@ changes the shape of the conclusion rather than merely extending it:
 - Scaling _stream count_ does not approach a crossover — it moves away from one.
   Solo cost grows sublinearly in the number of independent modules, while parallel
   cost is a maximum over workers whose expectation grows as workers are added.
-- The remaining obstacle is measurable and specific: **worker latency variance.**
-  At six streams the workload is already large enough that consistent workers
-  would have crossed the baseline; one worker at 3.5× the median prevented it.
-- So the open question is no longer "how large must the workload be?" but
-  "**can the slowest worker be bounded?**" That is a different kind of problem —
-  scheduling, not sizing — and it is what the roadmap now names.
+- The slow-worker tail is a strong candidate for the dominant remaining
+  parallel-latency constraint. The six-stream counterfactual would beat the
+  baseline if every worker matched its run's median, but that is not an observed
+  crossover and does not identify a sole blocker.
+- This raises a specific open question alongside workload sizing: **can the
+  slowest worker be bounded?** It is a scheduling question worth measuring, and
+  it is what the roadmap now names.
 
 ---
 
@@ -427,9 +434,9 @@ Everything except `bench:validate` and `bench:analyze` spends live model usage.
   the micro suite; three fixtures and two repetitions per cell in the scale suite.
   Directional, not statistically significant — and one arm showed 4x variance
   across two runs.
-- **Two repetitions cannot characterise a distribution's tail**, which is exactly
-  what the straggler finding is about. The effect is large and appeared in every
-  six-worker run, but its magnitude is estimated from few samples.
+- **Two Tier C repetitions cannot characterise the worker-latency tail
+  distribution.** Both six-worker runs had a long tail, but its frequency and
+  magnitude cannot be estimated from these samples.
 - Fixtures are bounded by construction, because they must grade deterministically
   and re-run cheaply. The scale suite pushed depth and stream count up but stays
   within work a single supervisor session can hold, which biases every suite

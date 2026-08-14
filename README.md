@@ -34,6 +34,25 @@ delegate_tasks({
 Two ideas do most of the work here: **a worker's `PASS` is a claim, not a
 conclusion**, and **not every task should be delegated**.
 
+## Delegation is adaptive, not automatic
+
+Sol first decides whether delegation is worthwhile at all. More agents are not
+automatically better, and the optimal worker count can be zero. Good
+orchestration is not about maximizing agent count; it includes knowing when one
+strong Sol should do the work itself.
+
+Across the six measured free-choice runs in the scale suite, Sol declined to
+delegate every time, and forced delegation was slower on each corresponding
+fixture. That supports a deliberately scoped mental model for the workloads
+measured here: **strong supervisor first; additional agents only when they
+provide enough value to justify coordination cost.** More agents are a tool, not
+an objective. It does not prove that single-agent systems are universally better
+than multi-agent systems.
+
+There is a second adaptive layer when Sol does choose to delegate: each Luna
+worker gets `medium`, `high`, `xhigh`, or `max` reasoning effort based on that
+task's difficulty. Worker count and worker effort are separate decisions.
+
 ## Quick start
 
 Prerequisite: [OpenAI Codex](https://developers.openai.com/codex) installed and
@@ -101,8 +120,9 @@ workstreams did not find a break-even point either — and going from four strea
 to six moved orchestration further behind (+46% → +108%), because solo cost grows
 sublinearly in stream count while parallel cost is set by the slowest single
 worker. No token saving and no cost saving has been demonstrated; orchestration
-used roughly 4–5× the tokens in every measured configuration. Details and the
-measured obstacle in [`bench/RESULTS.md`](bench/RESULTS.md).
+showed no token crossover. Forced-parallel used about 5.1× the known tokens on
+Tier B and 4.8× on Tier C versus solo-high; adaptive and coupled ratios differed.
+Details in [`bench/RESULTS.md`](bench/RESULTS.md).
 
 ## Why it exists
 
@@ -110,9 +130,9 @@ Not because delegation is always cheaper. On small tasks it measurably is not �
 this project's own benchmark says so, and that result is
 [documented rather than buried](#benchmarks). Delegation earns its keep when work
 stops fitting in one head: when a session is long enough to lose coherence, when
-changes need an enforced boundary, when "it passed" needs to mean more than the
-model saying so, or when several independent pieces of work can genuinely run at
-the same time.
+changes need a declared scope with post-execution scope-violation detection, when
+"it passed" needs to mean more than the model saying so, or when several
+independent pieces of work can genuinely run at the same time.
 
 The split is the one most teams already use with people:
 
@@ -473,7 +493,7 @@ orchestration becomes competitive with Sol working alone. It did not find one.
 | ------------- | ------------------- | ------------- | ----------- | ----------------- |
 | scale-svckit  | 4                   | 171.5s        | **120s**    | 250s (+46%)       |
 | scale-datakit | 6                   | 189.5s        | 186.5s      | 394.5s (+108%)    |
-| scale-coupled | 1 (no natural seam) | 113.5s        | **87.5s**   | 347s (+111%)      |
+| scale-coupled | 1 (no natural seam) | 113.5s        | **87.5s**   | 347s (+206%)      |
 
 19 runs, all passing. Three findings worth more than the table:
 
@@ -486,12 +506,13 @@ slowest of four. The curves diverge.
 integration together take ~1.2s. Writing the contracts and reviewing the results
 take ~70s.
 
-**The obstacle is straggler variance.** In the six-stream runs, five of six
-workers finished within 95s and one took 333s. Had every worker matched its run's
-median, parallel would have finished around 176s against solo's 189.5s — a
-crossover. That is arithmetic on measured times rather than an observed result,
-but it says the workload is already big enough; the slowest worker is what is in
-the way.
+**The slow-worker tail is a strong candidate for the dominant remaining
+parallel-latency constraint.** In one six-stream run, four workers finished
+within 95s while the slowest took 333s; the other run also had a long tail. As a
+counterfactual, replacing each run's worker times with that run's median produces
+about 176s against solo's 189.5s. That is arithmetic on measured times, not an
+observed crossover, and two Tier C repetitions are not enough to characterize
+the tail distribution.
 
 **And left to decide for itself, Sol never delegated** — 0 of 6 free-choice runs,
 at one, four and six streams alike — while passing every time and being the
@@ -618,7 +639,8 @@ low-effort model will cheerfully claim it has a tool it does not have.
 - **Workers are verified in isolation.** Passing separately is not passing
   together — the supervisor is told to run the full suite after integration.
 - **Verification is not sandboxed.** See Security.
-- **Scope enforcement is detective, not preventive.**
+- **File-scope validation is detective, not preventive.** Scope violations are
+  detected after worker execution; declared scope does not prevent writes.
 - **Built against experimental surfaces.** Several behaviours this depends on are
   undocumented and were established by testing (see `CHANGELOG.md`). Upstream
   changes may break it.
@@ -629,13 +651,14 @@ low-effort model will cheerfully claim it has a tool it does not have.
 
 Not built yet — listed as intent, not as features:
 
-- **Bounding the slowest worker.** The crossover investigation showed the
-  workload is already large enough for parallel orchestration to win at six
-  independent streams, and that a single straggler at 3.5× the median worker time
-  is what prevents it. Ideas worth measuring: a per-task wall-clock budget that
-  re-delegates rather than waits, returning partial results while a straggler
-  continues, or feeding observed worker duration back into effort selection. None
-  of this is built, and any of it could fail to help.
+- **Bounding the slowest worker.** The crossover investigation made the
+  slow-worker tail a strong candidate for the dominant remaining
+  parallel-latency constraint at six independent streams. Ideas worth measuring:
+  a per-task wall-clock budget that re-delegates rather than waits, returning
+  partial results while a straggler continues, or feeding observed worker
+  duration back into effort selection. Two Tier C repetitions do not
+  characterize the tail distribution; none of this is built, and any of it could
+  fail to help.
 - **Fixtures larger than one supervisor context.** Every suite so far fits
   comfortably in a single Sol session, which structurally favours solo. Finding
   out whether that changes needs workloads big enough to strain one session —
