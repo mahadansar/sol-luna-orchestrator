@@ -95,12 +95,14 @@ or when one long session would lose coherence.
 
 **What the benchmarks have and have not shown.** Parallel delegation beat
 sequential delegation in every task and every repetition (median 155s vs 248s).
-Orchestrated execution has **not** yet beaten Sol High working alone on any
-fixture in the suite — solo was ~63s. No token saving and no cost saving has been
-demonstrated; orchestration used more tokens in every measured configuration.
-The fixtures are small by construction, which is exactly the regime that favours
-solo, so the crossover point is unknown rather than proven absent. Details in
-[`bench/RESULTS.md`](bench/RESULTS.md).
+Orchestrated execution has **not** beaten Sol High working alone on any fixture
+in any suite. A dedicated crossover investigation at four and six independent
+workstreams did not find a break-even point either — and going from four streams
+to six moved orchestration further behind (+46% → +108%), because solo cost grows
+sublinearly in stream count while parallel cost is set by the slowest single
+worker. No token saving and no cost saving has been demonstrated; orchestration
+used roughly 4–5× the tokens in every measured configuration. Details and the
+measured obstacle in [`bench/RESULTS.md`](bench/RESULTS.md).
 
 ## Why it exists
 
@@ -458,10 +460,42 @@ policy working, not a bug.
 
 So the honest rule is qualitative, not numeric: **when you delegate independent
 work, use parallel — but "should I delegate at all?" is a separate question, and
-for small work the answer is usually no.** This suite cannot locate the crossover
-point, because every fixture in it sits below that point. Full data, including a
-`solo-xhigh` arm that varied 4x between two repetitions, is in
+for small work the answer is usually no.** Full data, including a `solo-xhigh`
+arm that varied 4x between two repetitions, is in
 [`bench/RESULTS.md`](bench/RESULTS.md).
+
+## Looking for the break-even point
+
+A third suite was built specifically to find the workload size at which
+orchestration becomes competitive with Sol working alone. It did not find one.
+
+| Fixture       | Independent streams | Sol High solo | Free choice | Mandated parallel |
+| ------------- | ------------------- | ------------- | ----------- | ----------------- |
+| scale-svckit  | 4                   | 171.5s        | **120s**    | 250s (+46%)       |
+| scale-datakit | 6                   | 189.5s        | 186.5s      | 394.5s (+108%)    |
+| scale-coupled | 1 (no natural seam) | 113.5s        | **87.5s**   | 347s (+111%)      |
+
+19 runs, all passing. Three findings worth more than the table:
+
+**More streams made it worse, not better.** Solo cost grows sublinearly with the
+number of independent modules — 171.5s for four, 189.5s for six. Parallel cost is
+`slowest worker + ~70s`, and the expected slowest of six draws exceeds the
+slowest of four. The curves diverge.
+
+**The fixed cost is the supervisor, not the machinery.** Worktree creation and
+integration together take ~1.2s. Writing the contracts and reviewing the results
+take ~70s.
+
+**The obstacle is straggler variance.** In the six-stream runs, five of six
+workers finished within 95s and one took 333s. Had every worker matched its run's
+median, parallel would have finished around 176s against solo's 189.5s — a
+crossover. That is arithmetic on measured times rather than an observed result,
+but it says the workload is already big enough; the slowest worker is what is in
+the way.
+
+**And left to decide for itself, Sol never delegated** — 0 of 6 free-choice runs,
+at one, four and six streams alike — while passing every time and being the
+fastest arm on two of the three fixtures.
 
 Across every parallel batch that actually ran workers — 5 batches, 15 workers —
 there were **zero integration conflicts**: the supervisor produced disjoint
@@ -471,15 +505,20 @@ warrant it rather than that `max` has no use.
 
 ## Benchmarks
 
-Two suites, both reproducible, both graded by the harness after the agent stops —
+Three suites, all reproducible, all graded by the harness after the agent stops —
 never by the agent:
 
 ```bash
 npm run bench:validate                    # proves fixtures discriminate; no model calls
 npm run bench -- --suite micro            # small tasks: delegation overhead
 npm run bench -- --suite parallel         # multi-module projects: 4 arms
+npm run bench -- --suite scale            # 4- and 6-stream projects + a coupled control
 npm run bench:report                      # summarise the newest raw results
+npm run bench:analyze                     # crossover verdict across every results file
 ```
+
+`bench:validate` and `bench:analyze` spend nothing. The three `bench` commands
+make live model calls.
 
 A task passes only if its checks exit 0, files marked immutable are
 byte-identical (SHA-256), and — where a fixture defines one — the authored test
@@ -590,11 +629,18 @@ low-effort model will cheerfully claim it has a tool it does not have.
 
 Not built yet — listed as intent, not as features:
 
-- **A larger benchmark suite**, with realistic fixtures big enough to investigate
-  whether a break-even point between Sol-only and orchestrated execution exists
-  at all. Every fixture measured so far sits below any such point, so the suite
-  cannot see it; that is a gap in the measurement, not evidence of a crossover
-  waiting to be found.
+- **Bounding the slowest worker.** The crossover investigation showed the
+  workload is already large enough for parallel orchestration to win at six
+  independent streams, and that a single straggler at 3.5× the median worker time
+  is what prevents it. Ideas worth measuring: a per-task wall-clock budget that
+  re-delegates rather than waits, returning partial results while a straggler
+  continues, or feeding observed worker duration back into effort selection. None
+  of this is built, and any of it could fail to help.
+- **Fixtures larger than one supervisor context.** Every suite so far fits
+  comfortably in a single Sol session, which structurally favours solo. Finding
+  out whether that changes needs workloads big enough to strain one session —
+  which is also where deterministic grading becomes hard, so it is a real
+  research problem rather than a bigger fixture file.
 - **Optional worker continuation** — letting the supervisor resume an existing
   Luna thread for bounded follow-up or revision work instead of always starting a
   fresh worker. Supervision, file scope and the no-recursive-delegation guarantee

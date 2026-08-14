@@ -11,7 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Arm, RunRecord, SuiteName } from "./run.js";
+import type { Arm, Breakdown, RunRecord, SuiteName } from "./run.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RESULTS_DIR = path.resolve(HERE, "..", "..", "bench", "results");
@@ -97,6 +97,7 @@ function main(): void {
   const armOrder = [
     "solo-high",
     "solo-xhigh",
+    "adaptive",
     "seq",
     "par",
     "seq-forced",
@@ -124,9 +125,9 @@ function main(): void {
   lines.push("## Overall");
   lines.push("");
   lines.push(
-    "| Arm | Sol effort | Runs | Passed | Delegated | Median wall-clock | Median output tokens | Median input tokens | Median workers |",
+    "| Arm | Sol effort | Runs | Passed | Delegated | Median wall-clock | Range | Median output tokens | Median input tokens | Median workers | Peak concurrency |",
   );
-  lines.push("|---|---|---|---|---|---|---|---|---|");
+  lines.push("|---|---|---|---|---|---|---|---|---|---|---|");
 
   for (const arm of armsPresent) {
     const records = data.records.filter((record) => record.arm === arm);
@@ -136,16 +137,49 @@ function main(): void {
     // sometimes decides the work is not worth handing off, which makes the arm
     // measure something other than delegation — worth stating, not hiding.
     const delegated = records.filter((record) => (record.workerCount ?? 0) > 0).length;
+    const peaks = records
+      .map((record) => record.breakdown?.peakConcurrency)
+      .filter((value): value is number => typeof value === "number");
 
     lines.push(
       `| ${labelFor(arm)} | ${records[0]!.supervisorEffort ?? "-"} | ${stats.runs} | ` +
         `${stats.passed}/${stats.runs} | ${delegated}/${stats.runs} | ` +
         `${round(median(stats.durations))}s | ` +
+        `${Math.min(...stats.durations)}-${Math.max(...stats.durations)}s | ` +
         `${round(median(stats.totalOutput))} | ${round(median(stats.totalInput))} | ` +
-        `${round(median(stats.workerCounts))} |`,
+        `${round(median(stats.workerCounts))} | ` +
+        `${peaks.length > 0 ? round(median(peaks)) : "n/a"} |`,
     );
   }
   lines.push("");
+
+  // --- Where the wall-clock went -------------------------------------------
+  const withBreakdown = data.records.filter(
+    (record) =>
+      record.breakdown?.workerWindowSeconds !== null &&
+      record.breakdown?.workerWindowSeconds !== undefined,
+  );
+  if (withBreakdown.length > 0) {
+    lines.push("## Where orchestrated time went");
+    lines.push("");
+    lines.push(
+      "| Task | Arm | Rep | Total | Sol before | Worktree setup | Worker window | Slowest worker | Integration | Sol after | Peak |",
+    );
+    lines.push("|---|---|---|---|---|---|---|---|---|---|---|");
+    const cell = (value: number | null | undefined): string =>
+      value === null || value === undefined ? "unknown" : `${value}s`;
+    for (const record of withBreakdown) {
+      const b: Breakdown = record.breakdown;
+      lines.push(
+        `| ${record.taskId} | ${record.arm} | ${record.repetition} | ${record.durationSeconds}s | ` +
+          `${cell(b.supervisorBeforeSeconds)} | ${cell(b.worktreeSetupSeconds)} | ` +
+          `${cell(b.workerWindowSeconds)} | ${cell(b.slowestWorkerSeconds)} | ` +
+          `${cell(b.integrationSeconds)} | ${cell(b.supervisorAfterSeconds)} | ` +
+          `${b.peakConcurrency ?? "unknown"} |`,
+      );
+    }
+    lines.push("");
+  }
 
   lines.push("## By task");
   lines.push("");
@@ -275,6 +309,17 @@ function main(): void {
   lines.push(
     "- Sample sizes are small. Treat these as directional, not statistically " +
       "significant.",
+  );
+  lines.push(
+    "- `Peak concurrency` is the highest number of workers alive at one instant, " +
+      "computed from worker start and completion timestamps rather than assumed " +
+      "from the worker count.",
+  );
+  lines.push(
+    "- Orchestrated arms are given `SOL_LUNA_MAX_PARALLEL` equal to the fixture's " +
+      "independent stream count, which is above the shipped default of 3. That " +
+      "value is recorded per run as `maxParallelConfigured`. The solo arms have " +
+      "no workers, so the setting does not affect them.",
   );
 
   const report = lines.join("\n");

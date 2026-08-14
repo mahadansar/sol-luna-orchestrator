@@ -22,6 +22,18 @@ export interface BenchTask {
   category: string;
   /** Why this task is in the suite. */
   rationale: string;
+  /**
+   * Workload tier, for suites that vary size deliberately. `coupled` marks a
+   * fixture whose work has no natural seam and is expected to lose under
+   * delegation — a control rather than a rung on the ladder.
+   */
+  tier?: "A" | "B" | "C" | "D" | "coupled";
+  /**
+   * How many independent workstreams the fixture contains. Drives the
+   * concurrency the orchestrated arms are given, and is the axis the crossover
+   * investigation varies.
+   */
+  streams?: number;
   /** Files written into a fresh workspace before the agent starts. */
   files: Record<string, string>;
   /**

@@ -55,7 +55,7 @@
     "dev": "tsx src/server.ts",
     "format": "prettier --write \"src/**/*.ts\" \"*.md\" \"bench/*.md\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"*.md\" \"bench/*.md\"",
-    "test": "npm run build && node --test dist/selftest.js dist/security.test.js dist/parallel.test.js dist/cli.test.js",
+    "test": "npm run build && node --test dist/selftest.js dist/security.test.js dist/parallel.test.js dist/cli.test.js dist/bench.test.js",
     "smoke:cli": "npm run build && node dist/smoke-cli.js",
     "smoke": "npm run build && node dist/smoke-protocol.js",
     "smoke:live": "npm run build && node dist/smoke-live.js",
@@ -65,6 +65,7 @@
     "bench:validate": "npm run build && node dist/bench/validate.js",
     "bench": "npm run build && node dist/bench/run.js",
     "bench:report": "npm run build && node dist/bench/report.js",
+    "bench:analyze": "npm run build && node dist/bench/analyze.js",
     "prepublishOnly": "npm run verify"
   },
   "dependencies": {

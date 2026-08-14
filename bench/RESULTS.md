@@ -1,12 +1,16 @@
 # Benchmark results
 
-Two suites, both graded by the harness after the agent stops — never by the agent.
+Three suites, all graded by the harness after the agent stops — never by the agent.
 
 - **Micro** — four small single-file tasks. Tests whether delegation is worth it
   at small scale.
 - **Parallel** — two projects, each with three independent modules specified by
   their own test files. Tests whether orchestration pays off when there is real,
   separable work.
+- **Scale** — four- and six-stream projects at roughly twice the module depth,
+  plus a deliberately coupled control. Built to locate the point where
+  orchestration becomes competitive with a supervisor working alone, and
+  reporting that it did not find one.
 
 Everything below separates **measured** from **interpretation**. Raw records are
 in `bench/results/*.json`.
@@ -26,6 +30,16 @@ in `bench/results/*.json`.
 4. **Left to its own judgement, the supervisor usually declines to delegate these
    tasks at all**, which is the policy working as intended.
 5. **No arm ever failed.** Quality was identical everywhere: 24/24 runs passed.
+6. **The crossover investigation found no crossover.** Four- and six-stream
+   fixtures at roughly twice the module depth still favoured the supervisor
+   alone, and going from four streams to six made orchestration relatively
+   _worse_ (+46% → +108%). Stream count is not the road to break-even.
+7. **The obstacle is straggler variance, and it is now measured.** Orchestrated
+   wall-clock is `slowest worker + ~70s`; the slowest of six workers ran 3.5× the
+   median. Fixed orchestration cost is almost entirely the supervisor — worktree
+   setup and integration together are ~1.2s.
+8. **Free choice declined to delegate in 6 of 6 scale runs** and was the fastest
+   arm on two of three fixtures.
 
 ---
 
@@ -134,6 +148,177 @@ disjoint scopes every time, and every batch merged cleanly.
 
 ---
 
+## Scale suite — measured
+
+**What this suite is for: finding the point, if any, where orchestration becomes
+competitive with a supervisor working alone.** The earlier suites answered a
+narrower question and every fixture in them sat far below any break-even. These
+fixtures are roughly twice as deep per module and vary the number of independent
+workstreams, which the earlier data suggested was the axis that mattered.
+
+`2026-08-14T17-*.scale.json` and `2026-08-14T18-*.scale.json` · 19 runs ·
+`gpt-5.6-sol` at high effort · Node v26.7.0 on win32 x64 ·
+orchestrator v0.5.1 installed from npm.
+
+### Design, fixed before running
+
+Sizing came from the parallel suite's own numbers, not from guesswork.
+Decomposing its mandated-parallel runs into "slowest worker" and "everything
+else" gave a near-constant orchestration overhead of 65s, a Luna worker at 62s
+per small module, and Sol at 21s per small module. Modelling a run of N
+independent modules as `solo ≈ N × 21` against `parallel ≈ 62 + 65` predicted a
+crossover near six streams. **That prediction turned out to be wrong, for
+reasons the results make clear.**
+
+| Tier    | Fixture         | Streams | Shape                                                                        |
+| ------- | --------------- | ------- | ---------------------------------------------------------------------------- |
+| B       | `scale-svckit`  | 4       | JSON Pointer, LRU+TTL cache, backoff/retry, semver                           |
+| C       | `scale-datakit` | 6       | CSV, query strings, LCS diff, token bucket, glob, intervals                  |
+| coupled | `scale-coupled` | 1       | One expression evaluator: tokenizer, parser and evaluator with no fixed seam |
+
+Arms: `solo-high` (delegation disabled at the config level), `adaptive` (tools
+available, guidance neither mandates nor forbids their use), `par-forced`
+(delegation mandated). `seq-forced` was not re-run — the parallel suite already
+established that parallel beats sequential once delegating.
+
+**Stopping rule, written down before results were read:** two repetitions per
+cell; stop at two when the two arms' medians differ by more than 40%, since a
+third cannot change the direction; add a third only when they are within 25%,
+and add it to both arms rather than one. Every tier hit the >40% condition, so
+every cell has exactly two repetitions. Tier D was defined as conditional on
+tier C sitting just below the crossover; it did not, so it was not run.
+
+**Concurrency.** Orchestrated arms were given `SOL_LUNA_MAX_PARALLEL` equal to
+the fixture's stream count (4 and 6), above the shipped default of 3, so that
+stream count rather than the default cap was the variable under test. The value
+is recorded per run as `maxParallelConfigured`. The solo arms have no workers
+and are unaffected.
+
+### Results
+
+| Fixture       | Streams | Arm        | Runs | Passed | Median wall-clock | Range    | Sol tokens | Luna tokens | Total known | Peak concurrency |
+| ------------- | ------- | ---------- | ---- | ------ | ----------------- | -------- | ---------- | ----------- | ----------- | ---------------- |
+| scale-svckit  | 4       | solo-high  | 2    | 2/2    | **171.5s**        | 163–180s | 192,219    | 0           | 192,219     | n/a              |
+| scale-svckit  | 4       | adaptive   | 2    | 2/2    | **120s**          | 116–124s | 295,129    | 0           | 295,129     | n/a              |
+| scale-svckit  | 4       | par-forced | 3    | 3/3    | 250s              | 234–273s | 333,778    | 632,134     | 986,741     | 4                |
+| scale-datakit | 6       | solo-high  | 2    | 2/2    | **189.5s**        | 177–202s | 243,388    | 0           | 243,388     | n/a              |
+| scale-datakit | 6       | adaptive   | 2    | 2/2    | **186.5s**        | 184–189s | 404,697    | 0           | 404,697     | n/a              |
+| scale-datakit | 6       | par-forced | 2    | 2/2    | 394.5s            | 388–401s | 243,541    | 922,626     | 1,166,167   | 6                |
+| scale-coupled | 1       | solo-high  | 2    | 2/2    | 113.5s            | 110–117s | 126,579    | 0           | 126,579     | n/a              |
+| scale-coupled | 1       | adaptive   | 2    | 2/2    | **87.5s**         | 77–98s   | 90,748     | 0           | 90,748      | n/a              |
+| scale-coupled | 1       | par-forced | 2    | 2/2    | 347s              | 240–454s | 141,061    | 73,501      | 214,561     | 1                |
+
+Every arm passed every run: 19/19. The `par-forced` row for `scale-svckit` has
+three runs because a pilot run of that exact cell was made first to prove the
+harness plumbing, and it is reported rather than discarded.
+
+### Crossover verdict
+
+| Fixture       | Streams | Solo median | Best orchestrated | Delta     | Latency crossover | Token crossover |
+| ------------- | ------- | ----------- | ----------------- | --------- | ----------------- | --------------- |
+| scale-svckit  | 4       | 171.5s      | 250s              | **+46%**  | NO                | NO              |
+| scale-datakit | 6       | 189.5s      | 394.5s            | **+108%** | NO                | NO              |
+| scale-coupled | 1       | 113.5s      | 240s              | **+111%** | NO                | NO              |
+
+**No latency crossover, and no token crossover, at any size tested.** Going from
+four streams to six moved orchestration _further_ from the baseline, not closer.
+
+### Where the time went
+
+Measured from event timestamps, not added instrumentation. Median across the six
+orchestrated scale runs:
+
+| Phase                          | Median    |
+| ------------------------------ | --------- |
+| Supervisor before the batch    | 37.1s     |
+| Worktree setup                 | 0.8s      |
+| Slowest worker                 | 187.1s    |
+| Integration                    | 0.4s      |
+| Supervisor review after        | 32.4s     |
+| **Total minus slowest worker** | **70.9s** |
+
+Two things follow. **The mechanical orchestration cost is negligible** — worktree
+creation and integration together are ~1.2s, so the serialized worktree setup
+introduced in 0.5.1 costs nothing measurable. Essentially all fixed overhead is
+the supervisor: ~37s writing contracts and ~32s reviewing results.
+
+**And the critical path is one worker.** Parallel wall-clock is
+`slowest worker + ~70s`, so the arm is decided by the worst individual worker,
+not the average one.
+
+### The straggler effect
+
+| Fixture       | Rep | Total | Worker durations (sorted)      | Median | Max | Max/median |
+| ------------- | --- | ----- | ------------------------------ | ------ | --- | ---------- |
+| scale-svckit  | p   | 250s  | 112, 133, 136, 179             | 134.5  | 179 | 1.3        |
+| scale-svckit  | 1   | 234s  | 61, 67, 115, 164               | 91     | 164 | 1.8        |
+| scale-svckit  | 2   | 273s  | 99, 117, 147, 196              | 132    | 196 | 1.5        |
+| scale-datakit | 1   | 401s  | 81, 83, 94, 95, **181, 333**   | 94.5   | 333 | **3.5**    |
+| scale-datakit | 2   | 388s  | 52, 79, 108, 122, **229, 315** | 115    | 315 | **2.7**    |
+
+The dispersion widens with worker count: median max/median ratio is 1.5 at four
+workers and 3.1 at six. That is the expected shape of a maximum over more draws,
+and it is why adding streams hurt instead of helping — **solo cost grows
+sublinearly in stream count (171.5s at four modules, 189.5s at six) while
+parallel cost is a maximum whose expectation grows as workers are added.** The
+curves diverge.
+
+> **Counterfactual, clearly labelled as such.** Had every worker in the six-stream
+> runs finished at that run's _median_ worker time, parallel would have completed
+> in about 163s and 188s — median ~176s, against a solo median of 189.5s. That is
+> a crossover. It did not happen, and this is arithmetic on measured numbers
+> rather than an observed result, but it locates the obstacle precisely: at six
+> independent streams the workload is already large enough for parallel
+> orchestration to win **if worker latency were consistent**. Straggler variance,
+> not overhead and not decomposition cost, is what stands in the way.
+
+### The coupled control
+
+Work with no natural seam behaved as the control predicted it would, and worse
+than the tiers above:
+
+- **Free choice declined to delegate, both times**, and was the fastest arm on
+  this fixture (87.5s median against 113.5s for mandated-solo).
+- **Mandated delegation cost 3.1× solo** (347s vs 113.5s). In one repetition the
+  supervisor emitted **no delegation events at all** despite being told it must
+  delegate; in the other it delegated the whole module to a single worker at
+  `xhigh`. Neither is a decomposition, because the fixture does not admit one:
+  any split of a tokenizer, parser and evaluator would need two workers writing
+  the same file, which the orchestrator refuses by design.
+
+### Free-choice behaviour
+
+**0 of 6 free-choice runs delegated** — at one, four and six streams alike. In
+every case the free-choice arm passed, and on two of the three fixtures it was
+the fastest arm measured:
+
+| Fixture       | Free choice | Mandated solo | Mandated parallel |
+| ------------- | ----------- | ------------- | ----------------- |
+| scale-svckit  | **120s**    | 171.5s        | 250s              |
+| scale-datakit | 186.5s      | 189.5s        | 394.5s            |
+| scale-coupled | **87.5s**   | 113.5s        | 347s              |
+
+The delegation policy is not merely declining; it is declining correctly on every
+workload measured so far.
+
+### Reliability
+
+Across all 17 delegating runs in this repository's history, including the six new
+ones at four and six concurrent workers:
+
+- integration conflicts: **0**
+- worker failures: **0**
+- verification failures: **0**
+- verification refusals: **0**
+- runs with an agent error: **0**
+- worktree metadata races: **0** (the 0.5.1 fix held under 4- and 6-way
+  concurrent batches)
+
+Worker effort across the whole scale suite: `high` ×34, `xhigh` ×16, `medium` ×8,
+`max` ×0.
+
+---
+
 ## Interpretation
 
 Kept deliberately separate from the numbers above.
@@ -172,21 +357,35 @@ rule, which is what the README and `SOL_RULES.md` state:
   parallel is reliably faster than sequential when delegating at all.
 
 The suite cannot answer "how big must a module be before parallel beats solo?"
-because every fixture here is below that size. Finding it would need fixtures
-large enough that a single supervisor session starts to struggle — which is also
-the regime where a deterministic grader becomes hard to write. That is honest
-future work, not a claim.
+because every fixture here is below that size.
+
+**The scale suite went looking for that answer and did not find it either**, which
+changes the shape of the conclusion rather than merely extending it:
+
+- Scaling _stream count_ does not approach a crossover — it moves away from one.
+  Solo cost grows sublinearly in the number of independent modules, while parallel
+  cost is a maximum over workers whose expectation grows as workers are added.
+- The remaining obstacle is measurable and specific: **worker latency variance.**
+  At six streams the workload is already large enough that consistent workers
+  would have crossed the baseline; one worker at 3.5× the median prevented it.
+- So the open question is no longer "how large must the workload be?" but
+  "**can the slowest worker be bounded?**" That is a different kind of problem —
+  scheduling, not sizing — and it is what the roadmap now names.
 
 ---
 
 ## Method
 
 ```bash
-npm run bench:validate                  # no model calls
+npm run bench:validate                  # no model calls, proves fixtures discriminate
 npm run bench -- --suite micro --reps 2
 npm run bench -- --suite parallel --reps 2
-npm run bench:report
+npm run bench -- --suite scale --reps 2  # tiers B, C and the coupled control
+npm run bench:report                     # summarise one results file
+npm run bench:analyze                    # crossover verdict across every results file
 ```
+
+Everything except `bench:validate` and `bench:analyze` spends live model usage.
 
 - **Same fixtures per arm.** Each run starts from a freshly materialised temp
   workspace; parallel fixtures are `git init`-ed and committed so worktrees have a
@@ -225,10 +424,20 @@ npm run bench:report
 ## Limitations
 
 - Two tasks and two repetitions per cell in the parallel suite; four and two in
-  the micro suite. Directional, not statistically significant — and one arm showed
-  4x variance across two runs.
-- Fixtures are small by construction, because they must grade deterministically
-  and re-run cheaply. That biases both suites against delegation.
-- Single machine, single platform, with normal network variance.
+  the micro suite; three fixtures and two repetitions per cell in the scale suite.
+  Directional, not statistically significant — and one arm showed 4x variance
+  across two runs.
+- **Two repetitions cannot characterise a distribution's tail**, which is exactly
+  what the straggler finding is about. The effect is large and appeared in every
+  six-worker run, but its magnitude is estimated from few samples.
+- Fixtures are bounded by construction, because they must grade deterministically
+  and re-run cheaply. The scale suite pushed depth and stream count up but stays
+  within work a single supervisor session can hold, which biases every suite
+  against delegation.
+- Single machine, single platform, with normal network variance. Wall-clock
+  includes model latency, which is not under this project's control.
 - No adversarial tasks: no worker produced a false `PASS`, so the claim-checking
   machinery is exercised by unit tests rather than by this benchmark.
+- The counterfactual in the scale suite is arithmetic on measured worker times,
+  not an observed run. It bounds where the obstacle lies; it does not demonstrate
+  a crossover.

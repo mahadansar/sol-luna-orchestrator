@@ -14,6 +14,8 @@ import os from "node:os";
 import path from "node:path";
 import { PARALLEL_SOLUTIONS } from "./parallel-solutions.js";
 import { PARALLEL_TASKS } from "./parallel-tasks.js";
+import { SCALE_SOLUTIONS } from "./scale-solutions.js";
+import { SCALE_TASKS } from "./scale-tasks.js";
 import { BENCH_TASKS, type BenchTask, type GradeCommand } from "./tasks.js";
 
 /** Known-good solutions, used only to prove the grader accepts correct work. */
@@ -191,7 +193,10 @@ async function validateTask(task: BenchTask): Promise<void> {
   }
 
   // 2. A known-good solution must pass every grade command.
-  const solution = REFERENCE_SOLUTIONS[task.id] ?? PARALLEL_SOLUTIONS[task.id];
+  const solution =
+    REFERENCE_SOLUTIONS[task.id] ??
+    PARALLEL_SOLUTIONS[task.id] ??
+    SCALE_SOLUTIONS[task.id];
   if (!solution) {
     check("has a reference solution", false);
     return;
@@ -231,7 +236,7 @@ async function validateTask(task: BenchTask): Promise<void> {
 
 async function main(): Promise<void> {
   console.log("Validating benchmark fixtures (no model calls)");
-  for (const task of [...BENCH_TASKS, ...PARALLEL_TASKS]) {
+  for (const task of [...BENCH_TASKS, ...PARALLEL_TASKS, ...SCALE_TASKS]) {
     await validateTask(task);
   }
   console.log(

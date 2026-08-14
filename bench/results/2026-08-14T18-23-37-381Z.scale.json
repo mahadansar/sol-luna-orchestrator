@@ -1,0 +1,326 @@
+{
+  "schema": 3,
+  "suite": "scale",
+  "supervisorModel": "gpt-5.6-sol",
+  "startedAt": "2026-08-14T18-23-37-381Z",
+  "platform": "win32 x64",
+  "nodeVersion": "v26.7.0",
+  "reps": 2,
+  "records": [
+    {
+      "suite": "scale",
+      "taskId": "scale-coupled",
+      "taskCategory": "implementation",
+      "tier": "coupled",
+      "streams": 1,
+      "maxParallelConfigured": null,
+      "arm": "solo-high",
+      "armLabel": "Sol high, solo",
+      "supervisorEffort": "high",
+      "repetition": 1,
+      "startedAt": "2026-08-14T18:23:37.827Z",
+      "durationSeconds": 117,
+      "passed": true,
+      "grades": [
+        {
+          "label": "the expression test suite passes",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ numbers and arithmetic (1.6579ms)\n✔ decimals are supported (0.1558ms)\n✔ parentheses override precedence (0.1838ms)\n✔ exponentiation binds tighter than multiplication and is right associative (0.1366ms)\n✔ unary minus and plus (0.1541ms)\n✔ comparisons and equality produce booleans (0.1626ms)\n✔ logical operators short-circuit and have lower precedence (0.1779ms)\n✔ variables are read from the scope (0.1575ms)\n✔ functions may be called (0.2038ms)\n✔ whitespace is insignificant (0.189ms)\n✔ an unknown variable is an error naming it (0.4223ms)\n✔ an unknown function is an error naming it (0.1489ms)\n✔ a syntax error reports the position (0.2789ms)\n✔ trailing input is rejected (0.7886ms)\n✔ division by zero yields infinity rather than throwing (0.0965ms)\nℹ tests 15\nℹ suites 0\nℹ pass 15\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 92.0633"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 125465,
+        "cachedInputTokens": 109824,
+        "outputTokens": 4199,
+        "reasoningOutputTokens": 1148
+      },
+      "delegations": [],
+      "workerCount": 0,
+      "workerEfforts": [],
+      "batches": [],
+      "integrationConflicts": 0,
+      "breakdown": {
+        "supervisorBeforeSeconds": null,
+        "worktreeSetupSeconds": null,
+        "workerWindowSeconds": null,
+        "slowestWorkerSeconds": null,
+        "integrationSeconds": null,
+        "supervisorAfterSeconds": null,
+        "peakConcurrency": null
+      },
+      "verificationFailed": 0,
+      "verificationRefused": 0,
+      "workerFailures": [],
+      "agentError": null
+    },
+    {
+      "suite": "scale",
+      "taskId": "scale-coupled",
+      "taskCategory": "implementation",
+      "tier": "coupled",
+      "streams": 1,
+      "maxParallelConfigured": 1,
+      "arm": "adaptive",
+      "armLabel": "Sol high, free choice",
+      "supervisorEffort": "high",
+      "repetition": 1,
+      "startedAt": "2026-08-14T18:25:35.456Z",
+      "durationSeconds": 98,
+      "passed": true,
+      "grades": [
+        {
+          "label": "the expression test suite passes",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ numbers and arithmetic (1.9597ms)\n✔ decimals are supported (0.2662ms)\n✔ parentheses override precedence (0.2557ms)\n✔ exponentiation binds tighter than multiplication and is right associative (0.1888ms)\n✔ unary minus and plus (0.2714ms)\n✔ comparisons and equality produce booleans (0.2011ms)\n✔ logical operators short-circuit and have lower precedence (0.1825ms)\n✔ variables are read from the scope (0.1705ms)\n✔ functions may be called (0.2467ms)\n✔ whitespace is insignificant (0.2004ms)\n✔ an unknown variable is an error naming it (0.4637ms)\n✔ an unknown function is an error naming it (0.144ms)\n✔ a syntax error reports the position (0.3034ms)\n✔ trailing input is rejected (0.1982ms)\n✔ division by zero yields infinity rather than throwing (0.1171ms)\nℹ tests 15\nℹ suites 0\nℹ pass 15\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 104.5229"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 107869,
+        "cachedInputTokens": 86528,
+        "outputTokens": 3995,
+        "reasoningOutputTokens": 902
+      },
+      "delegations": [],
+      "workerCount": 0,
+      "workerEfforts": [],
+      "batches": [],
+      "integrationConflicts": 0,
+      "breakdown": {
+        "supervisorBeforeSeconds": null,
+        "worktreeSetupSeconds": null,
+        "workerWindowSeconds": null,
+        "slowestWorkerSeconds": null,
+        "integrationSeconds": null,
+        "supervisorAfterSeconds": null,
+        "peakConcurrency": null
+      },
+      "verificationFailed": 0,
+      "verificationRefused": 0,
+      "workerFailures": [],
+      "agentError": null
+    },
+    {
+      "suite": "scale",
+      "taskId": "scale-coupled",
+      "taskCategory": "implementation",
+      "tier": "coupled",
+      "streams": 1,
+      "maxParallelConfigured": 1,
+      "arm": "par-forced",
+      "armLabel": "Sol high + parallel Luna (mandated)",
+      "supervisorEffort": "high",
+      "repetition": 1,
+      "startedAt": "2026-08-14T18:27:13.948Z",
+      "durationSeconds": 454,
+      "passed": true,
+      "grades": [
+        {
+          "label": "the expression test suite passes",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ numbers and arithmetic (1.7332ms)\n✔ decimals are supported (0.1741ms)\n✔ parentheses override precedence (0.1747ms)\n✔ exponentiation binds tighter than multiplication and is right associative (0.15ms)\n✔ unary minus and plus (0.1702ms)\n✔ comparisons and equality produce booleans (0.1589ms)\n✔ logical operators short-circuit and have lower precedence (0.1627ms)\n✔ variables are read from the scope (0.1719ms)\n✔ functions may be called (0.2072ms)\n✔ whitespace is insignificant (0.1746ms)\n✔ an unknown variable is an error naming it (0.4522ms)\n✔ an unknown function is an error naming it (0.1417ms)\n✔ a syntax error reports the position (0.2962ms)\n✔ trailing input is rejected (0.1206ms)\n✔ division by zero yields infinity rather than throwing (0.5845ms)\nℹ tests 15\nℹ suites 0\nℹ pass 15\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 90.8695"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 97643,
+        "cachedInputTokens": 85504,
+        "outputTokens": 985,
+        "reasoningOutputTokens": 207
+      },
+      "delegations": [],
+      "workerCount": 0,
+      "workerEfforts": [],
+      "batches": [],
+      "integrationConflicts": 0,
+      "breakdown": {
+        "supervisorBeforeSeconds": null,
+        "worktreeSetupSeconds": null,
+        "workerWindowSeconds": null,
+        "slowestWorkerSeconds": null,
+        "integrationSeconds": null,
+        "supervisorAfterSeconds": null,
+        "peakConcurrency": null
+      },
+      "verificationFailed": 0,
+      "verificationRefused": 0,
+      "workerFailures": [],
+      "agentError": null
+    },
+    {
+      "suite": "scale",
+      "taskId": "scale-coupled",
+      "taskCategory": "implementation",
+      "tier": "coupled",
+      "streams": 1,
+      "maxParallelConfigured": null,
+      "arm": "solo-high",
+      "armLabel": "Sol high, solo",
+      "supervisorEffort": "high",
+      "repetition": 2,
+      "startedAt": "2026-08-14T18:34:48.613Z",
+      "durationSeconds": 110,
+      "passed": true,
+      "grades": [
+        {
+          "label": "the expression test suite passes",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ numbers and arithmetic (1.8005ms)\n✔ decimals are supported (0.1729ms)\n✔ parentheses override precedence (0.1806ms)\n✔ exponentiation binds tighter than multiplication and is right associative (0.1637ms)\n✔ unary minus and plus (0.1686ms)\n✔ comparisons and equality produce booleans (0.1771ms)\n✔ logical operators short-circuit and have lower precedence (0.174ms)\n✔ variables are read from the scope (0.1939ms)\n✔ functions may be called (0.1958ms)\n✔ whitespace is insignificant (0.1886ms)\n✔ an unknown variable is an error naming it (0.4092ms)\n✔ an unknown function is an error naming it (0.1367ms)\n✔ a syntax error reports the position (0.2752ms)\n✔ trailing input is rejected (0.1181ms)\n✔ division by zero yields infinity rather than throwing (0.632ms)\nℹ tests 15\nℹ suites 0\nℹ pass 15\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 95.9636"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 118908,
+        "cachedInputTokens": 98816,
+        "outputTokens": 4586,
+        "reasoningOutputTokens": 1030
+      },
+      "delegations": [],
+      "workerCount": 0,
+      "workerEfforts": [],
+      "batches": [],
+      "integrationConflicts": 0,
+      "breakdown": {
+        "supervisorBeforeSeconds": null,
+        "worktreeSetupSeconds": null,
+        "workerWindowSeconds": null,
+        "slowestWorkerSeconds": null,
+        "integrationSeconds": null,
+        "supervisorAfterSeconds": null,
+        "peakConcurrency": null
+      },
+      "verificationFailed": 0,
+      "verificationRefused": 0,
+      "workerFailures": [],
+      "agentError": null
+    },
+    {
+      "suite": "scale",
+      "taskId": "scale-coupled",
+      "taskCategory": "implementation",
+      "tier": "coupled",
+      "streams": 1,
+      "maxParallelConfigured": 1,
+      "arm": "adaptive",
+      "armLabel": "Sol high, free choice",
+      "supervisorEffort": "high",
+      "repetition": 2,
+      "startedAt": "2026-08-14T18:36:39.508Z",
+      "durationSeconds": 77,
+      "passed": true,
+      "grades": [
+        {
+          "label": "the expression test suite passes",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ numbers and arithmetic (1.8611ms)\n✔ decimals are supported (0.1523ms)\n✔ parentheses override precedence (0.1495ms)\n✔ exponentiation binds tighter than multiplication and is right associative (0.1437ms)\n✔ unary minus and plus (0.1718ms)\n✔ comparisons and equality produce booleans (0.143ms)\n✔ logical operators short-circuit and have lower precedence (0.1593ms)\n✔ variables are read from the scope (0.1875ms)\n✔ functions may be called (0.2037ms)\n✔ whitespace is insignificant (0.1732ms)\n✔ an unknown variable is an error naming it (0.4053ms)\n✔ an unknown function is an error naming it (0.6099ms)\n✔ a syntax error reports the position (0.4973ms)\n✔ trailing input is rejected (0.2164ms)\n✔ division by zero yields infinity rather than throwing (0.1051ms)\nℹ tests 15\nℹ suites 0\nℹ pass 15\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 92.9713"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 66318,
+        "cachedInputTokens": 52224,
+        "outputTokens": 3314,
+        "reasoningOutputTokens": 654
+      },
+      "delegations": [],
+      "workerCount": 0,
+      "workerEfforts": [],
+      "batches": [],
+      "integrationConflicts": 0,
+      "breakdown": {
+        "supervisorBeforeSeconds": null,
+        "worktreeSetupSeconds": null,
+        "workerWindowSeconds": null,
+        "slowestWorkerSeconds": null,
+        "integrationSeconds": null,
+        "supervisorAfterSeconds": null,
+        "peakConcurrency": null
+      },
+      "verificationFailed": 0,
+      "verificationRefused": 0,
+      "workerFailures": [],
+      "agentError": null
+    },
+    {
+      "suite": "scale",
+      "taskId": "scale-coupled",
+      "taskCategory": "implementation",
+      "tier": "coupled",
+      "streams": 1,
+      "maxParallelConfigured": 1,
+      "arm": "par-forced",
+      "armLabel": "Sol high + parallel Luna (mandated)",
+      "supervisorEffort": "high",
+      "repetition": 2,
+      "startedAt": "2026-08-14T18:37:57.164Z",
+      "durationSeconds": 240,
+      "passed": true,
+      "grades": [
+        {
+          "label": "the expression test suite passes",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ numbers and arithmetic (1.679ms)\n✔ decimals are supported (0.1592ms)\n✔ parentheses override precedence (0.2006ms)\n✔ exponentiation binds tighter than multiplication and is right associative (0.1373ms)\n✔ unary minus and plus (0.1802ms)\n✔ comparisons and equality produce booleans (0.1627ms)\n✔ logical operators short-circuit and have lower precedence (0.1617ms)\n✔ variables are read from the scope (0.1897ms)\n✔ functions may be called (0.2629ms)\n✔ whitespace is insignificant (0.1682ms)\n✔ an unknown variable is an error naming it (0.4098ms)\n✔ an unknown function is an error naming it (0.1433ms)\n✔ a syntax error reports the position (0.2594ms)\n✔ trailing input is rejected (0.7022ms)\n✔ division by zero yields infinity rather than throwing (0.0936ms)\nℹ tests 15\nℹ suites 0\nℹ pass 15\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 95.0456"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 181184,
+        "cachedInputTokens": 148224,
+        "outputTokens": 2309,
+        "reasoningOutputTokens": 713
+      },
+      "delegations": [
+        {
+          "effort": "xhigh",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 170,
+          "usage": {
+            "inputTokens": 138999,
+            "cachedInputTokens": 111104,
+            "outputTokens": 8002,
+            "reasoningOutputTokens": 4056
+          }
+        }
+      ],
+      "workerCount": 1,
+      "workerEfforts": [
+        "xhigh"
+      ],
+      "batches": [
+        {
+          "mode": "parallel",
+          "taskCount": 1,
+          "maxParallel": 1
+        }
+      ],
+      "integrationConflicts": 0,
+      "breakdown": {
+        "supervisorBeforeSeconds": 27.1,
+        "worktreeSetupSeconds": 0.3,
+        "workerWindowSeconds": 169.8,
+        "slowestWorkerSeconds": 169.8,
+        "integrationSeconds": 0.1,
+        "supervisorAfterSeconds": 42.5,
+        "peakConcurrency": 1
+      },
+      "verificationFailed": 0,
+      "verificationRefused": 0,
+      "workerFailures": [],
+      "agentError": null
+    }
+  ]
+}

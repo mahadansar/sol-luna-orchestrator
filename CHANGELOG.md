@@ -6,9 +6,39 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
-Documentation only; no runtime change.
+No runtime change. A benchmark suite built to answer the break-even question, and
+the documentation updates its results forced.
+
+### Added
+
+- **Scale benchmark suite** (`npm run bench -- --suite scale`): three fixtures —
+  four independent modules, six independent modules, and a deliberately coupled
+  control with no natural seam — at roughly twice the module depth of the earlier
+  suites. Reference solutions and `bench:validate` coverage included.
+- **`adaptive` arm**: delegation tools available, guidance that neither mandates
+  nor forbids their use, so the arm measures the supervisor's own policy.
+- **Overhead decomposition** per orchestrated run — supervisor before the batch,
+  worktree setup, worker window, slowest worker, integration, supervisor review,
+  and peak concurrency — derived from existing event timestamps rather than new
+  instrumentation.
+- **`npm run bench:analyze`**: crossover verdict across every committed results
+  file. Spends nothing. Reports missing usage as `unknown` rather than zero, so
+  pre-0.4.0 runs cannot silently understate worker tokens.
+- 19 deterministic tests for the harness itself, including concurrency
+  measurement, the overhead decomposition, and a check that every fixture marks
+  its own specification immutable.
 
 ### Changed
+
+- Benchmark documentation now reports the crossover investigation: **no latency
+  or token crossover at four or six independent streams**, and going from four to
+  six made orchestration relatively worse. `bench/RESULTS.md`, the README
+  benchmark and value-proposition sections, and `SOL_RULES.md` were updated
+  together.
+- Roadmap: the "larger benchmark suite / break-even investigation" item is
+  complete and has been replaced by the specific question the data raised —
+  bounding the slowest worker — plus fixtures larger than a single supervisor
+  context.
 
 - Corrected two claims the project's own evidence contradicts: the README
   described a benefit as spending "fewer top-tier tokens" while the benchmarks

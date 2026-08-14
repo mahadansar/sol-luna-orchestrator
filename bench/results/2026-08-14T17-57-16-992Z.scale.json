@@ -1,0 +1,477 @@
+{
+  "schema": 3,
+  "suite": "scale",
+  "supervisorModel": "gpt-5.6-sol",
+  "startedAt": "2026-08-14T17-57-16-992Z",
+  "platform": "win32 x64",
+  "nodeVersion": "v26.7.0",
+  "reps": 2,
+  "records": [
+    {
+      "suite": "scale",
+      "taskId": "scale-datakit",
+      "taskCategory": "implementation",
+      "tier": "C",
+      "streams": 6,
+      "maxParallelConfigured": null,
+      "arm": "solo-high",
+      "armLabel": "Sol high, solo",
+      "supervisorEffort": "high",
+      "repetition": 1,
+      "startedAt": "2026-08-14T17:57:17.442Z",
+      "durationSeconds": 177,
+      "passed": true,
+      "grades": [
+        {
+          "label": "all six module test suites pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "wline and round-trips (0.2696ms)\n✔ toCsv renders null and undefined as empty fields (0.1493ms)\n✔ identical input is all context (2.9638ms)\n✔ an appended line is an insert (0.1888ms)\n✔ a removed line is a delete (0.1623ms)\n✔ a replaced line is a delete followed by an insert (0.2043ms)\n✔ empty against empty is no operations (0.1568ms)\n✔ everything inserted when the original is empty (0.1605ms)\n✔ everything deleted when the result is empty (0.1744ms)\n✔ the common subsequence found is the longest one (0.2011ms)\n✔ repeated lines are matched without duplication (0.2673ms)\n✔ a diff applied to the original reproduces the result (0.4659ms)\n✔ the number of context operations is maximal (0.1979ms)\n✔ formatDiff renders unified-style prefixes (0.1919ms)\n✔ CRLF input is normalised before diffing (0.1239ms)\n✔ a literal pattern matches only itself (14.3227ms)\n✔ a star matches within one segment (0.238ms)\n✔ a star matches an empty run (0.1326ms)\n✔ a question mark matches exactly one character, never a slash (0.1535ms)\n✔ a double star crosses segment boundaries (0.2155ms)\n✔ a trailing double star matches everything below (0.1502ms)\n✔ braces expand to alternatives (0.2246ms)\n✔ braces may contain a glob (0.1452ms)\n✔ character classes match one listed character (0.2994ms)\n✔ a negated character class excludes what it lists (0.2412ms)\n✔ regular-expression metacharacters are literal (0.265ms)\n✔ matching is anchored at both ends (0.1573ms)\n✔ backslashes in a path are treated as separators (0.147ms)\n✔ an empty pattern matches only an empty path (0.1045ms)\n✔ merge sorts and joins overlapping intervals (1.8371ms)\n✔ merge joins intervals that only touch (0.1359ms)\n✔ merge keeps disjoint intervals apart (0.1324ms)\n✔ merge drops empty intervals (0.132ms)\n✔ merge of nothing is nothing (0.1287ms)\n✔ merge does not mutate its input (0.1633ms)\n✔ merge rejects a reversed interval (0.4327ms)\n✔ intersect keeps only shared coverage (0.275ms)\n✔ touching intervals do not intersect (0.1906ms)\n✔ intersecting with nothing gives nothing (0.2963ms)\n✔ intersect normalises unsorted overlapping input first (0.1644ms)\n✔ subtract removes the second set from the first (0.1963ms)\n✔ subtract handles several holes (0.137ms)\n✔ contains reports whether a point is covered (0.1862ms)\n✔ totalLength sums merged coverage without double counting (0.1531ms)\n✔ flat pairs parse into an object of strings (2.2195ms)\n✔ a leading question mark is ignored (0.2557ms)\n✔ empty input is an empty object (0.1605ms)\n✔ a key with no equals sign has an empty value (0.1379ms)\n✔ percent escapes and plus signs are decoded (0.1569ms)\n✔ bracket notation builds nested objects (0.3698ms)\n✔ empty brackets append to an array (0.2423ms)\n✔ numeric brackets index an array (0.2493ms)\n✔ a repeated flat key becomes an array (0.1846ms)\n✔ stringify emits keys in sorted order (0.6009ms)\n✔ stringify encodes reserved characters (0.246ms)\n✔ stringify writes arrays with empty brackets (0.2139ms)\n✔ stringify writes nested objects with bracket paths (0.1779ms)\n✔ stringify skips null and undefined values (0.1359ms)\n✔ stringify renders numbers and booleans (0.1424ms)\n✔ an empty object stringifies to an empty string (0.174ms)\n✔ a fresh bucket starts full (1.9423ms)\n✔ taking tokens succeeds while the bucket has them (0.2401ms)\n✔ taking more than is left fails and consumes nothing (0.1434ms)\n✔ tokens refill over time at the configured rate (0.1692ms)\n✔ refill is fractional rather than stepwise (0.1876ms)\n✔ the bucket never exceeds its capacity (0.1602ms)\n✔ retryAfterMs is zero when the request would succeed now (0.2279ms)\n✔ retryAfterMs reports the wait for the missing tokens (0.1571ms)\n✔ retryAfterMs rounds up to a whole millisecond (0.1522ms)\n✔ asking for more than capacity is rejected (0.6507ms)\n✔ taking zero or a negative count is rejected (0.2423ms)\n✔ invalid configuration is rejected (0.1634ms)\n✔ reset refills the bucket (0.1056ms)\nℹ tests 85\nℹ suites 0\nℹ pass 85\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 175.0478"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 166629,
+        "cachedInputTokens": 122112,
+        "outputTokens": 7934,
+        "reasoningOutputTokens": 1860
+      },
+      "delegations": [],
+      "workerCount": 0,
+      "workerEfforts": [],
+      "batches": [],
+      "integrationConflicts": 0,
+      "breakdown": {
+        "supervisorBeforeSeconds": null,
+        "worktreeSetupSeconds": null,
+        "workerWindowSeconds": null,
+        "slowestWorkerSeconds": null,
+        "integrationSeconds": null,
+        "supervisorAfterSeconds": null,
+        "peakConcurrency": null
+      },
+      "verificationFailed": 0,
+      "verificationRefused": 0,
+      "workerFailures": [],
+      "agentError": null
+    },
+    {
+      "suite": "scale",
+      "taskId": "scale-datakit",
+      "taskCategory": "implementation",
+      "tier": "C",
+      "streams": 6,
+      "maxParallelConfigured": 6,
+      "arm": "adaptive",
+      "armLabel": "Sol high, free choice",
+      "supervisorEffort": "high",
+      "repetition": 1,
+      "startedAt": "2026-08-14T18:00:15.231Z",
+      "durationSeconds": 184,
+      "passed": true,
+      "grades": [
+        {
+          "label": "all six module test suites pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "wline and round-trips (0.1813ms)\n✔ toCsv renders null and undefined as empty fields (0.1392ms)\n✔ identical input is all context (3.4298ms)\n✔ an appended line is an insert (0.2354ms)\n✔ a removed line is a delete (0.163ms)\n✔ a replaced line is a delete followed by an insert (0.2244ms)\n✔ empty against empty is no operations (0.1932ms)\n✔ everything inserted when the original is empty (0.1795ms)\n✔ everything deleted when the result is empty (0.1295ms)\n✔ the common subsequence found is the longest one (0.1944ms)\n✔ repeated lines are matched without duplication (0.1819ms)\n✔ a diff applied to the original reproduces the result (0.3223ms)\n✔ the number of context operations is maximal (0.1851ms)\n✔ formatDiff renders unified-style prefixes (0.1849ms)\n✔ CRLF input is normalised before diffing (0.1177ms)\n✔ a literal pattern matches only itself (10.4459ms)\n✔ a star matches within one segment (0.2495ms)\n✔ a star matches an empty run (0.1567ms)\n✔ a question mark matches exactly one character, never a slash (0.1476ms)\n✔ a double star crosses segment boundaries (0.265ms)\n✔ a trailing double star matches everything below (0.1635ms)\n✔ braces expand to alternatives (0.2312ms)\n✔ braces may contain a glob (0.1491ms)\n✔ character classes match one listed character (0.2414ms)\n✔ a negated character class excludes what it lists (0.216ms)\n✔ regular-expression metacharacters are literal (0.2097ms)\n✔ matching is anchored at both ends (0.0986ms)\n✔ backslashes in a path are treated as separators (0.117ms)\n✔ an empty pattern matches only an empty path (0.2202ms)\n✔ merge sorts and joins overlapping intervals (1.8059ms)\n✔ merge joins intervals that only touch (0.1519ms)\n✔ merge keeps disjoint intervals apart (0.1365ms)\n✔ merge drops empty intervals (0.2399ms)\n✔ merge of nothing is nothing (0.1642ms)\n✔ merge does not mutate its input (0.1831ms)\n✔ merge rejects a reversed interval (0.4977ms)\n✔ intersect keeps only shared coverage (0.231ms)\n✔ touching intervals do not intersect (0.1757ms)\n✔ intersecting with nothing gives nothing (0.2395ms)\n✔ intersect normalises unsorted overlapping input first (0.2961ms)\n✔ subtract removes the second set from the first (0.2504ms)\n✔ subtract handles several holes (0.1558ms)\n✔ contains reports whether a point is covered (0.1696ms)\n✔ totalLength sums merged coverage without double counting (0.1232ms)\n✔ flat pairs parse into an object of strings (1.9751ms)\n✔ a leading question mark is ignored (0.2168ms)\n✔ empty input is an empty object (0.1266ms)\n✔ a key with no equals sign has an empty value (0.147ms)\n✔ percent escapes and plus signs are decoded (0.2292ms)\n✔ bracket notation builds nested objects (0.4489ms)\n✔ empty brackets append to an array (0.2457ms)\n✔ numeric brackets index an array (0.1792ms)\n✔ a repeated flat key becomes an array (0.228ms)\n✔ stringify emits keys in sorted order (0.3488ms)\n✔ stringify encodes reserved characters (0.238ms)\n✔ stringify writes arrays with empty brackets (0.1876ms)\n✔ stringify writes nested objects with bracket paths (0.1718ms)\n✔ stringify skips null and undefined values (0.1582ms)\n✔ stringify renders numbers and booleans (0.1987ms)\n✔ an empty object stringifies to an empty string (0.1469ms)\n✔ a fresh bucket starts full (1.8625ms)\n✔ taking tokens succeeds while the bucket has them (0.2372ms)\n✔ taking more than is left fails and consumes nothing (0.1402ms)\n✔ tokens refill over time at the configured rate (0.1755ms)\n✔ refill is fractional rather than stepwise (0.2007ms)\n✔ the bucket never exceeds its capacity (0.1291ms)\n✔ retryAfterMs is zero when the request would succeed now (0.1579ms)\n✔ retryAfterMs reports the wait for the missing tokens (0.1423ms)\n✔ retryAfterMs rounds up to a whole millisecond (0.1624ms)\n✔ asking for more than capacity is rejected (0.7675ms)\n✔ taking zero or a negative count is rejected (0.2343ms)\n✔ invalid configuration is rejected (0.1802ms)\n✔ reset refills the bucket (0.1129ms)\nℹ tests 85\nℹ suites 0\nℹ pass 85\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 172.2013"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 385895,
+        "cachedInputTokens": 330752,
+        "outputTokens": 3960,
+        "reasoningOutputTokens": 1705
+      },
+      "delegations": [],
+      "workerCount": 0,
+      "workerEfforts": [],
+      "batches": [],
+      "integrationConflicts": 0,
+      "breakdown": {
+        "supervisorBeforeSeconds": null,
+        "worktreeSetupSeconds": null,
+        "workerWindowSeconds": null,
+        "slowestWorkerSeconds": null,
+        "integrationSeconds": null,
+        "supervisorAfterSeconds": null,
+        "peakConcurrency": null
+      },
+      "verificationFailed": 0,
+      "verificationRefused": 0,
+      "workerFailures": [],
+      "agentError": null
+    },
+    {
+      "suite": "scale",
+      "taskId": "scale-datakit",
+      "taskCategory": "implementation",
+      "tier": "C",
+      "streams": 6,
+      "maxParallelConfigured": 6,
+      "arm": "par-forced",
+      "armLabel": "Sol high + parallel Luna (mandated)",
+      "supervisorEffort": "high",
+      "repetition": 1,
+      "startedAt": "2026-08-14T18:03:20.356Z",
+      "durationSeconds": 401,
+      "passed": true,
+      "grades": [
+        {
+          "label": "all six module test suites pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "newline and round-trips (0.1725ms)\n✔ toCsv renders null and undefined as empty fields (0.1583ms)\n✔ identical input is all context (16.3667ms)\n✔ an appended line is an insert (0.2091ms)\n✔ a removed line is a delete (0.1398ms)\n✔ a replaced line is a delete followed by an insert (0.219ms)\n✔ empty against empty is no operations (0.1481ms)\n✔ everything inserted when the original is empty (0.1507ms)\n✔ everything deleted when the result is empty (0.1601ms)\n✔ the common subsequence found is the longest one (0.1807ms)\n✔ repeated lines are matched without duplication (0.2268ms)\n✔ a diff applied to the original reproduces the result (0.394ms)\n✔ the number of context operations is maximal (0.192ms)\n✔ formatDiff renders unified-style prefixes (0.3545ms)\n✔ CRLF input is normalised before diffing (0.1577ms)\n✔ a literal pattern matches only itself (2.1842ms)\n✔ a star matches within one segment (0.329ms)\n✔ a star matches an empty run (0.1937ms)\n✔ a question mark matches exactly one character, never a slash (0.2103ms)\n✔ a double star crosses segment boundaries (0.2248ms)\n✔ a trailing double star matches everything below (0.167ms)\n✔ braces expand to alternatives (0.2445ms)\n✔ braces may contain a glob (0.1741ms)\n✔ character classes match one listed character (0.5137ms)\n✔ a negated character class excludes what it lists (0.3423ms)\n✔ regular-expression metacharacters are literal (0.2284ms)\n✔ matching is anchored at both ends (0.1484ms)\n✔ backslashes in a path are treated as separators (0.1569ms)\n✔ an empty pattern matches only an empty path (0.1675ms)\n✔ merge sorts and joins overlapping intervals (1.817ms)\n✔ merge joins intervals that only touch (0.1798ms)\n✔ merge keeps disjoint intervals apart (0.1528ms)\n✔ merge drops empty intervals (0.2959ms)\n✔ merge of nothing is nothing (0.2165ms)\n✔ merge does not mutate its input (0.2474ms)\n✔ merge rejects a reversed interval (0.6769ms)\n✔ intersect keeps only shared coverage (0.3265ms)\n✔ touching intervals do not intersect (0.2621ms)\n✔ intersecting with nothing gives nothing (0.343ms)\n✔ intersect normalises unsorted overlapping input first (0.2141ms)\n✔ subtract removes the second set from the first (0.2805ms)\n✔ subtract handles several holes (0.3032ms)\n✔ contains reports whether a point is covered (0.2518ms)\n✔ totalLength sums merged coverage without double counting (0.1894ms)\n✔ flat pairs parse into an object of strings (2.4067ms)\n✔ a leading question mark is ignored (0.2268ms)\n✔ empty input is an empty object (0.1666ms)\n✔ a key with no equals sign has an empty value (0.1948ms)\n✔ percent escapes and plus signs are decoded (0.2221ms)\n✔ bracket notation builds nested objects (0.3964ms)\n✔ empty brackets append to an array (0.2946ms)\n✔ numeric brackets index an array (0.2484ms)\n✔ a repeated flat key becomes an array (0.2169ms)\n✔ stringify emits keys in sorted order (0.5121ms)\n✔ stringify encodes reserved characters (0.1664ms)\n✔ stringify writes arrays with empty brackets (0.1063ms)\n✔ stringify writes nested objects with bracket paths (0.084ms)\n✔ stringify skips null and undefined values (0.0903ms)\n✔ stringify renders numbers and booleans (0.0944ms)\n✔ an empty object stringifies to an empty string (0.0936ms)\n✔ a fresh bucket starts full (7.1646ms)\n✔ taking tokens succeeds while the bucket has them (0.3092ms)\n✔ taking more than is left fails and consumes nothing (0.1741ms)\n✔ tokens refill over time at the configured rate (0.2428ms)\n✔ refill is fractional rather than stepwise (0.2134ms)\n✔ the bucket never exceeds its capacity (0.1693ms)\n✔ retryAfterMs is zero when the request would succeed now (0.2377ms)\n✔ retryAfterMs reports the wait for the missing tokens (0.2349ms)\n✔ retryAfterMs rounds up to a whole millisecond (0.267ms)\n✔ asking for more than capacity is rejected (0.8891ms)\n✔ taking zero or a negative count is rejected (0.2574ms)\n✔ invalid configuration is rejected (0.189ms)\n✔ reset refills the bucket (0.1317ms)\nℹ tests 85\nℹ suites 0\nℹ pass 85\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 210.7825"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 262197,
+        "cachedInputTokens": 231680,
+        "outputTokens": 3041,
+        "reasoningOutputTokens": 615
+      },
+      "delegations": [
+        {
+          "effort": "xhigh",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 81,
+          "usage": {
+            "inputTokens": 115867,
+            "cachedInputTokens": 92672,
+            "outputTokens": 3094,
+            "reasoningOutputTokens": 1055
+          }
+        },
+        {
+          "effort": "high",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 83,
+          "usage": {
+            "inputTokens": 95687,
+            "cachedInputTokens": 73472,
+            "outputTokens": 3159,
+            "reasoningOutputTokens": 1438
+          }
+        },
+        {
+          "effort": "high",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 94,
+          "usage": {
+            "inputTokens": 111828,
+            "cachedInputTokens": 89600,
+            "outputTokens": 3528,
+            "reasoningOutputTokens": 1536
+          }
+        },
+        {
+          "effort": "high",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 95,
+          "usage": {
+            "inputTokens": 134071,
+            "cachedInputTokens": 110848,
+            "outputTokens": 3363,
+            "reasoningOutputTokens": 1497
+          }
+        },
+        {
+          "effort": "xhigh",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 181,
+          "usage": {
+            "inputTokens": 111946,
+            "cachedInputTokens": 85760,
+            "outputTokens": 5275,
+            "reasoningOutputTokens": 2470
+          }
+        },
+        {
+          "effort": "xhigh",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 333,
+          "usage": {
+            "inputTokens": 355305,
+            "cachedInputTokens": 313856,
+            "outputTokens": 15173,
+            "reasoningOutputTokens": 9708
+          }
+        }
+      ],
+      "workerCount": 6,
+      "workerEfforts": [
+        "high",
+        "xhigh",
+        "high",
+        "xhigh",
+        "xhigh",
+        "high"
+      ],
+      "batches": [
+        {
+          "mode": "parallel",
+          "taskCount": 6,
+          "maxParallel": 6
+        }
+      ],
+      "integrationConflicts": 0,
+      "breakdown": {
+        "supervisorBeforeSeconds": 35.5,
+        "worktreeSetupSeconds": 0.9,
+        "workerWindowSeconds": 333,
+        "slowestWorkerSeconds": 333,
+        "integrationSeconds": 0.5,
+        "supervisorAfterSeconds": 31.5,
+        "peakConcurrency": 6
+      },
+      "verificationFailed": 0,
+      "verificationRefused": 0,
+      "workerFailures": [],
+      "agentError": null
+    },
+    {
+      "suite": "scale",
+      "taskId": "scale-datakit",
+      "taskCategory": "implementation",
+      "tier": "C",
+      "streams": 6,
+      "maxParallelConfigured": null,
+      "arm": "solo-high",
+      "armLabel": "Sol high, solo",
+      "supervisorEffort": "high",
+      "repetition": 2,
+      "startedAt": "2026-08-14T18:10:02.560Z",
+      "durationSeconds": 202,
+      "passed": true,
+      "grades": [
+        {
+          "label": "all six module test suites pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "line and round-trips (0.2802ms)\n✔ toCsv renders null and undefined as empty fields (0.1681ms)\n✔ identical input is all context (3.4805ms)\n✔ an appended line is an insert (0.3094ms)\n✔ a removed line is a delete (0.1573ms)\n✔ a replaced line is a delete followed by an insert (0.2162ms)\n✔ empty against empty is no operations (0.1848ms)\n✔ everything inserted when the original is empty (0.1729ms)\n✔ everything deleted when the result is empty (0.1252ms)\n✔ the common subsequence found is the longest one (0.1643ms)\n✔ repeated lines are matched without duplication (0.1763ms)\n✔ a diff applied to the original reproduces the result (0.3913ms)\n✔ the number of context operations is maximal (0.1713ms)\n✔ formatDiff renders unified-style prefixes (0.1732ms)\n✔ CRLF input is normalised before diffing (0.2324ms)\n✔ a literal pattern matches only itself (3.5247ms)\n✔ a star matches within one segment (0.3779ms)\n✔ a star matches an empty run (0.2267ms)\n✔ a question mark matches exactly one character, never a slash (0.1847ms)\n✔ a double star crosses segment boundaries (0.2967ms)\n✔ a trailing double star matches everything below (0.2357ms)\n✔ braces expand to alternatives (0.4205ms)\n✔ braces may contain a glob (0.2721ms)\n✔ character classes match one listed character (0.4008ms)\n✔ a negated character class excludes what it lists (0.4619ms)\n✔ regular-expression metacharacters are literal (0.3366ms)\n✔ matching is anchored at both ends (0.2494ms)\n✔ backslashes in a path are treated as separators (0.2443ms)\n✔ an empty pattern matches only an empty path (0.2292ms)\n✔ merge sorts and joins overlapping intervals (2.6364ms)\n✔ merge joins intervals that only touch (0.3379ms)\n✔ merge keeps disjoint intervals apart (0.2369ms)\n✔ merge drops empty intervals (0.1963ms)\n✔ merge of nothing is nothing (0.1869ms)\n✔ merge does not mutate its input (0.2498ms)\n✔ merge rejects a reversed interval (0.754ms)\n✔ intersect keeps only shared coverage (0.4075ms)\n✔ touching intervals do not intersect (0.2333ms)\n✔ intersecting with nothing gives nothing (0.3064ms)\n✔ intersect normalises unsorted overlapping input first (0.1735ms)\n✔ subtract removes the second set from the first (0.2029ms)\n✔ subtract handles several holes (0.18ms)\n✔ contains reports whether a point is covered (0.2195ms)\n✔ totalLength sums merged coverage without double counting (0.1541ms)\n✔ flat pairs parse into an object of strings (3.3814ms)\n✔ a leading question mark is ignored (0.2921ms)\n✔ empty input is an empty object (0.2408ms)\n✔ a key with no equals sign has an empty value (0.3292ms)\n✔ percent escapes and plus signs are decoded (0.2879ms)\n✔ bracket notation builds nested objects (0.4715ms)\n✔ empty brackets append to an array (0.506ms)\n✔ numeric brackets index an array (0.2651ms)\n✔ a repeated flat key becomes an array (0.2643ms)\n✔ stringify emits keys in sorted order (0.4675ms)\n✔ stringify encodes reserved characters (0.1607ms)\n✔ stringify writes arrays with empty brackets (0.117ms)\n✔ stringify writes nested objects with bracket paths (0.1738ms)\n✔ stringify skips null and undefined values (0.0921ms)\n✔ stringify renders numbers and booleans (0.0916ms)\n✔ an empty object stringifies to an empty string (0.1179ms)\n✔ a fresh bucket starts full (2.9206ms)\n✔ taking tokens succeeds while the bucket has them (0.2709ms)\n✔ taking more than is left fails and consumes nothing (0.2322ms)\n✔ tokens refill over time at the configured rate (0.2436ms)\n✔ refill is fractional rather than stepwise (0.1721ms)\n✔ the bucket never exceeds its capacity (0.1529ms)\n✔ retryAfterMs is zero when the request would succeed now (0.2082ms)\n✔ retryAfterMs reports the wait for the missing tokens (0.1553ms)\n✔ retryAfterMs rounds up to a whole millisecond (0.1416ms)\n✔ asking for more than capacity is rejected (0.6476ms)\n✔ taking zero or a negative count is rejected (0.2758ms)\n✔ invalid configuration is rejected (0.181ms)\n✔ reset refills the bucket (0.1291ms)\nℹ tests 85\nℹ suites 0\nℹ pass 85\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 218.2852"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 304712,
+        "cachedInputTokens": 271104,
+        "outputTokens": 7501,
+        "reasoningOutputTokens": 1165
+      },
+      "delegations": [],
+      "workerCount": 0,
+      "workerEfforts": [],
+      "batches": [],
+      "integrationConflicts": 0,
+      "breakdown": {
+        "supervisorBeforeSeconds": null,
+        "worktreeSetupSeconds": null,
+        "workerWindowSeconds": null,
+        "slowestWorkerSeconds": null,
+        "integrationSeconds": null,
+        "supervisorAfterSeconds": null,
+        "peakConcurrency": null
+      },
+      "verificationFailed": 0,
+      "verificationRefused": 0,
+      "workerFailures": [],
+      "agentError": null
+    },
+    {
+      "suite": "scale",
+      "taskId": "scale-datakit",
+      "taskCategory": "implementation",
+      "tier": "C",
+      "streams": 6,
+      "maxParallelConfigured": 6,
+      "arm": "adaptive",
+      "armLabel": "Sol high, free choice",
+      "supervisorEffort": "high",
+      "repetition": 2,
+      "startedAt": "2026-08-14T18:13:25.740Z",
+      "durationSeconds": 189,
+      "passed": true,
+      "grades": [
+        {
+          "label": "all six module test suites pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "and round-trips (0.2712ms)\n✔ toCsv renders null and undefined as empty fields (0.1345ms)\n✔ identical input is all context (3.8194ms)\n✔ an appended line is an insert (0.2957ms)\n✔ a removed line is a delete (0.1893ms)\n✔ a replaced line is a delete followed by an insert (0.1808ms)\n✔ empty against empty is no operations (0.1756ms)\n✔ everything inserted when the original is empty (0.2105ms)\n✔ everything deleted when the result is empty (0.1699ms)\n✔ the common subsequence found is the longest one (0.246ms)\n✔ repeated lines are matched without duplication (0.2457ms)\n✔ a diff applied to the original reproduces the result (0.6002ms)\n✔ the number of context operations is maximal (0.5076ms)\n✔ formatDiff renders unified-style prefixes (0.2958ms)\n✔ CRLF input is normalised before diffing (0.1845ms)\n✔ a literal pattern matches only itself (10.6253ms)\n✔ a star matches within one segment (0.3625ms)\n✔ a star matches an empty run (0.2537ms)\n✔ a question mark matches exactly one character, never a slash (0.2529ms)\n✔ a double star crosses segment boundaries (0.3641ms)\n✔ a trailing double star matches everything below (0.2684ms)\n✔ braces expand to alternatives (0.5191ms)\n✔ braces may contain a glob (0.2814ms)\n✔ character classes match one listed character (0.4583ms)\n✔ a negated character class excludes what it lists (0.3807ms)\n✔ regular-expression metacharacters are literal (0.2314ms)\n✔ matching is anchored at both ends (0.1517ms)\n✔ backslashes in a path are treated as separators (0.1354ms)\n✔ an empty pattern matches only an empty path (0.1717ms)\n✔ merge sorts and joins overlapping intervals (2.5005ms)\n✔ merge joins intervals that only touch (0.1693ms)\n✔ merge keeps disjoint intervals apart (0.2109ms)\n✔ merge drops empty intervals (0.1705ms)\n✔ merge of nothing is nothing (0.1717ms)\n✔ merge does not mutate its input (0.2335ms)\n✔ merge rejects a reversed interval (0.6221ms)\n✔ intersect keeps only shared coverage (0.3371ms)\n✔ touching intervals do not intersect (0.1959ms)\n✔ intersecting with nothing gives nothing (0.2137ms)\n✔ intersect normalises unsorted overlapping input first (0.2271ms)\n✔ subtract removes the second set from the first (0.3244ms)\n✔ subtract handles several holes (0.2273ms)\n✔ contains reports whether a point is covered (0.4406ms)\n✔ totalLength sums merged coverage without double counting (0.4875ms)\n✔ flat pairs parse into an object of strings (3.4959ms)\n✔ a leading question mark is ignored (0.3384ms)\n✔ empty input is an empty object (0.2377ms)\n✔ a key with no equals sign has an empty value (0.2724ms)\n✔ percent escapes and plus signs are decoded (0.3088ms)\n✔ bracket notation builds nested objects (0.4253ms)\n✔ empty brackets append to an array (0.2908ms)\n✔ numeric brackets index an array (0.3811ms)\n✔ a repeated flat key becomes an array (0.5514ms)\n✔ stringify emits keys in sorted order (0.6674ms)\n✔ stringify encodes reserved characters (0.2145ms)\n✔ stringify writes arrays with empty brackets (0.1544ms)\n✔ stringify writes nested objects with bracket paths (0.1021ms)\n✔ stringify skips null and undefined values (0.0915ms)\n✔ stringify renders numbers and booleans (0.0831ms)\n✔ an empty object stringifies to an empty string (0.1602ms)\n✔ a fresh bucket starts full (2.6444ms)\n✔ taking tokens succeeds while the bucket has them (0.4906ms)\n✔ taking more than is left fails and consumes nothing (0.1918ms)\n✔ tokens refill over time at the configured rate (0.2189ms)\n✔ refill is fractional rather than stepwise (0.159ms)\n✔ the bucket never exceeds its capacity (0.1632ms)\n✔ retryAfterMs is zero when the request would succeed now (0.2694ms)\n✔ retryAfterMs reports the wait for the missing tokens (0.2512ms)\n✔ retryAfterMs rounds up to a whole millisecond (0.2692ms)\n✔ asking for more than capacity is rejected (0.9821ms)\n✔ taking zero or a negative count is rejected (0.4241ms)\n✔ invalid configuration is rejected (0.3309ms)\n✔ reset refills the bucket (0.2104ms)\nℹ tests 85\nℹ suites 0\nℹ pass 85\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 227.8341"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 416136,
+        "cachedInputTokens": 365824,
+        "outputTokens": 3403,
+        "reasoningOutputTokens": 1176
+      },
+      "delegations": [],
+      "workerCount": 0,
+      "workerEfforts": [],
+      "batches": [],
+      "integrationConflicts": 0,
+      "breakdown": {
+        "supervisorBeforeSeconds": null,
+        "worktreeSetupSeconds": null,
+        "workerWindowSeconds": null,
+        "slowestWorkerSeconds": null,
+        "integrationSeconds": null,
+        "supervisorAfterSeconds": null,
+        "peakConcurrency": null
+      },
+      "verificationFailed": 0,
+      "verificationRefused": 0,
+      "workerFailures": [],
+      "agentError": null
+    },
+    {
+      "suite": "scale",
+      "taskId": "scale-datakit",
+      "taskCategory": "implementation",
+      "tier": "C",
+      "streams": 6,
+      "maxParallelConfigured": 6,
+      "arm": "par-forced",
+      "armLabel": "Sol high + parallel Luna (mandated)",
+      "supervisorEffort": "high",
+      "repetition": 2,
+      "startedAt": "2026-08-14T18:16:35.292Z",
+      "durationSeconds": 388,
+      "passed": true,
+      "grades": [
+        {
+          "label": "all six module test suites pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": " and round-trips (0.1275ms)\n✔ toCsv renders null and undefined as empty fields (0.0838ms)\n✔ identical input is all context (3.0832ms)\n✔ an appended line is an insert (0.1889ms)\n✔ a removed line is a delete (0.1842ms)\n✔ a replaced line is a delete followed by an insert (0.1567ms)\n✔ empty against empty is no operations (0.1429ms)\n✔ everything inserted when the original is empty (0.1579ms)\n✔ everything deleted when the result is empty (0.1418ms)\n✔ the common subsequence found is the longest one (0.243ms)\n✔ repeated lines are matched without duplication (0.227ms)\n✔ a diff applied to the original reproduces the result (0.3652ms)\n✔ the number of context operations is maximal (0.2023ms)\n✔ formatDiff renders unified-style prefixes (0.2169ms)\n✔ CRLF input is normalised before diffing (0.1328ms)\n✔ a literal pattern matches only itself (1.7129ms)\n✔ a star matches within one segment (0.4232ms)\n✔ a star matches an empty run (0.2681ms)\n✔ a question mark matches exactly one character, never a slash (0.2472ms)\n✔ a double star crosses segment boundaries (0.2974ms)\n✔ a trailing double star matches everything below (0.2484ms)\n✔ braces expand to alternatives (0.4723ms)\n✔ braces may contain a glob (0.3133ms)\n✔ character classes match one listed character (0.6648ms)\n✔ a negated character class excludes what it lists (0.3884ms)\n✔ regular-expression metacharacters are literal (0.2556ms)\n✔ matching is anchored at both ends (0.2028ms)\n✔ backslashes in a path are treated as separators (0.1782ms)\n✔ an empty pattern matches only an empty path (0.1208ms)\n✔ merge sorts and joins overlapping intervals (1.8224ms)\n✔ merge joins intervals that only touch (0.1717ms)\n✔ merge keeps disjoint intervals apart (0.1809ms)\n✔ merge drops empty intervals (0.1659ms)\n✔ merge of nothing is nothing (0.1308ms)\n✔ merge does not mutate its input (0.1841ms)\n✔ merge rejects a reversed interval (0.7982ms)\n✔ intersect keeps only shared coverage (0.2899ms)\n✔ touching intervals do not intersect (0.1938ms)\n✔ intersecting with nothing gives nothing (0.2859ms)\n✔ intersect normalises unsorted overlapping input first (0.2026ms)\n✔ subtract removes the second set from the first (0.3875ms)\n✔ subtract handles several holes (0.1848ms)\n✔ contains reports whether a point is covered (0.2015ms)\n✔ totalLength sums merged coverage without double counting (0.1355ms)\n✔ flat pairs parse into an object of strings (2.1025ms)\n✔ a leading question mark is ignored (0.2366ms)\n✔ empty input is an empty object (0.1572ms)\n✔ a key with no equals sign has an empty value (0.1855ms)\n✔ percent escapes and plus signs are decoded (0.2378ms)\n✔ bracket notation builds nested objects (0.3622ms)\n✔ empty brackets append to an array (0.2865ms)\n✔ numeric brackets index an array (0.2628ms)\n✔ a repeated flat key becomes an array (0.1525ms)\n✔ stringify emits keys in sorted order (0.4066ms)\n✔ stringify encodes reserved characters (0.1181ms)\n✔ stringify writes arrays with empty brackets (0.1102ms)\n✔ stringify writes nested objects with bracket paths (0.0897ms)\n✔ stringify skips null and undefined values (0.0845ms)\n✔ stringify renders numbers and booleans (0.0954ms)\n✔ an empty object stringifies to an empty string (0.0962ms)\n✔ a fresh bucket starts full (5.7806ms)\n✔ taking tokens succeeds while the bucket has them (0.1999ms)\n✔ taking more than is left fails and consumes nothing (0.1585ms)\n✔ tokens refill over time at the configured rate (0.1975ms)\n✔ refill is fractional rather than stepwise (0.1454ms)\n✔ the bucket never exceeds its capacity (0.1155ms)\n✔ retryAfterMs is zero when the request would succeed now (0.1533ms)\n✔ retryAfterMs reports the wait for the missing tokens (0.1354ms)\n✔ retryAfterMs rounds up to a whole millisecond (0.1346ms)\n✔ asking for more than capacity is rejected (0.7167ms)\n✔ taking zero or a negative count is rejected (0.2152ms)\n✔ invalid configuration is rejected (0.1783ms)\n✔ reset refills the bucket (0.1135ms)\nℹ tests 85\nℹ suites 0\nℹ pass 85\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 169.4743"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 218859,
+        "cachedInputTokens": 185856,
+        "outputTokens": 2985,
+        "reasoningOutputTokens": 592
+      },
+      "delegations": [
+        {
+          "effort": "high",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 52,
+          "usage": {
+            "inputTokens": 58420,
+            "cachedInputTokens": 29184,
+            "outputTokens": 1615,
+            "reasoningOutputTokens": 386
+          }
+        },
+        {
+          "effort": "high",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 79,
+          "usage": {
+            "inputTokens": 75675,
+            "cachedInputTokens": 57344,
+            "outputTokens": 3145,
+            "reasoningOutputTokens": 1309
+          }
+        },
+        {
+          "effort": "high",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 108,
+          "usage": {
+            "inputTokens": 116942,
+            "cachedInputTokens": 92672,
+            "outputTokens": 4083,
+            "reasoningOutputTokens": 1912
+          }
+        },
+        {
+          "effort": "xhigh",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 122,
+          "usage": {
+            "inputTokens": 183857,
+            "cachedInputTokens": 158208,
+            "outputTokens": 4910,
+            "reasoningOutputTokens": 2564
+          }
+        },
+        {
+          "effort": "xhigh",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 229,
+          "usage": {
+            "inputTokens": 232071,
+            "cachedInputTokens": 199168,
+            "outputTokens": 10286,
+            "reasoningOutputTokens": 6394
+          }
+        },
+        {
+          "effort": "xhigh",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 315,
+          "usage": {
+            "inputTokens": 180177,
+            "cachedInputTokens": 120320,
+            "outputTokens": 15775,
+            "reasoningOutputTokens": 11715
+          }
+        }
+      ],
+      "workerCount": 6,
+      "workerEfforts": [
+        "high",
+        "xhigh",
+        "high",
+        "xhigh",
+        "xhigh",
+        "high"
+      ],
+      "batches": [
+        {
+          "mode": "parallel",
+          "taskCount": 6,
+          "maxParallel": 6
+        }
+      ],
+      "integrationConflicts": 0,
+      "breakdown": {
+        "supervisorBeforeSeconds": 38.6,
+        "worktreeSetupSeconds": 1,
+        "workerWindowSeconds": 314.8,
+        "slowestWorkerSeconds": 314.8,
+        "integrationSeconds": 0.5,
+        "supervisorAfterSeconds": 33.2,
+        "peakConcurrency": 6
+      },
+      "verificationFailed": 0,
+      "verificationRefused": 0,
+      "workerFailures": [],
+      "agentError": null
+    }
+  ]
+}

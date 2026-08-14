@@ -1,0 +1,425 @@
+{
+  "schema": 3,
+  "suite": "scale",
+  "supervisorModel": "gpt-5.6-sol",
+  "startedAt": "2026-08-14T17-38-51-964Z",
+  "platform": "win32 x64",
+  "nodeVersion": "v26.7.0",
+  "reps": 2,
+  "records": [
+    {
+      "suite": "scale",
+      "taskId": "scale-svckit",
+      "taskCategory": "implementation",
+      "tier": "B",
+      "streams": 4,
+      "maxParallelConfigured": null,
+      "arm": "solo-high",
+      "armLabel": "Sol high, solo",
+      "supervisorEffort": "high",
+      "repetition": 1,
+      "startedAt": "2026-08-14T17:38:52.375Z",
+      "durationSeconds": 180,
+      "passed": true,
+      "grades": [
+        {
+          "label": "all four module test suites pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ delays grow by the factor and are capped (1.9745ms)\n✔ attempt numbers below one are rejected (0.459ms)\n✔ full jitter spans zero to the capped delay (0.1749ms)\n✔ equal jitter keeps half the delay and randomises the rest (0.1512ms)\n✔ delays are whole milliseconds (0.1489ms)\n✔ an unknown jitter mode is rejected (0.2105ms)\n✔ retry returns the first success without sleeping (1.2763ms)\n✔ retry sleeps between attempts and returns the eventual success (0.6908ms)\n✔ retry gives up after maxAttempts and rethrows the last error (0.7714ms)\n✔ shouldRetry can stop early, and the error still propagates (0.5589ms)\n✔ shouldRetry sees the attempt number (0.4214ms)\n✔ maxAttempts below one is rejected (0.2663ms)\n✔ an empty pointer selects the whole document (1.4259ms)\n✔ pointers walk objects and arrays (0.7994ms)\n✔ the empty string is a valid key (0.2659ms)\n✔ escapes are decoded: ~1 is a slash and ~0 is a tilde (0.1674ms)\n✔ ~01 decodes to ~1, not to a slash (0.1673ms)\n✔ missing paths read as undefined rather than throwing (0.1967ms)\n✔ a non-empty pointer must start with a slash (0.5835ms)\n✔ set writes through objects and returns the document (0.217ms)\n✔ set creates missing intermediate objects (0.2764ms)\n✔ set replaces an array element by index (0.2525ms)\n✔ a dash appends to an array, and so does the end index (0.2052ms)\n✔ an out-of-range array index is rejected (0.1866ms)\n✔ remove returns what it deleted (0.1755ms)\n✔ remove splices arrays rather than leaving a hole (0.1076ms)\n✔ removing something absent yields undefined and changes nothing (0.0902ms)\n✔ values round-trip and size reflects what is held (2.009ms)\n✔ capacity evicts the least recently used entry (0.3045ms)\n✔ reading an entry makes it recently used (0.1845ms)\n✔ overwriting a key updates it in place and refreshes it (0.2355ms)\n✔ keys are listed most recently used first (1.3152ms)\n✔ entries expire once the ttl has elapsed (0.1937ms)\n✔ reading does not extend an entry's lifetime (0.1268ms)\n✔ writing again restarts the ttl (0.1393ms)\n✔ expired entries stop counting towards size and are not listed (0.2247ms)\n✔ has reports liveness without disturbing recency (0.2502ms)\n✔ delete removes an entry and reports whether it was there (0.1614ms)\n✔ a capacity below one is rejected (0.3993ms)\n✔ parse splits a plain version (1.9061ms)\n✔ parse handles prerelease and build metadata (0.2662ms)\n✔ numeric prerelease identifiers become numbers, others stay strings (0.1311ms)\n✔ a leading v is accepted (0.147ms)\n✔ invalid versions parse as null (0.1385ms)\n✔ compare orders by major, minor, then patch (0.2105ms)\n✔ a prerelease is lower than its release (0.1315ms)\n✔ prerelease precedence follows the specification (0.2583ms)\n✔ build metadata is ignored when comparing (0.1801ms)\n✔ comparators match (0.7921ms)\n✔ caret allows changes that do not modify the leftmost non-zero digit (0.3352ms)\n✔ tilde allows patch-level changes (0.1533ms)\n✔ space joins comparators with and (0.1001ms)\n✔ double pipe joins ranges with or (0.0902ms)\n✔ a prerelease only satisfies a range that names the same version (0.1339ms)\n✔ an unparseable version never satisfies anything (0.1225ms)\n✔ star matches any release (0.1774ms)\nℹ tests 56\nℹ suites 0\nℹ pass 56\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 151.3608"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 184232,
+        "cachedInputTokens": 139264,
+        "outputTokens": 6311,
+        "reasoningOutputTokens": 1528
+      },
+      "delegations": [],
+      "workerCount": 0,
+      "workerEfforts": [],
+      "batches": [],
+      "integrationConflicts": 0,
+      "breakdown": {
+        "supervisorBeforeSeconds": null,
+        "worktreeSetupSeconds": null,
+        "workerWindowSeconds": null,
+        "slowestWorkerSeconds": null,
+        "integrationSeconds": null,
+        "supervisorAfterSeconds": null,
+        "peakConcurrency": null
+      },
+      "verificationFailed": 0,
+      "verificationRefused": 0,
+      "workerFailures": [],
+      "agentError": null
+    },
+    {
+      "suite": "scale",
+      "taskId": "scale-svckit",
+      "taskCategory": "implementation",
+      "tier": "B",
+      "streams": 4,
+      "maxParallelConfigured": 4,
+      "arm": "adaptive",
+      "armLabel": "Sol high, free choice",
+      "supervisorEffort": "high",
+      "repetition": 1,
+      "startedAt": "2026-08-14T17:41:53.028Z",
+      "durationSeconds": 124,
+      "passed": true,
+      "grades": [
+        {
+          "label": "all four module test suites pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ delays grow by the factor and are capped (1.7293ms)\n✔ attempt numbers below one are rejected (0.4094ms)\n✔ full jitter spans zero to the capped delay (0.172ms)\n✔ equal jitter keeps half the delay and randomises the rest (0.1505ms)\n✔ delays are whole milliseconds (0.1496ms)\n✔ an unknown jitter mode is rejected (0.151ms)\n✔ retry returns the first success without sleeping (0.7073ms)\n✔ retry sleeps between attempts and returns the eventual success (0.4973ms)\n✔ retry gives up after maxAttempts and rethrows the last error (0.4309ms)\n✔ shouldRetry can stop early, and the error still propagates (0.3433ms)\n✔ shouldRetry sees the attempt number (0.2758ms)\n✔ maxAttempts below one is rejected (0.1625ms)\n✔ an empty pointer selects the whole document (1.2021ms)\n✔ pointers walk objects and arrays (0.9439ms)\n✔ the empty string is a valid key (0.1831ms)\n✔ escapes are decoded: ~1 is a slash and ~0 is a tilde (0.1483ms)\n✔ ~01 decodes to ~1, not to a slash (0.1272ms)\n✔ missing paths read as undefined rather than throwing (0.1272ms)\n✔ a non-empty pointer must start with a slash (0.4897ms)\n✔ set writes through objects and returns the document (0.2044ms)\n✔ set creates missing intermediate objects (0.3275ms)\n✔ set replaces an array element by index (0.3361ms)\n✔ a dash appends to an array, and so does the end index (0.2049ms)\n✔ an out-of-range array index is rejected (0.1818ms)\n✔ remove returns what it deleted (0.1462ms)\n✔ remove splices arrays rather than leaving a hole (0.1183ms)\n✔ removing something absent yields undefined and changes nothing (0.101ms)\n✔ values round-trip and size reflects what is held (2.0817ms)\n✔ capacity evicts the least recently used entry (0.1598ms)\n✔ reading an entry makes it recently used (0.1956ms)\n✔ overwriting a key updates it in place and refreshes it (0.133ms)\n✔ keys are listed most recently used first (0.8519ms)\n✔ entries expire once the ttl has elapsed (0.1883ms)\n✔ reading does not extend an entry's lifetime (0.1318ms)\n✔ writing again restarts the ttl (0.1218ms)\n✔ expired entries stop counting towards size and are not listed (0.2964ms)\n✔ has reports liveness without disturbing recency (0.3538ms)\n✔ delete removes an entry and reports whether it was there (0.1817ms)\n✔ a capacity below one is rejected (0.4371ms)\n✔ parse splits a plain version (1.8909ms)\n✔ parse handles prerelease and build metadata (0.3242ms)\n✔ numeric prerelease identifiers become numbers, others stay strings (0.1709ms)\n✔ a leading v is accepted (0.1506ms)\n✔ invalid versions parse as null (0.1664ms)\n✔ compare orders by major, minor, then patch (0.2245ms)\n✔ a prerelease is lower than its release (0.2019ms)\n✔ prerelease precedence follows the specification (0.2601ms)\n✔ build metadata is ignored when comparing (0.128ms)\n✔ comparators match (0.5466ms)\n✔ caret allows changes that do not modify the leftmost non-zero digit (0.1918ms)\n✔ tilde allows patch-level changes (0.1224ms)\n✔ space joins comparators with and (0.0837ms)\n✔ double pipe joins ranges with or (0.0905ms)\n✔ a prerelease only satisfies a range that names the same version (0.1202ms)\n✔ an unparseable version never satisfies anything (0.0821ms)\n✔ star matches any release (0.1606ms)\nℹ tests 56\nℹ suites 0\nℹ pass 56\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 138.3214"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 275322,
+        "cachedInputTokens": 244480,
+        "outputTokens": 4497,
+        "reasoningOutputTokens": 1025
+      },
+      "delegations": [],
+      "workerCount": 0,
+      "workerEfforts": [],
+      "batches": [],
+      "integrationConflicts": 0,
+      "breakdown": {
+        "supervisorBeforeSeconds": null,
+        "worktreeSetupSeconds": null,
+        "workerWindowSeconds": null,
+        "slowestWorkerSeconds": null,
+        "integrationSeconds": null,
+        "supervisorAfterSeconds": null,
+        "peakConcurrency": null
+      },
+      "verificationFailed": 0,
+      "verificationRefused": 0,
+      "workerFailures": [],
+      "agentError": null
+    },
+    {
+      "suite": "scale",
+      "taskId": "scale-svckit",
+      "taskCategory": "implementation",
+      "tier": "B",
+      "streams": 4,
+      "maxParallelConfigured": 4,
+      "arm": "par-forced",
+      "armLabel": "Sol high + parallel Luna (mandated)",
+      "supervisorEffort": "high",
+      "repetition": 1,
+      "startedAt": "2026-08-14T17:43:57.587Z",
+      "durationSeconds": 234,
+      "passed": true,
+      "grades": [
+        {
+          "label": "all four module test suites pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ delays grow by the factor and are capped (1.8691ms)\n✔ attempt numbers below one are rejected (0.5553ms)\n✔ full jitter spans zero to the capped delay (0.2073ms)\n✔ equal jitter keeps half the delay and randomises the rest (0.2092ms)\n✔ delays are whole milliseconds (0.1635ms)\n✔ an unknown jitter mode is rejected (0.1499ms)\n✔ retry returns the first success without sleeping (0.678ms)\n✔ retry sleeps between attempts and returns the eventual success (0.4873ms)\n✔ retry gives up after maxAttempts and rethrows the last error (0.4977ms)\n✔ shouldRetry can stop early, and the error still propagates (0.3708ms)\n✔ shouldRetry sees the attempt number (0.3554ms)\n✔ maxAttempts below one is rejected (0.1535ms)\n✔ an empty pointer selects the whole document (1.1862ms)\n✔ pointers walk objects and arrays (1.0714ms)\n✔ the empty string is a valid key (0.224ms)\n✔ escapes are decoded: ~1 is a slash and ~0 is a tilde (0.1722ms)\n✔ ~01 decodes to ~1, not to a slash (0.1228ms)\n✔ missing paths read as undefined rather than throwing (0.1546ms)\n✔ a non-empty pointer must start with a slash (0.471ms)\n✔ set writes through objects and returns the document (0.3211ms)\n✔ set creates missing intermediate objects (0.3016ms)\n✔ set replaces an array element by index (0.2708ms)\n✔ a dash appends to an array, and so does the end index (0.1908ms)\n✔ an out-of-range array index is rejected (0.2167ms)\n✔ remove returns what it deleted (0.2146ms)\n✔ remove splices arrays rather than leaving a hole (0.2678ms)\n✔ removing something absent yields undefined and changes nothing (0.1611ms)\n✔ values round-trip and size reflects what is held (14.7777ms)\n✔ capacity evicts the least recently used entry (0.1693ms)\n✔ reading an entry makes it recently used (0.1378ms)\n✔ overwriting a key updates it in place and refreshes it (0.1281ms)\n✔ keys are listed most recently used first (0.6911ms)\n✔ entries expire once the ttl has elapsed (0.1698ms)\n✔ reading does not extend an entry's lifetime (0.1232ms)\n✔ writing again restarts the ttl (0.1113ms)\n✔ expired entries stop counting towards size and are not listed (0.191ms)\n✔ has reports liveness without disturbing recency (0.3179ms)\n✔ delete removes an entry and reports whether it was there (0.1849ms)\n✔ a capacity below one is rejected (0.3874ms)\n✔ parse splits a plain version (1.855ms)\n✔ parse handles prerelease and build metadata (0.2562ms)\n✔ numeric prerelease identifiers become numbers, others stay strings (0.1281ms)\n✔ a leading v is accepted (0.1445ms)\n✔ invalid versions parse as null (0.1341ms)\n✔ compare orders by major, minor, then patch (0.2138ms)\n✔ a prerelease is lower than its release (0.13ms)\n✔ prerelease precedence follows the specification (0.2272ms)\n✔ build metadata is ignored when comparing (0.2181ms)\n✔ comparators match (0.951ms)\n✔ caret allows changes that do not modify the leftmost non-zero digit (0.2821ms)\n✔ tilde allows patch-level changes (0.1187ms)\n✔ space joins comparators with and (0.1283ms)\n✔ double pipe joins ranges with or (0.0942ms)\n✔ a prerelease only satisfies a range that names the same version (0.1304ms)\n✔ an unparseable version never satisfies anything (0.1249ms)\n✔ star matches any release (0.1253ms)\nℹ tests 56\nℹ suites 0\nℹ pass 56\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 136.4613"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 303993,
+        "cachedInputTokens": 278016,
+        "outputTokens": 2856,
+        "reasoningOutputTokens": 753
+      },
+      "delegations": [
+        {
+          "effort": "high",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 61,
+          "usage": {
+            "inputTokens": 94074,
+            "cachedInputTokens": 72448,
+            "outputTokens": 2025,
+            "reasoningOutputTokens": 556
+          }
+        },
+        {
+          "effort": "high",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 67,
+          "usage": {
+            "inputTokens": 114582,
+            "cachedInputTokens": 78592,
+            "outputTokens": 1955,
+            "reasoningOutputTokens": 495
+          }
+        },
+        {
+          "effort": "high",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 115,
+          "usage": {
+            "inputTokens": 102074,
+            "cachedInputTokens": 78592,
+            "outputTokens": 4963,
+            "reasoningOutputTokens": 2592
+          }
+        },
+        {
+          "effort": "xhigh",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 164,
+          "usage": {
+            "inputTokens": 140776,
+            "cachedInputTokens": 112128,
+            "outputTokens": 7600,
+            "reasoningOutputTokens": 4038
+          }
+        }
+      ],
+      "workerCount": 4,
+      "workerEfforts": [
+        "high",
+        "high",
+        "high",
+        "xhigh"
+      ],
+      "batches": [
+        {
+          "mode": "parallel",
+          "taskCount": 4,
+          "maxParallel": 4
+        }
+      ],
+      "integrationConflicts": 0,
+      "breakdown": {
+        "supervisorBeforeSeconds": 48.1,
+        "worktreeSetupSeconds": 0.8,
+        "workerWindowSeconds": 164.2,
+        "slowestWorkerSeconds": 164.2,
+        "integrationSeconds": 0.4,
+        "supervisorAfterSeconds": 21,
+        "peakConcurrency": 4
+      },
+      "verificationFailed": 0,
+      "verificationRefused": 0,
+      "workerFailures": [],
+      "agentError": null
+    },
+    {
+      "suite": "scale",
+      "taskId": "scale-svckit",
+      "taskCategory": "implementation",
+      "tier": "B",
+      "streams": 4,
+      "maxParallelConfigured": null,
+      "arm": "solo-high",
+      "armLabel": "Sol high, solo",
+      "supervisorEffort": "high",
+      "repetition": 2,
+      "startedAt": "2026-08-14T17:47:52.631Z",
+      "durationSeconds": 163,
+      "passed": true,
+      "grades": [
+        {
+          "label": "all four module test suites pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ delays grow by the factor and are capped (1.9986ms)\n✔ attempt numbers below one are rejected (0.4532ms)\n✔ full jitter spans zero to the capped delay (0.2078ms)\n✔ equal jitter keeps half the delay and randomises the rest (0.1566ms)\n✔ delays are whole milliseconds (0.1697ms)\n✔ an unknown jitter mode is rejected (0.1916ms)\n✔ retry returns the first success without sleeping (0.7512ms)\n✔ retry sleeps between attempts and returns the eventual success (0.4658ms)\n✔ retry gives up after maxAttempts and rethrows the last error (0.4828ms)\n✔ shouldRetry can stop early, and the error still propagates (0.3422ms)\n✔ shouldRetry sees the attempt number (0.3671ms)\n✔ maxAttempts below one is rejected (0.1721ms)\n✔ an empty pointer selects the whole document (1.8759ms)\n✔ pointers walk objects and arrays (1.3791ms)\n✔ the empty string is a valid key (0.2083ms)\n✔ escapes are decoded: ~1 is a slash and ~0 is a tilde (0.2326ms)\n✔ ~01 decodes to ~1, not to a slash (0.2126ms)\n✔ missing paths read as undefined rather than throwing (0.208ms)\n✔ a non-empty pointer must start with a slash (0.8552ms)\n✔ set writes through objects and returns the document (0.3168ms)\n✔ set creates missing intermediate objects (0.349ms)\n✔ set replaces an array element by index (0.2532ms)\n✔ a dash appends to an array, and so does the end index (0.155ms)\n✔ an out-of-range array index is rejected (0.1957ms)\n✔ remove returns what it deleted (0.1582ms)\n✔ remove splices arrays rather than leaving a hole (0.1143ms)\n✔ removing something absent yields undefined and changes nothing (0.0928ms)\n✔ values round-trip and size reflects what is held (2.1355ms)\n✔ capacity evicts the least recently used entry (0.2424ms)\n✔ reading an entry makes it recently used (0.1416ms)\n✔ overwriting a key updates it in place and refreshes it (0.1492ms)\n✔ keys are listed most recently used first (0.7475ms)\n✔ entries expire once the ttl has elapsed (0.2285ms)\n✔ reading does not extend an entry's lifetime (0.1403ms)\n✔ writing again restarts the ttl (0.126ms)\n✔ expired entries stop counting towards size and are not listed (0.275ms)\n✔ has reports liveness without disturbing recency (0.3048ms)\n✔ delete removes an entry and reports whether it was there (0.1975ms)\n✔ a capacity below one is rejected (0.4107ms)\n✔ parse splits a plain version (2.0811ms)\n✔ parse handles prerelease and build metadata (0.3262ms)\n✔ numeric prerelease identifiers become numbers, others stay strings (0.1296ms)\n✔ a leading v is accepted (0.2266ms)\n✔ invalid versions parse as null (0.1413ms)\n✔ compare orders by major, minor, then patch (0.216ms)\n✔ a prerelease is lower than its release (0.1792ms)\n✔ prerelease precedence follows the specification (0.1785ms)\n✔ build metadata is ignored when comparing (0.1422ms)\n✔ comparators match (0.5165ms)\n✔ caret allows changes that do not modify the leftmost non-zero digit (0.2294ms)\n✔ tilde allows patch-level changes (0.1338ms)\n✔ space joins comparators with and (0.0965ms)\n✔ double pipe joins ranges with or (0.089ms)\n✔ a prerelease only satisfies a range that names the same version (0.1092ms)\n✔ an unparseable version never satisfies anything (0.9372ms)\n✔ star matches any release (0.1162ms)\nℹ tests 56\nℹ suites 0\nℹ pass 56\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 144.8603"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 187619,
+        "cachedInputTokens": 161792,
+        "outputTokens": 6275,
+        "reasoningOutputTokens": 1454
+      },
+      "delegations": [],
+      "workerCount": 0,
+      "workerEfforts": [],
+      "batches": [],
+      "integrationConflicts": 0,
+      "breakdown": {
+        "supervisorBeforeSeconds": null,
+        "worktreeSetupSeconds": null,
+        "workerWindowSeconds": null,
+        "slowestWorkerSeconds": null,
+        "integrationSeconds": null,
+        "supervisorAfterSeconds": null,
+        "peakConcurrency": null
+      },
+      "verificationFailed": 0,
+      "verificationRefused": 0,
+      "workerFailures": [],
+      "agentError": null
+    },
+    {
+      "suite": "scale",
+      "taskId": "scale-svckit",
+      "taskCategory": "implementation",
+      "tier": "B",
+      "streams": 4,
+      "maxParallelConfigured": 4,
+      "arm": "adaptive",
+      "armLabel": "Sol high, free choice",
+      "supervisorEffort": "high",
+      "repetition": 2,
+      "startedAt": "2026-08-14T17:50:35.857Z",
+      "durationSeconds": 116,
+      "passed": true,
+      "grades": [
+        {
+          "label": "all four module test suites pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ delays grow by the factor and are capped (1.8502ms)\n✔ attempt numbers below one are rejected (0.4704ms)\n✔ full jitter spans zero to the capped delay (0.1638ms)\n✔ equal jitter keeps half the delay and randomises the rest (0.1442ms)\n✔ delays are whole milliseconds (0.1476ms)\n✔ an unknown jitter mode is rejected (0.148ms)\n✔ retry returns the first success without sleeping (0.8598ms)\n✔ retry sleeps between attempts and returns the eventual success (0.4173ms)\n✔ retry gives up after maxAttempts and rethrows the last error (0.3843ms)\n✔ shouldRetry can stop early, and the error still propagates (0.2992ms)\n✔ shouldRetry sees the attempt number (0.273ms)\n✔ maxAttempts below one is rejected (0.1843ms)\n✔ an empty pointer selects the whole document (1.0942ms)\n✔ pointers walk objects and arrays (0.9026ms)\n✔ the empty string is a valid key (0.1288ms)\n✔ escapes are decoded: ~1 is a slash and ~0 is a tilde (0.16ms)\n✔ ~01 decodes to ~1, not to a slash (0.1338ms)\n✔ missing paths read as undefined rather than throwing (0.1432ms)\n✔ a non-empty pointer must start with a slash (0.5183ms)\n✔ set writes through objects and returns the document (0.1739ms)\n✔ set creates missing intermediate objects (0.1997ms)\n✔ set replaces an array element by index (0.2327ms)\n✔ a dash appends to an array, and so does the end index (0.1623ms)\n✔ an out-of-range array index is rejected (0.1936ms)\n✔ remove returns what it deleted (0.1489ms)\n✔ remove splices arrays rather than leaving a hole (0.1016ms)\n✔ removing something absent yields undefined and changes nothing (0.1021ms)\n✔ values round-trip and size reflects what is held (2.3166ms)\n✔ capacity evicts the least recently used entry (0.2437ms)\n✔ reading an entry makes it recently used (0.1426ms)\n✔ overwriting a key updates it in place and refreshes it (0.1456ms)\n✔ keys are listed most recently used first (0.7184ms)\n✔ entries expire once the ttl has elapsed (0.2084ms)\n✔ reading does not extend an entry's lifetime (0.1765ms)\n✔ writing again restarts the ttl (0.1538ms)\n✔ expired entries stop counting towards size and are not listed (0.2308ms)\n✔ has reports liveness without disturbing recency (0.3601ms)\n✔ delete removes an entry and reports whether it was there (0.2224ms)\n✔ a capacity below one is rejected (0.4844ms)\n✔ parse splits a plain version (2.3468ms)\n✔ parse handles prerelease and build metadata (0.4002ms)\n✔ numeric prerelease identifiers become numbers, others stay strings (0.1871ms)\n✔ a leading v is accepted (0.1909ms)\n✔ invalid versions parse as null (0.1509ms)\n✔ compare orders by major, minor, then patch (0.3404ms)\n✔ a prerelease is lower than its release (0.298ms)\n✔ prerelease precedence follows the specification (0.3071ms)\n✔ build metadata is ignored when comparing (0.1555ms)\n✔ comparators match (0.6079ms)\n✔ caret allows changes that do not modify the leftmost non-zero digit (0.2334ms)\n✔ tilde allows patch-level changes (0.1089ms)\n✔ space joins comparators with and (0.0859ms)\n✔ double pipe joins ranges with or (0.1207ms)\n✔ a prerelease only satisfies a range that names the same version (0.1659ms)\n✔ an unparseable version never satisfies anything (0.8435ms)\n✔ star matches any release (0.1852ms)\nℹ tests 56\nℹ suites 0\nℹ pass 56\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 144.321"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 306885,
+        "cachedInputTokens": 269568,
+        "outputTokens": 3553,
+        "reasoningOutputTokens": 760
+      },
+      "delegations": [],
+      "workerCount": 0,
+      "workerEfforts": [],
+      "batches": [],
+      "integrationConflicts": 0,
+      "breakdown": {
+        "supervisorBeforeSeconds": null,
+        "worktreeSetupSeconds": null,
+        "workerWindowSeconds": null,
+        "slowestWorkerSeconds": null,
+        "integrationSeconds": null,
+        "supervisorAfterSeconds": null,
+        "peakConcurrency": null
+      },
+      "verificationFailed": 0,
+      "verificationRefused": 0,
+      "workerFailures": [],
+      "agentError": null
+    },
+    {
+      "suite": "scale",
+      "taskId": "scale-svckit",
+      "taskCategory": "implementation",
+      "tier": "B",
+      "streams": 4,
+      "maxParallelConfigured": 4,
+      "arm": "par-forced",
+      "armLabel": "Sol high + parallel Luna (mandated)",
+      "supervisorEffort": "high",
+      "repetition": 2,
+      "startedAt": "2026-08-14T17:52:32.617Z",
+      "durationSeconds": 273,
+      "passed": true,
+      "grades": [
+        {
+          "label": "all four module test suites pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ delays grow by the factor and are capped (17.6109ms)\n✔ attempt numbers below one are rejected (0.5321ms)\n✔ full jitter spans zero to the capped delay (0.2737ms)\n✔ equal jitter keeps half the delay and randomises the rest (0.1931ms)\n✔ delays are whole milliseconds (0.1874ms)\n✔ an unknown jitter mode is rejected (0.172ms)\n✔ retry returns the first success without sleeping (0.8222ms)\n✔ retry sleeps between attempts and returns the eventual success (0.3872ms)\n✔ retry gives up after maxAttempts and rethrows the last error (0.4125ms)\n✔ shouldRetry can stop early, and the error still propagates (0.3355ms)\n✔ shouldRetry sees the attempt number (0.3207ms)\n✔ maxAttempts below one is rejected (0.2634ms)\n✔ an empty pointer selects the whole document (1.2518ms)\n✔ pointers walk objects and arrays (1.0742ms)\n✔ the empty string is a valid key (0.1447ms)\n✔ escapes are decoded: ~1 is a slash and ~0 is a tilde (0.1626ms)\n✔ ~01 decodes to ~1, not to a slash (0.1275ms)\n✔ missing paths read as undefined rather than throwing (0.1508ms)\n✔ a non-empty pointer must start with a slash (0.5427ms)\n✔ set writes through objects and returns the document (0.2224ms)\n✔ set creates missing intermediate objects (0.2291ms)\n✔ set replaces an array element by index (0.2082ms)\n✔ a dash appends to an array, and so does the end index (0.201ms)\n✔ an out-of-range array index is rejected (0.3277ms)\n✔ remove returns what it deleted (0.2795ms)\n✔ remove splices arrays rather than leaving a hole (0.1325ms)\n✔ removing something absent yields undefined and changes nothing (0.0977ms)\n✔ values round-trip and size reflects what is held (2.4707ms)\n✔ capacity evicts the least recently used entry (0.2401ms)\n✔ reading an entry makes it recently used (0.1518ms)\n✔ overwriting a key updates it in place and refreshes it (0.1379ms)\n✔ keys are listed most recently used first (0.8214ms)\n✔ entries expire once the ttl has elapsed (0.1841ms)\n✔ reading does not extend an entry's lifetime (0.1402ms)\n✔ writing again restarts the ttl (0.1349ms)\n✔ expired entries stop counting towards size and are not listed (0.1861ms)\n✔ has reports liveness without disturbing recency (0.245ms)\n✔ delete removes an entry and reports whether it was there (0.2256ms)\n✔ a capacity below one is rejected (0.5077ms)\n✔ parse splits a plain version (2.3821ms)\n✔ parse handles prerelease and build metadata (0.3711ms)\n✔ numeric prerelease identifiers become numbers, others stay strings (0.1683ms)\n✔ a leading v is accepted (0.1552ms)\n✔ invalid versions parse as null (0.2216ms)\n✔ compare orders by major, minor, then patch (0.2253ms)\n✔ a prerelease is lower than its release (0.1723ms)\n✔ prerelease precedence follows the specification (0.2627ms)\n✔ build metadata is ignored when comparing (0.1624ms)\n✔ comparators match (0.8608ms)\n✔ caret allows changes that do not modify the leftmost non-zero digit (0.2959ms)\n✔ tilde allows patch-level changes (0.1725ms)\n✔ space joins comparators with and (0.1065ms)\n✔ double pipe joins ranges with or (0.1148ms)\n✔ a prerelease only satisfies a range that names the same version (0.1351ms)\n✔ an unparseable version never satisfies anything (0.1693ms)\n✔ star matches any release (0.1888ms)\nℹ tests 56\nℹ suites 0\nℹ pass 56\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 161.8707"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 465609,
+        "cachedInputTokens": 409344,
+        "outputTokens": 2911,
+        "reasoningOutputTokens": 635
+      },
+      "delegations": [
+        {
+          "effort": "xhigh",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 99,
+          "usage": {
+            "inputTokens": 139420,
+            "cachedInputTokens": 113920,
+            "outputTokens": 4001,
+            "reasoningOutputTokens": 2254
+          }
+        },
+        {
+          "effort": "high",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 117,
+          "usage": {
+            "inputTokens": 242815,
+            "cachedInputTokens": 212992,
+            "outputTokens": 4382,
+            "reasoningOutputTokens": 1865
+          }
+        },
+        {
+          "effort": "high",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 147,
+          "usage": {
+            "inputTokens": 104956,
+            "cachedInputTokens": 79616,
+            "outputTokens": 6906,
+            "reasoningOutputTokens": 4329
+          }
+        },
+        {
+          "effort": "xhigh",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 196,
+          "usage": {
+            "inputTokens": 120277,
+            "cachedInputTokens": 89856,
+            "outputTokens": 9377,
+            "reasoningOutputTokens": 5210
+          }
+        }
+      ],
+      "workerCount": 4,
+      "workerEfforts": [
+        "high",
+        "high",
+        "xhigh",
+        "xhigh"
+      ],
+      "batches": [
+        {
+          "mode": "parallel",
+          "taskCount": 4,
+          "maxParallel": 4
+        }
+      ],
+      "integrationConflicts": 0,
+      "breakdown": {
+        "supervisorBeforeSeconds": 52,
+        "worktreeSetupSeconds": 0.7,
+        "workerWindowSeconds": 195.6,
+        "slowestWorkerSeconds": 195.6,
+        "integrationSeconds": 0.4,
+        "supervisorAfterSeconds": 24.3,
+        "peakConcurrency": 4
+      },
+      "verificationFailed": 0,
+      "verificationRefused": 0,
+      "workerFailures": [],
+      "agentError": null
+    }
+  ]
+}

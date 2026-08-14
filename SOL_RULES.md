@@ -34,6 +34,21 @@ the result costs time and tokens on top of the work itself. This project's own
 micro-benchmark measured a one-file task as roughly 2.3x slower and 3.5x the
 tokens when delegated, with no quality difference.
 
+Two further measurements are worth carrying into the decision:
+
+- **Splitting work into more streams does not make delegation win.** Fixtures
+  with four and six genuinely independent modules were both slower delegated than
+  done directly, and the six-stream one was relatively worse. A batch finishes
+  when its _slowest_ worker finishes, so adding workers adds chances to draw a
+  slow one.
+- **The fixed cost is your own time, not the machinery.** Worktree setup and
+  integration take about a second. Writing the contracts and reviewing the
+  results took around 70 seconds of supervisor turn in measured runs.
+
+So the reason to delegate is rarely speed. It is an enforced file scope,
+independently re-run verification, and keeping a long piece of work out of your
+own context.
+
 So make it a decision, not a reflex:
 
 **Do it yourself** when the change is small, mechanical, or confined to one file;
@@ -51,10 +66,16 @@ pieces of work:
   They share the workspace and run one at a time.
 - `mode: "parallel"` — the tasks are genuinely independent. Each worker gets its
   own git worktree; results are integrated only if no two workers touched the
-  same file. This is the only mode that can save wall-clock time.
+  same file. This is the only mode that can save wall-clock time, and on every
+  benchmark fixture so far it still did not beat doing the work yourself.
 
 Before choosing parallel, ask: can I give each task a disjoint `allowedFiles`
 scope? If not, they are not independent, and sequential is the honest answer.
+
+If the work has no seam — a tokenizer, parser and evaluator sharing an
+intermediate representation you have not fixed yet — do not split it. Measured on
+exactly that shape, mandated delegation cost 3.1x doing it directly, and no split
+was possible anyway because every part wanted the same file.
 
 ---
 

@@ -25,6 +25,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runGit } from "../git.js";
 import { PARALLEL_TASKS } from "./parallel-tasks.js";
+import { SCALE_TASKS } from "./scale-tasks.js";
 import { BENCH_TASKS, type BenchTask, type GradeCommand } from "./tasks.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -37,6 +38,7 @@ const TASK_TIMEOUT_SECONDS = Number(process.env.BENCH_TASK_TIMEOUT ?? 1500);
 export const SUITES = {
   micro: BENCH_TASKS,
   parallel: PARALLEL_TASKS,
+  scale: SCALE_TASKS,
 } as const;
 export type SuiteName = keyof typeof SUITES;
 
@@ -83,6 +85,21 @@ the workers run at the same time. Give each task a DISJOINT allowedFiles scope.
 Choose each worker's effort from that subtask's own difficulty — they need not be
 the same. Review what comes back, integrate it, and confirm the whole suite passes.
 Only implement something yourself if delegation is genuinely not workable.`,
+  },
+
+  /**
+   * Free choice. The guidance states the delegation tools exist and says
+   * nothing about whether to use them, so what this arm measures is the
+   * supervisor's own policy — including deciding to do the work itself. `par`
+   * above nudges towards parallel; this one deliberately does not.
+   */
+  adaptive: {
+    label: "Sol high, free choice",
+    effort: "high",
+    delegation: true,
+    guidance: `You have delegation tools available (delegate_task and delegate_tasks).
+Use them or do the work yourself, whichever you judge will finish this correctly and
+soonest. Make sure the required checks pass before you finish.`,
   },
 
   // The two arms above leave the decision to the supervisor, which is realistic
@@ -135,10 +152,33 @@ export interface DelegationRecord {
   } | null;
 }
 
+/**
+ * Where a run's wall-clock went.
+ *
+ * Derived from event timestamps rather than new instrumentation, so measuring
+ * it cannot change what is measured. `supervisorBefore` is the supervisor
+ * reading the repository and writing contracts; `supervisorAfter` is its review
+ * and final verification. Everything between is the batch itself.
+ */
+export interface Breakdown {
+  supervisorBeforeSeconds: number | null;
+  worktreeSetupSeconds: number | null;
+  workerWindowSeconds: number | null;
+  slowestWorkerSeconds: number | null;
+  integrationSeconds: number | null;
+  supervisorAfterSeconds: number | null;
+  /** Highest number of workers running at the same instant. */
+  peakConcurrency: number | null;
+}
+
 export interface RunRecord {
   suite: SuiteName;
   taskId: string;
   taskCategory: string;
+  tier: string | null;
+  streams: number | null;
+  /** SOL_LUNA_MAX_PARALLEL given to the orchestrator, or null when solo. */
+  maxParallelConfigured: number | null;
   arm: Arm;
   armLabel: string;
   supervisorEffort: string;
@@ -155,6 +195,10 @@ export interface RunRecord {
   workerEfforts: string[];
   batches: Array<{ mode: string; taskCount: number; maxParallel: number }>;
   integrationConflicts: number;
+  breakdown: Breakdown;
+  verificationFailed: number;
+  verificationRefused: number;
+  workerFailures: string[];
   agentError: string | null;
 }
 
@@ -219,18 +263,80 @@ interface Telemetry {
   integrationConflicts: number;
   /** Efforts the supervisor chose, from `task.queued` and single delegations. */
   efforts: string[];
+  breakdown: Breakdown;
+  verificationFailed: number;
+  verificationRefused: number;
+  workerFailures: string[];
+}
+
+const EMPTY_BREAKDOWN: Breakdown = {
+  supervisorBeforeSeconds: null,
+  worktreeSetupSeconds: null,
+  workerWindowSeconds: null,
+  slowestWorkerSeconds: null,
+  integrationSeconds: null,
+  supervisorAfterSeconds: null,
+  peakConcurrency: null,
+};
+
+const EMPTY_TELEMETRY: Telemetry = {
+  delegations: [],
+  batches: [],
+  integrationConflicts: 0,
+  efforts: [],
+  breakdown: EMPTY_BREAKDOWN,
+  verificationFailed: 0,
+  verificationRefused: 0,
+  workerFailures: [],
+};
+
+/**
+ * Highest number of workers alive at once, from start/completion timestamps.
+ *
+ * A sweep over +1/-1 boundary events. Ties are resolved by processing
+ * completions first, so two adjacent-but-not-overlapping workers never read as
+ * concurrent.
+ */
+export function peakOverlap(spans: Array<{ start: number; end: number }>): number {
+  const points: Array<[number, number]> = [];
+  for (const span of spans) {
+    points.push([span.start, 1]);
+    points.push([span.end, -1]);
+  }
+  points.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+
+  let live = 0;
+  let peak = 0;
+  for (const [, delta] of points) {
+    live += delta;
+    peak = Math.max(peak, live);
+  }
+  return peak;
 }
 
 /** Delegation and batch telemetry appended while this run was executing. */
-function readTelemetry(eventsFile: string, offset: number): Telemetry {
+export function readTelemetry(
+  eventsFile: string,
+  offset: number,
+  runStartMs: number,
+  runEndMs: number,
+): Telemetry {
   const delegations: DelegationRecord[] = [];
   const batches: RunRecord["batches"] = [];
   const efforts: string[] = [];
+  const workerFailures: string[] = [];
   let integrationConflicts = 0;
+  let verificationFailed = 0;
+  let verificationRefused = 0;
 
-  if (!fs.existsSync(eventsFile)) {
-    return { delegations, batches, integrationConflicts, efforts };
-  }
+  // Timestamps, for the overhead decomposition.
+  let batchStarted: number | null = null;
+  let batchCompleted: number | null = null;
+  let lastWorktreeCreated: number | null = null;
+  const workerStarts = new Map<string, number>();
+  const spans: Array<{ start: number; end: number }> = [];
+
+  if (!fs.existsSync(eventsFile)) return EMPTY_TELEMETRY;
 
   const content = fs.readFileSync(eventsFile, "utf8").slice(offset);
   for (const line of content.split("\n")) {
@@ -242,6 +348,8 @@ function readTelemetry(eventsFile: string, offset: number): Telemetry {
     } catch {
       continue;
     }
+    const at = Date.parse(String(parsed.timestamp ?? ""));
+    const stamp = Number.isNaN(at) ? null : at;
 
     // A single `delegate_task` call is recorded without a `type` field and
     // carries full usage; batch workers are recorded as typed events instead.
@@ -264,6 +372,30 @@ function readTelemetry(eventsFile: string, offset: number): Telemetry {
           taskCount: Number(parsed.taskCount ?? 0),
           maxParallel: Number(parsed.maxParallel ?? 1),
         });
+        if (stamp !== null && batchStarted === null) batchStarted = stamp;
+        break;
+
+      case "batch.completed":
+        if (stamp !== null) batchCompleted = stamp;
+        break;
+
+      case "worktree.created":
+        if (stamp !== null) {
+          lastWorktreeCreated = Math.max(lastWorktreeCreated ?? stamp, stamp);
+        }
+        break;
+
+      case "worker.started":
+        if (stamp !== null) workerStarts.set(String(parsed.taskId), stamp);
+        break;
+
+      case "worker.failed":
+        workerFailures.push(String(parsed.reason ?? "unknown"));
+        break;
+
+      case "verification.completed":
+        verificationFailed += Number(parsed.failed ?? 0);
+        verificationRefused += Number(parsed.refused ?? 0);
         break;
 
       case "task.queued":
@@ -271,7 +403,11 @@ function readTelemetry(eventsFile: string, offset: number): Telemetry {
         efforts.push(String(parsed.effort ?? ""));
         break;
 
-      case "worker.completed":
+      case "worker.completed": {
+        const started = workerStarts.get(String(parsed.taskId));
+        if (stamp !== null && started !== undefined) {
+          spans.push({ start: started, end: stamp });
+        }
         delegations.push({
           effort: String(parsed.effort ?? ""),
           verdict: String(parsed.verdict ?? ""),
@@ -291,6 +427,7 @@ function readTelemetry(eventsFile: string, offset: number): Telemetry {
               : null),
         });
         break;
+      }
 
       case "integration.conflict":
         integrationConflicts += 1;
@@ -301,7 +438,36 @@ function readTelemetry(eventsFile: string, offset: number): Telemetry {
     }
   }
 
-  return { delegations, batches, integrationConflicts, efforts: efforts.filter(Boolean) };
+  const seconds = (from: number | null, to: number | null): number | null =>
+    from === null || to === null ? null : Math.round(((to - from) / 1000) * 10) / 10;
+
+  const firstWorkerStart =
+    spans.length > 0 ? Math.min(...spans.map((s) => s.start)) : null;
+  const lastWorkerEnd = spans.length > 0 ? Math.max(...spans.map((s) => s.end)) : null;
+
+  const breakdown: Breakdown = {
+    supervisorBeforeSeconds: seconds(runStartMs, batchStarted),
+    worktreeSetupSeconds: seconds(batchStarted, lastWorktreeCreated),
+    workerWindowSeconds: seconds(firstWorkerStart, lastWorkerEnd),
+    slowestWorkerSeconds:
+      spans.length > 0
+        ? Math.round(Math.max(...spans.map((s) => (s.end - s.start) / 1000)) * 10) / 10
+        : null,
+    integrationSeconds: seconds(lastWorkerEnd, batchCompleted),
+    supervisorAfterSeconds: seconds(batchCompleted, runEndMs),
+    peakConcurrency: spans.length > 0 ? peakOverlap(spans) : null,
+  };
+
+  return {
+    delegations,
+    batches,
+    integrationConflicts,
+    efforts: efforts.filter(Boolean),
+    breakdown,
+    verificationFailed,
+    verificationRefused,
+    workerFailures,
+  };
 }
 
 async function runArm(
@@ -323,8 +489,27 @@ async function runArm(
 
   const eventsOffset = fs.existsSync(eventsFile) ? fs.statSync(eventsFile).size : 0;
 
+  // A fixture with N independent streams needs N concurrent workers before
+  // parallel execution can show what it is worth; the shipped default of 3
+  // would otherwise queue the rest and cap the speedup at 3x regardless of
+  // fixture size. This is a non-default configuration and is recorded in the
+  // results file so no reader has to assume otherwise. It changes nothing for
+  // the solo arms, which have no workers.
+  const maxParallel = armSpec.delegation
+    ? Math.min(Math.max(task.streams ?? 3, 1), 8)
+    : null;
+
   const config = armSpec.delegation
-    ? { mcp_servers: { [ORCHESTRATOR_NAME]: { env: { SOL_LUNA_EVENTS: eventsFile } } } }
+    ? {
+        mcp_servers: {
+          [ORCHESTRATOR_NAME]: {
+            env: {
+              SOL_LUNA_EVENTS: eventsFile,
+              SOL_LUNA_MAX_PARALLEL: String(maxParallel),
+            },
+          },
+        },
+      }
     : { mcp_servers: { [ORCHESTRATOR_NAME]: { enabled: false } } };
 
   const codex = new Codex({ config });
@@ -367,7 +552,8 @@ async function runArm(
     clearTimeout(timer);
   }
 
-  const durationSeconds = Math.round((Date.now() - start) / 1000);
+  const runEndMs = Date.now();
+  const durationSeconds = Math.round((runEndMs - start) / 1000);
 
   // --- Objective grading, performed by the harness --------------------------
   const grades: GradeOutcome[] = [];
@@ -403,8 +589,8 @@ async function runArm(
     (task.mutation ? mutationCaught === true : true);
 
   const telemetry: Telemetry = armSpec.delegation
-    ? readTelemetry(eventsFile, eventsOffset)
-    : { delegations: [], batches: [], integrationConflicts: 0, efforts: [] };
+    ? readTelemetry(eventsFile, eventsOffset, start, runEndMs)
+    : EMPTY_TELEMETRY;
 
   const workerEfforts = telemetry.efforts;
 
@@ -416,6 +602,9 @@ async function runArm(
     suite,
     taskId: task.id,
     taskCategory: task.category,
+    tier: task.tier ?? null,
+    streams: task.streams ?? null,
+    maxParallelConfigured: maxParallel,
     arm,
     armLabel: armSpec.label,
     supervisorEffort: armSpec.effort,
@@ -432,6 +621,10 @@ async function runArm(
     workerEfforts,
     batches: telemetry.batches,
     integrationConflicts: telemetry.integrationConflicts,
+    breakdown: telemetry.breakdown,
+    verificationFailed: telemetry.verificationFailed,
+    verificationRefused: telemetry.verificationRefused,
+    workerFailures: telemetry.workerFailures,
     agentError,
   };
 }
@@ -466,7 +659,9 @@ function parseArgs(argv: string[]): {
         ? arms
         : suite === "parallel"
           ? ["solo-high", "solo-xhigh", "seq", "par"]
-          : ["solo-high", "seq"],
+          : suite === "scale"
+            ? ["solo-high", "adaptive", "par-forced"]
+            : ["solo-high", "seq"],
   };
 }
 
@@ -528,7 +723,7 @@ async function main(): Promise<void> {
           resultsFile,
           JSON.stringify(
             {
-              schema: 2,
+              schema: 3,
               suite,
               supervisorModel: SUPERVISOR_MODEL,
               startedAt: stamp,
@@ -549,7 +744,11 @@ async function main(): Promise<void> {
   console.log(`\nWrote ${records.length} records to ${resultsFile}`);
 }
 
-main().catch((error: unknown) => {
-  console.error("Benchmark failed:", error);
-  process.exit(1);
-});
+// Only run when invoked as a script; the telemetry helpers above are imported
+// by tests, which must not start a benchmark.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error: unknown) => {
+    console.error("Benchmark failed:", error);
+    process.exit(1);
+  });
+}

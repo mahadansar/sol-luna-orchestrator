@@ -76,10 +76,23 @@ fail in its starting state and pass with the reference solution. Run it after
 touching anything in `src/bench/tasks.ts` or `src/bench/parallel-tasks.ts`, and
 add a reference solution (`src/bench/parallel-solutions.ts`) for any new task.
 
-There are two suites. `--suite micro` covers small single-file tasks, where
+There are three suites. `--suite micro` covers small single-file tasks, where
 delegation overhead is expected to hurt; `--suite parallel` covers projects with
-three independent modules. Keep both: the micro suite's negative result is a
-finding, not an embarrassment to be tuned away.
+three independent modules; `--suite scale` covers four- and six-stream projects
+plus a coupled control, and exists to test whether orchestration ever overtakes a
+supervisor working alone. Keep all three: the negative results are findings, not
+embarrassments to be tuned away.
+
+`npm run bench:analyze` reports the crossover verdict across every committed
+results file and spends nothing. Add a fixture to `src/bench/scale-tasks.ts` with
+a matching entry in `src/bench/scale-solutions.ts`; `src/bench.test.ts` will fail
+if a fixture's stream count, module list, objective and reference solution
+disagree, or if it forgets to mark its own test files immutable.
+
+Orchestrated arms are given `SOL_LUNA_MAX_PARALLEL` equal to the fixture's stream
+count so that stream count, rather than the shipped default of 3, is the variable
+under test. That value is recorded per run. Do not change production defaults to
+improve a benchmark number.
 
 Do not report benchmark numbers that the committed raw results in
 `bench/results/` do not support.
