@@ -126,13 +126,76 @@ export interface TaskWorktree {
 }
 
 /**
+ * Serializes every operation that mutates `.git/worktrees`.
+ *
+ * The worktrees themselves are isolated, but registering one is not: `git
+ * worktree add` walks the shared metadata directory, and a concurrent `add`
+ * that has created `.git/worktrees/<id>/` but not yet written `commondir`
+ * inside it makes the other process abort. Measured on Windows with eight
+ * concurrent creations:
+ *
+ *     fatal: failed to read .git/worktrees/t5-.../commondir: No error
+ *
+ * The victim's task then failed with no result at all. `worktree remove` and
+ * `worktree prune` rewrite the same directory and are serialized for the same
+ * reason.
+ *
+ * A single queue rather than one per repository: these operations take
+ * milliseconds, at most eight ever queue behind each other, and a global queue
+ * cannot be defeated by two batches running against the same repository. It
+ * covers setup and teardown only — worker execution never passes through here,
+ * so parallelism where it actually costs time is untouched.
+ *
+ * Nothing guarded below calls another guarded function, so this cannot deadlock.
+ */
+class SerialQueue {
+  private tail: Promise<unknown> = Promise.resolve();
+  /** Highest number of operations that have ever been inside the queue at once. */
+  private inFlight = 0;
+  private peak = 0;
+
+  run<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.tail.then(async () => {
+      this.inFlight += 1;
+      this.peak = Math.max(this.peak, this.inFlight);
+      try {
+        return await operation();
+      } finally {
+        this.inFlight -= 1;
+      }
+    });
+    // Keep the chain alive even when a caller's operation rejects.
+    this.tail = result.catch(() => undefined);
+    return result;
+  }
+
+  /** Test-visible proof that guarded operations never overlapped. */
+  peakOverlap(): number {
+    return this.peak;
+  }
+}
+
+export const worktreeMetadataQueue = new SerialQueue();
+
+/**
  * Create an isolated worktree for one task.
  *
- * On any failure partway through, whatever was created is torn down before the
- * error propagates, so a half-built worktree never survives to confuse the next
- * run.
+ * Serialized against every other worktree registration — see
+ * `worktreeMetadataQueue`. On any failure partway through, whatever was created
+ * is torn down before the error propagates, so a half-built worktree never
+ * survives to confuse the next run.
  */
-export async function createTaskWorktree(
+export function createTaskWorktree(
+  base: WorktreeBase,
+  taskId: string,
+  mainWorkspace: string,
+): Promise<TaskWorktree> {
+  return worktreeMetadataQueue.run(() =>
+    createTaskWorktreeUnsynchronized(base, taskId, mainWorkspace),
+  );
+}
+
+async function createTaskWorktreeUnsynchronized(
   base: WorktreeBase,
   taskId: string,
   mainWorkspace: string,
@@ -253,10 +316,20 @@ export type CleanupReason = "success" | "failure" | "cancelled";
  * Linked directories are unlinked first: on Windows a junction that git deletes
  * recursively would take the real `node_modules` with it.
  */
-export async function cleanupWorktree(
+export function cleanupWorktree(
   worktree: TaskWorktree,
   reason: CleanupReason,
   keepPolicy = KEEP_WORKTREES,
+): Promise<{ removed: boolean; keptAt?: string; error?: string }> {
+  return worktreeMetadataQueue.run(() =>
+    cleanupWorktreeUnsynchronized(worktree, reason, keepPolicy),
+  );
+}
+
+async function cleanupWorktreeUnsynchronized(
+  worktree: TaskWorktree,
+  reason: CleanupReason,
+  keepPolicy: typeof KEEP_WORKTREES,
 ): Promise<{ removed: boolean; keptAt?: string; error?: string }> {
   const keep =
     keepPolicy === "always" || (keepPolicy === "onfailure" && reason !== "success");
@@ -303,7 +376,11 @@ export async function unlinkSharedDirectories(
  * Only touches paths under this project's own runtime directory, so a user's
  * own worktrees are never candidates.
  */
-export async function pruneStaleWorktrees(repoRoot: string): Promise<string[]> {
+export function pruneStaleWorktrees(repoRoot: string): Promise<string[]> {
+  return worktreeMetadataQueue.run(() => pruneStaleWorktreesUnsynchronized(repoRoot));
+}
+
+async function pruneStaleWorktreesUnsynchronized(repoRoot: string): Promise<string[]> {
   const removed: string[] = [];
   const ours = path.join(repoRoot, ...WORKTREE_DIR.split("/"));
 

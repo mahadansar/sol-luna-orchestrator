@@ -8,14 +8,21 @@
  * are git's and the filesystem's, not a mock's.
  */
 import assert from "node:assert/strict";
+import { readdirSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { BatchRejectedError, runBatch } from "./batch.js";
-import { MAX_PARALLEL, MAX_PARALLEL_LIMIT, clampParallel } from "./config.js";
+import {
+  MAX_PARALLEL,
+  MAX_PARALLEL_LIMIT,
+  WORKTREE_DIR,
+  clampParallel,
+} from "./config.js";
 import {
   delegateTaskInputSchema,
+  type BatchOutput,
   type DelegateTaskInput,
   type DelegateTaskOutput,
 } from "./contract.js";
@@ -32,6 +39,7 @@ import {
   linkSharedDirectories,
   prepareWorktreeBase,
   pruneStaleWorktrees,
+  worktreeMetadataQueue,
   WorktreeUnavailableError,
 } from "./worktree.js";
 
@@ -141,6 +149,42 @@ const cleanupRepo = async (dir: string): Promise<void> => {
     .catch(() => undefined);
 };
 
+/**
+ * Render a batch result as per-task evidence.
+ *
+ * A CI failure that says only `1 !== 2` costs an entire investigation cycle to
+ * turn into a hypothesis. Attaching this to the count assertions means the log
+ * already names which task fell over and why.
+ *
+ * Objectives and file paths are fixture data, so there is nothing sensitive to
+ * withhold; worker output is not included.
+ */
+function describeBatch(result: BatchOutput): string {
+  const lines = [
+    `batch ${result.batchId}: ${result.passed} passed / ${result.failed} failed ` +
+      `of ${result.taskCount} (mode ${result.mode}, maxParallel ${result.maxParallel}, ` +
+      `integrated ${result.integrated})`,
+  ];
+  for (const task of result.tasks) {
+    lines.push(
+      `  ${task.taskId}: state=${task.state} verdict=${task.result?.verdict ?? "none"} ` +
+        `changed=[${task.changedFiles.join(", ")}] ` +
+        `worktree=${task.worktreePath ?? "removed"}`,
+    );
+    if (task.error) lines.push(`      error: ${task.error}`);
+    for (const warning of task.warnings) lines.push(`      warning: ${warning}`);
+  }
+  if (result.integrationConflicts.length > 0) {
+    lines.push(
+      `  integration conflicts: ${result.integrationConflicts
+        .map((conflict) => `${conflict.path} (${conflict.tasks.join(" + ")})`)
+        .join(", ")}`,
+    );
+  }
+  for (const warning of result.warnings) lines.push(`  batch warning: ${warning}`);
+  return lines.join("\n");
+}
+
 const makeTask = (overrides: Partial<DelegateTaskInput> = {}): DelegateTaskInput =>
   delegateTaskInputSchema.parse({
     objective: "Do a bounded piece of work in the assigned module.",
@@ -176,30 +220,46 @@ const makeOutput = (overrides: Partial<DelegateTaskOutput> = {}): DelegateTaskOu
   }) as DelegateTaskOutput;
 
 /**
+ * The module a task owns, taken from its declared scope: `src/auth/**` -> auth.
+ *
+ * Fixtures key off this rather than off the order the executor happens to be
+ * called in. Workers run concurrently, so invocation order is not input order —
+ * a fixture that assumed it was would silently attribute one task's behaviour to
+ * another and fail for a reason that has nothing to do with the code under test.
+ */
+function moduleOf(task: DelegateTaskInput): string {
+  const scope = task.allowedFiles[0] ?? "";
+  const segments = scope.split("/").filter((part) => part && !part.includes("*"));
+  return segments.at(-1) ?? task.objective;
+}
+
+/**
  * An executor that writes the files it claims to have written, so integration
  * and conflict detection are exercised against a real filesystem.
+ *
+ * `writes` and `fail` receive the task itself, never a scheduling index.
  */
 function fakeExecutor(options: {
-  writes?: (taskIndex: number) => Record<string, string>;
-  fail?: (taskIndex: number) => boolean;
+  writes?: (task: DelegateTaskInput) => Record<string, string>;
+  fail?: (task: DelegateTaskInput) => boolean;
   delayMs?: number;
   onConcurrency?: (active: number) => void;
 }) {
   let active = 0;
-  let call = 0;
 
   return async (
     input: DelegateTaskInput,
     execOptions: { workingDirectory: string; signal?: AbortSignal },
   ): Promise<DelegateTaskOutput> => {
-    const index = call++;
     active += 1;
     options.onConcurrency?.(active);
     try {
       await new Promise((resolve) => setTimeout(resolve, options.delayMs ?? 25));
-      if (options.fail?.(index)) throw new Error(`worker ${index} exploded`);
+      if (options.fail?.(input)) {
+        throw new Error(`worker for ${moduleOf(input)} exploded`);
+      }
 
-      const writes = options.writes?.(index) ?? {};
+      const writes = options.writes?.(input) ?? {};
       const changed: DelegateTaskOutput["filesChanged"] = [];
       for (const [relative, content] of Object.entries(writes)) {
         const target = path.join(execOptions.workingDirectory, ...relative.split("/"));
@@ -450,8 +510,8 @@ test("a parallel batch isolates workers and integrates disjoint results", async 
           onConcurrency: (active) => {
             peak = Math.max(peak, active);
           },
-          writes: (index): Record<string, string> =>
-            index === 0
+          writes: (task): Record<string, string> =>
+            moduleOf(task) === "auth"
               ? { "src/auth/login.ts": "export const login = () => true;\n" }
               : { "src/payments/charge.ts": "export const charge = () => true;\n" },
         }),
@@ -459,10 +519,10 @@ test("a parallel batch isolates workers and integrates disjoint results", async 
     );
 
     assert.equal(result.mode, "parallel");
-    assert.equal(result.passed, 2);
-    assert.equal(result.failed, 0);
-    assert.deepEqual(result.integrationConflicts, []);
-    assert.equal(result.integrated, true);
+    assert.equal(result.passed, 2, describeBatch(result));
+    assert.equal(result.failed, 0, describeBatch(result));
+    assert.deepEqual(result.integrationConflicts, [], describeBatch(result));
+    assert.equal(result.integrated, true, describeBatch(result));
 
     // Both workers really ran at once.
     assert.ok(peak > 1, `expected concurrent execution, peak was ${peak}`);
@@ -477,6 +537,185 @@ test("a parallel batch isolates workers and integrates disjoint results", async 
       await fs.readFile(path.join(repo, "src", "payments", "charge.ts"), "utf8"),
       /charge/,
     );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// --- Regression: concurrent worktree registration ---------------------------
+//
+// `git worktree add` walks the shared `.git/worktrees` directory. Two running at
+// once made one abort reading the other's half-written metadata:
+//
+//     fatal: failed to read .git/worktrees/t5-.../commondir: No error
+//
+// The victim's task ended with no result at all, so a batch that should have
+// reported 2 passed reported 1. It reproduced roughly once per thousand
+// creations, which is exactly often enough to fail CI and not often enough to
+// fail locally. These tests pin the invariant rather than the odds.
+
+test("worktree registration never overlaps, however concurrently it is requested", async () => {
+  const repo = await makeRepo();
+  try {
+    const base = await prepareWorktreeBase(repo, [["src/**"]]);
+
+    // Fan out deliberately: this is the exact call pattern that used to race.
+    const worktrees = await Promise.all(
+      Array.from({ length: 6 }, (_, index) =>
+        createTaskWorktree(base, `race-${index}`, repo),
+      ),
+    );
+
+    assert.equal(worktrees.length, 6);
+    assert.equal(
+      new Set(worktrees.map((worktree) => worktree.path)).size,
+      6,
+      "each task must get its own worktree",
+    );
+    for (const worktree of worktrees) {
+      assert.ok(
+        await fs.stat(path.join(worktree.path, "README.md")).catch(() => null),
+        `${worktree.taskId} was registered but not checked out`,
+      );
+    }
+
+    assert.equal(
+      worktreeMetadataQueue.peakOverlap(),
+      1,
+      "two worktree metadata operations ran at the same time",
+    );
+
+    for (const worktree of worktrees) await cleanupWorktree(worktree, "success", "never");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("a batch builds every worktree before any worker starts, then runs them together", async () => {
+  const repo = await makeRepo();
+  const worktreeRoot = path.join(repo, ...WORKTREE_DIR.split("/"));
+  try {
+    let peak = 0;
+    // How many worktrees existed the moment the first worker began. Under the
+    // old design a worker could start while later worktrees were still being
+    // created — which is precisely what made the creations concurrent.
+    let treesAtFirstWorker = -1;
+
+    const result = await runBatch(
+      ["alpha", "beta", "gamma"].map((name) =>
+        makeTask({
+          objective: `Implement the ${name} module fully.`,
+          allowedFiles: [`src/${name}/**`],
+        }),
+      ),
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        executor: fakeExecutor({
+          onConcurrency: (active) => {
+            peak = Math.max(peak, active);
+            if (treesAtFirstWorker < 0) {
+              treesAtFirstWorker = readdirSync(worktreeRoot).length;
+            }
+          },
+          writes: (task) => ({ [`src/${moduleOf(task)}/mod.ts`]: "x\n" }),
+          delayMs: 60,
+        }),
+      },
+    );
+
+    assert.equal(result.passed, 3, describeBatch(result));
+    assert.equal(result.failed, 0, describeBatch(result));
+
+    assert.equal(
+      treesAtFirstWorker,
+      3,
+      `all worktrees must exist before the first worker starts; saw ${treesAtFirstWorker}`,
+    );
+
+    // Setup was serialized...
+    assert.equal(worktreeMetadataQueue.peakOverlap(), 1);
+    // ...and the workers themselves were not. All three overlapped, which is
+    // only possible if none of them was still waiting for a worktree.
+    assert.equal(
+      peak,
+      Math.min(3, MAX_PARALLEL),
+      `workers should run together; peak was ${peak}`,
+    );
+
+    for (const name of ["alpha", "beta", "gamma"]) {
+      assert.ok(
+        await fs.stat(path.join(repo, "src", name, "mod.ts")).catch(() => null),
+        `${name} did not integrate\n${describeBatch(result)}`,
+      );
+    }
+
+    assert.deepEqual(
+      await fs.readdir(worktreeRoot).catch(() => []),
+      [],
+      "worktrees should be gone after a clean batch",
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("a worktree that cannot be created fails only its own task", async () => {
+  const repo = await makeRepo();
+  try {
+    // Serializing setup must not turn one task's problem into a batch-wide one.
+    // A *locked* worktree whose directory is missing is the one case git refuses
+    // to overwrite with a single `--force`, which gives a deterministic
+    // per-task creation failure rather than a contrived one.
+    const secondTaskId = "t2-implement-the-duo-module";
+    const blocked = path.join(repo, ...WORKTREE_DIR.split("/"), secondTaskId);
+    await fs.mkdir(path.dirname(blocked), { recursive: true });
+    await runGit(["worktree", "add", "--detach", blocked, "HEAD"], repo);
+    await runGit(["worktree", "lock", blocked], repo);
+    await fs.rm(blocked, { recursive: true, force: true });
+
+    const result = await runBatch(
+      ["solo", "duo"].map((name) =>
+        makeTask({
+          objective: `Implement the ${name} module.`,
+          allowedFiles: [`src/${name}/**`],
+        }),
+      ),
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        executor: fakeExecutor({
+          writes: (task) => ({ [`src/${moduleOf(task)}/mod.ts`]: "x\n" }),
+        }),
+      },
+    );
+
+    // If the id scheme ever changes this assertion fails loudly, rather than the
+    // test quietly passing while blocking nothing.
+    assert.equal(
+      result.tasks[1]?.taskId,
+      secondTaskId,
+      `setup targeted the wrong task\n${describeBatch(result)}`,
+    );
+
+    assert.equal(result.passed, 1, describeBatch(result));
+    assert.equal(result.failed, 1, describeBatch(result));
+    assert.equal(result.tasks[1]?.state, "failed", describeBatch(result));
+    assert.match(
+      result.tasks[1]?.error ?? "",
+      /Could not create an isolated worktree/,
+      describeBatch(result),
+    );
+
+    // The healthy task still ran and its work still landed.
+    assert.equal(result.tasks[0]?.result?.verdict, "PASS", describeBatch(result));
+    assert.ok(
+      await fs.stat(path.join(repo, "src", "solo", "mod.ts")).catch(() => null),
+      describeBatch(result),
+    );
+
+    await runGit(["worktree", "unlock", blocked], repo).catch(() => undefined);
+    await runGit(["worktree", "prune"], repo).catch(() => undefined);
   } finally {
     await cleanupRepo(repo);
   }
@@ -599,10 +838,10 @@ test("workers that touch the same file block integration instead of overwriting"
         workingDirectory: repo,
         allowOverlappingScopes: true,
         executor: fakeExecutor({
-          writes: (index): Record<string, string> =>
-            index === 0
-              ? { "src/auth/a.ts": "a\n", "shared/config.ts": "from-worker-0\n" }
-              : { "src/payments/b.ts": "b\n", "shared/config.ts": "from-worker-1\n" },
+          writes: (task): Record<string, string> =>
+            moduleOf(task) === "auth"
+              ? { "src/auth/a.ts": "a\n", "shared/config.ts": "from-auth\n" }
+              : { "src/payments/b.ts": "b\n", "shared/config.ts": "from-payments\n" },
         }),
       },
     );
@@ -655,24 +894,35 @@ test("one worker failing does not discard the others", async () => {
         mode: "parallel",
         workingDirectory: repo,
         executor: fakeExecutor({
-          fail: (index) => index === 1,
-          writes: (index) => ({
-            [`src/${["one", "two", "three"][index]}/mod.ts`]: "x\n",
-          }),
+          // Keyed on the task's own scope: whichever worker runs first, it is
+          // always the `two` task that fails and always `one` that succeeds.
+          fail: (task) => moduleOf(task) === "two",
+          writes: (task) => ({ [`src/${moduleOf(task)}/mod.ts`]: "x\n" }),
         }),
       },
     );
 
-    assert.equal(result.taskCount, 3);
-    assert.equal(result.tasks.filter((task) => task.state === "failed").length, 1);
-    assert.equal(result.tasks.filter((task) => task.state === "completed").length, 2);
+    assert.equal(result.taskCount, 3, describeBatch(result));
+    assert.equal(
+      result.tasks.filter((task) => task.state === "failed").length,
+      1,
+      describeBatch(result),
+    );
+    assert.equal(
+      result.tasks.filter((task) => task.state === "completed").length,
+      2,
+      describeBatch(result),
+    );
     assert.match(
       result.tasks.find((task) => task.state === "failed")?.error ?? "",
       /exploded/,
     );
 
     // The successful work is still integrated.
-    assert.ok(await fs.stat(path.join(repo, "src", "one", "mod.ts")).catch(() => null));
+    assert.ok(
+      await fs.stat(path.join(repo, "src", "one", "mod.ts")).catch(() => null),
+      describeBatch(result),
+    );
     assert.ok(
       result.reviewChecklist.some((item) => /Partial success/.test(item)),
       "partial success must be called out, not buried",

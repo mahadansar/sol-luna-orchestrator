@@ -330,10 +330,51 @@ async function runParallel(
     );
   }
 
+  // --- Setup: build every isolated workspace before any worker starts ------
+  //
+  // Deliberately a plain sequential loop. `git worktree add` mutates metadata
+  // shared by the whole repository, and running two at once makes one of them
+  // abort reading the other's half-written `commondir`. The operations are
+  // milliseconds each, so serializing them costs nothing measurable, and doing
+  // it here means a worktree that cannot be created is discovered before any
+  // model tokens are spent on the rest of the batch.
+  //
+  // `createTaskWorktree` is independently serialized, so this ordering is a
+  // scheduling choice rather than the safety mechanism.
+  for (const task of running) {
+    if (signal?.aborted) {
+      markCancelled(batchId, task);
+      continue;
+    }
+    try {
+      task.worktree = await createTaskWorktreeTracked(batchId, base, task, workspace);
+      task.result.warnings.push(...task.worktree.warnings);
+    } catch (error) {
+      // Partial failure is preserved: this task is marked failed and the rest
+      // of the batch still runs.
+      task.state = "failed";
+      task.result.state = "failed";
+      task.result.error = `Could not create an isolated worktree: ${(error as Error).message}`;
+      emitEvent({
+        type: "worker.failed",
+        batchId,
+        taskId: task.taskId,
+        reason: task.result.error,
+      });
+    }
+  }
+
+  // --- Execution: the expensive part, genuinely concurrent -----------------
+  //
   // Each task takes a slot from the shared semaphore, so this respects
-  // SOL_LUNA_MAX_PARALLEL without a second scheduler.
+  // SOL_LUNA_MAX_PARALLEL without a second scheduler. Every workspace already
+  // exists, so workers start together instead of queueing behind each other's
+  // setup.
   await Promise.all(
     running.map(async (task) => {
+      const worktree = task.worktree;
+      if (!worktree || task.state === "failed" || task.state === "cancelled") return;
+
       if (signal?.aborted) {
         markCancelled(batchId, task);
         return;
@@ -345,25 +386,9 @@ async function runParallel(
           return;
         }
 
-        try {
-          task.worktree = await createTaskWorktreeTracked(batchId, base, task, workspace);
-        } catch (error) {
-          task.state = "failed";
-          task.result.state = "failed";
-          task.result.error = `Could not create an isolated worktree: ${(error as Error).message}`;
-          emitEvent({
-            type: "worker.failed",
-            batchId,
-            taskId: task.taskId,
-            reason: task.result.error,
-          });
-          return;
-        }
+        await runOne(batchId, task, worktree.path, run, signal);
 
-        task.result.warnings.push(...task.worktree.warnings);
-        await runOne(batchId, task, task.worktree.path, run, signal);
-
-        const outcome = await readWorktreeOutcome(task.worktree);
+        const outcome = await readWorktreeOutcome(worktree);
         task.result.warnings.push(...outcome.warnings);
         task.result.changedFiles = outcome.changes.files.map((file) => file.path);
         task.result.diff = truncateDiff(outcome.changes.diff);

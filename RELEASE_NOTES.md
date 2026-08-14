@@ -7,16 +7,30 @@ when the tag is created.
 
 ## sol-luna-orchestrator v0.5.1
 
-A patch release covering release infrastructure and documentation. **No
-orchestration or runtime behaviour changed.** The published code is functionally
-identical to 0.5.0 — upgrading gains you nothing but the version number.
+A patch release fixing a race in parallel delegation, plus release
+infrastructure and documentation.
 
 ```bash
 npm install -g sol-luna-orchestrator
 sol-luna-orchestrator init
 ```
 
-### What changed
+### Fixed
+
+**A parallel batch could fail a task that had nothing wrong with it.** Worker
+worktrees were created concurrently, and `git worktree add` walks metadata
+shared by the whole repository, so one creation could abort part-way through
+reading another's half-written entry. The affected task came back with no result
+and the batch reported a failure that retrying the work would not have fixed.
+This was present in 0.5.0; upgrade if you use `mode: "parallel"`.
+
+Worktree setup is now serialized and a batch builds every worktree before any
+worker starts. **Worker execution is unchanged and still fully concurrent** — in
+fact more so, since workers no longer queue behind each other's setup while
+holding a concurrency slot. An eight-task batch now reaches eight concurrent
+workers where it previously peaked at three to six.
+
+### What else changed
 
 - **npm Trusted Publishing.** A new `publish.yml` workflow publishes from a
   version tag using GitHub Actions OIDC. There is no npm token in the workflow,
@@ -36,10 +50,11 @@ sol-luna-orchestrator init
 
 ### Unchanged
 
-Delegation, worker isolation, scope enforcement, worktrees, verification, the
-CLI and telemetry are all exactly as they were in 0.5.0. The benchmark findings
-stand: orchestration has not beaten the supervisor working alone on any fixture
-in the suite, and no token or cost saving is claimed.
+Delegation, worker isolation, scope enforcement, verification, the CLI and
+telemetry behave exactly as they did in 0.5.0 — the only runtime change is when
+worktrees are created, not what workers do. The benchmark findings stand:
+orchestration has not beaten the supervisor working alone on any fixture in the
+suite, and no token or cost saving is claimed.
 
 ### Links
 

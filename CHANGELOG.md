@@ -8,8 +8,32 @@ All notable changes to this project are documented here. Format follows
 
 ## [0.5.1] - 2026-08-14
 
-Release infrastructure and documentation. **No orchestration or runtime
-behaviour changed** — the published code is functionally identical to 0.5.0.
+Release infrastructure, documentation, and a fix for a race in parallel
+delegation.
+
+### Fixed
+
+- **Parallel batches could fail a task that had nothing wrong with it.** Worker
+  worktrees were created concurrently, but `git worktree add` walks the shared
+  `.git/worktrees` metadata directory, so one creation could abort reading
+  another's half-written entry:
+
+  ```
+  fatal: failed to read .git/worktrees/<other-task>/commondir: No error
+  ```
+
+  The affected task ended with no result, and the batch reported a failure that
+  no retry of the work would have fixed. Present in 0.5.0. Every operation that
+  mutates that directory — create, remove, prune — is now serialized, and a
+  batch builds all of its worktrees before any worker starts.
+
+  Reproduced roughly once per thousand worktree creations, so a run of two or
+  three workers was rarely affected and a large batch on a loaded machine more
+  often. Worker execution itself is unchanged and still fully concurrent.
+
+- Parallel batches now reach their configured concurrency reliably. Workers
+  previously queued behind each other's worktree setup while holding a slot: an
+  eight-task batch peaked at three to six concurrent workers instead of eight.
 
 ### Added
 
