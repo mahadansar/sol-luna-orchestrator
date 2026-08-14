@@ -1,5 +1,6 @@
 # sol-luna-orchestrator
 
+[![npm](https://img.shields.io/npm/v/sol-luna-orchestrator)](https://www.npmjs.com/package/sol-luna-orchestrator)
 [![CI](https://github.com/mahadansar/sol-luna-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/mahadansar/sol-luna-orchestrator/actions/workflows/ci.yml)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.12-brightgreen)](#requirements)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -581,13 +582,22 @@ low-effort model will cheerfully claim it has a tool it does not have.
 
 Not built yet — listed as intent, not as features:
 
+- **A larger benchmark suite**, with realistic fixtures big enough to investigate
+  whether a break-even point between Sol-only and orchestrated execution exists
+  at all. Every fixture measured so far sits below any such point, so the suite
+  cannot see it; that is a gap in the measurement, not evidence of a crossover
+  waiting to be found.
+- **Optional worker continuation** — letting the supervisor resume an existing
+  Luna thread for bounded follow-up or revision work instead of always starting a
+  fresh worker. Supervision, file scope and the no-recursive-delegation guarantee
+  would have to hold for the resumed turn exactly as they do for the first.
+- **Sandboxed verification** — investigating whether verification commands can
+  run inside the Codex sandbox rather than in the orchestrator's own process.
+  Today they run beside it, with your user's permissions; see
+  [Security](#security). Whether this is achievable depends on upstream Codex
+  capabilities and is not committed to.
 - Automatic retry with effort escalation, driven by `previousAttempts`
-- A larger benchmark suite with fixtures big enough to locate the break-even
-  point between solo and orchestrated execution
-- Optional worker continuation (resuming a worker thread for follow-up work)
-- Verification executed inside the Codex sandbox rather than beside it
 - Live end-to-end verification on Linux and macOS
-- Publishing to npm
 
 ## License
 

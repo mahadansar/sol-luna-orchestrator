@@ -6,6 +6,29 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-14
+
+Release infrastructure and documentation. **No orchestration or runtime
+behaviour changed** — the published code is functionally identical to 0.5.0.
+
+### Added
+
+- `.github/workflows/publish.yml`: npm publication from a version tag via npm
+  Trusted Publishing (OIDC). No npm token, no repository secret, nothing to
+  rotate. Because the repository and package are both public, npm attaches
+  provenance automatically.
+- The publish workflow refuses to run if the pushed tag does not match
+  `package.json`, before anything is built or published.
+- A release procedure for maintainers in `CONTRIBUTING.md`.
+- npm version badge in the README, now that the package is actually on npm.
+
+### Changed
+
+- Roadmap: removed "Publishing to npm", which shipped in 0.5.0. Expanded the
+  benchmark, worker-continuation and sandboxed-verification entries to say what
+  each would actually involve — and, for the benchmark, that no crossover point
+  has been shown to exist.
+
 ## [0.5.0] - 2026-08-14
 
 Release-candidate pass: current Node support, stricter CLI argument handling, and
@@ -216,5 +239,6 @@ Initial working version, verified end to end.
 development milestones and were never tagged or published, so they have no
 release links.
 
-[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/mahadansar/sol-luna-orchestrator/releases/tag/v0.5.1
 [0.5.0]: https://github.com/mahadansar/sol-luna-orchestrator/releases/tag/v0.5.0

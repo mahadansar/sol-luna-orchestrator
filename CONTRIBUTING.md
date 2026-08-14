@@ -84,6 +84,33 @@ finding, not an embarrassment to be tuned away.
 Do not report benchmark numbers that the committed raw results in
 `bench/results/` do not support.
 
+## Releasing
+
+Maintainers only. Releases are published by GitHub Actions using
+[npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers), so there is
+no npm token in this repository, no publish secret, and nothing to rotate.
+
+1. Bump the version and update the changelog:
+   `npm version <x.y.z> --no-git-tag-version`, then edit `CHANGELOG.md` and
+   `RELEASE_NOTES.md`.
+2. Commit and push to `main`.
+3. Wait for CI to go green on `main`.
+4. Tag the release commit and push the tag:
+   `git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`.
+5. `.github/workflows/publish.yml` fires on the tag. It refuses to continue if
+   the tag does not match `package.json`, then builds, typechecks, runs the
+   tests and the MCP smoke test, and publishes via OIDC.
+6. npm attaches provenance automatically — the repository and package are both
+   public, so `--provenance` is neither passed nor needed.
+7. Create the GitHub Release from the tag, using `RELEASE_NOTES.md` as the body.
+
+Only tags matching `vX.Y.Z` trigger a publish. Branches and pull requests never
+can. Pre-release tags such as `v1.0.0-rc.1` deliberately do not match; publishing
+one is a manual decision.
+
+v0.5.0 was published manually before this was set up, so it carries no provenance
+attestation. Everything from v0.5.1 onward is published this way.
+
 ## Pull requests
 
 Say what you changed and how you verified it. If you found upstream behaviour

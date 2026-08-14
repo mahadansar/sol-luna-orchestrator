@@ -540,6 +540,72 @@ test("every Node version CI tests is at or above the declared minimum", () => {
   }
 });
 
+// --- Release workflow -------------------------------------------------------
+//
+// The publish workflow can only be exercised by pushing a tag, which is exactly
+// the wrong moment to discover a mistake in it. These assertions are cheap and
+// catch the failure modes that matter: a leaked credential, a trigger that fires
+// on a branch, or a version that disagrees with the changelog.
+
+const publishWorkflow = fs.readFileSync(
+  path.join(REPO_ROOT, ".github", "workflows", "publish.yml"),
+  "utf8",
+);
+
+test("the publish workflow carries no npm token or secret", () => {
+  for (const forbidden of [
+    "NODE_AUTH_TOKEN",
+    "NPM_TOKEN",
+    "npm_token",
+    "secrets.",
+    "//registry.npmjs.org/:_authToken",
+  ]) {
+    assert.ok(
+      !publishWorkflow.includes(forbidden),
+      `publish.yml must not reference ${forbidden} — publishing is OIDC-only`,
+    );
+  }
+});
+
+test("the publish workflow requests exactly the OIDC permissions", () => {
+  assert.match(publishWorkflow, /id-token:\s*write/);
+  assert.match(publishWorkflow, /contents:\s*read/);
+  assert.ok(
+    !/contents:\s*write/.test(publishWorkflow),
+    "the publish job does not need write access to the repository",
+  );
+});
+
+test("the publish workflow triggers on release tags only", () => {
+  assert.match(publishWorkflow, /tags:\s*\n\s*- "v\[0-9\]\+\.\[0-9\]\+\.\[0-9\]\+"/);
+  assert.ok(
+    !/^\s*(branches|pull_request):/m.test(publishWorkflow),
+    "a branch or pull_request trigger would let a merge publish",
+  );
+});
+
+test("the publish workflow guards the tag against package.json", () => {
+  assert.match(publishWorkflow, /GITHUB_REF_NAME#v/);
+  assert.match(publishWorkflow, /does not match package\.json/);
+  assert.match(publishWorkflow, /exit 1/);
+  // The guard has to come before the publish, or it guards nothing.
+  assert.ok(
+    publishWorkflow.indexOf("GITHUB_REF_NAME#v") <
+      publishWorkflow.indexOf("run: npm publish"),
+    "the version guard must run before npm publish",
+  );
+});
+
+test("the changelog documents the version being shipped", () => {
+  const changelog = fs.readFileSync(path.join(REPO_ROOT, "CHANGELOG.md"), "utf8");
+  const newest = /^## \[(\d+\.\d+\.\d+)\]/m.exec(changelog);
+  assert.equal(
+    newest?.[1],
+    manifest.version,
+    "the newest changelog entry should be the version in package.json",
+  );
+});
+
 test("the README states the same minimum Node version", () => {
   const readme = fs.readFileSync(path.join(REPO_ROOT, "README.md"), "utf8");
   const { major, minor } = minimumNode();

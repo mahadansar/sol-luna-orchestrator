@@ -1,0 +1,88 @@
+name: Publish
+
+# Publishes to npm using npm Trusted Publishing (OIDC). There is no npm token
+# anywhere in this workflow, no repository secret, and nothing to rotate or leak:
+# npm exchanges GitHub's short-lived OIDC token for publish rights, which is why
+# `id-token: write` is the one unusual permission below.
+#
+# Because this repository and the package are both public, npm attaches
+# provenance automatically for trusted publishing — `--provenance` is not passed
+# and is not needed.
+
+on:
+  push:
+    # Release tags only. Never branches, never pull requests, so a merge can
+    # never publish. Pre-release tags (v1.0.0-rc.1) deliberately do not match;
+    # publishing one is a manual decision, not an accident.
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+# One publish at a time per tag. Never cancel in progress: interrupting a publish
+# mid-flight is worse than making the second run wait.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    name: npm publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # Active LTS for releases. Node 24 ships npm 11.17+, comfortably above
+          # the 11.5.1 that trusted publishing requires.
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          # No cache in a release build: the artifact that reaches npm should be
+          # built from the lockfile, not from whatever a cache happened to hold.
+          package-manager-cache: false
+
+      # The tag is the only thing a human types during a release, so it is the
+      # thing most likely to be wrong. Refuse before anything is built or
+      # published rather than shipping a version nobody asked for.
+      - name: Verify the tag matches package.json
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(node -p "JSON.parse(require('node:fs').readFileSync('package.json','utf8')).version")"
+          echo "tag:        $TAG_VERSION"
+          echo "package.json: $PKG_VERSION"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $PKG_VERSION. Nothing was published."
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Tests
+        run: node --test dist/selftest.js dist/security.test.js dist/parallel.test.js dist/cli.test.js
+
+      - name: MCP protocol smoke test
+        run: node dist/smoke-protocol.js
+
+      - name: Inspect the package that will be published
+        run: npm pack --dry-run
+
+      # `prepublishOnly` runs `npm run verify` again here. That repetition is
+      # deliberate: the steps above exist to give a readable failure in the log,
+      # while `prepublishOnly` guarantees that no publish path — including a
+      # manual one from a laptop — can skip verification.
+      - name: Publish to npm
+        run: npm publish

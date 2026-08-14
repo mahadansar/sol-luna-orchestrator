@@ -1,6 +1,6 @@
 {
   "name": "sol-luna-orchestrator",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "MCP server that lets a supervising OpenAI Codex agent delegate bounded implementation tasks to isolated worker threads, with file-scope enforcement and independently verified results.",
   "type": "module",
   "license": "MIT",
