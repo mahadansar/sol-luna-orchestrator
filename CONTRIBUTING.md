@@ -15,10 +15,11 @@ npm test          # unit, security, parallel and CLI tests; no model calls
 npm run smoke     # MCP protocol handshake, no model calls
 ```
 
-`npm test` and `npm run smoke` spend nothing and should pass on a clean checkout.
-Everything else in the repo touches the OpenAI API and costs money — those
-scripts are named explicitly (`smoke:live`, `smoke:parallel`, `smoke:isolation`,
-`bench`).
+Build, typecheck, formatting, tests, `smoke`, `smoke:cli`, `bench:validate`,
+`bench:report`, and `bench:analyze` are deterministic and make no model calls.
+Only the explicitly live-model scripts (`smoke:live`, `smoke:parallel`,
+`smoke:isolation`, and `bench`) invoke real Codex turns; they may consume the
+quota or billing associated with your Codex setup.
 
 ## Ground rules
 
@@ -50,7 +51,7 @@ file hashes, process logs.
 | `src/events.ts`    | Structured run telemetry                                   |
 | `src/command.ts`   | Verification command parsing and policy (pure)             |
 | `src/verify.ts`    | Verification execution                                     |
-| `src/scope.ts`     | File-scope and workspace-boundary enforcement              |
+| `src/scope.ts`     | File-scope validation and workspace-boundary checks        |
 | `src/workspace.ts` | `workingDirectory` validation                              |
 | `src/contract.ts`  | Task contract and result schemas                           |
 | `src/prompt.ts`    | The worker's brief                                         |

@@ -30,6 +30,8 @@ the documentation updates its results forced.
 
 ### Changed
 
+- Normalized benchmark, adaptive-delegation, scope, effort, and telemetry wording
+  across the documentation and configuration example.
 - Clarified benchmark math and interpretation, and made adaptive delegation —
   including zero workers — explicit in the product positioning.
 - Benchmark documentation now reports the crossover investigation: **no latency
@@ -45,8 +47,8 @@ the documentation updates its results forced.
 - Corrected two claims the project's own evidence contradicts: the README
   described a benefit as spending "fewer top-tier tokens" while the benchmarks
   show orchestration using more of them in every measured configuration, and it
-  reported "12 parallel runs" with zero integration conflicts where the raw
-  records hold 5 parallel batches and 15 workers.
+  reported "12 parallel runs" with zero integration conflicts where the earlier
+  parallel-suite records hold 5 parallel batches and 15 workers.
 - Replaced "enforced file scope" with the accurate description — a declared
   scope with violations detected and reported — in the README lead, the npm
   package description and `SOL_RULES.md`. Scope checking is detective, and the

@@ -3,16 +3,17 @@
 # Merge this into ~/.codex/config.toml (or %USERPROFILE%\.codex\config.toml).
 # Replace /absolute/path/to with wherever you cloned this repository.
 
-# The supervisor. Sol at high effort is the recommended default: it decides what
-# to delegate and reviews what comes back.
+# The supervisor. Select high effort for Sol as the recommended setting: it
+# decides what to delegate and reviews what comes back. The orchestrator does not
+# control the parent session's effort.
 #
-# Supported efforts for gpt-5.6-sol: low, medium, high, xhigh, max, ultra.
+# This project's supervisor guidance covers medium, high, xhigh, and max.
 #   medium  simple but non-trivial work with obvious decomposition
-#   high    DEFAULT - architecture, decomposition, delegation, review
+#   high    RECOMMENDED - architecture, decomposition, delegation, review
 #   xhigh   difficult architecture, subtle bugs, hard decomposition
 #   max     exceptional supervisor-level problems only
-# `low` is too shallow to decompose or review well; `ultra` is not warranted by
-# anything this tool does.
+# `ultra` is a separate Codex multi-agent execution mode, not a reasoning-effort
+# value. Luna worker effort choices are medium, high, xhigh, and max.
 model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
 
@@ -35,10 +36,11 @@ startup_timeout_sec = 30
 # Optional but strongly recommended: the single best troubleshooting signal.
 # No file at all  => Codex never started the server (config or path problem).
 # "client connected" but no "delegate_task" line => the model never called it.
-SOL_LUNA_LOG = "/absolute/path/to/sol-luna-orchestrator/orchestrator.log"
+SOL_LUNA_LOG = "/home/you/.codex/sol-luna-orchestrator.log"
 
-# Optional: one JSON record per delegation (effort, verdict, duration, tokens).
-# SOL_LUNA_EVENTS = "/absolute/path/to/sol-luna-orchestrator/delegations.jsonl"
+# Optional: one JSONL record per orchestration lifecycle event, including
+# batches, workers, worktrees and verification.
+# SOL_LUNA_EVENTS = "/home/you/.codex/sol-luna-events.jsonl"
 
 # --- Optional hardening ----------------------------------------------------
 # Confine delegation to specific directory trees (OS path separator delimited).

@@ -17,13 +17,13 @@ change it mid-session.
 | Supervisor effort | When it fits                                                                                                              |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `medium`          | Simple but non-trivial work whose decomposition is already obvious.                                                       |
-| `high`            | **Default.** Architecture, decomposition, delegation, review, normal multi-file engineering.                              |
+| `high`            | **Recommended.** Architecture, decomposition, delegation, review, normal multi-file engineering.                          |
 | `xhigh`           | Difficult architecture, subtle production bugs, cross-service reasoning, tricky concurrency or state, hard decomposition. |
 | `max`             | Exceptional supervisor-level problems only. Not a routine setting.                                                        |
 
-`gpt-5.6-sol` also advertises `low` and `ultra`. Neither is recommended here:
-`low` is too shallow to decompose or review well, and `ultra` is not warranted by
-anything this tool does.
+The orchestrator does not control the parent Sol effort; the user selects it for
+the Codex session. `ultra` is a separate Codex multi-agent execution mode, not
+another reasoning-effort value.
 
 ---
 
@@ -32,22 +32,23 @@ anything this tool does.
 Delegation is not free. Writing the contract, spawning a thread and re-verifying
 the result costs time and tokens on top of the work itself. This project's own
 micro-benchmark measured a one-file task as roughly 2.3x slower and 3.5x the
-tokens when delegated, with no quality difference.
+tokens when delegated, with no measurable quality difference.
 
 Two further measurements are worth carrying into the decision:
 
-- **Splitting work into more streams does not make delegation win.** Fixtures
-  with four and six genuinely independent modules were both slower delegated than
-  done directly, and the six-stream one was relatively worse. A batch finishes
-  when its _slowest_ worker finishes, so adding workers adds chances to draw a
-  slow one.
-- **The fixed cost is your own time, not the machinery.** Worktree setup and
-  integration take about a second. Writing the contracts and reviewing the
-  results took around 70 seconds of supervisor turn in measured runs.
+- **More streams did not improve forced-parallel relative performance in V6.**
+  Fixtures with four and six genuinely independent modules were both slower
+  forced-parallel than solo, and the relative gap widened at six. No latency
+  crossover was observed in the tested regime; whether one exists on
+  substantially different or larger workloads remains unknown.
+- **The measured fixed cost was supervisor coordination and review, not the
+  machinery.** Worktree setup and integration took about a second. Writing the
+  contracts and reviewing the results took around 70 seconds of supervisor turn
+  in the measured runs.
 
-So the reason to delegate is rarely speed. It is an enforced file scope,
-independently re-run verification, and keeping a long piece of work out of your
-own context.
+So the reason to delegate is rarely speed. It is a declared worker scope with
+post-execution scope-violation detection, independently re-run verification, and
+keeping a long piece of work out of your own context.
 
 So make it a decision, not a reflex:
 
@@ -66,8 +67,9 @@ pieces of work:
   They share the workspace and run one at a time.
 - `mode: "parallel"` — the tasks are genuinely independent. Each worker gets its
   own git worktree; results are integrated only if no two workers touched the
-  same file. This is the only mode that can save wall-clock time, and on every
-  benchmark fixture so far it still did not beat doing the work yourself.
+  same file. This is the only mode that can save wall-clock time. It did not beat
+  solo execution on the measured fixtures; whether a crossover exists beyond
+  the tested regime remains unknown.
 
 Before choosing parallel, ask: can I give each task a disjoint `allowedFiles`
 scope? If not, they are not independent, and sequential is the honest answer.

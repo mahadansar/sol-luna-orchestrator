@@ -11,8 +11,8 @@ parallel in their own git worktrees — with a declared file scope per task,
 scope-violation detection, and results the orchestrator verifies instead of
 taking on trust.
 
-The supervisor (`gpt-5.6-sol`, high effort by default) decides _what_ should
-happen, whether delegating is even worth it, and reviews what comes back.
+The supervisor (`gpt-5.6-sol`, with high effort recommended) decides _what_
+should happen, whether delegating is even worth it, and reviews what comes back.
 Workers (`gpt-5.6-luna`, at an effort chosen per task) do the contained
 implementation work in their own Codex threads.
 
@@ -396,11 +396,13 @@ model's to change mid-session.
 | Effort     | Use for                                                                                                         |
 | ---------- | --------------------------------------------------------------------------------------------------------------- |
 | `medium`   | Simple but non-trivial work whose decomposition is already obvious                                              |
-| **`high`** | **Default.** Architecture, decomposition, delegation, review, normal multi-file engineering                     |
+| **`high`** | **Recommended.** Architecture, decomposition, delegation, review, normal multi-file engineering                 |
 | `xhigh`    | Difficult architecture, subtle production bugs, cross-service reasoning, tricky concurrency, hard decomposition |
 | `max`      | Exceptional supervisor-level problems only — not a routine setting                                              |
 
-The model also advertises `low` and `ultra`; neither is recommended here.
+The orchestrator does not set the parent Sol effort; select it in the Codex
+session. `ultra` is a separate Codex multi-agent execution mode, not another
+reasoning-effort value.
 
 ## Worker effort
 
@@ -427,10 +429,10 @@ Two rules carry most of the weight:
   because the brief was vague, fix the brief. A scope violation or a timeout is
   never an effort problem.
 
-Across every benchmark run of both suites, the supervisor never selected `max`.
-That is a statement about the fixtures — all small, all well-specified — not
+Across the committed runs in all three benchmark suites, no worker was assigned
+`max`. That is a statement about the fixtures — bounded and well-specified — not
 evidence that `max` is useless. It is the setting the policy reserves, and no
-task in the suite was hard enough to reach for it.
+measured task was hard enough to reach for it.
 
 Full rules are in [`SOL_RULES.md`](SOL_RULES.md). They also reach the supervisor
 automatically through the MCP tool descriptions, so no setup is needed.
@@ -474,9 +476,10 @@ module is 15–30 lines against a fixed test file — too small to amortise a co
 per task, a thread per worker, a verification pass per worker and an integration
 step.
 
-**And the supervisor mostly agreed.** When left to decide, it declined to delegate
-in 5 of 8 runs, implementing the modules itself instead. That is the delegation
-policy working, not a bug.
+**And the supervisor mostly declined.** When left to decide, it used zero workers
+in 5 of 8 runs, implementing the modules itself instead. Those decisions avoided
+the forced-delegation overhead measured on the same fixtures; stochastic runs do
+not prove why Sol made each choice.
 
 So the honest rule is qualitative, not numeric: **when you delegate independent
 work, use parallel — but "should I delegate at all?" is a separate question, and
@@ -486,8 +489,9 @@ arm that varied 4x between two repetitions, is in
 
 ## Looking for the break-even point
 
-A third suite was built specifically to find the workload size at which
-orchestration becomes competitive with Sol working alone. It did not find one.
+A third suite tested whether larger measured workloads reached a point where
+orchestration became competitive with Sol working alone. It did not observe one;
+whether a crossover exists beyond the tested regime remains unknown.
 
 | Fixture       | Independent streams | Sol High solo | Free choice | Mandated parallel |
 | ------------- | ------------------- | ------------- | ----------- | ----------------- |
@@ -497,14 +501,14 @@ orchestration becomes competitive with Sol working alone. It did not find one.
 
 19 runs, all passing. Three findings worth more than the table:
 
-**More streams made it worse, not better.** Solo cost grows sublinearly with the
-number of independent modules — 171.5s for four, 189.5s for six. Parallel cost is
-`slowest worker + ~70s`, and the expected slowest of six draws exceeds the
-slowest of four. The curves diverge.
+**More streams did not improve relative performance in V6.** From four to six
+independent modules, solo time moved from 171.5s to 189.5s while forced-parallel
+time moved from 250s to 394.5s. In the observed parallel runs, elapsed time
+tracked the slowest worker plus roughly 70s of coordination and review.
 
-**The fixed cost is the supervisor, not the machinery.** Worktree creation and
-integration together take ~1.2s. Writing the contracts and reviewing the results
-take ~70s.
+**The measured fixed cost was supervisor coordination and review, not the
+machinery.** Worktree creation and integration together took ~1.2s. The
+supervisor's contract-writing and review portions took ~70s.
 
 **The slow-worker tail is a strong candidate for the dominant remaining
 parallel-latency constraint.** In one six-stream run, four workers finished
@@ -518,11 +522,11 @@ the tail distribution.
 at one, four and six streams alike — while passing every time and being the
 fastest arm on two of the three fixtures.
 
-Across every parallel batch that actually ran workers — 5 batches, 15 workers —
-there were **zero integration conflicts**: the supervisor produced disjoint
-scopes every time and every batch merged cleanly. `max` effort was never selected
-by any run of either suite, which says these fixtures were never hard enough to
-warrant it rather than that `max` has no use.
+Across the scale suite's parallel-mode batches that actually launched workers —
+6 batches, 25 workers — there were **zero integration conflicts**: the supervisor
+produced disjoint scopes every time and every batch merged cleanly. No scale-suite
+worker was assigned `max`, which says these fixtures did not warrant it rather
+than that `max` has no use.
 
 ## Benchmarks
 

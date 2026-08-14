@@ -20,8 +20,8 @@ in `bench/results/*.json`.
 ## Headline
 
 1. **On small tasks, delegating is worse.** ~2.3x slower, ~3.5x the tokens, no
-   quality difference. Unchanged from the previous release, and still the single
-   most useful thing this project has measured.
+   measurable quality difference. Unchanged from the previous release, and still
+   the single most useful thing this project has measured.
 2. **On three-module projects, parallel delegation beat sequential delegation in
    every task and every repetition** — median 155s vs 248s, and far more
    consistent (122–183s vs 193–565s).
@@ -142,7 +142,7 @@ Sequential runs the same three workers one after another, so its total is the su
 of three worker times plus overhead, and a single slow worker moves the whole run.
 
 Worker effort across 24 delegated tasks in this run: `high` ×17, `medium` ×4,
-`xhigh` ×3. `max` was never selected, in any run of either suite.
+`xhigh` ×3. `max` was never selected anywhere in the parallel suite.
 
 No integration conflicts occurred in any parallel run: the supervisor produced
 disjoint scopes every time, and every batch merged cleanly.
@@ -151,11 +151,11 @@ disjoint scopes every time, and every batch merged cleanly.
 
 ## Scale suite — measured
 
-**What this suite is for: finding the point, if any, where orchestration becomes
-competitive with a supervisor working alone.** The earlier suites answered a
-narrower question and every fixture in them sat far below any break-even. These
-fixtures are roughly twice as deep per module and vary the number of independent
-workstreams, which the earlier data suggested was the axis that mattered.
+**What this suite is for: testing whether orchestration becomes competitive with
+a supervisor working alone in a larger measured regime.** The earlier suites
+answered a narrower question and did not approach break-even. These fixtures are
+roughly twice as deep per module and vary the number of independent workstreams,
+which the earlier data suggested was an axis worth testing.
 
 `2026-08-14T17-*.scale.json` and `2026-08-14T18-*.scale.json` · 19 runs ·
 `gpt-5.6-sol` at high effort · Node v26.7.0 on win32 x64 ·
@@ -303,13 +303,15 @@ the fastest arm measured:
 | scale-datakit | 186.5s      | 189.5s        | 394.5s            |
 | scale-coupled | **87.5s**   | 113.5s        | 347s              |
 
-The delegation policy is not merely declining; it is declining correctly on every
-workload measured so far.
+Sol chose zero workers in all six measured free-choice runs, while forced
+delegation was slower on the corresponding fixtures. None of these workloads
+provided evidence that declining delegation was the wrong choice; the runs do
+not establish why Sol made each decision.
 
 ### Reliability
 
-Across all 17 delegating runs in this repository's history, including the six new
-ones at four and six concurrent workers:
+Across the 17 runs in the parallel and scale suites that actually delegated,
+including five runs with four or six concurrent workers:
 
 - integration conflicts: **0**
 - worker failures: **0**
@@ -328,10 +330,10 @@ Worker effort across the whole scale suite: `high` ×34, `xhigh` ×16, `medium` 
 
 Kept deliberately separate from the numbers above.
 
-**Parallelism works, and it does what it is supposed to do.** In 12 delegated
-parallel runs, three workers ran concurrently in three isolated worktrees, chose
-efforts independently, produced zero integration conflicts, and merged cleanly
-every time. The mechanism is sound.
+**The earlier parallel suite exercised parallelism successfully.** In its five
+batches that actually used parallel mode, 15 workers ran in isolated worktrees,
+chose efforts independently, produced zero integration conflicts, and merged
+cleanly every time.
 
 **Parallel clearly beats sequential once you are delegating.** ~1.6x faster at the
 median, faster in every single task-repetition pair, and much tighter spread. That
@@ -345,11 +347,11 @@ lines against a fixed test file. Splitting that costs a contract per task, a
 thread spin-up per worker, a verification pass per worker and an integration step
 — overhead the modules are too small to amortise.
 
-**The supervisor's own judgement was right.** Given the choice, it mostly refused
-to delegate these tasks, and the runs where it refused were the fastest
-delegating-arm runs. That is the `delegate_task` policy text working: it was told
-that delegation has a fixed cost and that small work should be done directly, and
-it applied that to a task the benchmark was nudging it to delegate.
+**Free-choice runs often used zero workers.** On the earlier parallel fixtures,
+Sol declined delegation in 5 of 8 runs; on the scale fixtures, it declined in all
+six. Forced delegation was slower on the corresponding measured fixtures, so
+none of these workloads provided evidence that declining delegation was the
+wrong choice. These stochastic runs do not prove why Sol made each decision.
 
 **Where this leaves the break-even point.** The data does not support a numeric
 threshold, and inventing one would be dishonest. What it supports is a qualitative
@@ -362,15 +364,15 @@ rule, which is what the README and `SOL_RULES.md` state:
 - Several genuinely independent, substantial workstreams → parallel, because
   parallel is reliably faster than sequential when delegating at all.
 
-The suite cannot answer "how big must a module be before parallel beats solo?"
-because every fixture here is below that size.
+The parallel suite alone cannot establish whether a latency crossover exists
+beyond its measured fixtures.
 
 **The scale suite went looking for that answer and did not find it either**, which
 changes the shape of the conclusion rather than merely extending it:
 
-- Scaling _stream count_ does not approach a crossover — it moves away from one.
-  Solo cost grows sublinearly in the number of independent modules, while parallel
-  cost is a maximum over workers whose expectation grows as workers are added.
+- In V6, moving from four to six independent streams did not improve
+  forced-parallel relative performance. No latency crossover was observed in the
+  tested regime; substantially different or larger workloads remain unmeasured.
 - The slow-worker tail is a strong candidate for the dominant remaining
   parallel-latency constraint. The six-stream counterfactual would beat the
   baseline if every worker matched its run's median, but that is not an observed
@@ -392,7 +394,9 @@ npm run bench:report                     # summarise one results file
 npm run bench:analyze                    # crossover verdict across every results file
 ```
 
-Everything except `bench:validate` and `bench:analyze` spends live model usage.
+The three `npm run bench -- --suite ...` commands above invoke live Codex turns.
+`bench:validate`, `bench:report`, and `bench:analyze` are deterministic and make
+no model calls.
 
 - **Same fixtures per arm.** Each run starts from a freshly materialised temp
   workspace; parallel fixtures are `git init`-ed and committed so worktrees have a
@@ -413,7 +417,9 @@ Everything except `bench:validate` and `bench:analyze` spends live model usage.
 - Wall-clock per run, around the whole supervisor turn — so it includes
   delegation, worktree setup, verification and integration overhead.
 - Supervisor tokens from the Codex SDK's `turn.completed` event.
-- Worker efforts and worker counts from the orchestrator's own telemetry.
+- Worker efforts, worker counts, and current input, cached-input, output, and
+  reasoning usage from the orchestrator's own telemetry. Batch records before
+  v0.4.0 captured worker output only; missing historical fields remain unknown.
 - Pass/fail, file immutability and mutation detection, by the harness.
 
 **Not measurable from this integration**
@@ -421,9 +427,6 @@ Everything except `bench:validate` and `bench:analyze` spends live model usage.
 - **Cost in currency.** The API exposes token counts, not prices, and the arms use
   different models at different efforts. No cost figure is given; do not derive
   one from the token counts.
-- **Worker input tokens in batch runs.** Single delegations record full usage;
-  batch workers currently record output tokens only, so the input-token column
-  understates the delegating arms. Reported as measured rather than estimated.
 - **Billing treatment of cached input tokens**, a large share of the input totals.
 - **Quality beyond the objective checks.** Every arm scored 100%, so this suite
   cannot separate them on quality at all.
