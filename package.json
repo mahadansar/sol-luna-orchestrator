@@ -1,0 +1,75 @@
+{
+  "name": "sol-luna-orchestrator",
+  "version": "0.3.0",
+  "description": "MCP server that lets a supervising OpenAI Codex agent delegate bounded implementation tasks to isolated worker threads, with file-scope enforcement and independently verified results.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Mahad Ansar <mahadansar00@gmail.com> (https://github.com/mahadansar)",
+  "engines": {
+    "node": ">=20.10.0"
+  },
+  "bin": {
+    "sol-luna-orchestrator": "dist/server.js"
+  },
+  "main": "dist/server.js",
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.js.map",
+    "README.md",
+    "SECURITY.md",
+    "SOL_RULES.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mahadansar/sol-luna-orchestrator.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mahadansar/sol-luna-orchestrator/issues"
+  },
+  "homepage": "https://github.com/mahadansar/sol-luna-orchestrator#readme",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "codex",
+    "openai",
+    "agents",
+    "multi-agent",
+    "orchestration",
+    "delegation"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/server.js",
+    "dev": "tsx src/server.ts",
+    "format": "prettier --write \"src/**/*.ts\" \"*.md\" \"bench/*.md\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"*.md\" \"bench/*.md\"",
+    "test": "npm run build && node --test dist/selftest.js dist/security.test.js dist/parallel.test.js",
+    "smoke": "npm run build && node dist/smoke-protocol.js",
+    "smoke:live": "npm run build && node dist/smoke-live.js",
+    "smoke:isolation": "npm run build && node dist/smoke-isolation.js",
+    "smoke:parallel": "npm run build && node dist/smoke-parallel.js",
+    "verify": "npm run typecheck && npm test && npm run smoke",
+    "bench:validate": "npm run build && node dist/bench/validate.js",
+    "bench": "npm run build && node dist/bench/run.js",
+    "bench:report": "npm run build && node dist/bench/report.js",
+    "prepublishOnly": "npm run verify"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@openai/codex-sdk": "^0.147.0",
+    "cross-spawn": "^7.0.6",
+    "picomatch": "^4.0.5",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/cross-spawn": "^6.0.6",
+    "@types/node": "^26.2.0",
+    "@types/picomatch": "^4.0.3",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,0 +1,12 @@
+# Normalise line endings so a checkout is byte-identical on Windows, Linux and
+# macOS. Without this, Windows contributors produce CRLF working copies and
+# every file looks fully rewritten in a diff.
+#
+# LF everywhere also matters for the tests: the worktree suite asserts on file
+# contents, and the benchmark fixtures are compared against committed reference
+# solutions.
+* text=auto eol=lf
+
+# Keep committed benchmark data exactly as written.
+bench/results/*.json -text
+bench/results/*.md   text eol=lf

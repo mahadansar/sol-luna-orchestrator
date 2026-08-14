@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# No API keys, no model calls, no network access to OpenAI. Everything here is
+# deterministic. Tests that need a real Codex login live in the `smoke:live`,
+# `smoke:parallel` and `bench` scripts and are deliberately not run here.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ["20", "24"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # The worktree tests drive the real git CLI. Give it an identity so
+      # committing fixtures works on a bare runner.
+      - name: Configure git
+        run: |
+          git config --global user.email "ci@example.invalid"
+          git config --global user.name "CI"
+          git config --global init.defaultBranch main
+
+      - run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Format check
+        run: npm run format:check
+
+      # Unit, security/path-escape, and parallel orchestration tests. The
+      # parallel suite creates real git worktrees and real temp directories, so
+      # it exercises this runner's actual filesystem semantics — path
+      # separators, case sensitivity, symlink support and file locking.
+      - name: Tests
+        run: node --test dist/selftest.js dist/security.test.js dist/parallel.test.js
+
+      # Starts the MCP server as a subprocess and performs a real protocol
+      # handshake. Needs no model access.
+      - name: MCP protocol smoke test
+        run: node dist/smoke-protocol.js
+
+      # Proves each benchmark fixture fails in its starting state and passes
+      # with its committed reference solution.
+      - name: Benchmark fixture validation
+        run: node dist/bench/validate.js
+
+      - name: Report symlink capability
+        if: always()
+        shell: bash
+        run: |
+          echo "Platform: $RUNNER_OS"
+          node -e "const fs=require('fs'),os=require('os'),p=require('path');
+          const d=fs.mkdtempSync(p.join(os.tmpdir(),'lnk-'));
+          try{fs.symlinkSync(d,p.join(d,'l'),process.platform==='win32'?'junction':'dir');
+          console.log('directory links: supported');}
+          catch(e){console.log('directory links: NOT supported ->',e.code);}"

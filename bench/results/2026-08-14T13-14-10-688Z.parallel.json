@@ -1,0 +1,659 @@
+{
+  "schema": 2,
+  "suite": "parallel",
+  "supervisorModel": "gpt-5.6-sol",
+  "startedAt": "2026-08-14T13-14-10-688Z",
+  "platform": "win32 x64",
+  "nodeVersion": "v24.5.0",
+  "reps": 2,
+  "records": [
+    {
+      "suite": "parallel",
+      "taskId": "parallel-toolkit",
+      "taskCategory": "implementation",
+      "arm": "seq-forced",
+      "armLabel": "Sol high + sequential Luna (mandated)",
+      "supervisorEffort": "high",
+      "repetition": 1,
+      "startedAt": "2026-08-14T13:14:11.158Z",
+      "durationSeconds": 257,
+      "passed": true,
+      "grades": [
+        {
+          "label": "all three module test suites pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ formats whole amounts with two decimals (0.9465ms)\n✔ formats partial amounts (0.1498ms)\n✔ groups thousands with commas (0.1223ms)\n✔ puts the minus sign before the symbol (0.1175ms)\n✔ supports EUR and GBP symbols (0.1359ms)\n✔ falls back to the code for unknown currencies (0.1103ms)\n✔ rejects non-integer cents (0.4215ms)\n✔ returns the first successful value without sleeping (1.388ms)\n✔ retries until it succeeds (0.8783ms)\n✔ doubles the delay each attempt starting from baseDelayMs (0.387ms)\n✔ throws the last error after exhausting attempts (0.5167ms)\n✔ defaults to 3 attempts and a 50ms base delay (0.2931ms)\n✔ lowercases and hyphenates (1.0491ms)\n✔ collapses runs of non-alphanumerics into one hyphen (0.1456ms)\n✔ trims leading and trailing separators (0.112ms)\n✔ keeps digits (0.1107ms)\n✔ returns an empty string when nothing survives (0.2115ms)\n✔ truncates at maxLength without splitting a word (0.1167ms)\n✔ truncates hard when a single word exceeds maxLength (0.1277ms)\nℹ tests 19\nℹ suites 0\nℹ pass 19\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 106.4746"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 268113,
+        "cachedInputTokens": 231168,
+        "outputTokens": 2316,
+        "reasoningOutputTokens": 442
+      },
+      "delegations": [
+        {
+          "effort": "",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 51,
+          "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 1724,
+            "reasoningOutputTokens": 0
+          }
+        },
+        {
+          "effort": "",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 75,
+          "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 2289,
+            "reasoningOutputTokens": 0
+          }
+        },
+        {
+          "effort": "",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 76,
+          "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 2681,
+            "reasoningOutputTokens": 0
+          }
+        }
+      ],
+      "workerCount": 3,
+      "workerEfforts": [
+        "high",
+        "high",
+        "xhigh"
+      ],
+      "batches": [
+        {
+          "mode": "sequential",
+          "taskCount": 3,
+          "maxParallel": 1
+        }
+      ],
+      "integrationConflicts": 0,
+      "agentError": null
+    },
+    {
+      "suite": "parallel",
+      "taskId": "parallel-toolkit",
+      "taskCategory": "implementation",
+      "arm": "par-forced",
+      "armLabel": "Sol high + parallel Luna (mandated)",
+      "supervisorEffort": "high",
+      "repetition": 1,
+      "startedAt": "2026-08-14T13:18:29.049Z",
+      "durationSeconds": 144,
+      "passed": true,
+      "grades": [
+        {
+          "label": "all three module test suites pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ formats whole amounts with two decimals (0.9097ms)\n✔ formats partial amounts (0.2843ms)\n✔ groups thousands with commas (0.1711ms)\n✔ puts the minus sign before the symbol (0.1367ms)\n✔ supports EUR and GBP symbols (0.1686ms)\n✔ falls back to the code for unknown currencies (0.1632ms)\n✔ rejects non-integer cents (0.4982ms)\n✔ returns the first successful value without sleeping (1.9452ms)\n✔ retries until it succeeds (0.9056ms)\n✔ doubles the delay each attempt starting from baseDelayMs (0.4369ms)\n✔ throws the last error after exhausting attempts (0.5568ms)\n✔ defaults to 3 attempts and a 50ms base delay (0.4219ms)\n✔ lowercases and hyphenates (1.6919ms)\n✔ collapses runs of non-alphanumerics into one hyphen (0.373ms)\n✔ trims leading and trailing separators (0.3367ms)\n✔ keeps digits (0.2861ms)\n✔ returns an empty string when nothing survives (0.2858ms)\n✔ truncates at maxLength without splitting a word (0.2433ms)\n✔ truncates hard when a single word exceeds maxLength (0.19ms)\nℹ tests 19\nℹ suites 0\nℹ pass 19\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 133.1258"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 180233,
+        "cachedInputTokens": 163584,
+        "outputTokens": 2263,
+        "reasoningOutputTokens": 549
+      },
+      "delegations": [
+        {
+          "effort": "",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 62,
+          "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 2104,
+            "reasoningOutputTokens": 0
+          }
+        },
+        {
+          "effort": "",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 63,
+          "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 2266,
+            "reasoningOutputTokens": 0
+          }
+        },
+        {
+          "effort": "",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 78,
+          "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 2797,
+            "reasoningOutputTokens": 0
+          }
+        }
+      ],
+      "workerCount": 3,
+      "workerEfforts": [
+        "high",
+        "high",
+        "xhigh"
+      ],
+      "batches": [
+        {
+          "mode": "parallel",
+          "taskCount": 3,
+          "maxParallel": 3
+        }
+      ],
+      "integrationConflicts": 0,
+      "agentError": null
+    },
+    {
+      "suite": "parallel",
+      "taskId": "parallel-httpkit",
+      "taskCategory": "implementation",
+      "arm": "seq-forced",
+      "armLabel": "Sol high + sequential Luna (mandated)",
+      "supervisorEffort": "high",
+      "repetition": 1,
+      "startedAt": "2026-08-14T13:20:53.782Z",
+      "durationSeconds": 239,
+      "passed": true,
+      "grades": [
+        {
+          "label": "all three module test suites pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ round-trips an object (1.9364ms)\n✔ produces url-safe output (1.0639ms)\n✔ round-trips arrays and primitives (0.2519ms)\n✔ returns null for malformed input rather than throwing (0.1263ms)\n✔ different values produce different cursors (0.2378ms)\n✔ maps a known error code to its status (2.3219ms)\n✔ maps the full code table (1.3908ms)\n✔ falls back to 500 and INTERNAL for unknown codes (0.2523ms)\n✔ hides the message of a 500 but keeps it for client errors (0.3573ms)\n✔ honours an explicit numeric status on the error (0.2944ms)\n✔ parses simple key/value pairs (3.0201ms)\n✔ accepts a leading question mark (0.3002ms)\n✔ coerces booleans and numbers, leaving other text alone (0.203ms)\n✔ decodes percent encoding (0.1997ms)\n✔ collects repeated keys into an array (0.1771ms)\n✔ treats a bare key as true and an empty value as empty string (0.1584ms)\n✔ returns an empty object for empty input (0.2861ms)\nℹ tests 17\nℹ suites 0\nℹ pass 17\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 133.8939"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 162101,
+        "cachedInputTokens": 136192,
+        "outputTokens": 2150,
+        "reasoningOutputTokens": 402
+      },
+      "delegations": [
+        {
+          "effort": "",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 52,
+          "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 1554,
+            "reasoningOutputTokens": 0
+          }
+        },
+        {
+          "effort": "",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 51,
+          "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 1437,
+            "reasoningOutputTokens": 0
+          }
+        },
+        {
+          "effort": "",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 76,
+          "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 1453,
+            "reasoningOutputTokens": 0
+          }
+        }
+      ],
+      "workerCount": 3,
+      "workerEfforts": [
+        "high",
+        "high",
+        "high"
+      ],
+      "batches": [
+        {
+          "mode": "sequential",
+          "taskCount": 3,
+          "maxParallel": 1
+        }
+      ],
+      "integrationConflicts": 0,
+      "agentError": null
+    },
+    {
+      "suite": "parallel",
+      "taskId": "parallel-httpkit",
+      "taskCategory": "implementation",
+      "arm": "par-forced",
+      "armLabel": "Sol high + parallel Luna (mandated)",
+      "supervisorEffort": "high",
+      "repetition": 1,
+      "startedAt": "2026-08-14T13:24:53.768Z",
+      "durationSeconds": 166,
+      "passed": true,
+      "grades": [
+        {
+          "label": "all three module test suites pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ round-trips an object (1.3779ms)\n✔ produces url-safe output (1.296ms)\n✔ round-trips arrays and primitives (0.4795ms)\n✔ returns null for malformed input rather than throwing (0.4316ms)\n✔ different values produce different cursors (0.4394ms)\n✔ maps a known error code to its status (1.7977ms)\n✔ maps the full code table (1.134ms)\n✔ falls back to 500 and INTERNAL for unknown codes (0.1497ms)\n✔ hides the message of a 500 but keeps it for client errors (0.1825ms)\n✔ honours an explicit numeric status on the error (0.1655ms)\n✔ parses simple key/value pairs (2.7006ms)\n✔ accepts a leading question mark (0.2957ms)\n✔ coerces booleans and numbers, leaving other text alone (0.3425ms)\n✔ decodes percent encoding (0.3268ms)\n✔ collects repeated keys into an array (0.2365ms)\n✔ treats a bare key as true and an empty value as empty string (0.1947ms)\n✔ returns an empty object for empty input (0.2272ms)\nℹ tests 17\nℹ suites 0\nℹ pass 17\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 123.5931"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 252144,
+        "cachedInputTokens": 224256,
+        "outputTokens": 2281,
+        "reasoningOutputTokens": 604
+      },
+      "delegations": [
+        {
+          "effort": "",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 81,
+          "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 1791,
+            "reasoningOutputTokens": 0
+          }
+        },
+        {
+          "effort": "",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 83,
+          "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 1993,
+            "reasoningOutputTokens": 0
+          }
+        },
+        {
+          "effort": "",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 85,
+          "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 2507,
+            "reasoningOutputTokens": 0
+          }
+        }
+      ],
+      "workerCount": 3,
+      "workerEfforts": [
+        "high",
+        "medium",
+        "high"
+      ],
+      "batches": [
+        {
+          "mode": "parallel",
+          "taskCount": 3,
+          "maxParallel": 3
+        }
+      ],
+      "integrationConflicts": 0,
+      "agentError": null
+    },
+    {
+      "suite": "parallel",
+      "taskId": "parallel-toolkit",
+      "taskCategory": "implementation",
+      "arm": "seq-forced",
+      "armLabel": "Sol high + sequential Luna (mandated)",
+      "supervisorEffort": "high",
+      "repetition": 2,
+      "startedAt": "2026-08-14T13:27:39.968Z",
+      "durationSeconds": 193,
+      "passed": true,
+      "grades": [
+        {
+          "label": "all three module test suites pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ formats whole amounts with two decimals (1.0745ms)\n✔ formats partial amounts (0.1743ms)\n✔ groups thousands with commas (0.1385ms)\n✔ puts the minus sign before the symbol (0.1227ms)\n✔ supports EUR and GBP symbols (0.1685ms)\n✔ falls back to the code for unknown currencies (0.1519ms)\n✔ rejects non-integer cents (0.3953ms)\n✔ returns the first successful value without sleeping (1.6998ms)\n✔ retries until it succeeds (0.929ms)\n✔ doubles the delay each attempt starting from baseDelayMs (0.338ms)\n✔ throws the last error after exhausting attempts (0.5924ms)\n✔ defaults to 3 attempts and a 50ms base delay (0.4126ms)\n✔ lowercases and hyphenates (1.1144ms)\n✔ collapses runs of non-alphanumerics into one hyphen (0.1845ms)\n✔ trims leading and trailing separators (0.1189ms)\n✔ keeps digits (0.141ms)\n✔ returns an empty string when nothing survives (0.2068ms)\n✔ truncates at maxLength without splitting a word (0.1634ms)\n✔ truncates hard when a single word exceeds maxLength (0.1174ms)\nℹ tests 19\nℹ suites 0\nℹ pass 19\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 121.1318"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 299570,
+        "cachedInputTokens": 265728,
+        "outputTokens": 2269,
+        "reasoningOutputTokens": 407
+      },
+      "delegations": [
+        {
+          "effort": "",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 52,
+          "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 1569,
+            "reasoningOutputTokens": 0
+          }
+        },
+        {
+          "effort": "",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 40,
+          "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 1092,
+            "reasoningOutputTokens": 0
+          }
+        },
+        {
+          "effort": "",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 36,
+          "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 930,
+            "reasoningOutputTokens": 0
+          }
+        }
+      ],
+      "workerCount": 3,
+      "workerEfforts": [
+        "medium",
+        "medium",
+        "high"
+      ],
+      "batches": [
+        {
+          "mode": "sequential",
+          "taskCount": 3,
+          "maxParallel": 1
+        }
+      ],
+      "integrationConflicts": 0,
+      "agentError": null
+    },
+    {
+      "suite": "parallel",
+      "taskId": "parallel-toolkit",
+      "taskCategory": "implementation",
+      "arm": "par-forced",
+      "armLabel": "Sol high + parallel Luna (mandated)",
+      "supervisorEffort": "high",
+      "repetition": 2,
+      "startedAt": "2026-08-14T13:30:53.541Z",
+      "durationSeconds": 183,
+      "passed": true,
+      "grades": [
+        {
+          "label": "all three module test suites pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ formats whole amounts with two decimals (25.1181ms)\n✔ formats partial amounts (0.5421ms)\n✔ groups thousands with commas (0.2343ms)\n✔ puts the minus sign before the symbol (0.2999ms)\n✔ supports EUR and GBP symbols (0.3975ms)\n✔ falls back to the code for unknown currencies (0.2151ms)\n✔ rejects non-integer cents (0.9122ms)\n✔ returns the first successful value without sleeping (2.1334ms)\n✔ retries until it succeeds (1.3859ms)\n✔ doubles the delay each attempt starting from baseDelayMs (0.5736ms)\n✔ throws the last error after exhausting attempts (0.5884ms)\n✔ defaults to 3 attempts and a 50ms base delay (0.3206ms)\n✔ lowercases and hyphenates (1.1047ms)\n✔ collapses runs of non-alphanumerics into one hyphen (0.2636ms)\n✔ trims leading and trailing separators (0.1406ms)\n✔ keeps digits (0.1815ms)\n✔ returns an empty string when nothing survives (0.1749ms)\n✔ truncates at maxLength without splitting a word (0.127ms)\n✔ truncates hard when a single word exceeds maxLength (0.1568ms)\nℹ tests 19\nℹ suites 0\nℹ pass 19\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 149.9186"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 237548,
+        "cachedInputTokens": 188672,
+        "outputTokens": 2102,
+        "reasoningOutputTokens": 396
+      },
+      "delegations": [
+        {
+          "effort": "",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 54,
+          "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 1616,
+            "reasoningOutputTokens": 0
+          }
+        },
+        {
+          "effort": "",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 55,
+          "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 1667,
+            "reasoningOutputTokens": 0
+          }
+        },
+        {
+          "effort": "",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 121,
+          "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 4797,
+            "reasoningOutputTokens": 0
+          }
+        }
+      ],
+      "workerCount": 3,
+      "workerEfforts": [
+        "high",
+        "high",
+        "xhigh"
+      ],
+      "batches": [
+        {
+          "mode": "parallel",
+          "taskCount": 3,
+          "maxParallel": 3
+        }
+      ],
+      "integrationConflicts": 0,
+      "agentError": null
+    },
+    {
+      "suite": "parallel",
+      "taskId": "parallel-httpkit",
+      "taskCategory": "implementation",
+      "arm": "seq-forced",
+      "armLabel": "Sol high + sequential Luna (mandated)",
+      "supervisorEffort": "high",
+      "repetition": 2,
+      "startedAt": "2026-08-14T13:33:57.099Z",
+      "durationSeconds": 565,
+      "passed": true,
+      "grades": [
+        {
+          "label": "all three module test suites pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ round-trips an object (2.4828ms)\n✔ produces url-safe output (1.4959ms)\n✔ round-trips arrays and primitives (0.4218ms)\n✔ returns null for malformed input rather than throwing (0.2757ms)\n✔ different values produce different cursors (0.2733ms)\n✔ maps a known error code to its status (1.5388ms)\n✔ maps the full code table (1.3556ms)\n✔ falls back to 500 and INTERNAL for unknown codes (0.2025ms)\n✔ hides the message of a 500 but keeps it for client errors (0.2216ms)\n✔ honours an explicit numeric status on the error (0.3322ms)\n✔ parses simple key/value pairs (3.6797ms)\n✔ accepts a leading question mark (0.2581ms)\n✔ coerces booleans and numbers, leaving other text alone (0.1684ms)\n✔ decodes percent encoding (0.3524ms)\n✔ collects repeated keys into an array (0.3903ms)\n✔ treats a bare key as true and an empty value as empty string (0.2108ms)\n✔ returns an empty object for empty input (0.2291ms)\nℹ tests 17\nℹ suites 0\nℹ pass 17\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 131.335"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 876205,
+        "cachedInputTokens": 824064,
+        "outputTokens": 3571,
+        "reasoningOutputTokens": 634
+      },
+      "delegations": [
+        {
+          "effort": "",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 364,
+          "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 2155,
+            "reasoningOutputTokens": 0
+          }
+        },
+        {
+          "effort": "",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 83,
+          "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 2364,
+            "reasoningOutputTokens": 0
+          }
+        },
+        {
+          "effort": "",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 46,
+          "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 1364,
+            "reasoningOutputTokens": 0
+          }
+        }
+      ],
+      "workerCount": 3,
+      "workerEfforts": [
+        "high",
+        "high",
+        "high"
+      ],
+      "batches": [
+        {
+          "mode": "sequential",
+          "taskCount": 3,
+          "maxParallel": 1
+        }
+      ],
+      "integrationConflicts": 0,
+      "agentError": null
+    },
+    {
+      "suite": "parallel",
+      "taskId": "parallel-httpkit",
+      "taskCategory": "implementation",
+      "arm": "par-forced",
+      "armLabel": "Sol high + parallel Luna (mandated)",
+      "supervisorEffort": "high",
+      "repetition": 2,
+      "startedAt": "2026-08-14T13:43:22.551Z",
+      "durationSeconds": 122,
+      "passed": true,
+      "grades": [
+        {
+          "label": "all three module test suites pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ round-trips an object (1.7823ms)\n✔ produces url-safe output (1.0174ms)\n✔ round-trips arrays and primitives (0.2508ms)\n✔ returns null for malformed input rather than throwing (0.1275ms)\n✔ different values produce different cursors (0.2026ms)\n✔ maps a known error code to its status (1.6786ms)\n✔ maps the full code table (0.9639ms)\n✔ falls back to 500 and INTERNAL for unknown codes (0.1721ms)\n✔ hides the message of a 500 but keeps it for client errors (0.2672ms)\n✔ honours an explicit numeric status on the error (0.2182ms)\n✔ parses simple key/value pairs (2.2313ms)\n✔ accepts a leading question mark (0.2351ms)\n✔ coerces booleans and numbers, leaving other text alone (0.3723ms)\n✔ decodes percent encoding (0.1757ms)\n✔ collects repeated keys into an array (0.1879ms)\n✔ treats a bare key as true and an empty value as empty string (0.1891ms)\n✔ returns an empty object for empty input (0.191ms)\nℹ tests 17\nℹ suites 0\nℹ pass 17\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 126.3218"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 162251,
+        "cachedInputTokens": 130048,
+        "outputTokens": 2234,
+        "reasoningOutputTokens": 541
+      },
+      "delegations": [
+        {
+          "effort": "",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 51,
+          "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 1556,
+            "reasoningOutputTokens": 0
+          }
+        },
+        {
+          "effort": "",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 53,
+          "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 1605,
+            "reasoningOutputTokens": 0
+          }
+        },
+        {
+          "effort": "",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 58,
+          "usage": {
+            "inputTokens": 0,
+            "cachedInputTokens": 0,
+            "outputTokens": 1839,
+            "reasoningOutputTokens": 0
+          }
+        }
+      ],
+      "workerCount": 3,
+      "workerEfforts": [
+        "high",
+        "high",
+        "medium"
+      ],
+      "batches": [
+        {
+          "mode": "parallel",
+          "taskCount": 3,
+          "maxParallel": 3
+        }
+      ],
+      "integrationConflicts": 0,
+      "agentError": null
+    }
+  ]
+}

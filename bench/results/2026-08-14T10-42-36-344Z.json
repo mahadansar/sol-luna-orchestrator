@@ -1,0 +1,547 @@
+{
+  "schema": 1,
+  "supervisorModel": "gpt-5.6-sol",
+  "supervisorEffort": "high",
+  "startedAt": "2026-08-14T10-42-36-344Z",
+  "platform": "win32 x64",
+  "nodeVersion": "v24.5.0",
+  "reps": 2,
+  "records": [
+    {
+      "taskId": "bugfix-pagination",
+      "taskCategory": "bugfix",
+      "arm": "solo",
+      "repetition": 1,
+      "startedAt": "2026-08-14T10:42:36.348Z",
+      "durationSeconds": 31,
+      "passed": true,
+      "grades": [
+        {
+          "label": "pagination tests pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ pages are 1-based (1.373ms)\n✔ the final page may be partial (0.1346ms)\n✔ out-of-range pages are empty (0.1546ms)\n✔ pageCount rounds up (0.1808ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 83.3998"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 58597,
+        "cachedInputTokens": 49152,
+        "outputTokens": 673,
+        "reasoningOutputTokens": 165
+      },
+      "delegations": [],
+      "agentError": null
+    },
+    {
+      "taskId": "bugfix-pagination",
+      "taskCategory": "bugfix",
+      "arm": "orchestrated",
+      "repetition": 1,
+      "startedAt": "2026-08-14T10:43:07.363Z",
+      "durationSeconds": 85,
+      "passed": true,
+      "grades": [
+        {
+          "label": "pagination tests pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ pages are 1-based (1.403ms)\n✔ the final page may be partial (0.1367ms)\n✔ out-of-range pages are empty (0.1385ms)\n✔ pageCount rounds up (0.1654ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 84.7773"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 99077,
+        "cachedInputTokens": 80384,
+        "outputTokens": 1648,
+        "reasoningOutputTokens": 800
+      },
+      "delegations": [
+        {
+          "effort": "high",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 36,
+          "usage": {
+            "inputTokens": 55192,
+            "cachedInputTokens": 39168,
+            "outputTokens": 760,
+            "reasoningOutputTokens": 172
+          }
+        }
+      ],
+      "agentError": null
+    },
+    {
+      "taskId": "feature-validation",
+      "taskCategory": "implementation",
+      "arm": "solo",
+      "repetition": 1,
+      "startedAt": "2026-08-14T10:44:32.415Z",
+      "durationSeconds": 47,
+      "passed": true,
+      "grades": [
+        {
+          "label": "validation tests pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ accepts valid input (2.235ms)\n✔ ignores unknown fields (0.2336ms)\n✔ reports a missing email (0.2073ms)\n✔ reports a malformed email (0.2391ms)\n✔ requires a password of at least 8 characters containing a digit (0.1798ms)\n✔ requires a 3-20 character username of letters, digits and underscores (0.173ms)\n✔ errors are sorted by field name (11.3465ms)\nℹ tests 7\nℹ suites 0\nℹ pass 7\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 106.3895"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 77796,
+        "cachedInputTokens": 68352,
+        "outputTokens": 1335,
+        "reasoningOutputTokens": 325
+      },
+      "delegations": [],
+      "agentError": null
+    },
+    {
+      "taskId": "feature-validation",
+      "taskCategory": "implementation",
+      "arm": "orchestrated",
+      "repetition": 1,
+      "startedAt": "2026-08-14T10:45:19.717Z",
+      "durationSeconds": 110,
+      "passed": true,
+      "grades": [
+        {
+          "label": "validation tests pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ accepts valid input (2.2384ms)\n✔ ignores unknown fields (0.2295ms)\n✔ reports a missing email (0.1827ms)\n✔ reports a malformed email (0.219ms)\n✔ requires a password of at least 8 characters containing a digit (0.1746ms)\n✔ requires a 3-20 character username of letters, digits and underscores (0.1679ms)\n✔ errors are sorted by field name (17.5871ms)\nℹ tests 7\nℹ suites 0\nℹ pass 7\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 105.713"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 172031,
+        "cachedInputTokens": 151040,
+        "outputTokens": 1590,
+        "reasoningOutputTokens": 438
+      },
+      "delegations": [
+        {
+          "effort": "high",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 59,
+          "usage": {
+            "inputTokens": 73296,
+            "cachedInputTokens": 55296,
+            "outputTokens": 1909,
+            "reasoningOutputTokens": 888
+          }
+        }
+      ],
+      "agentError": null
+    },
+    {
+      "taskId": "tests-stack",
+      "taskCategory": "tests",
+      "arm": "solo",
+      "repetition": 1,
+      "startedAt": "2026-08-14T10:47:10.026Z",
+      "durationSeconds": 41,
+      "passed": true,
+      "grades": [
+        {
+          "label": "authored tests pass against the real class",
+          "exitCode": 0,
+          "passed": true,
+          "output": "▶ Stack\n  ✔ push returns the stack for chaining (1.5555ms)\n  ✔ pop returns items in last-in-first-out order (0.1766ms)\n  ✔ peek returns the top item without removing it (0.1692ms)\n  ✔ size reflects the stack contents (0.1498ms)\n  ✔ pop throws RangeError when the stack is empty (0.4232ms)\n  ✔ peek throws RangeError when the stack is empty (0.1468ms)\n✔ Stack (3.837ms)\nℹ tests 6\nℹ suites 1\nℹ pass 6\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 89.0042"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": true,
+      "supervisorUsage": {
+        "inputTokens": 58782,
+        "cachedInputTokens": 50176,
+        "outputTokens": 912,
+        "reasoningOutputTokens": 69
+      },
+      "delegations": [],
+      "agentError": null
+    },
+    {
+      "taskId": "tests-stack",
+      "taskCategory": "tests",
+      "arm": "orchestrated",
+      "repetition": 1,
+      "startedAt": "2026-08-14T10:47:51.066Z",
+      "durationSeconds": 76,
+      "passed": true,
+      "grades": [
+        {
+          "label": "authored tests pass against the real class",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ push returns the same Stack instance for chaining (0.9135ms)\n✔ pop returns values in last-in-first-out order (0.7885ms)\n✔ peek returns the top value without removing it (0.1617ms)\n✔ size reflects pushes and pops (0.1486ms)\n✔ pop throws RangeError on an empty stack (0.4386ms)\n✔ peek throws RangeError on an empty stack (0.1346ms)\nℹ tests 6\nℹ suites 0\nℹ pass 6\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 84.4342"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": true,
+      "supervisorUsage": {
+        "inputTokens": 100125,
+        "cachedInputTokens": 88576,
+        "outputTokens": 1171,
+        "reasoningOutputTokens": 301
+      },
+      "delegations": [
+        {
+          "effort": "medium",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 40,
+          "usage": {
+            "inputTokens": 55515,
+            "cachedInputTokens": 40192,
+            "outputTokens": 985,
+            "reasoningOutputTokens": 101
+          }
+        }
+      ],
+      "agentError": null
+    },
+    {
+      "taskId": "debug-concurrency",
+      "taskCategory": "investigation",
+      "arm": "solo",
+      "repetition": 1,
+      "startedAt": "2026-08-14T10:49:07.226Z",
+      "durationSeconds": 41,
+      "passed": true,
+      "grades": [
+        {
+          "label": "concurrency tests pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ results keep input order even when tasks finish out of order (2.5713ms)\n✔ never exceeds the concurrency limit (0.627ms)\n✔ handles an empty input list (0.1646ms)\n✔ propagates the first rejection (0.5876ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 85.6387"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 94370,
+        "cachedInputTokens": 81408,
+        "outputTokens": 929,
+        "reasoningOutputTokens": 208
+      },
+      "delegations": [],
+      "agentError": null
+    },
+    {
+      "taskId": "debug-concurrency",
+      "taskCategory": "investigation",
+      "arm": "orchestrated",
+      "repetition": 1,
+      "startedAt": "2026-08-14T10:49:48.139Z",
+      "durationSeconds": 97,
+      "passed": true,
+      "grades": [
+        {
+          "label": "concurrency tests pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ results keep input order even when tasks finish out of order (2.3615ms)\n✔ never exceeds the concurrency limit (0.4293ms)\n✔ handles an empty input list (0.1562ms)\n✔ propagates the first rejection (0.5838ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 84.9063"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 173769,
+        "cachedInputTokens": 150016,
+        "outputTokens": 1700,
+        "reasoningOutputTokens": 601
+      },
+      "delegations": [
+        {
+          "effort": "xhigh",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 51,
+          "usage": {
+            "inputTokens": 75200,
+            "cachedInputTokens": 54272,
+            "outputTokens": 1563,
+            "reasoningOutputTokens": 885
+          }
+        }
+      ],
+      "agentError": null
+    },
+    {
+      "taskId": "bugfix-pagination",
+      "taskCategory": "bugfix",
+      "arm": "solo",
+      "repetition": 2,
+      "startedAt": "2026-08-14T10:51:25.133Z",
+      "durationSeconds": 49,
+      "passed": true,
+      "grades": [
+        {
+          "label": "pagination tests pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ pages are 1-based (1.3501ms)\n✔ the final page may be partial (0.1397ms)\n✔ out-of-range pages are empty (0.1567ms)\n✔ pageCount rounds up (0.2118ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 83.899"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 74700,
+        "cachedInputTokens": 67328,
+        "outputTokens": 754,
+        "reasoningOutputTokens": 159
+      },
+      "delegations": [],
+      "agentError": null
+    },
+    {
+      "taskId": "bugfix-pagination",
+      "taskCategory": "bugfix",
+      "arm": "orchestrated",
+      "repetition": 2,
+      "startedAt": "2026-08-14T10:52:14.050Z",
+      "durationSeconds": 100,
+      "passed": true,
+      "grades": [
+        {
+          "label": "pagination tests pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ pages are 1-based (1.3255ms)\n✔ the final page may be partial (0.1267ms)\n✔ out-of-range pages are empty (0.1792ms)\n✔ pageCount rounds up (0.1596ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 79.9082"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 153100,
+        "cachedInputTokens": 134912,
+        "outputTokens": 1396,
+        "reasoningOutputTokens": 335
+      },
+      "delegations": [
+        {
+          "effort": "high",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 54,
+          "usage": {
+            "inputTokens": 74060,
+            "cachedInputTokens": 54272,
+            "outputTokens": 1902,
+            "reasoningOutputTokens": 1099
+          }
+        }
+      ],
+      "agentError": null
+    },
+    {
+      "taskId": "feature-validation",
+      "taskCategory": "implementation",
+      "arm": "solo",
+      "repetition": 2,
+      "startedAt": "2026-08-14T10:53:54.036Z",
+      "durationSeconds": 41,
+      "passed": true,
+      "grades": [
+        {
+          "label": "validation tests pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ accepts valid input (2.2458ms)\n✔ ignores unknown fields (0.2122ms)\n✔ reports a missing email (0.1803ms)\n✔ reports a malformed email (0.1937ms)\n✔ requires a password of at least 8 characters containing a digit (0.1554ms)\n✔ requires a 3-20 character username of letters, digits and underscores (0.1499ms)\n✔ errors are sorted by field name (10.8497ms)\nℹ tests 7\nℹ suites 0\nℹ pass 7\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 93.1792"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 60909,
+        "cachedInputTokens": 51200,
+        "outputTokens": 1268,
+        "reasoningOutputTokens": 395
+      },
+      "delegations": [],
+      "agentError": null
+    },
+    {
+      "taskId": "feature-validation",
+      "taskCategory": "implementation",
+      "arm": "orchestrated",
+      "repetition": 2,
+      "startedAt": "2026-08-14T10:54:35.431Z",
+      "durationSeconds": 95,
+      "passed": true,
+      "grades": [
+        {
+          "label": "validation tests pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ accepts valid input (2.0777ms)\n✔ ignores unknown fields (0.1988ms)\n✔ reports a missing email (0.1814ms)\n✔ reports a malformed email (0.2506ms)\n✔ requires a password of at least 8 characters containing a digit (0.2885ms)\n✔ requires a 3-20 character username of letters, digits and underscores (0.154ms)\n✔ errors are sorted by field name (10.4353ms)\nℹ tests 7\nℹ suites 0\nℹ pass 7\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 92.2053"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 158212,
+        "cachedInputTokens": 135936,
+        "outputTokens": 1882,
+        "reasoningOutputTokens": 812
+      },
+      "delegations": [
+        {
+          "effort": "medium",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 47,
+          "usage": {
+            "inputTokens": 74335,
+            "cachedInputTokens": 54272,
+            "outputTokens": 1404,
+            "reasoningOutputTokens": 422
+          }
+        }
+      ],
+      "agentError": null
+    },
+    {
+      "taskId": "tests-stack",
+      "taskCategory": "tests",
+      "arm": "solo",
+      "repetition": 2,
+      "startedAt": "2026-08-14T10:56:10.561Z",
+      "durationSeconds": 36,
+      "passed": true,
+      "grades": [
+        {
+          "label": "authored tests pass against the real class",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ push returns the stack for chaining (0.7775ms)\n✔ pop returns items in last-in-first-out order (1.0162ms)\n✔ peek returns the top item without removing it (0.2003ms)\n✔ size reflects the stack contents (0.1693ms)\n✔ pop throws RangeError when the stack is empty (0.4908ms)\n✔ peek throws RangeError when the stack is empty (0.1462ms)\nℹ tests 6\nℹ suites 0\nℹ pass 6\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 79.202"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": true,
+      "supervisorUsage": {
+        "inputTokens": 59145,
+        "cachedInputTokens": 49152,
+        "outputTokens": 912,
+        "reasoningOutputTokens": 109
+      },
+      "delegations": [],
+      "agentError": null
+    },
+    {
+      "taskId": "tests-stack",
+      "taskCategory": "tests",
+      "arm": "orchestrated",
+      "repetition": 2,
+      "startedAt": "2026-08-14T10:56:46.695Z",
+      "durationSeconds": 88,
+      "passed": true,
+      "grades": [
+        {
+          "label": "authored tests pass against the real class",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ push returns the same stack instance for chaining (0.7875ms)\n✔ pop returns values in last-in-first-out order (0.1368ms)\n✔ peek returns the top item without removing it (0.1519ms)\n✔ size reflects items as they are pushed and popped (0.1302ms)\n✔ pop and peek throw RangeError when the stack is empty (0.5822ms)\nℹ tests 5\nℹ suites 0\nℹ pass 5\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 81.4554"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": true,
+      "supervisorUsage": {
+        "inputTokens": 138834,
+        "cachedInputTokens": 119808,
+        "outputTokens": 1706,
+        "reasoningOutputTokens": 427
+      },
+      "delegations": [
+        {
+          "effort": "medium",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 39,
+          "usage": {
+            "inputTokens": 55919,
+            "cachedInputTokens": 50176,
+            "outputTokens": 1094,
+            "reasoningOutputTokens": 146
+          }
+        }
+      ],
+      "agentError": null
+    },
+    {
+      "taskId": "debug-concurrency",
+      "taskCategory": "investigation",
+      "arm": "solo",
+      "repetition": 2,
+      "startedAt": "2026-08-14T10:58:15.308Z",
+      "durationSeconds": 43,
+      "passed": true,
+      "grades": [
+        {
+          "label": "concurrency tests pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ results keep input order even when tasks finish out of order (2.6737ms)\n✔ never exceeds the concurrency limit (0.5122ms)\n✔ handles an empty input list (0.2465ms)\n✔ propagates the first rejection (0.5645ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 89.1871"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 95374,
+        "cachedInputTokens": 81408,
+        "outputTokens": 955,
+        "reasoningOutputTokens": 194
+      },
+      "delegations": [],
+      "agentError": null
+    },
+    {
+      "taskId": "debug-concurrency",
+      "taskCategory": "investigation",
+      "arm": "orchestrated",
+      "repetition": 2,
+      "startedAt": "2026-08-14T10:58:58.818Z",
+      "durationSeconds": 254,
+      "passed": true,
+      "grades": [
+        {
+          "label": "concurrency tests pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ results keep input order even when tasks finish out of order (2.5346ms)\n✔ never exceeds the concurrency limit (0.5132ms)\n✔ handles an empty input list (0.1465ms)\n✔ propagates the first rejection (0.5505ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 85.2694"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 248279,
+        "cachedInputTokens": 212480,
+        "outputTokens": 2766,
+        "reasoningOutputTokens": 1237
+      },
+      "delegations": [
+        {
+          "effort": "xhigh",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 177,
+          "usage": {
+            "inputTokens": 192601,
+            "cachedInputTokens": 164352,
+            "outputTokens": 7675,
+            "reasoningOutputTokens": 5328
+          }
+        }
+      ],
+      "agentError": null
+    }
+  ]
+}
