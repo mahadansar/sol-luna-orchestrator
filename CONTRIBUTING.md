@@ -90,9 +90,9 @@ Maintainers only. Releases are published by GitHub Actions using
 [npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers), so there is
 no npm token in this repository, no publish secret, and nothing to rotate.
 
-1. Bump the version and update the changelog:
-   `npm version <x.y.z> --no-git-tag-version`, then edit `CHANGELOG.md` and
-   `RELEASE_NOTES.md`.
+1. Bump the version and record what shipped:
+   `npm version <x.y.z> --no-git-tag-version`, then add the `CHANGELOG.md` entry
+   and draft the release body in `RELEASE_NOTES.md`.
 2. Commit and push to `main`.
 3. Wait for CI to go green on `main`.
 4. Tag the release commit and push the tag:
@@ -102,7 +102,8 @@ no npm token in this repository, no publish secret, and nothing to rotate.
    tests and the MCP smoke test, and publishes via OIDC.
 6. npm attaches provenance automatically — the repository and package are both
    public, so `--provenance` is neither passed nor needed.
-7. Create the GitHub Release from the tag, using `RELEASE_NOTES.md` as the body.
+7. Create the GitHub Release from the tag, using `RELEASE_NOTES.md` as the body,
+   then reset that file to its template so it never describes a shipped version.
 
 Only tags matching `vX.Y.Z` trigger a publish. Branches and pull requests never
 can. Pre-release tags such as `v1.0.0-rc.1` deliberately do not match; publishing

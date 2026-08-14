@@ -42,7 +42,7 @@ body:
     attributes:
       label: Environment
       description: OS, Node version, Codex CLI version, orchestrator version.
-      placeholder: Windows 11 · Node 26.7.0 · codex-cli 0.147.0 · orchestrator 0.5.0
+      placeholder: Windows 11 · Node 26.7.0 · codex-cli 0.147.0 · orchestrator 0.5.1
     validations:
       required: true
 

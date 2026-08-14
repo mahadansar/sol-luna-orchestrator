@@ -98,6 +98,12 @@ repository into each worktree — a junction on Windows, a directory symlink
 elsewhere. Anything linked is **shared, not copied**: a worker writing through
 that link writes into your real directory.
 
+Worktrees are created, removed and pruned one at a time. `git worktree add` walks
+metadata shared by the whole repository, so concurrent creation could corrupt
+another worker's registration (fixed in 0.5.1). Serializing those operations
+costs milliseconds and does not affect the workers themselves, which still run
+concurrently once their workspaces exist.
+
 ### Logs and telemetry
 
 `SOL_LUNA_LOG` and `SOL_LUNA_EVENTS` write plain files with no access control.

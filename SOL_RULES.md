@@ -41,7 +41,8 @@ when you already know the exact edit; when explaining it would take longer than
 making it; or when there is no second piece of independent work to overlap with.
 
 **Delegate one task** (`delegate_task`) when the work is substantial and bounded
-and you want an enforced file scope plus independently re-run verification.
+and you want a declared file scope, with any violation reported back to you, plus
+independently re-run verification.
 
 **Delegate several** (`delegate_tasks`) when there are two or more meaningful
 pieces of work:

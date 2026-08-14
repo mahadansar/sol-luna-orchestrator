@@ -6,6 +6,26 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+Documentation only; no runtime change.
+
+### Changed
+
+- Corrected two claims the project's own evidence contradicts: the README
+  described a benefit as spending "fewer top-tier tokens" while the benchmarks
+  show orchestration using more of them in every measured configuration, and it
+  reported "12 parallel runs" with zero integration conflicts where the raw
+  records hold 5 parallel batches and 15 workers.
+- Replaced "enforced file scope" with the accurate description — a declared
+  scope with violations detected and reported — in the README lead, the npm
+  package description and `SOL_RULES.md`. Scope checking is detective, and the
+  Limitations section always said so; the summaries did not match it.
+- `SECURITY.md` now states that worktree create/remove/prune are serialized, and
+  why, so the trust boundary around shared git metadata is documented rather than
+  only fixed.
+- `RELEASE_NOTES.md` is now an explicit draft for the _next_ release rather than a
+  copy of the last one. Duplicating a shipped changelog entry only drifts from
+  it, which it had already done once.
+
 ## [0.5.1] - 2026-08-14
 
 Release infrastructure, documentation, and a fix for a race in parallel
@@ -34,6 +54,13 @@ delegation.
 - Parallel batches now reach their configured concurrency reliably. Workers
   previously queued behind each other's worktree setup while holding a slot: an
   eight-task batch peaked at three to six concurrent workers instead of eight.
+
+- Parallel test fixtures no longer identify a task by the order the executor
+  happened to be called in. Concurrent execution does not preserve input order,
+  so a fixture could attribute one task's behaviour to another and fail for a
+  reason unrelated to the code under test. Fixtures now key off each task's own
+  declared scope, and batch assertions report per-task state on failure instead
+  of a bare count mismatch.
 
 ### Added
 

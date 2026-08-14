@@ -7,8 +7,9 @@
 
 An MCP server that lets a supervising OpenAI Codex agent delegate bounded
 implementation tasks to isolated worker threads — one at a time, or several in
-parallel in their own git worktrees — with enforced file scopes and results the
-orchestrator verifies instead of taking on trust.
+parallel in their own git worktrees — with a declared file scope per task,
+scope-violation detection, and results the orchestrator verifies instead of
+taking on trust.
 
 The supervisor (`gpt-5.6-sol`, high effort by default) decides _what_ should
 happen, whether delegating is even worth it, and reviews what comes back.
@@ -87,7 +88,8 @@ small tasks delegation measured ~2.3x slower and ~3.5x the tokens, with no
 quality difference.
 
 **Orchestration is worth considering when** a task has two or more genuinely
-independent workstreams, when you want an enforced file scope per unit of work,
+independent workstreams, when you want a declared file scope per unit of work
+with violations reported rather than discovered later,
 when you want verification re-run independently of the agent claiming it passed,
 or when one long session would lose coherence.
 
@@ -129,8 +131,12 @@ efforts.
 - Engineers in medium or large repositories where "change these three files" is a
   genuinely separable unit of work.
 - People experimenting with multi-agent coding who want the delegation boundary
-  to be explicit, enforced, and checkable rather than emergent.
-- Anyone who wants to spend fewer top-tier tokens without giving up review.
+  to be explicit, declared, and checkable rather than emergent.
+- Anyone who wants reasoning effort allocated per task rather than fixed for a
+  whole session — mechanical work at `medium` while the hard task gets `xhigh`.
+
+Not, on current evidence, anyone looking to spend fewer tokens: orchestration
+used more of them in every configuration measured so far.
 
 ## Adaptive orchestration
 
@@ -457,9 +463,11 @@ point, because every fixture in it sits below that point. Full data, including a
 `solo-xhigh` arm that varied 4x between two repetitions, is in
 [`bench/RESULTS.md`](bench/RESULTS.md).
 
-In 12 parallel runs there were **zero integration conflicts**: the supervisor
-produced disjoint scopes every time and every batch merged cleanly. `max` effort
-was never selected by any run of either suite.
+Across every parallel batch that actually ran workers — 5 batches, 15 workers —
+there were **zero integration conflicts**: the supervisor produced disjoint
+scopes every time and every batch merged cleanly. `max` effort was never selected
+by any run of either suite, which says these fixtures were never hard enough to
+warrant it rather than that `max` has no use.
 
 ## Benchmarks
 
