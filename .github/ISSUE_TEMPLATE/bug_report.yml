@@ -1,0 +1,58 @@
+name: Bug report
+description: Something behaves differently from what the docs describe.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        `sol-luna-orchestrator doctor --json` answers most of the environment
+        questions below in one go. Please redact paths or output you would not
+        want published.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: |
+        The smallest sequence that shows the problem — the prompt or tool call,
+        and the task contract if delegation was involved.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: doctor output
+      description: Output of `sol-luna-orchestrator doctor`.
+      render: text
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Node version, Codex CLI version, orchestrator version.
+      placeholder: Windows 11 · Node 26.7.0 · codex-cli 0.147.0 · orchestrator 0.5.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: |
+        From `SOL_LUNA_LOG`, if you have it set. **Remove secrets first** — logs
+        can contain command output and file contents.
+      render: text
+    validations:
+      required: false

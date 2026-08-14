@@ -214,6 +214,38 @@ export function toTomlValue(value: string | number | boolean | string[]): string
   return `[${value.map((entry) => JSON.stringify(entry)).join(", ")}]`;
 }
 
+/**
+ * Turn a raw TOML scalar back into readable text, for display only.
+ *
+ * Values are stored escaped — a Windows path arrives as
+ * `"C:\\Users\\me\\log"` — which is correct in the file and unreadable in a
+ * diagnostic. Non-string values are returned as they are.
+ */
+export function fromTomlValue(raw: string | null): string | null {
+  if (raw === null) return null;
+  const trimmed = raw.trim();
+
+  if (trimmed.startsWith("'") && trimmed.endsWith("'") && trimmed.length >= 2) {
+    return trimmed.slice(1, -1); // literal string: no escapes to decode
+  }
+  if (!trimmed.startsWith('"') || !trimmed.endsWith('"') || trimmed.length < 2) {
+    return trimmed;
+  }
+
+  const inner = trimmed.slice(1, -1);
+  let result = "";
+  for (let i = 0; i < inner.length; i += 1) {
+    if (inner[i] === "\\" && i + 1 < inner.length) {
+      const { text, consumed } = decodeEscape(inner, i + 1);
+      result += text;
+      i += consumed;
+      continue;
+    }
+    result += inner[i];
+  }
+  return result;
+}
+
 export interface UpsertOptions {
   /** Comment lines written above the key when it is first inserted. */
   comment?: string[];

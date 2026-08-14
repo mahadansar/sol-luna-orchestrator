@@ -30,18 +30,23 @@ export const yellow = (text: string): string => paint(33, text);
 export const dim = (text: string): string => paint(90, text);
 export const bold = (text: string): string => paint(1, text);
 
+/**
+ * The ASCII fallbacks are all six characters wide so columns still line up, and
+ * they spell out the status: an abbreviation the reader has to decode is no
+ * better than the replacement character it was meant to avoid.
+ */
 export const symbols = {
   get ok(): string {
-    return green(useUnicode() ? "✓" : "[ok]");
+    return green(useUnicode() ? "✓" : "[ ok ]");
   },
   get fail(): string {
-    return red(useUnicode() ? "✗" : "[!!]");
+    return red(useUnicode() ? "✗" : "[FAIL]");
   },
   get warn(): string {
-    return yellow(useUnicode() ? "!" : "[ws]");
+    return yellow(useUnicode() ? "!" : "[WARN]");
   },
   get skip(): string {
-    return dim(useUnicode() ? "-" : "[--]");
+    return dim(useUnicode() ? "-" : "[skip]");
   },
 };
 

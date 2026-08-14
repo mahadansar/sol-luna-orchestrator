@@ -23,13 +23,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # 24 is the active LTS line, 26 is Current. Node 20 reached end of life
+        # in 2026 and is no longer tested or supported.
         os: [ubuntu-latest, windows-latest, macos-latest]
-        node: ["20", "24"]
+        node: ["24", "26"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      # v7 of both actions runs on the node24 runner. Earlier majors ran on
+      # node20, which GitHub now reports as deprecated on every job.
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -53,12 +57,13 @@ jobs:
       - name: Format check
         run: npm run format:check
 
-      # Unit, security/path-escape, and parallel orchestration tests. The
-      # parallel suite creates real git worktrees and real temp directories, so
-      # it exercises this runner's actual filesystem semantics — path
-      # separators, case sensitivity, symlink support and file locking.
+      # Unit, security/path-escape, parallel orchestration and CLI/config tests.
+      # The parallel suite creates real git worktrees and real temp directories,
+      # and the CLI suite spawns the real binary, so both exercise this runner's
+      # actual filesystem and process semantics — path separators, case
+      # sensitivity, symlink support and file locking.
       - name: Tests
-        run: node --test dist/selftest.js dist/security.test.js dist/parallel.test.js
+        run: node --test dist/selftest.js dist/security.test.js dist/parallel.test.js dist/cli.test.js
 
       # Starts the MCP server as a subprocess and performs a real protocol
       # handshake. Needs no model access.
@@ -69,6 +74,11 @@ jobs:
       # with its committed reference solution.
       - name: Benchmark fixture validation
         run: node dist/bench/validate.js
+
+      # Catches an accidental change to `files` or `bin` before it reaches npm.
+      - name: Packaging check
+        if: matrix.os == 'ubuntu-latest' && matrix.node == '24'
+        run: npm pack --dry-run
 
       - name: Report symlink capability
         if: always()

@@ -69,12 +69,38 @@ export function installLocation(): InstallLocation {
   };
 }
 
-/** Read this package's own version without importing JSON at runtime. */
-export function packageVersion(): string {
+interface PackageManifest {
+  version?: string;
+  engines?: { node?: string };
+}
+
+function readManifest(): PackageManifest {
   try {
     const raw = fs.readFileSync(path.join(packageRoot(), "package.json"), "utf8");
-    return (JSON.parse(raw) as { version?: string }).version ?? "unknown";
+    return JSON.parse(raw) as PackageManifest;
   } catch {
-    return "unknown";
+    return {};
   }
+}
+
+/** Read this package's own version without importing JSON at runtime. */
+export function packageVersion(): string {
+  return readManifest().version ?? "unknown";
+}
+
+/**
+ * The declared `engines.node` range, parsed into a comparable minimum.
+ *
+ * `doctor` reports this rather than a constant of its own, so the diagnostic
+ * and the package metadata cannot drift apart and tell a user two different
+ * things about which Node versions are supported.
+ */
+export function minimumNode(): { range: string; major: number; minor: number } {
+  const range = readManifest().engines?.node ?? ">=22.12.0";
+  const match = /(\d+)\.(\d+)/.exec(range);
+  return {
+    range,
+    major: Number(match?.[1] ?? 22),
+    minor: Number(match?.[2] ?? 12),
+  };
 }

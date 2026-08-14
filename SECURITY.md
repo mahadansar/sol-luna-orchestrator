@@ -7,8 +7,18 @@ might assume.
 
 ## Reporting a vulnerability
 
-Open a GitHub security advisory, or a regular issue if the problem is not
-sensitive. Please include the version, your platform, and a reproduction.
+Open a
+[GitHub security advisory](https://github.com/mahadansar/sol-luna-orchestrator/security/advisories/new),
+which is private, or a regular
+[issue](https://github.com/mahadansar/sol-luna-orchestrator/issues) if the
+problem is not sensitive. Please include the orchestrator version, your platform
+and Node version, and a reproduction.
+
+**Redact before you send.** Logs and event files can contain repository paths,
+file contents and command output. Strip anything you would not publish.
+
+There is no bounty programme and no formal SLA; this is a solo project. Expect an
+acknowledgement rather than an immediate fix.
 
 ## Threat model
 
@@ -72,6 +82,29 @@ Workers cannot delegate. Two independent guards, both covered by tests:
 `--config mcp_servers={}` does **not** work for this: Codex merges that override
 into the existing table and every server still starts. This was verified against
 codex-cli 0.147.0 and is why guard 1 is written the way it is.
+
+### Parallel batches write inside your repository
+
+A parallel batch creates one git worktree per worker under
+`.sol-luna/worktrees/` and adds that path to `.git/info/exclude`. Each worker
+edits **real files** in its own worktree — the isolation is between workers, not
+between a worker and your disk. Integration copies files back into your working
+tree, and only when no two workers touched the same file. A batch is refused up
+front if two tasks declare overlapping scopes, or if the repository has
+uncommitted changes inside a declared scope.
+
+`SOL_LUNA_WORKTREE_LINK` (default `node_modules`) links directories from your
+repository into each worktree — a junction on Windows, a directory symlink
+elsewhere. Anything linked is **shared, not copied**: a worker writing through
+that link writes into your real directory.
+
+### Logs and telemetry
+
+`SOL_LUNA_LOG` and `SOL_LUNA_EVENTS` write plain files with no access control.
+They record objectives, file paths, verification command output and token
+counts. Verification output is truncated but not sanitised, so if a test suite
+prints a secret, the log will contain it. Keep both outside the repository, and
+do not attach them to a public issue without reading them first.
 
 ## What is NOT enforced — read this
 

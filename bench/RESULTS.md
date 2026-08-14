@@ -31,6 +31,10 @@ in `bench/results/*.json`.
 
 ## Micro suite — measured
 
+**What this suite is for: showing when _not_ to delegate.** Four small
+single-file tasks, sized so that delegation overhead should dominate. It answers
+"is handing this off worth it?" and the answer here is no.
+
 `2026-08-14T10-42-36-344Z.json` · 4 tasks × 2 arms × 2 reps = 16 runs ·
 `gpt-5.6-sol` at high effort · Node v24.5.0 on win32 x64.
 
@@ -46,6 +50,10 @@ not stated up front). `max` was never chosen.
 ---
 
 ## Parallel suite — measured
+
+**What this suite is for: comparing parallel delegation against sequential
+delegation**, on multi-module projects where the work genuinely splits. It does
+not attempt to show delegation beating solo execution, and it does not.
 
 `2026-08-14T12-38-48-852Z.parallel.json` · 2 tasks × 4 arms × 2 reps = 16 runs ·
 Node v24.5.0 on win32 x64.

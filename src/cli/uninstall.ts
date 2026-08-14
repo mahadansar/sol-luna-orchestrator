@@ -29,6 +29,16 @@ export async function uninstallCommand(argv: string[]): Promise<number> {
   out(bold("Sol-Luna Orchestrator uninstall"));
   out();
 
+  // A typo must not turn an intended dry run into a real removal.
+  const unknown = argv.filter((arg) => arg !== "--dry-run");
+  if (unknown.length > 0) {
+    for (const arg of unknown) out(`${symbols.fail} Unknown option: ${arg}`);
+    out();
+    out("Valid options: --dry-run");
+    out("Nothing was removed.");
+    return 1;
+  }
+
   const before = readConfig(configPath);
   const othersBefore = listSubTables(before, ["mcp_servers"]).filter(
     (name) => name !== SERVER_NAME,

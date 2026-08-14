@@ -6,9 +6,14 @@ import {
   gitVersion,
   readConfig,
 } from "./codex.js";
-import { codexConfigPath, installLocation, packageVersion } from "./paths.js";
+import {
+  codexConfigPath,
+  installLocation,
+  minimumNode,
+  packageVersion,
+} from "./paths.js";
 import { SERVER_NAME, inspectSettings, serverTable } from "./settings.js";
-import { readKey } from "./toml-edit.js";
+import { fromTomlValue, readKey } from "./toml-edit.js";
 import { bold, dim, out, symbols } from "./ui.js";
 
 /**
@@ -29,9 +34,6 @@ export interface Check {
   remedy?: string;
 }
 
-const MIN_NODE_MAJOR = 20;
-const MIN_NODE_MINOR = 10;
-
 export interface DoctorReport {
   version: string;
   checks: Check[];
@@ -42,15 +44,18 @@ export async function collectChecks(): Promise<Check[]> {
   const checks: Check[] = [];
 
   // --- Runtime -------------------------------------------------------------
+  const minimum = minimumNode();
   const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
   const nodeOk =
-    major > MIN_NODE_MAJOR || (major === MIN_NODE_MAJOR && minor >= MIN_NODE_MINOR);
+    major > minimum.major || (major === minimum.major && minor >= minimum.minor);
   checks.push({
     name: "Node.js supported",
     status: nodeOk ? "ok" : "fail",
     detail: `v${process.versions.node}`,
-    expected: `>=${MIN_NODE_MAJOR}.${MIN_NODE_MINOR}`,
-    remedy: nodeOk ? undefined : "Upgrade Node.js",
+    expected: minimum.range,
+    remedy: nodeOk
+      ? undefined
+      : `Upgrade Node.js — ${minimum.range}. Tested on 24 (LTS) and 26 (Current).`,
   });
 
   const git = await gitVersion();
@@ -171,7 +176,9 @@ export async function collectChecks(): Promise<Check[]> {
     detail: "workers run with the orchestrator disabled and SOL_LUNA_WORKER=1",
   });
 
-  const logPath = readKey(configText, [...serverTable(), "env"], "SOL_LUNA_LOG");
+  const logPath = fromTomlValue(
+    readKey(configText, [...serverTable(), "env"], "SOL_LUNA_LOG"),
+  );
   checks.push({
     name: "Diagnostic log configured",
     status: logPath ? "ok" : "warn",

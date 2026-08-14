@@ -6,6 +6,50 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-14
+
+Release-candidate pass: current Node support, stricter CLI argument handling, and
+platform claims brought in line with what CI has actually executed.
+
+### Added
+
+- GitHub issue templates (bug report, feature request) and a pull request
+  template. The bug template asks for `doctor` output, versions and a redacted
+  log rather than leaving reporters to guess.
+- CI now runs the CLI/configuration suite and a `npm pack --dry-run` packaging
+  check, so a change to `files` or `bin` fails before it can reach npm.
+- Tests that assert the supported Node range agrees across `engines`, the CLI
+  doctor, the CI matrix and the README.
+- `SECURITY.md` sections on parallel worktrees — including that
+  `SOL_LUNA_WORKTREE_LINK` shares directories rather than copying them — and on
+  what log and telemetry files can contain.
+
+### Changed
+
+- **Minimum supported Node is now 22.12.** Node 20 reached end of life and is no
+  longer tested or supported. Nothing in the code requires a newer API; the bump
+  is a support-policy decision, not a technical one.
+- CI matrix is Node 24 (active LTS) and 26 (current) across Windows, Ubuntu and
+  macOS. `actions/checkout` and `actions/setup-node` moved to v7, whose node24
+  runner ends the Node-20 runtime deprecation warnings on every job.
+- `doctor` derives its Node requirement from `engines` instead of a private
+  constant, so the diagnostic and the package metadata cannot disagree.
+- Platform documentation now reports deterministic CI and live model testing
+  separately. CI is verified on all three platforms; live Codex delegation
+  remains verified on Windows only.
+- ASCII status markers are spelled out (`[ ok ]`, `[FAIL]`, `[WARN]`, `[skip]`)
+  instead of abbreviations that had to be decoded.
+- Dropped `main` from the manifest. This is a CLI and an MCP server, not a
+  library, and pointing `main` at the stdio server meant importing the package
+  would start one.
+
+### Fixed
+
+- `init` and `uninstall` now refuse unrecognised options instead of ignoring
+  them. `init --dryrun` previously performed a real write.
+- `init --log` no longer consumes a following flag as its value; `--log --force`
+  reports a missing value and keeps `--force`.
+
 ## [0.4.0] - 2026-08-14
 
 One-command setup, and full usage telemetry for parallel batches.
@@ -168,8 +212,9 @@ Initial working version, verified end to end.
   `default_tools_approval_mode = "approve"` (not `"auto"`), or delegation is
   cancelled.
 
-[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.4.0...HEAD
-[0.4.0]: https://github.com/mahadansar/sol-luna-orchestrator/releases/tag/v0.4.0
-[0.3.0]: https://github.com/mahadansar/sol-luna-orchestrator/releases/tag/v0.3.0
-[0.2.0]: https://github.com/mahadansar/sol-luna-orchestrator/releases/tag/v0.2.0
-[0.1.0]: https://github.com/mahadansar/sol-luna-orchestrator/releases/tag/v0.1.0
+0.5.0 is the first version intended for release. 0.1.0 through 0.4.0 were
+development milestones and were never tagged or published, so they have no
+release links.
+
+[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/mahadansar/sol-luna-orchestrator/releases/tag/v0.5.0

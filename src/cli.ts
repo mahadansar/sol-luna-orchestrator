@@ -12,7 +12,7 @@ import { doctorCommand } from "./cli/doctor.js";
 import { initCommand } from "./cli/init.js";
 import { codexConfigPath, installLocation, packageVersion } from "./cli/paths.js";
 import { SERVER_NAME, inspectSettings } from "./cli/settings.js";
-import { findTable } from "./cli/toml-edit.js";
+import { findTable, fromTomlValue } from "./cli/toml-edit.js";
 import { bold, dim, errOut, out, symbols, table } from "./cli/ui.js";
 import { uninstallCommand } from "./cli/uninstall.js";
 
@@ -59,7 +59,7 @@ function statusCommand(): number {
     ["Timeout", configured ? `${value("tool_timeout_sec")}s` : "-"],
     [
       "Approval",
-      configured ? value("default_tools_approval_mode").replace(/"/g, "") : "-",
+      configured ? (fromTomlValue(value("default_tools_approval_mode")) ?? "-") : "-",
     ],
     ["Max workers", process.env.SOL_LUNA_MAX_PARALLEL ?? "3"],
     ["Verification", process.env.SOL_LUNA_VERIFY_MODE ?? "allowlist"],

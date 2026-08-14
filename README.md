@@ -1,5 +1,9 @@
 # sol-luna-orchestrator
 
+[![CI](https://github.com/mahadansar/sol-luna-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/mahadansar/sol-luna-orchestrator/actions/workflows/ci.yml)
+[![Node](https://img.shields.io/badge/node-%E2%89%A522.12-brightgreen)](#requirements)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 An MCP server that lets a supervising OpenAI Codex agent delegate bounded
 implementation tasks to isolated worker threads — one at a time, or several in
 parallel in their own git worktrees — with enforced file scopes and results the
@@ -57,6 +61,20 @@ sol-luna-orchestrator doctor      # diagnose, with the fix for anything broken
 sol-luna-orchestrator status      # short summary
 sol-luna-orchestrator uninstall   # remove this project's entry, nothing else
 ```
+
+<details>
+<summary>Why two commands and not one <code>npx</code> line</summary>
+
+A single `npx sol-luna-orchestrator init` would be shorter and would work today.
+It would also write a Codex config pointing into npm's `_npx` cache, which npm
+deletes whenever it feels like it — leaving a configuration that silently stops
+working weeks later with no obvious cause. `init` refuses that by default.
+
+If you want it on one line, chain the two commands your shell's way:
+`npm i -g sol-luna-orchestrator && sol-luna-orchestrator init` in bash, zsh or
+PowerShell 7; use `;` instead of `&&` in Windows PowerShell 5.
+
+</details>
 
 ## Should I use this?
 
@@ -189,7 +207,8 @@ treated as evidence to be checked rather than as a result.
 
 ## Requirements
 
-- **Node.js ≥ 20.10**
+- **Node.js ≥ 22.12** — tested in CI on 24 (active LTS) and 26 (current). Node 20
+  and earlier are end-of-life and are neither tested nor supported.
 - **OpenAI Codex CLI**, logged in (`codex login`). Built against `codex-cli 0.147.0`.
 - **git ≥ 2.20** — only for parallel batches, which use `git worktree`.
 - Access to `gpt-5.6-sol` and `gpt-5.6-luna`. Check with
@@ -379,6 +398,11 @@ Two rules carry most of the weight:
   because the brief was vague, fix the brief. A scope violation or a timeout is
   never an effort problem.
 
+Across every benchmark run of both suites, the supervisor never selected `max`.
+That is a statement about the fixtures — all small, all well-specified — not
+evidence that `max` is useless. It is the setting the policy reserves, and no
+task in the suite was hard enough to reach for it.
+
 Full rules are in [`SOL_RULES.md`](SOL_RULES.md). They also reach the supervisor
 automatically through the MCP tool descriptions, so no setup is needed.
 
@@ -492,21 +516,29 @@ about. The short version:
 
 Statuses reflect what has actually been executed, not what the code intends.
 
-| Platform                 | Status     | Evidence                                                                                                                                                                        |
-| ------------------------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Windows 11** (Node 24) | Verified   | Full test suite, MCP smoke, live single + parallel delegation, worktree lifecycle, benchmarks                                                                                   |
-| **Linux**                | Unverified | CI is configured for `ubuntu-latest` (build, typecheck, format, unit/security/parallel tests, MCP smoke, fixture validation) but has not been executed yet. No live model runs. |
-| **macOS**                | Unverified | Same CI configuration for `macos-latest`, likewise not executed yet. No live model runs.                                                                                        |
+Two different things get called "supported", so they are reported separately.
+**Deterministic CI** runs the build, typecheck, format check, unit, security,
+parallel-orchestration and CLI suites, the MCP protocol handshake and the
+benchmark fixture validation — no model access. **Live model testing** drives
+real Codex sessions with real Sol and Luna turns.
+
+| Platform       | Deterministic CI | Live Codex delegation | Notes                                                                       |
+| -------------- | ---------------- | --------------------- | --------------------------------------------------------------------------- |
+| **Windows 11** | Verified         | **Verified**          | Single + parallel delegation, worktree lifecycle, CLI lifecycle, benchmarks |
+| **Linux**      | Verified         | Not yet run           | `ubuntu-latest`, GitHub-hosted                                              |
+| **macOS**      | Verified         | Not yet run           | `macos-latest`, GitHub-hosted                                               |
 
 Platform-specific behaviour is exercised by real code paths rather than mocked:
-worktree tests create actual git worktrees and directory links, so each runner
-tests its own filesystem semantics (path separators, case sensitivity, symlink
-support, file locking). Windows uses junctions and `taskkill /T` for process-tree
-cleanup; POSIX uses directory symlinks and process-group kills.
+worktree tests create actual git worktrees and directory links, and the CLI tests
+spawn the real binary, so each runner tests its own filesystem and process
+semantics (path separators, case sensitivity, symlink support, file locking).
+Windows uses junctions and `taskkill /T` for process-tree cleanup; POSIX uses
+directory symlinks and process-group kills.
 
-Linux and macOS have not been driven end-to-end with a live Codex session, and
-the CI workflow has not run anywhere yet. Treat both as expected-to-work rather
-than proven.
+What that means in practice: the code paths that differ per platform are proven
+on all three, but only Windows has been driven end to end with a live model.
+Treat Linux and macOS as expected-to-work with the mechanics verified, rather
+than as proven end to end.
 
 ## Troubleshooting
 

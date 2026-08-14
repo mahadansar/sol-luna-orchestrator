@@ -20,6 +20,7 @@ import {
   detectNewline,
   findTable,
   formatTableHeader,
+  fromTomlValue,
   listSubTables,
   parseTableHeader,
   readKey,
@@ -27,6 +28,8 @@ import {
   toTomlValue,
   upsertKey,
 } from "./cli/toml-edit.js";
+import { parseInitOptions } from "./cli/init.js";
+import { minimumNode } from "./cli/paths.js";
 import { inspectSettings, settingsSatisfied } from "./cli/settings.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -427,6 +430,123 @@ test("uninstall on an unconfigured machine is a safe no-op", async () => {
   const result = await runCli(["uninstall"], { CODEX_HOME: home });
   assert.equal(result.code, 0);
   assert.match(result.stdout, /Nothing to remove/);
+});
+
+// --- Display decoding -------------------------------------------------------
+
+test("raw TOML values are decoded for display without altering the file", () => {
+  assert.equal(fromTomlValue(`"C:\\\\Users\\\\me\\\\log.txt"`), "C:\\Users\\me\\log.txt");
+  assert.equal(fromTomlValue(`"approve"`), "approve");
+  assert.equal(fromTomlValue(`'C:\\raw\\path'`), "C:\\raw\\path");
+  assert.equal(fromTomlValue("3600"), "3600");
+  assert.equal(fromTomlValue(null), null);
+});
+
+test("decoding a value and re-encoding it round-trips", () => {
+  const original = "C:\\Users\\me\\sol luna\\log.txt";
+  assert.equal(fromTomlValue(toTomlValue(original)), original);
+});
+
+// --- Argument handling on config-mutating commands --------------------------
+
+test("a mistyped init flag is refused instead of performing a real write", async () => {
+  const home = emptyCodexHome();
+  const configPath = path.join(home, "config.toml");
+  fs.writeFileSync(configPath, REALISTIC_CONFIG, "utf8");
+
+  const result = await runCli(["init", "--dryrun"], { CODEX_HOME: home });
+
+  assert.equal(result.code, 1);
+  assert.match(result.stdout, /Unknown option: --dryrun/);
+  assert.equal(fs.readFileSync(configPath, "utf8"), REALISTIC_CONFIG);
+});
+
+test("init --log does not swallow a following flag as its value", () => {
+  const options = parseInitOptions(["--log", "--force"]);
+  assert.equal(options.logPath, undefined);
+  assert.deepEqual(options.missingValue, ["--log"]);
+  // --force must still be seen; it was never the log path.
+  assert.equal(options.force, true);
+});
+
+test("init --log at the end of the line reports a missing value", () => {
+  const options = parseInitOptions(["--log"]);
+  assert.deepEqual(options.missingValue, ["--log"]);
+  assert.deepEqual(options.unknown, []);
+});
+
+test("valid init flags still parse", () => {
+  const options = parseInitOptions(["--dry-run", "--log", "/tmp/x.log", "--force"]);
+  assert.equal(options.dryRun, true);
+  assert.equal(options.force, true);
+  assert.equal(options.logPath, "/tmp/x.log");
+  assert.deepEqual(options.unknown, []);
+  assert.deepEqual(options.missingValue, []);
+});
+
+test("a mistyped uninstall flag removes nothing", async () => {
+  const home = emptyCodexHome();
+  const configPath = path.join(home, "config.toml");
+  fs.writeFileSync(configPath, REALISTIC_CONFIG, "utf8");
+
+  const result = await runCli(["uninstall", "--dry"], { CODEX_HOME: home });
+
+  assert.equal(result.code, 1);
+  assert.match(result.stdout, /Unknown option: --dry/);
+  assert.equal(fs.readFileSync(configPath, "utf8"), REALISTIC_CONFIG);
+});
+
+// --- Node support policy ----------------------------------------------------
+//
+// The supported Node range is stated in four places: package `engines`, the
+// CLI doctor, CI, and the README. They are only useful if they agree, so the
+// agreement is asserted rather than maintained by hand.
+
+const REPO_ROOT = path.resolve(HERE, "..");
+
+const manifest = JSON.parse(
+  fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"),
+) as { engines: { node: string }; version: string };
+
+test("doctor reports the same Node range the package declares", () => {
+  assert.equal(minimumNode().range, manifest.engines.node);
+});
+
+test("doctor's runtime check is derived from engines, not a private constant", async () => {
+  const result = await runCli(["doctor", "--json"], { CODEX_HOME: emptyCodexHome() });
+  const report = JSON.parse(result.stdout) as {
+    checks: Array<{ name: string; expected?: string }>;
+  };
+  const node = report.checks.find((check) => check.name === "Node.js supported");
+  assert.equal(node?.expected, manifest.engines.node);
+});
+
+test("every Node version CI tests is at or above the declared minimum", () => {
+  const workflow = path.join(REPO_ROOT, ".github", "workflows", "ci.yml");
+  const text = fs.readFileSync(workflow, "utf8");
+  const line = /^\s*node:\s*\[(.+)\]\s*$/m.exec(text);
+  assert.ok(line, "could not find the CI node matrix");
+
+  const versions = line[1]!
+    .split(",")
+    .map((entry) => Number(entry.trim().replace(/"/g, "")));
+  assert.ok(versions.length > 0);
+
+  for (const version of versions) {
+    assert.ok(
+      version >= minimumNode().major,
+      `CI tests Node ${version}, below the declared minimum ${minimumNode().range}`,
+    );
+  }
+});
+
+test("the README states the same minimum Node version", () => {
+  const readme = fs.readFileSync(path.join(REPO_ROOT, "README.md"), "utf8");
+  const { major, minor } = minimumNode();
+  assert.ok(
+    readme.includes(`Node.js ≥ ${major}.${minor}`),
+    `README should state "Node.js ≥ ${major}.${minor}"`,
+  );
 });
 
 function emptyCodexHome(): string {

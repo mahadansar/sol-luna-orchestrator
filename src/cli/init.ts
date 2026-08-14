@@ -15,7 +15,13 @@ import {
   serverTable,
   settingsSatisfied,
 } from "./settings.js";
-import { findTable, readKey, toTomlValue, upsertKey } from "./toml-edit.js";
+import {
+  findTable,
+  fromTomlValue,
+  readKey,
+  toTomlValue,
+  upsertKey,
+} from "./toml-edit.js";
 import { bold, dim, out, symbols, table } from "./ui.js";
 
 /**
@@ -41,19 +47,58 @@ export interface InitOptions {
   force: boolean;
   allowEphemeral: boolean;
   logPath?: string;
+  /** Arguments that matched no known flag. */
+  unknown: string[];
+  /** Flags that were given without the value they require. */
+  missingValue: string[];
 }
 
+const INIT_BOOLEAN_FLAGS = ["--dry-run", "--force", "--allow-ephemeral"];
+const INIT_VALUE_FLAGS = ["--log"];
+
+/**
+ * Parse `init`'s arguments strictly.
+ *
+ * A mistyped flag on a command that rewrites configuration must not be ignored:
+ * `init --dryrun` silently performing a real write is exactly the surprise this
+ * command exists to avoid. Unknown arguments are collected and refused rather
+ * than dropped, and a value flag followed by another flag counts as missing its
+ * value instead of swallowing the next flag as a path.
+ */
 export function parseInitOptions(argv: string[]): InitOptions {
-  const valueOf = (flag: string): string | undefined => {
-    const index = argv.indexOf(flag);
-    return index >= 0 ? argv[index + 1] : undefined;
+  const options: InitOptions = {
+    dryRun: false,
+    force: false,
+    allowEphemeral: false,
+    unknown: [],
+    missingValue: [],
   };
-  return {
-    dryRun: argv.includes("--dry-run"),
-    force: argv.includes("--force"),
-    allowEphemeral: argv.includes("--allow-ephemeral"),
-    logPath: valueOf("--log"),
-  };
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i]!;
+
+    if (INIT_BOOLEAN_FLAGS.includes(arg)) {
+      if (arg === "--dry-run") options.dryRun = true;
+      if (arg === "--force") options.force = true;
+      if (arg === "--allow-ephemeral") options.allowEphemeral = true;
+      continue;
+    }
+
+    if (INIT_VALUE_FLAGS.includes(arg)) {
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith("--")) {
+        options.missingValue.push(arg);
+        continue;
+      }
+      if (arg === "--log") options.logPath = value;
+      i += 1;
+      continue;
+    }
+
+    options.unknown.push(arg);
+  }
+
+  return options;
 }
 
 export async function initCommand(argv: string[]): Promise<number> {
@@ -61,6 +106,17 @@ export async function initCommand(argv: string[]): Promise<number> {
 
   out(bold("Sol-Luna Orchestrator setup"));
   out();
+
+  if (options.unknown.length > 0 || options.missingValue.length > 0) {
+    for (const arg of options.unknown) out(`${symbols.fail} Unknown option: ${arg}`);
+    for (const arg of options.missingValue) {
+      out(`${symbols.fail} ${arg} needs a value, e.g. ${arg} /path/to/file`);
+    }
+    out();
+    out(`Valid options: ${[...INIT_BOOLEAN_FLAGS, "--log <path>"].join(", ")}`);
+    out("Nothing was written. Run `sol-luna-orchestrator --help` for usage.");
+    return 1;
+  }
 
   // --- Prerequisites -------------------------------------------------------
   const codex = await codexVersion();
@@ -228,7 +284,7 @@ function printSummary(serverEntry: string, configText: string): void {
     ["MCP", `ready (${SERVER_NAME})`],
     ["Server", serverEntry],
     ["Timeout", `${value("tool_timeout_sec")}s`],
-    ["Approval", value("default_tools_approval_mode").replace(/"/g, "")],
+    ["Approval", fromTomlValue(value("default_tools_approval_mode")) ?? "unset"],
     ["Workers", `max ${process.env.SOL_LUNA_MAX_PARALLEL ?? "3"}`],
     ["Verify", process.env.SOL_LUNA_VERIFY_MODE ?? "allowlist"],
   ]);

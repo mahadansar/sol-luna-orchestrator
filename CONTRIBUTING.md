@@ -5,10 +5,13 @@ server that lets one Codex agent delegate bounded work to another.
 
 ## Getting set up
 
+Node 22.12 or newer. CI runs 24 (active LTS) and 26 (current) on Windows, Ubuntu
+and macOS.
+
 ```bash
 npm install
 npm run build
-npm test          # unit + security tests, no model calls
+npm test          # unit, security, parallel and CLI tests; no model calls
 npm run smoke     # MCP protocol handshake, no model calls
 ```
 
@@ -51,6 +54,8 @@ file hashes, process logs.
 | `src/workspace.ts` | `workingDirectory` validation                              |
 | `src/contract.ts`  | Task contract and result schemas                           |
 | `src/prompt.ts`    | The worker's brief                                         |
+| `src/cli.ts`       | User CLI entry (`init`, `doctor`, `status`, `uninstall`)   |
+| `src/cli/`         | CLI internals, including the surgical TOML config editor   |
 | `src/bench/`       | Benchmark harness and fixtures                             |
 
 Pure logic lives apart from I/O on purpose. `buildDelegationResult` takes
