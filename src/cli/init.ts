@@ -6,6 +6,7 @@ import {
   readConfig,
   writeConfig,
 } from "./codex.js";
+import { defaultEventsPath } from "./events-path.js";
 import { codexConfigPath, installLocation } from "./paths.js";
 import {
   REQUIRED_SETTINGS,
@@ -47,6 +48,7 @@ export interface InitOptions {
   force: boolean;
   allowEphemeral: boolean;
   logPath?: string;
+  eventsPath?: string;
   /** Arguments that matched no known flag. */
   unknown: string[];
   /** Flags that were given without the value they require. */
@@ -54,7 +56,7 @@ export interface InitOptions {
 }
 
 const INIT_BOOLEAN_FLAGS = ["--dry-run", "--force", "--allow-ephemeral"];
-const INIT_VALUE_FLAGS = ["--log"];
+const INIT_VALUE_FLAGS = ["--log", "--events"];
 
 /**
  * Parse `init`'s arguments strictly.
@@ -91,6 +93,7 @@ export function parseInitOptions(argv: string[]): InitOptions {
         continue;
       }
       if (arg === "--log") options.logPath = value;
+      if (arg === "--events") options.eventsPath = value;
       i += 1;
       continue;
     }
@@ -99,6 +102,61 @@ export function parseInitOptions(argv: string[]): InitOptions {
   }
 
   return options;
+}
+
+export interface InitConfigInput {
+  /** Interpreter Codex should launch the server with. */
+  command: string;
+  /** Absolute path to the built stdio server. */
+  serverEntry: string;
+  logPath: string;
+  eventsPath: string;
+  /** True when `--log` was given, which is a request to replace any value. */
+  forceLogPath: boolean;
+  /** True when `--events` was given, which is a request to replace any value. */
+  forceEventsPath: boolean;
+}
+
+/**
+ * Produce the new config text from the old one.
+ *
+ * Pure, and exported so the surgical-edit behaviour that matters most —
+ * migrating an existing installation without disturbing anything else — can be
+ * tested without a Codex binary on PATH. `initCommand` is not testable that way
+ * because it refuses to run at all when Codex is missing, which is exactly the
+ * situation in CI.
+ */
+export function applyInitConfig(before: string, input: InitConfigInput): string {
+  let text = before;
+
+  text = upsertKey(text, serverTable(), "command", input.command, {
+    comment: ["Registered by `sol-luna-orchestrator init`."],
+  });
+  text = upsertKey(text, serverTable(), "args", [input.serverEntry]);
+
+  for (const setting of REQUIRED_SETTINGS) {
+    if (readKey(text, serverTable(), setting.key) === setting.expected) continue;
+    text = upsertKey(text, serverTable(), setting.key, setting.value, {
+      comment: setting.comment,
+    });
+  }
+
+  // Same rule as the event path below: an explicit `--log` replaces whatever is
+  // there, a plain re-run never does.
+  if (input.forceLogPath || !readKey(text, serverEnvTable(), "SOL_LUNA_LOG")) {
+    text = upsertKey(text, serverEnvTable(), "SOL_LUNA_LOG", input.logPath);
+  }
+
+  // Never overwrite a path the user chose. `--events` is an explicit request
+  // and wins; otherwise an existing value is left exactly as it is, so
+  // re-running init cannot redirect someone's history to the default.
+  if (input.forceEventsPath || !readKey(text, serverEnvTable(), "SOL_LUNA_EVENTS")) {
+    text = upsertKey(text, serverEnvTable(), "SOL_LUNA_EVENTS", input.eventsPath, {
+      comment: ["Structured activity events, read by `sol-luna-orchestrator activity`."],
+    });
+  }
+
+  return text;
 }
 
 export async function initCommand(argv: string[]): Promise<number> {
@@ -113,7 +171,9 @@ export async function initCommand(argv: string[]): Promise<number> {
       out(`${symbols.fail} ${arg} needs a value, e.g. ${arg} /path/to/file`);
     }
     out();
-    out(`Valid options: ${[...INIT_BOOLEAN_FLAGS, "--log <path>"].join(", ")}`);
+    out(
+      `Valid options: ${[...INIT_BOOLEAN_FLAGS, "--log <path>", "--events <path>"].join(", ")}`,
+    );
     out("Nothing was written. Run `sol-luna-orchestrator --help` for usage.");
     return 1;
   }
@@ -166,10 +226,23 @@ export async function initCommand(argv: string[]): Promise<number> {
   const commandMatches =
     readKey(before, serverTable(), "command") === toTomlValue(process.execPath);
 
-  const registrationOk = isRegistered && pathMatches && commandMatches;
-  const alreadyDone = registrationOk && settingsSatisfied(settingsBefore);
+  // Activity logging is configuration this command owns, so a config missing it
+  // is not "already configured". Without this an installation made by an
+  // earlier version reports Already configured forever and `activity` never
+  // works, which is exactly the bug this check exists to prevent.
+  const eventsConfigured = readKey(before, serverEnvTable(), "SOL_LUNA_EVENTS") !== null;
 
-  if (alreadyDone && !options.force) {
+  const registrationOk = isRegistered && pathMatches && commandMatches;
+  const alreadyDone =
+    registrationOk && settingsSatisfied(settingsBefore) && eventsConfigured;
+
+  // `--log` and `--events` each name a specific path, so either is a request to
+  // change one. Letting the "nothing to do" shortcut swallow them would make
+  // the flags silently inert on exactly the installations someone would use
+  // them on.
+  const explicitPath = options.logPath !== undefined || options.eventsPath !== undefined;
+
+  if (alreadyDone && !options.force && !explicitPath) {
     out();
     out(`${symbols.ok} Already configured. Nothing to change.`);
     printSummary(location.serverEntry, before);
@@ -178,6 +251,7 @@ export async function initCommand(argv: string[]): Promise<number> {
 
   const logPath =
     options.logPath ?? path.join(path.dirname(configPath), "sol-luna-orchestrator.log");
+  const eventsPath = options.eventsPath ?? defaultEventsPath();
 
   const planned: string[] = [];
   if (!isRegistered) planned.push(`register MCP server "${SERVER_NAME}"`);
@@ -192,8 +266,16 @@ export async function initCommand(argv: string[]): Promise<number> {
         (setting.actual ? ` (currently ${setting.actual})` : ""),
     );
   }
-  if (!readKey(before, serverEnvTable(), "SOL_LUNA_LOG")) {
-    planned.push("set SOL_LUNA_LOG for diagnostics");
+  const logConfigured = readKey(before, serverEnvTable(), "SOL_LUNA_LOG") !== null;
+  if (options.logPath !== undefined && logConfigured) {
+    planned.push(`replace SOL_LUNA_LOG with ${logPath}`);
+  } else if (!logConfigured) {
+    planned.push(`set SOL_LUNA_LOG for diagnostics (${logPath})`);
+  }
+  if (options.eventsPath !== undefined && eventsConfigured) {
+    planned.push(`replace SOL_LUNA_EVENTS with ${eventsPath}`);
+  } else if (!eventsConfigured) {
+    planned.push(`set SOL_LUNA_EVENTS so \`activity\` works (${eventsPath})`);
   }
 
   out();
@@ -208,24 +290,15 @@ export async function initCommand(argv: string[]): Promise<number> {
   }
 
   // --- Write only the keys we own ------------------------------------------
-  let text = before;
-  const original = text;
-
-  text = upsertKey(text, serverTable(), "command", process.execPath, {
-    comment: ["Registered by `sol-luna-orchestrator init`."],
+  const original = before;
+  const text = applyInitConfig(before, {
+    command: process.execPath,
+    serverEntry: location.serverEntry,
+    logPath,
+    eventsPath,
+    forceLogPath: options.logPath !== undefined,
+    forceEventsPath: options.eventsPath !== undefined,
   });
-  text = upsertKey(text, serverTable(), "args", [location.serverEntry]);
-
-  for (const setting of REQUIRED_SETTINGS) {
-    if (readKey(text, serverTable(), setting.key) === setting.expected) continue;
-    text = upsertKey(text, serverTable(), setting.key, setting.value, {
-      comment: setting.comment,
-    });
-  }
-
-  if (!readKey(text, serverEnvTable(), "SOL_LUNA_LOG")) {
-    text = upsertKey(text, serverEnvTable(), "SOL_LUNA_LOG", logPath);
-  }
 
   let backupPath: string | undefined;
   if (text !== original) {
@@ -287,5 +360,10 @@ function printSummary(serverEntry: string, configText: string): void {
     ["Approval", fromTomlValue(value("default_tools_approval_mode")) ?? "unset"],
     ["Workers", `max ${process.env.SOL_LUNA_MAX_PARALLEL ?? "3"}`],
     ["Verify", process.env.SOL_LUNA_VERIFY_MODE ?? "allowlist"],
+    [
+      "Activity",
+      fromTomlValue(readKey(configText, serverEnvTable(), "SOL_LUNA_EVENTS")) ??
+        "not configured",
+    ],
   ]);
 }

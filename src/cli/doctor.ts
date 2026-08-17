@@ -6,6 +6,7 @@ import {
   gitVersion,
   readConfig,
 } from "./codex.js";
+import { describeEventsSource, resolveEventsPath } from "./events-path.js";
 import {
   codexConfigPath,
   installLocation,
@@ -186,6 +187,20 @@ export async function collectChecks(): Promise<Check[]> {
     remedy: logPath
       ? undefined
       : "Optional, but it is the best troubleshooting signal. Run: sol-luna-orchestrator init",
+  });
+
+  // `init` owns this key now, so doctor has to check it — a setup command that
+  // writes something its own diagnostic ignores is how the two start disagreeing.
+  const events = resolveEventsPath(configText);
+  checks.push({
+    name: "Activity log configured",
+    status: events.path ? "ok" : "warn",
+    detail: events.path
+      ? `${events.path} (${describeEventsSource(events.source)})`
+      : "not set",
+    remedy: events.path
+      ? undefined
+      : "`sol-luna-orchestrator activity` needs this. Run: sol-luna-orchestrator init",
   });
 
   const roots = process.env.SOL_LUNA_ALLOWED_ROOTS;

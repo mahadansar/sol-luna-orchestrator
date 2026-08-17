@@ -98,6 +98,10 @@ const readConfig = (home: string): string => {
   }
 };
 
+const writeConfig = (home: string, contents: string): void => {
+  fs.writeFileSync(path.join(home, "config.toml"), contents, "utf8");
+};
+
 const cleanup = (home: string): void => {
   fs.rmSync(home, { recursive: true, force: true, maxRetries: 3 });
 };
@@ -140,11 +144,78 @@ async function scenarioFreshInstall(): Promise<void> {
       assert.match(text, /default_tools_approval_mode = "approve"/),
     );
     check("diagnostic log configured", () => assert.match(text, /SOL_LUNA_LOG/));
+    check("activity event log configured", () => assert.match(text, /SOL_LUNA_EVENTS/));
     check("unrelated config survived init", () =>
       assertUserConfigIntact(text, "after init"),
     );
     check("init printed next steps", () =>
       assert.match(result.stdout, /Select GPT-5\.6 Sol/),
+    );
+  } finally {
+    cleanup(home);
+  }
+}
+
+/**
+ * The v0.6.0 upgrade path.
+ *
+ * v0.6.0 registered the server and both required settings but never wrote
+ * SOL_LUNA_EVENTS, so `activity` could not find an event file and `init`
+ * cheerfully reported "Already configured" forever. Re-running init has to
+ * repair that, and `activity` has to work afterwards with nothing exported.
+ */
+async function scenarioMigrateFromV060(): Promise<void> {
+  console.log("\n[9] init migrates a v0.6.0 install that predates activity logging");
+  const home = makeHome(UNRELATED_CONFIG);
+  try {
+    await cli(["init"], home);
+
+    // Roll the config back to what v0.6.0 produced: drop only the event key.
+    const initial = readConfig(home);
+    const withoutEvents = initial
+      .split(/\r?\n/)
+      .filter(
+        (line) =>
+          !line.includes("SOL_LUNA_EVENTS") &&
+          !line.includes("Structured activity events"),
+      )
+      .join("\n");
+    writeConfig(home, withoutEvents);
+
+    check("precondition: the v0.6.0 config has no event path", () =>
+      assert.ok(!readConfig(home).includes("SOL_LUNA_EVENTS")),
+    );
+
+    const before = await cli(["activity"], home);
+    check("activity fails before migration, pointing at init", () => {
+      assert.equal(before.code, 1);
+      assert.match(before.stderr, /not configured/i);
+      assert.match(before.stderr, /init/);
+    });
+
+    const migrate = await cli(["init"], home);
+    check("init does not claim it is already configured", () =>
+      assert.ok(
+        !/Already configured/.test(migrate.stdout),
+        "init must repair the missing event path, not skip it\n" + migrate.stdout,
+      ),
+    );
+    check("init migrated the event path", () =>
+      assert.match(readConfig(home), /SOL_LUNA_EVENTS/),
+    );
+    check("unrelated config survived migration", () =>
+      assertUserConfigIntact(readConfig(home), "after migration"),
+    );
+
+    const after = await cli(["activity"], home);
+    check("activity works after migration with no env var", () => {
+      assert.equal(after.code, 0, after.stdout + after.stderr);
+      assert.match(after.stdout, /No orchestration activity found/);
+    });
+
+    const again = await cli(["init"], home);
+    check("init is idempotent once migrated", () =>
+      assert.match(again.stdout, /Already configured/),
     );
   } finally {
     cleanup(home);
@@ -383,6 +454,7 @@ async function main(): Promise<void> {
   await scenarioRoundTrip();
   await scenarioEmptyConfig();
   await scenarioMalformedConfig();
+  await scenarioMigrateFromV060();
 
   console.log(
     failures === 0

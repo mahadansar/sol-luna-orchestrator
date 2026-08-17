@@ -10,6 +10,7 @@
 import { activityCommand } from "./cli/activity.js";
 import { readConfig } from "./cli/codex.js";
 import { doctorCommand } from "./cli/doctor.js";
+import { describeEventsSource, resolveEventsPath } from "./cli/events-path.js";
 import { initCommand } from "./cli/init.js";
 import { codexConfigPath, installLocation, packageVersion } from "./cli/paths.js";
 import { SERVER_NAME, inspectSettings } from "./cli/settings.js";
@@ -35,7 +36,8 @@ ${bold("Options")}
   activity --json          Output a machine-readable JSON snapshot
   init --dry-run           Show what would change, write nothing
   init --force             Re-apply configuration even if it looks correct
-  init --log <path>        Where the orchestrator writes its diagnostic log
+  init --log <path>        Set the diagnostic log path, replacing any existing one
+  init --events <path>     Set the activity event path, replacing any existing one
   init --allow-ephemeral   Permit registering a temporary npx install
   doctor --json            Machine-readable report
   uninstall --dry-run      Show what would be removed, write nothing
@@ -50,6 +52,7 @@ function statusCommand(): number {
   const configText = readConfig();
   const configured = findTable(configText, ["mcp_servers", SERVER_NAME]) !== null;
   const settings = inspectSettings(configText);
+  const events = resolveEventsPath(configText);
   const value = (key: string): string =>
     settings.find((setting) => setting.key === key)?.actual ?? "unset";
 
@@ -67,7 +70,14 @@ function statusCommand(): number {
     ],
     ["Max workers", process.env.SOL_LUNA_MAX_PARALLEL ?? "3"],
     ["Verification", process.env.SOL_LUNA_VERIFY_MODE ?? "allowlist"],
-    ["Telemetry", process.env.SOL_LUNA_EVENTS ?? "off (set SOL_LUNA_EVENTS)"],
+    [
+      "Activity log",
+      // Same resolver `activity` uses. Reporting only this shell's environment
+      // told people telemetry was off while the server was busy writing it.
+      events.path
+        ? `${events.path}  ${dim(`(${describeEventsSource(events.source)})`)}`
+        : "not configured  (run: sol-luna-orchestrator init)",
+    ],
     ["Codex config", codexConfigPath()],
   ]);
 

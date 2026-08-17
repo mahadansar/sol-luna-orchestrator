@@ -38,9 +38,12 @@ startup_timeout_sec = 30
 # "client connected" but no "delegate_task" line => the model never called it.
 SOL_LUNA_LOG = "/home/you/.codex/sol-luna-orchestrator.log"
 
-# Optional: one JSONL record per orchestration lifecycle event, including
-# batches, workers, worktrees and verification.
-# SOL_LUNA_EVENTS = "/home/you/.codex/sol-luna-events.jsonl"
+# Written by `init`. One JSONL record per orchestration lifecycle event,
+# covering batches, workers, worktrees and verification. This is the file
+# `sol-luna-orchestrator activity` reads, so removing the key turns that
+# command off. Change it with `init --events <path>`; re-running `init` never
+# overwrites a path you chose.
+SOL_LUNA_EVENTS = "/home/you/.codex/sol-luna-orchestrator.events.jsonl"
 
 # --- Optional hardening ----------------------------------------------------
 # Confine delegation to specific directory trees (OS path separator delimited).

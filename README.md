@@ -356,30 +356,45 @@ separation is the core of the security model.
 
 ### Environment variables
 
-| Variable                          | Default                 | Purpose                                                        |
-| --------------------------------- | ----------------------- | -------------------------------------------------------------- |
-| `LUNA_MODEL`                      | `gpt-5.6-luna`          | Worker model                                                   |
-| `LUNA_TIMEOUT_SECONDS`            | `1800`                  | Wall-clock budget per delegated task                           |
-| `LUNA_SANDBOX`                    | `workspace-write`       | Codex sandbox mode for workers                                 |
-| `LUNA_NETWORK_ACCESS`             | off                     | `1` allows workers network access                              |
-| `SOL_LUNA_MAX_PARALLEL`           | `3`                     | Concurrent workers; hard ceiling 8                             |
-| `SOL_LUNA_WORKTREE_LINK`          | `node_modules`          | Directories linked into each worktree                          |
-| `SOL_LUNA_KEEP_WORKTREES`         | `onFailure`             | `always`, `never`, or `onFailure`                              |
-| `SOL_LUNA_ALLOW_DIRTY`            | off                     | `1` permits parallel batches over uncommitted in-scope changes |
-| `SOL_LUNA_VERIFY_MODE`            | `allowlist`             | `allowlist`, `off`, or `shell` — see [Security](#security)     |
-| `SOL_LUNA_VERIFY_ALLOW`           | —                       | Extra permitted executables, comma separated                   |
-| `SOL_LUNA_VERIFY_ENV_PASSTHROUGH` | off                     | `1` stops withholding credential-shaped env vars               |
-| `SOL_LUNA_ALLOWED_ROOTS`          | —                       | Confine delegation to these directory trees                    |
-| `SOL_LUNA_SERVER_NAME`            | `sol-luna-orchestrator` | **Must match** the name registered in Codex                    |
-| `SOL_LUNA_LOG`                    | —                       | Tee diagnostics to a file (best troubleshooting signal)        |
-| `SOL_LUNA_EVENTS`                 | —                       | JSONL telemetry: batches, workers, worktrees, conflicts        |
+| Variable                          | Default                 | Purpose                                                           |
+| --------------------------------- | ----------------------- | ----------------------------------------------------------------- |
+| `LUNA_MODEL`                      | `gpt-5.6-luna`          | Worker model                                                      |
+| `LUNA_TIMEOUT_SECONDS`            | `1800`                  | Wall-clock budget per delegated task                              |
+| `LUNA_SANDBOX`                    | `workspace-write`       | Codex sandbox mode for workers                                    |
+| `LUNA_NETWORK_ACCESS`             | off                     | `1` allows workers network access                                 |
+| `SOL_LUNA_MAX_PARALLEL`           | `3`                     | Concurrent workers; hard ceiling 8                                |
+| `SOL_LUNA_WORKTREE_LINK`          | `node_modules`          | Directories linked into each worktree                             |
+| `SOL_LUNA_KEEP_WORKTREES`         | `onFailure`             | `always`, `never`, or `onFailure`                                 |
+| `SOL_LUNA_ALLOW_DIRTY`            | off                     | `1` permits parallel batches over uncommitted in-scope changes    |
+| `SOL_LUNA_VERIFY_MODE`            | `allowlist`             | `allowlist`, `off`, or `shell` — see [Security](#security)        |
+| `SOL_LUNA_VERIFY_ALLOW`           | —                       | Extra permitted executables, comma separated                      |
+| `SOL_LUNA_VERIFY_ENV_PASSTHROUGH` | off                     | `1` stops withholding credential-shaped env vars                  |
+| `SOL_LUNA_ALLOWED_ROOTS`          | —                       | Confine delegation to these directory trees                       |
+| `SOL_LUNA_SERVER_NAME`            | `sol-luna-orchestrator` | **Must match** the name registered in Codex                       |
+| `SOL_LUNA_LOG`                    | —                       | Tee diagnostics to a file (best troubleshooting signal)           |
+| `SOL_LUNA_EVENTS`                 | set by `init`           | JSONL activity log. Overrides the configured path for one command |
 
 ## Usage telemetry
 
-Set `SOL_LUNA_EVENTS=/path/to/events.jsonl` and every run appends structured
-records: batch start and finish, each worker's start, completion, effort and
+`init` configures this for you. Every run appends structured records to the
+event log: batch start and finish, each worker's start, completion, effort and
 model, worktree creation and removal, verification outcomes, scope and
-integration conflicts.
+integration conflicts. That file is what `sol-luna-orchestrator activity` reads.
+
+The effective path is resolved in this order, highest first:
+
+1. `SOL_LUNA_EVENTS` in the current process — a deliberate one-off override.
+2. `SOL_LUNA_EVENTS` in the registered server's `env` table, which is what
+   `init` writes and the running server uses.
+3. Nothing, in which case `activity` tells you to run `init`.
+
+The default is `sol-luna-orchestrator.events.jsonl` inside your Codex home, so
+the log accumulates across projects rather than landing in whichever repository
+you happened to run `init` from. Choose another with
+`sol-luna-orchestrator init --events /path/to/events.jsonl`, which replaces an
+existing value because you asked it to; a plain `init` never overwrites a path
+you set. `--log` behaves the same way for the diagnostic log. `sol-luna-orchestrator status` shows the
+effective path and where it came from.
 
 Per worker, the following are recorded exactly as the Codex SDK reports them on
 `turn.completed`:

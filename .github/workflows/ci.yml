@@ -63,7 +63,7 @@ jobs:
       # actual filesystem and process semantics — path separators, case
       # sensitivity, symlink support and file locking.
       - name: Tests
-        run: node --test dist/selftest.js dist/security.test.js dist/parallel.test.js dist/cli.test.js dist/bench.test.js dist/activity.test.js dist/activity-watch.test.js
+        run: node --test dist/selftest.js dist/security.test.js dist/parallel.test.js dist/cli.test.js dist/bench.test.js dist/activity.test.js dist/activity-watch.test.js dist/activity-config.test.js
 
       # Starts the MCP server as a subprocess and performs a real protocol
       # handshake. Needs no model access.

@@ -2,7 +2,8 @@ import { createReadStream, statSync, watch, type FSWatcher } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
-import { EVENTS_FILE } from "../config.js";
+import { readConfig } from "./codex.js";
+import { resolveEventsPath } from "./events-path.js";
 import {
   type ActivitySnapshot,
   type TimestampedEvent,
@@ -141,11 +142,15 @@ export async function activityCommand(argv: string[]): Promise<number> {
   const watchMode = argv.includes("--watch");
   const jsonMode = argv.includes("--json");
 
-  if (!EVENTS_FILE) {
-    errOut(
-      `${bold(red("Error:"))} SOL_LUNA_EVENTS is not set. Event logging is required for the activity command.`,
-    );
-    errOut("Export SOL_LUNA_EVENTS=/path/to/events.jsonl to enable logging.");
+  // Resolved from this process first, then from the registered MCP server's
+  // env table — which is where `init` puts it and where the running server
+  // reads it from. A missing file is not an error: it simply means nothing has
+  // been delegated yet.
+  const resolved = resolveEventsPath(readConfig());
+
+  if (!resolved.path) {
+    errOut(`${bold(red("Error:"))} Activity logging is not configured.`);
+    errOut("Run: sol-luna-orchestrator init");
     return 1;
   }
 
@@ -154,7 +159,7 @@ export async function activityCommand(argv: string[]): Promise<number> {
     return 1;
   }
 
-  const eventsFile = EVENTS_FILE;
+  const eventsFile = resolved.path;
   const events = await readEvents(eventsFile);
   let snapshot = reduceEvents(events);
 

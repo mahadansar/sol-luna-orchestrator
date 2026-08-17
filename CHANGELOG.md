@@ -6,6 +6,36 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`activity` did not work after a normal `init`.** The event path lives in
+  `[mcp_servers.<name>.env]`, which Codex injects into the MCP server it
+  launches — a standalone CLI process is not that child and never saw it, so
+  `activity` reported `SOL_LUNA_EVENTS is not set` however well the install was
+  configured. Compounding it, `init` never wrote the key at all, so no events
+  were being recorded either. `init` now configures an event path, and every
+  command resolves it the same way. No manual shell export is required.
+- Re-running `init` on an installation made by 0.6.0 now repairs the missing
+  event path instead of reporting `Already configured` and leaving `activity`
+  broken. A path you set yourself is never overwritten.
+- `init --log <path>` was inert on an already-configured install: the
+  "already configured" shortcut returned before writing, and the write itself
+  only ran when no log path was set. Both `--log` and `--events` are now treated
+  as explicit requests that replace an existing value; a plain `init` still
+  preserves whatever you set.
+- `status` reported telemetry as off whenever the current shell lacked
+  `SOL_LUNA_EVENTS`, contradicting a correctly configured server. It now shows
+  the effective path and where it came from.
+
+### Added
+
+- `init --events <path>` chooses the activity event file. The default is
+  `sol-luna-orchestrator.events.jsonl` under the Codex home, so history
+  accumulates across projects rather than inside whichever repository `init` ran
+  in.
+- `doctor` checks the activity event configuration, so the key `init` writes is
+  one the diagnostic knows about.
+
 ## [0.6.0] - 2026-08-17
 
 Live orchestration activity inspection, adaptive delegation onboarding, scale

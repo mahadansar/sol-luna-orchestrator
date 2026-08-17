@@ -112,6 +112,14 @@ counts. Verification output is truncated but not sanitised, so if a test suite
 prints a secret, the log will contain it. Keep both outside the repository, and
 do not attach them to a public issue without reading them first.
 
+**`init` configures both by default**, under your Codex home, because
+`sol-luna-orchestrator activity` cannot work without the event log. Nothing is
+transmitted anywhere — these are local files — but they do accumulate a record
+of what you delegated across every project. To turn either off, delete its key
+from `[mcp_servers.sol-luna-orchestrator.env]`; the server treats an unset value
+as "do not write". `uninstall` removes those keys but deliberately leaves the
+files themselves alone, since the history is yours rather than ours to delete.
+
 ## What is NOT enforced — read this
 
 - **The worker writes real files.** It runs under Codex's `workspace-write`
