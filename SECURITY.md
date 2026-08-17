@@ -107,10 +107,23 @@ concurrently once their workspaces exist.
 ### Logs and telemetry
 
 `SOL_LUNA_LOG` and `SOL_LUNA_EVENTS` write plain files with no access control.
-They record objectives, file paths, verification command output and token
-counts. Verification output is truncated but not sanitised, so if a test suite
-prints a secret, the log will contain it. Keep both outside the repository, and
-do not attach them to a public issue without reading them first.
+They hold different things, which matters when deciding what is safe to share:
+
+- **`SOL_LUNA_LOG`** is the human-readable diagnostics log. It records
+  objectives, file paths and **verification command output**. That output is
+  truncated but not sanitised, so if a test suite prints a secret, the log will
+  contain it. Treat it as sensitive.
+- **`SOL_LUNA_EVENTS`** is the structured stream `activity` reads. Its schema
+  carries task ids, effort, category, verdicts, model, durations, token counts,
+  worktree and working-directory paths, failure reasons and conflicting file
+  paths. It does **not** contain prompts, source code or command output. Note
+  that a task id is a slug of the first few words of that task's objective, so
+  it leaks a fragment of the request, and the paths it records may themselves be
+  revealing.
+
+Only control characters are stripped, from both — enough to stop a crafted
+string forging a log line, not a secret filter. Keep both outside the
+repository, and read either before attaching it to a public issue.
 
 **`init` configures both by default**, under your Codex home, because
 `sol-luna-orchestrator activity` cannot work without the event log. Nothing is

@@ -40,24 +40,27 @@ file hashes, process logs.
 
 ## Project layout
 
-| Path               | What it is                                                 |
-| ------------------ | ---------------------------------------------------------- |
-| `src/server.ts`    | MCP server; registers `delegate_task` and `delegate_tasks` |
-| `src/worker.ts`    | Single-worker lifecycle, concurrency slots, claim-checking |
-| `src/batch.ts`     | Batch scheduling, integration, cleanup                     |
-| `src/worktree.ts`  | Per-task git worktree lifecycle                            |
-| `src/git.ts`       | Cross-platform git wrapper (argument arrays, no shell)     |
-| `src/overlap.ts`   | Scope-overlap and integration-conflict detection (pure)    |
-| `src/events.ts`    | Structured run telemetry                                   |
-| `src/command.ts`   | Verification command parsing and policy (pure)             |
-| `src/verify.ts`    | Verification execution                                     |
-| `src/scope.ts`     | File-scope validation and workspace-boundary checks        |
-| `src/workspace.ts` | `workingDirectory` validation                              |
-| `src/contract.ts`  | Task contract and result schemas                           |
-| `src/prompt.ts`    | The worker's brief                                         |
-| `src/cli.ts`       | User CLI entry (`init`, `doctor`, `status`, `uninstall`)   |
-| `src/cli/`         | CLI internals, including the surgical TOML config editor   |
-| `src/bench/`       | Benchmark harness and fixtures                             |
+| Path                          | What it is                                                           |
+| ----------------------------- | -------------------------------------------------------------------- |
+| `src/server.ts`               | MCP server; registers `delegate_task` and `delegate_tasks`           |
+| `src/worker.ts`               | Single-worker lifecycle, concurrency slots, claim-checking           |
+| `src/batch.ts`                | Batch scheduling, integration, cleanup                               |
+| `src/worktree.ts`             | Per-task git worktree lifecycle                                      |
+| `src/git.ts`                  | Cross-platform git wrapper (argument arrays, no shell)               |
+| `src/overlap.ts`              | Scope-overlap and integration-conflict detection (pure)              |
+| `src/events.ts`               | Structured run telemetry                                             |
+| `src/command.ts`              | Verification command parsing and policy (pure)                       |
+| `src/verify.ts`               | Verification execution                                               |
+| `src/scope.ts`                | File-scope validation and workspace-boundary checks                  |
+| `src/workspace.ts`            | `workingDirectory` validation                                        |
+| `src/contract.ts`             | Task contract and result schemas                                     |
+| `src/prompt.ts`               | The worker's brief                                                   |
+| `src/cli.ts`                  | User CLI entry (`activity`, `init`, `doctor`, `status`, `uninstall`) |
+| `src/cli/activity.ts`         | Activity rendering, snapshot and `--watch` stream                    |
+| `src/cli/activity-reducer.ts` | Pure event-stream reducer producing an activity snapshot             |
+| `src/cli/events-path.ts`      | Canonical resolver for the effective activity event file             |
+| `src/cli/`                    | Other CLI internals, including the surgical TOML config editor       |
+| `src/bench/`                  | Benchmark harness and fixtures                                       |
 
 Pure logic lives apart from I/O on purpose. `buildDelegationResult` takes
 measurements and returns a report with no side effects, which is why the

@@ -87,11 +87,59 @@ comments, formatting and other MCP servers are left exactly as they were. Run it
 twice and it says `Already configured`.
 
 ```bash
-sol-luna-orchestrator activity    # view live orchestration activity (or use --watch)
+sol-luna-orchestrator activity    # print a snapshot of the latest batch, then exit
 sol-luna-orchestrator doctor      # diagnose, with the fix for anything broken
 sol-luna-orchestrator status      # short summary
 sol-luna-orchestrator uninstall   # remove this project's entry, nothing else
 ```
+
+### Watching a delegation as it happens
+
+`activity` prints one snapshot and exits. To follow a run live, open a **second
+terminal** and leave the watcher running:
+
+```bash
+sol-luna-orchestrator activity --watch
+```
+
+It refreshes as each worker starts, verifies and completes, and stops on
+Ctrl+C. Before anything has been delegated it shows `No orchestration activity
+found.` and keeps waiting, so you can start it first and then work in Codex.
+`activity --json` prints a machine-readable snapshot instead;
+`--watch` and `--json` cannot be combined.
+
+`init` configures the event log this reads, so no environment variable needs to
+be exported.
+
+### Requesting delegation explicitly
+
+Optional. Normal adaptive usage above is the default, and Sol is usually the
+better judge. When you already know the work has clean independent seams, you
+can ask for it in plain language — no MCP or tool syntax:
+
+```
+These three modules are independent. Use Sol-Luna to delegate them in parallel,
+one Luna worker per module with disjoint file scopes. Choose each worker's
+reasoning effort based on its task, then review the integrated changes and run
+the full test suite.
+```
+
+You can equally ask for sequential delegation, or name worker counts, scopes and
+efforts when you have a reason to. Leave them unspecified otherwise.
+
+Parallel delegation needs a little more from the repository than sequential does:
+
+- it must be a **git repository with at least one commit**, since each worker
+  gets a detached worktree branched from `HEAD`;
+- the declared scopes must have **no uncommitted changes** inside them, or the
+  batch is refused (override with `SOL_LUNA_ALLOW_DIRTY=1`);
+- scopes should be **disjoint** — overlapping `allowedFiles` are refused before
+  any worker starts;
+- if two workers do change the same file, that collision is **detected, not
+  prevented**: nothing is integrated and the worktrees are kept for you.
+
+`delegate_task` (a single task) has none of these requirements. More detail in
+[Tools](#tools).
 
 <details>
 <summary>Why two commands and not one <code>npx</code> line</summary>
@@ -283,13 +331,20 @@ default_tools_approval_mode = "approve"   # "auto" does NOT work here
 startup_timeout_sec = 30
 
 [mcp_servers.sol-luna-orchestrator.env]
-SOL_LUNA_LOG = "/path/to/sol-luna-orchestrator.log"
+SOL_LUNA_LOG = "/path/to/codex-home/sol-luna-orchestrator.log"
+# Structured activity events, read by `sol-luna-orchestrator activity`.
+SOL_LUNA_EVENTS = "/path/to/codex-home/sol-luna-orchestrator.events.jsonl"
 ```
 
 Both of the first two settings are required and were found the hard way: Codex's
 60s default tool timeout aborts every delegation mid-flight, and
 `default_tools_approval_mode` must be `"approve"` — `"auto"`, despite the name,
 makes non-interactive runs cancel the call.
+
+Both env paths default to your Codex home (`$CODEX_HOME`, or `~/.codex`), so
+they accumulate across projects rather than inside whichever repository you ran
+`init` from. Override either with `init --log <path>` or `init --events <path>`;
+a plain `init` never overwrites a path you set.
 
 A fully annotated example is in [`examples/codex-config.toml`](examples/codex-config.toml).
 
@@ -344,8 +399,10 @@ worker's effort yourself, then review the diffs and run the full suite.
 
 ## Configuration
 
-Everything is environment variables set by _you_ — never by the model. That
-separation is the core of the security model.
+Configuration comes from you: the Codex config `init` writes on your behalf, and
+environment variables you set yourself. **The model never gets to change any of
+it** — a worker cannot widen its own scope, relax verification or raise its
+concurrency. That separation is the core of the security model.
 
 ### Required Codex settings
 
@@ -371,8 +428,9 @@ separation is the core of the security model.
 | `SOL_LUNA_VERIFY_ENV_PASSTHROUGH` | off                     | `1` stops withholding credential-shaped env vars                  |
 | `SOL_LUNA_ALLOWED_ROOTS`          | —                       | Confine delegation to these directory trees                       |
 | `SOL_LUNA_SERVER_NAME`            | `sol-luna-orchestrator` | **Must match** the name registered in Codex                       |
-| `SOL_LUNA_LOG`                    | —                       | Tee diagnostics to a file (best troubleshooting signal)           |
-| `SOL_LUNA_EVENTS`                 | set by `init`           | JSONL activity log. Overrides the configured path for one command |
+| `SOL_LUNA_LOG`                    | set by `init`           | Human-readable diagnostics log. Unset in the server env = no log  |
+| `SOL_LUNA_EVENTS`                 | set by `init`           | Structured JSONL activity log, read by `activity`. Unset = no log |
+| `SOL_LUNA_WORKER`                 | set per worker          | Internal marker; a server seeing it registers zero tools          |
 
 ## Usage telemetry
 
@@ -412,6 +470,10 @@ The supervisor's own usage is not visible to this server — Codex does not repo
 the parent turn to an MCP server it launched. The benchmark harness records it
 separately because it drives the supervisor itself. Anything unavailable is
 written as `null` rather than zero, so absent data is never mistaken for free.
+
+Both files are local and nothing is transmitted anywhere. They hold different
+things, and the event log is the less sensitive of the two — see
+[Logs and telemetry](SECURITY.md#logs-and-telemetry) before sharing either.
 
 ### Cost
 
