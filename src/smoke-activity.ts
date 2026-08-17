@@ -69,7 +69,11 @@ async function main() {
   let jsonOutput = "";
   const originalStdoutWrite = process.stdout.write;
   try {
-    process.stdout.write = ((chunk: string | Uint8Array, encoding?: unknown, cb?: unknown) => {
+    process.stdout.write = ((
+      chunk: string | Uint8Array,
+      encoding?: unknown,
+      cb?: unknown,
+    ) => {
       jsonOutput += chunk.toString();
       if (typeof encoding === "function") encoding();
       else if (typeof cb === "function") cb();

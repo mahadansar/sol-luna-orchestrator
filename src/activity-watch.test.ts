@@ -14,7 +14,11 @@ test("watch mode partial line and UTF-8 split handling", async () => {
   let output = "";
   let renderCount = 0;
 
-  process.stdout.write = ((chunk: string | Uint8Array, encoding?: unknown, cb?: unknown) => {
+  process.stdout.write = ((
+    chunk: string | Uint8Array,
+    encoding?: unknown,
+    cb?: unknown,
+  ) => {
     const text = chunk.toString();
     output += text;
     if (text.includes("Sol-Luna Activity")) {
