@@ -2,6 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/sol-luna-orchestrator)](https://www.npmjs.com/package/sol-luna-orchestrator)
 [![CI](https://github.com/mahadansar/sol-luna-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/mahadansar/sol-luna-orchestrator/actions/workflows/ci.yml)
+[![M8ven Verified](https://m8ven.ai/badge/mcp/mahadansar-sol-luna-orchestrator-1k52hj?variant=verified)](https://m8ven.ai/mcp/mahadansar-sol-luna-orchestrator-1k52hj)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.12-brightgreen)](#requirements)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
