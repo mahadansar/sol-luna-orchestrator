@@ -79,6 +79,7 @@ comments, formatting and other MCP servers are left exactly as they were. Run it
 twice and it says `Already configured`.
 
 ```bash
+sol-luna-orchestrator activity    # view live orchestration activity (or use --watch)
 sol-luna-orchestrator doctor      # diagnose, with the fix for anything broken
 sol-luna-orchestrator status      # short summary
 sol-luna-orchestrator uninstall   # remove this project's entry, nothing else
@@ -656,13 +657,6 @@ low-effort model will cheerfully claim it has a tool it does not have.
 
 Not built yet — listed as intent, not as features:
 
-- **Live orchestration activity and worker visibility.** Plan
-  `sol-luna-orchestrator activity`, `activity --watch`, and `activity --json` to
-  show the Sol supervisor, active batch and mode, Luna workers, task, model,
-  effort, state, elapsed time, current and peak concurrency, and useful
-  verification or worktree status. Supervisor state would report only what the
-  MCP/orchestrator actually knows; it cannot observe Sol activity after an MCP
-  call returns. A focused `workers` command or alias may also be considered.
 - **Characterize and bound slow-worker tails.** V6 found no observed latency
   crossover, but the six-worker runs showed substantial straggler effects. A
   clearly labelled counterfactual suggests that reducing worker-tail latency

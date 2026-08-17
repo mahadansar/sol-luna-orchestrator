@@ -7,6 +7,7 @@
  * start a stdio server that then sits waiting on a pipe forever — which is
  * exactly what happens if one binary tries to be both.
  */
+import { activityCommand } from "./cli/activity.js";
 import { readConfig } from "./cli/codex.js";
 import { doctorCommand } from "./cli/doctor.js";
 import { initCommand } from "./cli/init.js";
@@ -22,6 +23,7 @@ ${bold("Usage")}
   sol-luna-orchestrator <command> [options]
 
 ${bold("Commands")}
+  activity     View live orchestration activity
   init         Register with Codex and apply the required settings
   doctor       Diagnose the installation and print how to fix it
   status       Short summary of the current configuration
@@ -29,6 +31,8 @@ ${bold("Commands")}
   version      Print the package version
 
 ${bold("Options")}
+  activity --watch         Continuously watch the event stream
+  activity --json          Output a machine-readable JSON snapshot
   init --dry-run           Show what would change, write nothing
   init --force             Re-apply configuration even if it looks correct
   init --log <path>        Where the orchestrator writes its diagnostic log
@@ -85,6 +89,8 @@ async function main(): Promise<number> {
   }
 
   switch (command) {
+    case "activity":
+      return activityCommand(argv.slice(1));
     case "init":
       return initCommand(argv.slice(1));
     case "doctor":

@@ -11,6 +11,7 @@ the documentation updates its results forced.
 
 ### Added
 
+- Added live orchestration activity inspection with `sol-luna-orchestrator activity` (including `--watch` and `--json` output).
 - **Scale benchmark suite** (`npm run bench -- --suite scale`): three fixtures —
   four independent modules, six independent modules, and a deliberately coupled
   control with no natural seam — at roughly twice the module depth of the earlier
