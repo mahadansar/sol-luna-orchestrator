@@ -72,7 +72,7 @@ jobs:
         run: npm run format:check
 
       - name: Tests
-        run: node --test dist/selftest.js dist/security.test.js dist/parallel.test.js dist/cli.test.js
+        run: node --test dist/selftest.js dist/security.test.js dist/parallel.test.js dist/cli.test.js dist/bench.test.js
 
       - name: MCP protocol smoke test
         run: node dist/smoke-protocol.js

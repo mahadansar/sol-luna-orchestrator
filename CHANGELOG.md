@@ -30,6 +30,7 @@ the documentation updates its results forced.
 
 ### Changed
 
+- Audited and aligned public documentation with current runtime, benchmark, telemetry, and security behavior.
 - Normalized benchmark, adaptive-delegation, scope, effort, and telemetry wording
   across the documentation and configuration example.
 - Clarified benchmark math and interpretation, and made adaptive delegation —

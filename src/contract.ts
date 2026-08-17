@@ -62,7 +62,7 @@ export const delegateTaskInputShape = {
     .default([])
     .describe(
       "Glob patterns the worker may create or modify (e.g. 'src/auth/**'). " +
-        "Empty means unrestricted, which is discouraged. Enforced after the run.",
+        "Empty means unrestricted, which is discouraged. Checked after the run.",
     ),
 
   forbiddenFiles: z

@@ -103,8 +103,8 @@ Do it yourself when:
   - explaining the task would take longer than making the change
   - there is no second independent piece of work to overlap it with
 
-Delegate a single task when the work is substantial and bounded, and you want an
-enforced file scope plus independently re-run verification.
+Delegate a single task when the work is substantial and bounded, and you want
+declared file-scope validation plus independently re-run verification.
 
 For two or more independent pieces of work, use \`delegate_tasks\` instead — that
 is where delegation can actually save wall-clock time.
