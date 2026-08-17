@@ -67,11 +67,19 @@ sol-luna-orchestrator init
 Then open Codex, select **GPT-5.6 Sol at High effort**, and work normally.
 
 ```
-You're the supervisor. src/auth/, src/payments/ and src/search/ each need their
-failing tests fixed, and they don't touch each other. Use delegate_tasks in
-parallel mode with one worker per module and a disjoint scope each. Pick each
-worker's effort yourself, then review the diffs and run the full suite.
+Fix the failing tests in src/auth/, src/payments/, and src/search/.
+Review the changes and run the full test suite.
 ```
+
+You do not need to tell Sol to delegate, specify worker counts, or manage MCP
+tools manually. Sol decides whether delegation is worthwhile:
+
+- If the task breaks down cleanly into independent workstreams, Sol delegates to
+  Luna workers in parallel worktrees, choosing task scopes and reasoning effort
+  adaptively.
+- If subtasks are dependent, small, or better done directly, Sol handles them
+  itself without delegation overhead. More agents are a tool, not an objective —
+  the optimal number of additional workers can be zero.
 
 `init` registers the MCP server with Codex and applies the two settings Codex
 needs for delegation to work at all. It changes only the keys it owns — your
@@ -321,6 +329,18 @@ own contract and its own effort. Parallel mode:
 Both tools share the same task contract: `objective`, `effort`, `effortReason`,
 `taskCategory`, `allowedFiles`, `forbiddenFiles`, `acceptanceCriteria`,
 `verificationCommands`, `previousAttempts`.
+
+### Explicit delegation
+
+Normal usage relies on Sol's adaptive delegation. For testing, benchmarks, or
+specific execution preferences, you can also steer Sol explicitly:
+
+```
+You're the supervisor. src/auth/, src/payments/ and src/search/ each need their
+failing tests fixed, and they don't touch each other. Use delegate_tasks in
+parallel mode with one worker per module and a disjoint scope each. Pick each
+worker's effort yourself, then review the diffs and run the full suite.
+```
 
 ## Configuration
 
