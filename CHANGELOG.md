@@ -6,32 +6,45 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
-No runtime change. A benchmark suite built to answer the break-even question, and
-the documentation updates its results forced.
+## [0.6.0] - 2026-08-17
+
+Live orchestration activity inspection, adaptive delegation onboarding, scale
+benchmark suites, and event stream reliability hardening.
 
 ### Added
 
-- Added live orchestration activity inspection with `sol-luna-orchestrator activity` (including `--watch` and `--json` output).
+- **Live orchestration activity inspection** (`sol-luna-orchestrator activity`):
+  inspect active batch state, execution mode, worker tasks, reasoning effort,
+  model, duration, worktree paths, verification status, and integration
+  conflicts. Includes `--watch` (live incremental monitoring with TTY-aware
+  rendering) and `--json` (machine-readable snapshot).
+- **Hardened event stream consumer**: buffered handling of partial JSONL lines,
+  incremental UTF-8 decoding (`StringDecoder`), safe handling of file truncation
+  and non-TTY outputs.
 - **Scale benchmark suite** (`npm run bench -- --suite scale`): three fixtures —
   four independent modules, six independent modules, and a deliberately coupled
   control with no natural seam — at roughly twice the module depth of the earlier
   suites. Reference solutions and `bench:validate` coverage included.
 - **`adaptive` arm**: delegation tools available, guidance that neither mandates
-  nor forbids their use, so the arm measures the supervisor's own policy.
+  nor forbids their use, so the arm measures the supervisor's natural policy.
 - **Overhead decomposition** per orchestrated run — supervisor before the batch,
   worktree setup, worker window, slowest worker, integration, supervisor review,
-  and peak concurrency — derived from existing event timestamps rather than new
-  instrumentation.
+  and peak concurrency — derived from existing event timestamps.
 - **`npm run bench:analyze`**: crossover verdict across every committed results
-  file. Spends nothing. Reports missing usage as `unknown` rather than zero, so
-  pre-0.4.0 runs cannot silently understate worker tokens.
+  file. Reports missing usage as `unknown` rather than zero, so pre-0.4.0 runs
+  cannot silently understate worker tokens.
 - 19 deterministic tests for the harness itself, including concurrency
   measurement, the overhead decomposition, and a check that every fixture marks
   its own specification immutable.
 
 ### Changed
 
-- Audited and aligned public documentation with current runtime, benchmark, telemetry, and security behavior.
+- **Adaptive delegation Quick Start**: clarified onboarding flow so users work
+  normally with Sol after `init` without manually commanding worker counts,
+  modes, or tools. Explicit delegation examples moved to an optional advanced
+  section.
+- Audited and aligned public documentation with current runtime, benchmark,
+  telemetry, and security behavior.
 - Normalized benchmark, adaptive-delegation, scope, effort, and telemetry wording
   across the documentation and configuration example.
 - Clarified benchmark math and interpretation, and made adaptive delegation —
@@ -45,7 +58,6 @@ the documentation updates its results forced.
   complete and has been replaced by the specific question the data raised —
   bounding the slowest worker — plus fixtures larger than a single supervisor
   context.
-
 - Corrected two claims the project's own evidence contradicts: the README
   described a benefit as spending "fewer top-tier tokens" while the benchmarks
   show orchestration using more of them in every measured configuration, and it
@@ -326,6 +338,7 @@ Initial working version, verified end to end.
 development milestones and were never tagged or published, so they have no
 release links.
 
-[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/mahadansar/sol-luna-orchestrator/releases/tag/v0.5.1
 [0.5.0]: https://github.com/mahadansar/sol-luna-orchestrator/releases/tag/v0.5.0
