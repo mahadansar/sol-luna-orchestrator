@@ -27,16 +27,16 @@ or for taking Git actions on the user's behalf.
 
 ## Priorities at a glance
 
-| Priority | Item                                 | Depends on         |
-| -------- | ------------------------------------ | ------------------ |
-| P0.1     | Context Capsule v2                   | nothing            |
-| P0.2     | Compact Evidence Packets             | P0.1               |
-| P0.3     | Worker Continuation                  | P0.2               |
-| P0.4     | Bounded Repair Loop                  | P0.3               |
-| P1.1     | Reasoned Retry and Effort Escalation | P0.4               |
-| P1.2     | Optional Stronger-Worker Fallback    | P1.1               |
-| P2.1     | Optional Explorer                    | mostly independent |
-| P2.2     | Cross-Session Handoff                | mostly independent |
+| Priority | Item                                     | Depends on         |
+| -------- | ---------------------------------------- | ------------------ |
+| P0.1     | Context Capsule v2                       | nothing            |
+| P0.2     | Compact Evidence Packets                 | P0.1               |
+| P0.3     | Worker Continuation                      | P0.2               |
+| P0.4     | Bounded Repair Loop                      | P0.3               |
+| P1.1     | Reasoned Retry and Effort Escalation     | P0.4               |
+| P1.2     | Adaptive Worker Routing + Compute Policy | P1.1               |
+| P2.1     | Optional Explorer                        | mostly independent |
+| P2.2     | Cross-Session Handoff                    | mostly independent |
 
 ```
 Context Capsule v2
@@ -54,15 +54,15 @@ Bounded Repair Loop
 Reasoned Retry / Effort Escalation
         |
         v
-Optional Stronger-Worker Fallback
+Adaptive Worker Routing + Compute Policy
 
 Explorer ................ later, mostly independent
 Cross-session handoff ... later, mostly independent
 ```
 
-The chain matters. A stronger-worker fallback built before continuation and
-repair exist would be a blunt "spend more on failure" mechanism, which is the
-opposite of the intent. Start at the top.
+The chain matters. Routing work to a more expensive worker before continuation
+and repair exist would be a blunt "spend more on failure" mechanism, which is
+the opposite of the intent. Start at the top.
 
 ---
 
@@ -181,25 +181,106 @@ or a recommendation the supervisor acts on.
 
 **Depends on** P0.4.
 
-## P1.2 Optional Stronger-Worker Fallback
+## P1.2 Adaptive Worker Routing + Compute Policy
 
-**Problem.** Some tasks are genuinely beyond the worker model at any effort.
-Once bounded repair and escalation are exhausted, there is nowhere to go.
+**Problem.** Once the supervisor can classify a failure and reason about repair
+and escalation, routing every delegated task to the same worker model becomes
+unnecessarily restrictive. Different bounded tasks may suit different available
+worker models, while reasoning effort remains an independent per-task decision.
 
-**Direction.** One configurable stronger fallback worker, tried at most once,
-after the earlier steps.
+Letting the supervisor choose without limits would be worse than the
+restriction. Model and effort choices are spending decisions, and orchestration
+must not silently expand beyond the compute envelope the user has explicitly
+authorised. A user may intentionally allow inexpensive workers while reserving
+stronger models or higher effort for exceptional cases. The orchestrator must
+respect that boundary.
+
+**Direction.** Two separable pieces. The user controls the compute envelope, the
+supervisor chooses a strategy inside it, and the runtime enforces the boundary
+between the two.
+
+The routing half. The supervisor may eventually choose, per bounded task, no
+worker at all, Luna, Terra, a Sol worker, or another supported model, and
+independently choose a reasoning effort, selecting only from what the user has
+authorised. A stronger worker after repeated failure then becomes one routing
+decision among several rather than a separate mechanism with its own permanent
+role in the architecture. Which model suits which kind of work is deliberately
+not settled here. Those preferences should come from measured results rather
+than from assumptions about what each model is presumed to be good at.
+
+The policy half. A user-owned compute policy covering which worker models are
+allowed, a maximum reasoning effort per model, a maximum number of concurrent
+workers per model, a global concurrency ceiling, and whether cross-model
+escalation is permitted at all. Defaults should be conservative: Luna enabled,
+other worker models disabled, cross-model escalation disabled, and concurrency
+no higher than the current bounded behaviour, so that a fresh install behaves
+the way Sol-Luna behaves today. The envelope is whatever the user has set,
+never something inferred from how the supervisor itself happens to be running.
+None of that configuration exists yet.
+
+Editing it should not mean hand-writing TOML. The intended shape is a small CLI
+surface, roughly `sol-luna-orchestrator policy` to change the envelope and
+`sol-luna-orchestrator policy --show` to inspect it, covering the obvious
+operations: enable or disable a worker model, set an effort ceiling, set
+concurrency limits, allow or disallow cross-model escalation, and reset to the
+conservative defaults. Configuration files stay the interface underneath for
+anyone who prefers them.
+
+The supervisor should also be told the effective policy before it routes
+anything, so that it reasons inside the real envelope instead of proposing
+workers the runtime will reject. An illustrative envelope, not a default and not
+a configuration that exists today:
+
+```text
+Allowed:
+  Luna up to XHigh
+  Sol up to High, max 1
+  3 workers in total
+
+Not allowed:
+  Terra
+  Sol above High
+```
+
+A likely build order, though not a commitment:
+
+- **P1.2a, the policy foundation.** Allowed models, effort ceilings,
+  concurrency ceilings, inspection, and enforcement in the runtime.
+- **P1.2b, adaptive routing.** The supervisor sees the policy and chooses a
+  model and an effort per task. Choosing no worker stays valid.
+- **P1.2c, cross-model escalation.** Failure classification first, bounded
+  repair and effort changes next, a different permitted model only where the
+  evidence justifies it.
+
+The guardrails come before the routing freedom, not after it.
 
 **Constraints.**
 
-- Conservative. Off or opt-in initially.
-- At most one stronger fallback per task.
-- Configured as a model choice, not as a new permanent named role in the
-  architecture.
-- No promises about any specific future model. What is available is whatever the
-  runtime can actually reach.
+- The supervisor cannot expand its own permissions. It cannot enable a worker
+  model, raise an effort ceiling, raise a concurrency ceiling or turn escalation
+  on. It may recommend one, for instance that a stronger worker looks likely to
+  help but the current compute policy does not permit it. Acting on that
+  recommendation is the user's decision, and until the user makes it the runtime
+  refuses the request.
+- Enforcement lives in the runtime, not in the prompt. A policy that holds only
+  while the supervisor chooses to respect it is not a policy.
+- Routing changes who does the work and nothing else. Declared scope, worktree
+  isolation, independent verification, evidence handling, bounded retries,
+  conservative concurrency and the activity stream behave exactly as they do for
+  a single-model batch.
+- No promises about any specific model. What is routable is whatever the runtime
+  can actually reach and the user has actually allowed.
 
-**Depends on** P1.1. Built first, it would reach for an expensive model on
-failures a repair turn would have fixed.
+**Not decided.** The policy schema and where it lives, the final CLI syntax, how
+the effective policy reaches the supervisor, and the routing rules themselves.
+
+**Depends on** P1.1, and through it on the rest of the P0 chain. Before choosing
+a different model is a sensible move, the supervisor needs to know whether the
+same worker could simply continue, whether the defect is locally repairable,
+whether the failure was reasoning-related at all, whether more effort would
+help, and whether the work should go back to the supervisor instead. Without
+that, routing degenerates into spending more on every failure, which is the
+outcome the compute policy exists to prevent.
 
 ---
 

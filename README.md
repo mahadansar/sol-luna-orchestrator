@@ -284,7 +284,7 @@ not establish that single-agent execution is universally better.
 **Next**
 
 - Reasoned retry and effort escalation driven by the kind of failure
-- An optional, conservative stronger-worker fallback
+- Adaptive worker routing inside a user-controlled compute policy
 
 **Later**
 

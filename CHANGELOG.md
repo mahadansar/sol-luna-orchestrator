@@ -8,6 +8,10 @@ All notable changes to this project are documented here. Format follows
 
 ### Changed
 
+- `ROADMAP.md`: replaced the narrow P1.2 stronger-worker fallback item with
+  adaptive worker routing inside a user-controlled compute policy, which makes
+  a stronger worker one routing decision rather than its own mechanism. Roadmap
+  direction only. No runtime behaviour changed.
 - Reorganised the README into a landing page and moved the detail it carried
   into focused documents: `docs/CONFIGURATION.md` for environment variables,
   init flags, Codex settings and log paths, and `docs/TROUBLESHOOTING.md` for
