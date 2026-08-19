@@ -6,6 +6,19 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Reorganised the README into a landing page and moved the detail it carried
+  into focused documents: `docs/CONFIGURATION.md` for environment variables,
+  init flags, Codex settings and log paths, and `docs/TROUBLESHOOTING.md` for
+  symptoms and configuration recovery. Nothing was dropped, and the five
+  overlapping sections that each restated the delegation philosophy are now one.
+
+### Added
+
+- `ROADMAP.md`: prioritised future work with the dependencies between items and
+  the design choices that are deliberately not goals.
+
 ## [0.6.1] - 2026-08-17
 
 A patch release making live orchestration activity inspection work out of the
