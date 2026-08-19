@@ -36,6 +36,28 @@ Working directory: ${workingDirectory}`,
     sections.push(`## Context from the supervisor\n\n${input.context}`);
   }
 
+  if (input.contextCapsule) {
+    const c = input.contextCapsule;
+    if (c.relevantContext) {
+      sections.push(`## Relevant context\n\n${c.relevantContext}`);
+    }
+    if (c.interfaces) {
+      sections.push(`## Interfaces\n\n${c.interfaces}`);
+    }
+    if (c.dependencies) {
+      sections.push(`## Dependencies\n\n${c.dependencies}`);
+    }
+    if (c.invariants) {
+      sections.push(`## Invariants\n\n${c.invariants}`);
+    }
+    if (c.upstreamDecisions) {
+      sections.push(`## Upstream decisions\n\n${c.upstreamDecisions}`);
+    }
+    if (c.knownPitfalls) {
+      sections.push(`## Known pitfalls\n\n${c.knownPitfalls}`);
+    }
+  }
+
   if (input.previousAttempts.length > 0) {
     const history = input.previousAttempts
       .map(

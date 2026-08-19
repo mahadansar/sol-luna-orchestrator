@@ -108,6 +108,52 @@ export const delegateTaskInputShape = {
         "constraints, gotchas, relevant files.",
     ),
 
+  contextCapsule: z
+    .object({
+      relevantContext: z
+        .string()
+        .optional()
+        .describe(
+          "Background the worker cannot infer from the repo: constraints, gotchas, relevant files.",
+        ),
+      interfaces: z
+        .string()
+        .optional()
+        .describe("Signatures, contracts, or boundaries the worker must not break."),
+      dependencies: z
+        .string()
+        .optional()
+        .describe("Services, libraries, or internal modules this work depends on."),
+      invariants: z
+        .string()
+        .optional()
+        .describe("Rules that must remain true (e.g. 'auth must precede routing')."),
+      upstreamDecisions: z
+        .string()
+        .optional()
+        .describe("Architecture or design decisions already settled by the supervisor."),
+      knownPitfalls: z
+        .string()
+        .optional()
+        .describe("Mistakes to avoid, especially those seen in previous attempts."),
+    })
+    .optional()
+    .describe(
+      "Optional structured context giving the worker a richer brief: selected " +
+        "relevant information rather than a dump of your whole session. Every " +
+        "field is optional and empty fields are omitted from the worker's prompt.",
+    ),
+
+  resultDetail: z
+    .enum(["full", "compact"])
+    .default("full")
+    .describe(
+      "full (default) = every field, including the stdout/stderr of verification " +
+        "commands that passed. compact = the same packet with the output of passed " +
+        "commands dropped; verdicts, discrepancies, scope violations and the output " +
+        "of failing or refused commands are always kept.",
+    ),
+
   previousAttempts: z
     .array(
       z.object({
@@ -346,6 +392,7 @@ const batchTaskShape = z.object({
   acceptanceCriteria: delegateTaskInputShape.acceptanceCriteria,
   verificationCommands: delegateTaskInputShape.verificationCommands,
   context: delegateTaskInputShape.context,
+  contextCapsule: delegateTaskInputShape.contextCapsule,
   previousAttempts: delegateTaskInputShape.previousAttempts,
   timeoutSeconds: delegateTaskInputShape.timeoutSeconds,
 });
@@ -359,6 +406,8 @@ export const delegateTasksInputShape = {
         "other; they share the workspace and run one at a time, so a later task " +
         "sees the earlier one's changes.",
     ),
+
+  resultDetail: delegateTaskInputShape.resultDetail,
 
   tasks: z
     .array(batchTaskShape)

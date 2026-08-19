@@ -190,6 +190,20 @@ Both share the same task contract: `objective`, `effort`, `effortReason`,
 `taskCategory`, `allowedFiles`, `forbiddenFiles`, `acceptanceCriteria`,
 `verificationCommands`, `previousAttempts`.
 
+Two optional additions, both of which default to today's behaviour:
+
+- `contextCapsule` gives the worker a structured brief it cannot infer from the
+  repository: `relevantContext`, `interfaces`, `dependencies`, `invariants`,
+  `upstreamDecisions`, `knownPitfalls`. Every field is optional, and empty ones
+  are left out of the worker's prompt. It is for selected context, not for
+  copying a whole session across.
+- `resultDetail: "compact"` drops the stdout of verification commands that
+  passed, keeping verdicts, discrepancies, scope violations and the output of
+  anything that failed or was refused. The default is `"full"`, which is
+  unchanged. Compact makes a routine result smaller; it does not make removed
+  output retrievable afterwards, so ask for `"full"` when you expect to need
+  the successful command output.
+
 The supervisor policy behind all of this, including how effort is chosen and how
 results should be reviewed, is in [`SOL_RULES.md`](SOL_RULES.md). It reaches Sol
 automatically through the MCP tool descriptions, so no setup is needed.

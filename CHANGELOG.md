@@ -20,6 +20,15 @@ All notable changes to this project are documented here. Format follows
 
 ### Added
 
+- Optional `contextCapsule` on a delegated task: structured background
+  (relevant context, interfaces, dependencies, invariants, upstream decisions,
+  known pitfalls) so a worker gets a selected brief rather than a copy of the
+  supervisor's session. Every field is optional and empty fields are omitted.
+- Optional `resultDetail: "compact"` on `delegate_task` and `delegate_tasks`.
+  It drops the stdout of verification commands that passed, which is the
+  largest and least informative part of a routine result, and keeps every
+  verdict, discrepancy, scope violation and failing command output. The default
+  stays `"full"` and is unchanged.
 - `ROADMAP.md`: prioritised future work with the dependencies between items and
   the design choices that are deliberately not goals.
 

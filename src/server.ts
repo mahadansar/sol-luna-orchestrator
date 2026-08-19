@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { appendFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createLogger } from "./log.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -117,12 +119,51 @@ actually touched, then returns \`verdict\`, \`discrepancies\`, and
 \`reviewChecklist\`. A worker PASS with a FAILED verdict means the worker was
 wrong. Always review the diff before accepting.
 
+\`resultDetail\` controls how much of the result you get back. \`"full"\` is the
+default and is unchanged. \`"compact"\` drops the stdout/stderr of verification
+commands that *passed*, keeping every verdict, discrepancy, scope violation and
+failing command output. Use compact when routine verified evidence is enough,
+and full when you need the successful command output too.
+
 \`verificationCommands\` run without a shell: one allowlisted executable per
 command, no pipes, redirects, \`&&\` or \`;\`. Use \`npm test\` or \`pytest -q\`,
 not \`npm run build && npm test\` (pass those as two commands).`;
 
+/**
+ * Strip the output of verification commands that passed.
+ *
+ * This is the whole of compact mode. A command that passed is fully described
+ * by its verdict and exit code, so its stdout is the largest thing in a routine
+ * result and the least informative. Everything else is kept, including the
+ * output of anything that failed or was refused.
+ *
+ * Exported and pure so tests can prove the removal actually happens; the tool
+ * handlers below apply it to `structuredContent`, which is where the bulk lives.
+ */
+export function compactResult(result: DelegateTaskOutput): DelegateTaskOutput {
+  return {
+    ...result,
+    verification: result.verification.map((run) =>
+      run.passed ? { ...run, output: "" } : run,
+    ),
+  };
+}
+
+/** Apply {@link compactResult} to every task result in a batch. */
+export function compactBatch(batch: BatchOutput): BatchOutput {
+  return {
+    ...batch,
+    tasks: batch.tasks.map((task) =>
+      task.result ? { ...task, result: compactResult(task.result) } : task,
+    ),
+  };
+}
+
 /** Render the structured result as readable text for the model's transcript. */
-function renderResult(result: DelegateTaskOutput): string {
+export function renderResult(
+  result: DelegateTaskOutput,
+  detail: "full" | "compact" = "full",
+): string {
   const lines: string[] = [];
   const flag = result.trustworthy ? "" : "  ⚠ NEEDS SCRUTINY";
 
@@ -134,7 +175,7 @@ function renderResult(result: DelegateTaskOutput): string {
       `thread ${result.workerThreadId ?? "unknown"} | ${result.durationSeconds}s`,
   );
   lines.push("");
-  lines.push(`SUMMARY\n${result.summary || "(none)"}`);
+  lines.push(`WORKER SUMMARY (claim)\n${result.summary || "(none)"}`);
 
   if (result.discrepancies.length > 0) {
     lines.push("");
@@ -156,7 +197,7 @@ function renderResult(result: DelegateTaskOutput): string {
     for (const file of result.filesChanged) {
       const mark = file.observed ? "" : "  [CLAIMED ONLY — not observed by runtime]";
       lines.push(`  ${file.kind.padEnd(6)} ${file.path}${mark}`);
-      if (file.why) lines.push(`         ${file.why}`);
+      if (detail === "full" && file.why) lines.push(`         ${file.why}`);
     }
   }
 
@@ -259,9 +300,12 @@ function registerDelegateTask(): void {
             `thread=${result.workerThreadId ?? "?"} in ${result.durationSeconds}s`,
         );
         recordEvent(result);
+        const detail = task.resultDetail ?? "full";
+        const structuredContent = detail === "compact" ? compactResult(result) : result;
+
         return {
-          content: [{ type: "text" as const, text: renderResult(result) }],
-          structuredContent: result,
+          content: [{ type: "text" as const, text: renderResult(result, detail) }],
+          structuredContent,
         };
       } catch (error) {
         const message =
@@ -341,9 +385,13 @@ function registerDelegateTasks(): void {
           `batch done: ${result.passed}/${result.taskCount} passed in ` +
             `${result.durationSeconds}s, integrated=${result.integrated}`,
         );
+
+        const detail = batch.resultDetail ?? "full";
+        const structuredContent = detail === "compact" ? compactBatch(result) : result;
+
         return {
           content: [{ type: "text" as const, text: renderBatch(result) }],
-          structuredContent: result,
+          structuredContent,
         };
       } catch (error) {
         const message =
@@ -363,7 +411,7 @@ function registerDelegateTasks(): void {
 }
 
 /** Render a batch result as readable text for the model's transcript. */
-function renderBatch(batch: BatchOutput): string {
+export function renderBatch(batch: BatchOutput): string {
   const lines: string[] = [];
 
   lines.push(
@@ -382,7 +430,8 @@ function renderBatch(batch: BatchOutput): string {
     lines.push(`    effort: ${task.effort} - ${task.effortReason}`);
     lines.push(`    objective: ${task.objective.slice(0, 140)}`);
 
-    if (task.result?.summary) lines.push(`    summary: ${task.result.summary}`);
+    if (task.result?.summary)
+      lines.push(`    worker summary (claim): ${task.result.summary}`);
     if (task.error) lines.push(`    error: ${task.error}`);
 
     if (task.changedFiles.length > 0) {
@@ -469,7 +518,13 @@ async function main(): Promise<void> {
   );
 }
 
-main().catch((error: unknown) => {
-  log(`fatal: ${(error as Error).stack ?? String(error)}`);
-  process.exit(1);
-});
+// Only start the server when this file is the entry point. Importing it — which
+// the render and compaction tests do — must not connect the stdio transport,
+// because that holds stdin open and the process never exits. Same guard, and
+// same reason, as `src/bench/run.ts`.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error: unknown) => {
+    log(`fatal: ${(error as Error).stack ?? String(error)}`);
+    process.exit(1);
+  });
+}
