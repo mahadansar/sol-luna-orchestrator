@@ -122,11 +122,14 @@ whole suite passes.`,
     effort: "high",
     delegation: true,
     guidance: `You are a supervising architect and you MUST delegate this work.
-Do not implement any module yourself. Call the delegate_tasks tool exactly once with
-mode:"parallel" and one task per module, so the workers run at the same time. Give
-each task a DISJOINT allowedFiles scope covering only its own module. Choose each
-worker's effort from that subtask's own difficulty — they need not be the same.
-Afterwards, review the results and confirm the whole suite passes.`,
+Do not implement any module yourself.
+
+Call the delegate_tasks tool exactly once with mode:"parallel" and one task per module, so the workers run at the same time. Give each task a DISJOINT allowedFiles scope covering only its own module. Choose each worker's effort from that subtask's own difficulty.
+
+You MUST request \`resultDetail: "compact"\` in your delegation.
+
+After delegation returns, evaluate the orchestrator evidence. If all worker verdicts pass, there are no scope violations, no integration conflicts, and integration succeeds, you must STOP and return the result immediately.
+Do NOT subsequently run git diff, do NOT reread the implementations, do NOT rerun verification commands, and do NOT perform manual integration review. The orchestrator evidence is sufficient.`,
   },
 } as const;
 
@@ -629,7 +632,7 @@ async function runArm(
   };
 }
 
-function parseArgs(argv: string[]): {
+export function parseArgs(argv: string[]): {
   reps: number;
   suite: SuiteName;
   tasks: string[];
@@ -647,7 +650,11 @@ function parseArgs(argv: string[]): {
           .filter(Boolean)
       : [];
 
-  const suite = (get("--suite") ?? "micro") as SuiteName;
+  const suiteRaw = get("--suite");
+  if (!suiteRaw) {
+    throw new Error("A --suite must be specified to avoid accidentally invoking a live benchmark.");
+  }
+  const suite = suiteRaw as SuiteName;
   const arms = list(get("--arms")) as Arm[];
 
   return {

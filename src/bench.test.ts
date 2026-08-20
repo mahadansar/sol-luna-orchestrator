@@ -10,7 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { ARMS, SUITES, peakOverlap, readTelemetry } from "./bench/run.js";
+import { ARMS, SUITES, parseArgs, peakOverlap, readTelemetry } from "./bench/run.js";
 import { SCALE_SOLUTIONS } from "./bench/scale-solutions.js";
 import { SCALE_TASKS } from "./bench/scale-tasks.js";
 import type { BenchTask } from "./bench/tasks.js";
@@ -313,4 +313,20 @@ test("every arm runs the supervisor at a stated effort", () => {
       `${name} has an unexpected effort`,
     );
   }
+});
+
+test("the par-forced arm explicitly requires compact resultDetail", () => {
+  assert.ok(ARMS["par-forced"].guidance.includes('resultDetail: "compact"'));
+});
+
+test("successful delegation does not instruct Sol to perform redundant manual review", () => {
+  const g = ARMS["par-forced"].guidance;
+  assert.ok(g.includes("Do NOT subsequently run git diff"));
+  assert.ok(g.includes("do NOT reread the implementations"));
+  assert.ok(g.includes("do NOT rerun verification commands"));
+  assert.ok(g.includes("do NOT perform manual integration review"));
+});
+
+test("deterministic preflight cannot accidentally invoke the live micro benchmark", () => {
+  assert.throws(() => parseArgs([]), /--suite must be specified/);
 });
