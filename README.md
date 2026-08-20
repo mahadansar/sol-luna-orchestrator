@@ -198,9 +198,10 @@ Two optional additions, both of which default to today's behaviour:
   are left out of the worker's prompt. It is for selected context, not for
   copying a whole session across.
 - `resultDetail: "compact"` drops the stdout of verification commands that
-  passed, keeping verdicts, discrepancies, scope violations and the output of
-  anything that failed or was refused. The default is `"full"`, which is
-  unchanged. Compact makes a routine result smaller; it does not make removed
+  passed from the structured result, keeping verdicts, discrepancies, scope
+  violations and the output of anything that failed or was refused. That output
+  is the only thing it removes, and the readable text block is the same either
+  way. The default is `"full"`, which is unchanged. Compact makes a routine result smaller; it does not make removed
   output retrievable afterwards, so ask for `"full"` when you expect to need
   the successful command output.
 

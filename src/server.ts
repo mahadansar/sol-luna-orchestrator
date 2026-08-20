@@ -137,8 +137,10 @@ not \`npm run build && npm test\` (pass those as two commands).`;
  * result and the least informative. Everything else is kept, including the
  * output of anything that failed or was refused.
  *
- * Exported and pure so tests can prove the removal actually happens; the tool
- * handlers below apply it to `structuredContent`, which is where the bulk lives.
+ * Exported and pure so tests can prove the removal actually happens. The text
+ * block never carried this output in the first place, so `structuredContent` is
+ * the only surface compact changes, and passed-command output is the only thing
+ * it removes. Everything else is identical to a full result.
  */
 export function compactResult(result: DelegateTaskOutput): DelegateTaskOutput {
   return {
@@ -160,10 +162,7 @@ export function compactBatch(batch: BatchOutput): BatchOutput {
 }
 
 /** Render the structured result as readable text for the model's transcript. */
-export function renderResult(
-  result: DelegateTaskOutput,
-  detail: "full" | "compact" = "full",
-): string {
+export function renderResult(result: DelegateTaskOutput): string {
   const lines: string[] = [];
   const flag = result.trustworthy ? "" : "  ⚠ NEEDS SCRUTINY";
 
@@ -197,7 +196,11 @@ export function renderResult(
     for (const file of result.filesChanged) {
       const mark = file.observed ? "" : "  [CLAIMED ONLY — not observed by runtime]";
       lines.push(`  ${file.kind.padEnd(6)} ${file.path}${mark}`);
-      if (detail === "full" && file.why) lines.push(`         ${file.why}`);
+      // Kept whatever the detail setting. It is small next to command output,
+      // and for a file the worker never mentioned it carries the runtime's own
+      // "(not mentioned in the worker's report)" marker, which nothing else
+      // records.
+      if (file.why) lines.push(`         ${file.why}`);
     }
   }
 
@@ -304,7 +307,7 @@ function registerDelegateTask(): void {
         const structuredContent = detail === "compact" ? compactResult(result) : result;
 
         return {
-          content: [{ type: "text" as const, text: renderResult(result, detail) }],
+          content: [{ type: "text" as const, text: renderResult(result) }],
           structuredContent,
         };
       } catch (error) {

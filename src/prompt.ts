@@ -38,23 +38,21 @@ Working directory: ${workingDirectory}`,
 
   if (input.contextCapsule) {
     const c = input.contextCapsule;
-    if (c.relevantContext) {
-      sections.push(`## Relevant context\n\n${c.relevantContext}`);
-    }
-    if (c.interfaces) {
-      sections.push(`## Interfaces\n\n${c.interfaces}`);
-    }
-    if (c.dependencies) {
-      sections.push(`## Dependencies\n\n${c.dependencies}`);
-    }
-    if (c.invariants) {
-      sections.push(`## Invariants\n\n${c.invariants}`);
-    }
-    if (c.upstreamDecisions) {
-      sections.push(`## Upstream decisions\n\n${c.upstreamDecisions}`);
-    }
-    if (c.knownPitfalls) {
-      sections.push(`## Known pitfalls\n\n${c.knownPitfalls}`);
+    // Fixed order, so the same capsule always produces the same brief. A field
+    // that is absent, empty, or nothing but whitespace produces no heading at
+    // all: an empty section is noise for the worker to read past, and the
+    // contract promises that empty fields are omitted.
+    const capsule: Array<[string, string | undefined]> = [
+      ["Relevant context", c.relevantContext],
+      ["Interfaces", c.interfaces],
+      ["Dependencies", c.dependencies],
+      ["Invariants", c.invariants],
+      ["Upstream decisions", c.upstreamDecisions],
+      ["Known pitfalls", c.knownPitfalls],
+    ];
+    for (const [heading, value] of capsule) {
+      const body = value?.trim();
+      if (body) sections.push(`## ${heading}\n\n${body}`);
     }
   }
 

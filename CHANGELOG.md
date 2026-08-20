@@ -27,8 +27,9 @@ All notable changes to this project are documented here. Format follows
 - Optional `resultDetail: "compact"` on `delegate_task` and `delegate_tasks`.
   It drops the stdout of verification commands that passed, which is the
   largest and least informative part of a routine result, and keeps every
-  verdict, discrepancy, scope violation and failing command output. The default
-  stays `"full"` and is unchanged.
+  verdict, discrepancy, scope violation and failing command output. That output
+  is the only thing it removes: the readable text block never carried it, so it
+  is identical either way. The default stays `"full"` and is unchanged.
 - `ROADMAP.md`: prioritised future work with the dependencies between items and
   the design choices that are deliberately not goals.
 
