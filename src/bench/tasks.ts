@@ -27,7 +27,7 @@ export interface BenchTask {
    * fixture whose work has no natural seam and is expected to lose under
    * delegation — a control rather than a rung on the ladder.
    */
-  tier?: "A" | "B" | "C" | "D" | "coupled";
+  tier?: "A" | "B" | "C" | "D" | "coupled" | "scale";
   /**
    * How many independent workstreams the fixture contains. Drives the
    * concurrency the orchestrated arms are given, and is the axis the crossover

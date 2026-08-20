@@ -30,7 +30,7 @@ import { runVerifications, truncate, type VerificationRun } from "./verify.js";
  * failing: a queued task is far less annoying than a spurious error, and the
  * MCP tool timeout still bounds the wait.
  */
-class Semaphore {
+export class Semaphore {
   private available: number;
   private readonly waiting: Array<() => void> = [];
 

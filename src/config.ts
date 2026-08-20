@@ -145,10 +145,10 @@ export const EVENTS_FILE = process.env.SOL_LUNA_EVENTS;
  * a mistaken batch cannot saturate the machine or the account's rate limits.
  */
 /** Hard ceiling, independent of configuration, against runaway spawning. */
-export const MAX_PARALLEL_LIMIT = 8;
+export const MAX_PARALLEL_LIMIT = 20;
 
 /** Most tasks accepted in one batch, however they are scheduled. */
-export const MAX_BATCH_SIZE = 12;
+export const MAX_BATCH_SIZE = 30;
 
 export function clampParallel(value: number): number {
   if (!Number.isFinite(value) || value < 1) return 1;

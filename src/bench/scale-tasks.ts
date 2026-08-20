@@ -1274,4 +1274,373 @@ Verify with: node --test test/expression.test.mjs`,
   grade: [nodeTest(["test/expression.test.mjs"], "the expression test suite passes")],
 };
 
-export const SCALE_TASKS: BenchTask[] = [svckit, datakit, coupled];
+export const scale6 = {
+  id: "scale-validators-6",
+  title: "6 independent validation modules",
+  category: "implementation",
+  tier: "scale",
+  rationale: "Scalable fixture for 6 streams.",
+  requiresGit: true,
+  streams: 6,
+  immutable: [
+    "test/email.test.mjs",
+    "test/ipv4.test.mjs",
+    "test/uuid.test.mjs",
+    "test/pagination.test.mjs",
+    "test/date_range.test.mjs",
+    "test/retry.test.mjs",
+  ],
+  files: {
+    "package.json":
+      '{\n  "name": "validators",\n  "private": true,\n  "type": "module"\n}\n',
+    "src/email.mjs":
+      "// Implement the email module.\\nexport function normalizeEmail(input) { return null; }\\n",
+    "test/email.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { normalizeEmail } from "../src/email.mjs";\n\ntest("normalize email", () => {\n  assert.equal(normalizeEmail(" Test.Email+alias@Example.COM "), "test.email+alias@example.com");\n  assert.equal(normalizeEmail("invalid"), null);\n});\n',
+    "src/ipv4.mjs":
+      "// Implement the ipv4 module.\\nexport function parseCidr(input) { return null; }\\n",
+    "test/ipv4.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { parseCidr } from "../src/ipv4.mjs";\n\ntest("parse IPv4 CIDR", () => {\n  assert.deepEqual(parseCidr("192.168.1.1/24"), { ip: "192.168.1.1", prefix: 24 });\n  assert.equal(parseCidr("256.0.0.1/32"), null);\n});\n',
+    "src/uuid.mjs":
+      "// Implement the uuid module.\\nexport function normalizeUuid(input) { return null; }\\n",
+    "test/uuid.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { normalizeUuid } from "../src/uuid.mjs";\n\ntest("normalize uuid", () => {\n  assert.equal(normalizeUuid("{123e4567-e89b-12d3-a456-426614174000}"), "123e4567-e89b-12d3-a456-426614174000");\n  assert.equal(normalizeUuid("123E4567E89B12D3A456426614174000"), "123e4567-e89b-12d3-a456-426614174000");\n  assert.equal(normalizeUuid("invalid"), null);\n});\n',
+    "src/pagination.mjs":
+      "// Implement the pagination module.\\nexport function encodeCursor(input) { return null; }\\n",
+    "test/pagination.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { encodeCursor, decodeCursor } from "../src/pagination.mjs";\n\ntest("cursor encode and decode", () => {\n  const data = { id: 123, sort: "asc" };\n  const encoded = encodeCursor(data);\n  assert.deepEqual(decodeCursor(encoded), data);\n  assert.equal(decodeCursor("invalid base64"), null);\n});\n',
+    "src/date_range.mjs":
+      "// Implement the date_range module.\\nexport function isOverlap(input) { return null; }\\n",
+    "test/date_range.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { isOverlap } from "../src/date_range.mjs";\n\ntest("date range overlap", () => {\n  const r1 = { start: "2023-01-01", end: "2023-01-10" };\n  const r2 = { start: "2023-01-05", end: "2023-01-15" };\n  const r3 = { start: "2023-01-11", end: "2023-01-20" };\n  assert.equal(isOverlap(r1, r2), true);\n  assert.equal(isOverlap(r1, r3), false);\n  assert.equal(isOverlap({start: "invalid", end: "2023"}, r2), null);\n});\n',
+    "src/retry.mjs":
+      "// Implement the retry module.\\nexport function parseRetryPolicy(input) { return null; }\\n",
+    "test/retry.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { parseRetryPolicy } from "../src/retry.mjs";\n\ntest("parse retry policy", () => {\n  assert.deepEqual(parseRetryPolicy("max=3,backoff=exponential,delay=100"), { max: 3, backoff: "exponential", delay: 100 });\n  assert.deepEqual(parseRetryPolicy("max=foo"), null);\n});\n',
+  },
+  objective: `This project has 6 unimplemented backend modules. Each has a test file that fully specifies its behaviour. None imports another.
+
+  src/email.mjs: Email parsing and normalization.
+  src/ipv4.mjs: IPv4 CIDR checking.
+  src/uuid.mjs: UUID parsing and normalization.
+  src/pagination.mjs: Base64 cursor encode/decode.
+  src/date_range.mjs: Start/End date parsing and overlap.
+  src/retry.mjs: Retry policy string parser.
+
+Implement all 6 so that every test passes. Do not modify any file under test/.
+
+Verify with:
+  node --test test/email.test.mjs test/ipv4.test.mjs test/uuid.test.mjs test/pagination.test.mjs test/date_range.test.mjs test/retry.test.mjs`,
+  grade: [
+    {
+      file: process.execPath,
+      args: [
+        "--test",
+        "test/email.test.mjs",
+        "test/ipv4.test.mjs",
+        "test/uuid.test.mjs",
+        "test/pagination.test.mjs",
+        "test/date_range.test.mjs",
+        "test/retry.test.mjs",
+      ],
+      label: "all 6 test suites pass",
+    },
+  ],
+} as BenchTask;
+
+export const scale12 = {
+  id: "scale-validators-12",
+  title: "12 independent validation modules",
+  category: "implementation",
+  tier: "scale",
+  rationale: "Scalable fixture for 12 streams.",
+  requiresGit: true,
+  streams: 12,
+  immutable: [
+    "test/email.test.mjs",
+    "test/ipv4.test.mjs",
+    "test/uuid.test.mjs",
+    "test/pagination.test.mjs",
+    "test/date_range.test.mjs",
+    "test/retry.test.mjs",
+    "test/money.test.mjs",
+    "test/slug.test.mjs",
+    "test/http_headers.test.mjs",
+    "test/query_filter.test.mjs",
+    "test/sort_spec.test.mjs",
+    "test/phone.test.mjs",
+  ],
+  files: {
+    "package.json":
+      '{\n  "name": "validators",\n  "private": true,\n  "type": "module"\n}\n',
+    "src/email.mjs":
+      "// Implement the email module.\\nexport function normalizeEmail(input) { return null; }\\n",
+    "test/email.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { normalizeEmail } from "../src/email.mjs";\n\ntest("normalize email", () => {\n  assert.equal(normalizeEmail(" Test.Email+alias@Example.COM "), "test.email+alias@example.com");\n  assert.equal(normalizeEmail("invalid"), null);\n});\n',
+    "src/ipv4.mjs":
+      "// Implement the ipv4 module.\\nexport function parseCidr(input) { return null; }\\n",
+    "test/ipv4.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { parseCidr } from "../src/ipv4.mjs";\n\ntest("parse IPv4 CIDR", () => {\n  assert.deepEqual(parseCidr("192.168.1.1/24"), { ip: "192.168.1.1", prefix: 24 });\n  assert.equal(parseCidr("256.0.0.1/32"), null);\n});\n',
+    "src/uuid.mjs":
+      "// Implement the uuid module.\\nexport function normalizeUuid(input) { return null; }\\n",
+    "test/uuid.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { normalizeUuid } from "../src/uuid.mjs";\n\ntest("normalize uuid", () => {\n  assert.equal(normalizeUuid("{123e4567-e89b-12d3-a456-426614174000}"), "123e4567-e89b-12d3-a456-426614174000");\n  assert.equal(normalizeUuid("123E4567E89B12D3A456426614174000"), "123e4567-e89b-12d3-a456-426614174000");\n  assert.equal(normalizeUuid("invalid"), null);\n});\n',
+    "src/pagination.mjs":
+      "// Implement the pagination module.\\nexport function encodeCursor(input) { return null; }\\n",
+    "test/pagination.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { encodeCursor, decodeCursor } from "../src/pagination.mjs";\n\ntest("cursor encode and decode", () => {\n  const data = { id: 123, sort: "asc" };\n  const encoded = encodeCursor(data);\n  assert.deepEqual(decodeCursor(encoded), data);\n  assert.equal(decodeCursor("invalid base64"), null);\n});\n',
+    "src/date_range.mjs":
+      "// Implement the date_range module.\\nexport function isOverlap(input) { return null; }\\n",
+    "test/date_range.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { isOverlap } from "../src/date_range.mjs";\n\ntest("date range overlap", () => {\n  const r1 = { start: "2023-01-01", end: "2023-01-10" };\n  const r2 = { start: "2023-01-05", end: "2023-01-15" };\n  const r3 = { start: "2023-01-11", end: "2023-01-20" };\n  assert.equal(isOverlap(r1, r2), true);\n  assert.equal(isOverlap(r1, r3), false);\n  assert.equal(isOverlap({start: "invalid", end: "2023"}, r2), null);\n});\n',
+    "src/retry.mjs":
+      "// Implement the retry module.\\nexport function parseRetryPolicy(input) { return null; }\\n",
+    "test/retry.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { parseRetryPolicy } from "../src/retry.mjs";\n\ntest("parse retry policy", () => {\n  assert.deepEqual(parseRetryPolicy("max=3,backoff=exponential,delay=100"), { max: 3, backoff: "exponential", delay: 100 });\n  assert.deepEqual(parseRetryPolicy("max=foo"), null);\n});\n',
+    "src/money.mjs":
+      "// Implement the money module.\\nexport function parseAmount(input) { return null; }\\n",
+    "test/money.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { parseAmount } from "../src/money.mjs";\n\ntest("parse money amount", () => {\n  assert.equal(parseAmount("$1,234.56"), 123456);\n  assert.equal(parseAmount("12.3"), 1230);\n  assert.equal(parseAmount("invalid"), null);\n});\n',
+    "src/slug.mjs":
+      "// Implement the slug module.\\nexport function generateSlug(input) { return null; }\\n",
+    "test/slug.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { generateSlug } from "../src/slug.mjs";\n\ntest("generate slug", () => {\n  assert.equal(generateSlug("Hello World! 123"), "hello-world-123");\n  assert.equal(generateSlug("  --Test--  "), "test");\n});\n',
+    "src/http_headers.mjs":
+      "// Implement the http_headers module.\\nexport function parseHeaders(input) { return null; }\\n",
+    "test/http_headers.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { parseHeaders } from "../src/http_headers.mjs";\n\ntest("parse headers", () => {\n  const block = "Content-Type: application/json\\r\\nAccept: */*\\r\\n";\n  assert.deepEqual(parseHeaders(block), { "content-type": "application/json", "accept": "*/*" });\n});\n',
+    "src/query_filter.mjs":
+      "// Implement the query_filter module.\\nexport function parseFilter(input) { return null; }\\n",
+    "test/query_filter.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { parseFilter } from "../src/query_filter.mjs";\n\ntest("parse filter", () => {\n  assert.deepEqual(parseFilter("age:gte:18"), { field: "age", op: "gte", value: "18" });\n  assert.equal(parseFilter("invalid"), null);\n});\n',
+    "src/sort_spec.mjs":
+      "// Implement the sort_spec module.\\nexport function parseSort(input) { return null; }\\n",
+    "test/sort_spec.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { parseSort } from "../src/sort_spec.mjs";\n\ntest("parse sort", () => {\n  assert.deepEqual(parseSort("name,-age"), [{ field: "name", desc: false }, { field: "age", desc: true }]);\n});\n',
+    "src/phone.mjs":
+      "// Implement the phone module.\\nexport function normalizePhone(input) { return null; }\\n",
+    "test/phone.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { normalizePhone } from "../src/phone.mjs";\n\ntest("normalize phone", () => {\n  assert.equal(normalizePhone("+1 (415) 555-2671"), "+14155552671");\n  assert.equal(normalizePhone("123"), null);\n});\n',
+  },
+  objective: `This project has 12 unimplemented backend modules. Each has a test file that fully specifies its behaviour. None imports another.
+
+  src/email.mjs: Email parsing and normalization.
+  src/ipv4.mjs: IPv4 CIDR checking.
+  src/uuid.mjs: UUID parsing and normalization.
+  src/pagination.mjs: Base64 cursor encode/decode.
+  src/date_range.mjs: Start/End date parsing and overlap.
+  src/retry.mjs: Retry policy string parser.
+  src/money.mjs: Amount normalization to cents.
+  src/slug.mjs: Title to slug generator.
+  src/http_headers.mjs: Parse raw HTTP header block into map.
+  src/query_filter.mjs: Parse field:op:value filters.
+  src/sort_spec.mjs: Parse sort specifications.
+  src/phone.mjs: Phone number normalization.
+
+Implement all 12 so that every test passes. Do not modify any file under test/.
+
+Verify with:
+  node --test test/email.test.mjs test/ipv4.test.mjs test/uuid.test.mjs test/pagination.test.mjs test/date_range.test.mjs test/retry.test.mjs test/money.test.mjs test/slug.test.mjs test/http_headers.test.mjs test/query_filter.test.mjs test/sort_spec.test.mjs test/phone.test.mjs`,
+  grade: [
+    {
+      file: process.execPath,
+      args: [
+        "--test",
+        "test/email.test.mjs",
+        "test/ipv4.test.mjs",
+        "test/uuid.test.mjs",
+        "test/pagination.test.mjs",
+        "test/date_range.test.mjs",
+        "test/retry.test.mjs",
+        "test/money.test.mjs",
+        "test/slug.test.mjs",
+        "test/http_headers.test.mjs",
+        "test/query_filter.test.mjs",
+        "test/sort_spec.test.mjs",
+        "test/phone.test.mjs",
+      ],
+      label: "all 12 test suites pass",
+    },
+  ],
+} as BenchTask;
+
+export const scale20 = {
+  id: "scale-validators-20",
+  title: "20 independent validation modules",
+  category: "implementation",
+  tier: "scale",
+  rationale: "Scalable fixture for 20 streams.",
+  requiresGit: true,
+  streams: 20,
+  immutable: [
+    "test/email.test.mjs",
+    "test/ipv4.test.mjs",
+    "test/uuid.test.mjs",
+    "test/pagination.test.mjs",
+    "test/date_range.test.mjs",
+    "test/retry.test.mjs",
+    "test/money.test.mjs",
+    "test/slug.test.mjs",
+    "test/http_headers.test.mjs",
+    "test/query_filter.test.mjs",
+    "test/sort_spec.test.mjs",
+    "test/phone.test.mjs",
+    "test/bool_coerce.test.mjs",
+    "test/idempotency.test.mjs",
+    "test/locale.test.mjs",
+    "test/content_type.test.mjs",
+    "test/duration.test.mjs",
+    "test/int_range.test.mjs",
+    "test/rate_limit.test.mjs",
+    "test/tags.test.mjs",
+  ],
+  files: {
+    "package.json":
+      '{\n  "name": "validators",\n  "private": true,\n  "type": "module"\n}\n',
+    "src/email.mjs":
+      "// Implement the email module.\\nexport function normalizeEmail(input) { return null; }\\n",
+    "test/email.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { normalizeEmail } from "../src/email.mjs";\n\ntest("normalize email", () => {\n  assert.equal(normalizeEmail(" Test.Email+alias@Example.COM "), "test.email+alias@example.com");\n  assert.equal(normalizeEmail("invalid"), null);\n});\n',
+    "src/ipv4.mjs":
+      "// Implement the ipv4 module.\\nexport function parseCidr(input) { return null; }\\n",
+    "test/ipv4.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { parseCidr } from "../src/ipv4.mjs";\n\ntest("parse IPv4 CIDR", () => {\n  assert.deepEqual(parseCidr("192.168.1.1/24"), { ip: "192.168.1.1", prefix: 24 });\n  assert.equal(parseCidr("256.0.0.1/32"), null);\n});\n',
+    "src/uuid.mjs":
+      "// Implement the uuid module.\\nexport function normalizeUuid(input) { return null; }\\n",
+    "test/uuid.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { normalizeUuid } from "../src/uuid.mjs";\n\ntest("normalize uuid", () => {\n  assert.equal(normalizeUuid("{123e4567-e89b-12d3-a456-426614174000}"), "123e4567-e89b-12d3-a456-426614174000");\n  assert.equal(normalizeUuid("123E4567E89B12D3A456426614174000"), "123e4567-e89b-12d3-a456-426614174000");\n  assert.equal(normalizeUuid("invalid"), null);\n});\n',
+    "src/pagination.mjs":
+      "// Implement the pagination module.\\nexport function encodeCursor(input) { return null; }\\n",
+    "test/pagination.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { encodeCursor, decodeCursor } from "../src/pagination.mjs";\n\ntest("cursor encode and decode", () => {\n  const data = { id: 123, sort: "asc" };\n  const encoded = encodeCursor(data);\n  assert.deepEqual(decodeCursor(encoded), data);\n  assert.equal(decodeCursor("invalid base64"), null);\n});\n',
+    "src/date_range.mjs":
+      "// Implement the date_range module.\\nexport function isOverlap(input) { return null; }\\n",
+    "test/date_range.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { isOverlap } from "../src/date_range.mjs";\n\ntest("date range overlap", () => {\n  const r1 = { start: "2023-01-01", end: "2023-01-10" };\n  const r2 = { start: "2023-01-05", end: "2023-01-15" };\n  const r3 = { start: "2023-01-11", end: "2023-01-20" };\n  assert.equal(isOverlap(r1, r2), true);\n  assert.equal(isOverlap(r1, r3), false);\n  assert.equal(isOverlap({start: "invalid", end: "2023"}, r2), null);\n});\n',
+    "src/retry.mjs":
+      "// Implement the retry module.\\nexport function parseRetryPolicy(input) { return null; }\\n",
+    "test/retry.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { parseRetryPolicy } from "../src/retry.mjs";\n\ntest("parse retry policy", () => {\n  assert.deepEqual(parseRetryPolicy("max=3,backoff=exponential,delay=100"), { max: 3, backoff: "exponential", delay: 100 });\n  assert.deepEqual(parseRetryPolicy("max=foo"), null);\n});\n',
+    "src/money.mjs":
+      "// Implement the money module.\\nexport function parseAmount(input) { return null; }\\n",
+    "test/money.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { parseAmount } from "../src/money.mjs";\n\ntest("parse money amount", () => {\n  assert.equal(parseAmount("$1,234.56"), 123456);\n  assert.equal(parseAmount("12.3"), 1230);\n  assert.equal(parseAmount("invalid"), null);\n});\n',
+    "src/slug.mjs":
+      "// Implement the slug module.\\nexport function generateSlug(input) { return null; }\\n",
+    "test/slug.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { generateSlug } from "../src/slug.mjs";\n\ntest("generate slug", () => {\n  assert.equal(generateSlug("Hello World! 123"), "hello-world-123");\n  assert.equal(generateSlug("  --Test--  "), "test");\n});\n',
+    "src/http_headers.mjs":
+      "// Implement the http_headers module.\\nexport function parseHeaders(input) { return null; }\\n",
+    "test/http_headers.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { parseHeaders } from "../src/http_headers.mjs";\n\ntest("parse headers", () => {\n  const block = "Content-Type: application/json\\r\\nAccept: */*\\r\\n";\n  assert.deepEqual(parseHeaders(block), { "content-type": "application/json", "accept": "*/*" });\n});\n',
+    "src/query_filter.mjs":
+      "// Implement the query_filter module.\\nexport function parseFilter(input) { return null; }\\n",
+    "test/query_filter.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { parseFilter } from "../src/query_filter.mjs";\n\ntest("parse filter", () => {\n  assert.deepEqual(parseFilter("age:gte:18"), { field: "age", op: "gte", value: "18" });\n  assert.equal(parseFilter("invalid"), null);\n});\n',
+    "src/sort_spec.mjs":
+      "// Implement the sort_spec module.\\nexport function parseSort(input) { return null; }\\n",
+    "test/sort_spec.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { parseSort } from "../src/sort_spec.mjs";\n\ntest("parse sort", () => {\n  assert.deepEqual(parseSort("name,-age"), [{ field: "name", desc: false }, { field: "age", desc: true }]);\n});\n',
+    "src/phone.mjs":
+      "// Implement the phone module.\\nexport function normalizePhone(input) { return null; }\\n",
+    "test/phone.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { normalizePhone } from "../src/phone.mjs";\n\ntest("normalize phone", () => {\n  assert.equal(normalizePhone("+1 (415) 555-2671"), "+14155552671");\n  assert.equal(normalizePhone("123"), null);\n});\n',
+    "src/bool_coerce.mjs":
+      "// Implement the bool_coerce module.\\nexport function toBool(input) { return null; }\\n",
+    "test/bool_coerce.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { toBool } from "../src/bool_coerce.mjs";\n\ntest("to bool", () => {\n  assert.equal(toBool("true"), true);\n  assert.equal(toBool("1"), true);\n  assert.equal(toBool("yes"), true);\n  assert.equal(toBool("false"), false);\n  assert.equal(toBool("0"), false);\n  assert.equal(toBool("invalid"), null);\n});\n',
+    "src/idempotency.mjs":
+      "// Implement the idempotency module.\\nexport function validateIdempotencyKey(input) { return null; }\\n",
+    "test/idempotency.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { validateIdempotencyKey } from "../src/idempotency.mjs";\n\ntest("validate idempotency key", () => {\n  assert.equal(validateIdempotencyKey("req_123ABC"), true);\n  assert.equal(validateIdempotencyKey("too_short"), false);\n});\n',
+    "src/locale.mjs":
+      "// Implement the locale module.\\nexport function parseLocale(input) { return null; }\\n",
+    "test/locale.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { parseLocale } from "../src/locale.mjs";\n\ntest("parse locale", () => {\n  assert.deepEqual(parseLocale("en-US,en;q=0.9"), [{ lang: "en-US", q: 1 }, { lang: "en", q: 0.9 }]);\n});\n',
+    "src/content_type.mjs":
+      "// Implement the content_type module.\\nexport function parseContentType(input) { return null; }\\n",
+    "test/content_type.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { parseContentType } from "../src/content_type.mjs";\n\ntest("parse content type", () => {\n  assert.deepEqual(parseContentType("application/json; charset=utf-8"), { type: "application/json", params: { charset: "utf-8" } });\n});\n',
+    "src/duration.mjs":
+      "// Implement the duration module.\\nexport function parseDuration(input) { return null; }\\n",
+    "test/duration.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { parseDuration } from "../src/duration.mjs";\n\ntest("parse duration", () => {\n  assert.equal(parseDuration("1h 30m"), 5400000);\n  assert.equal(parseDuration("invalid"), null);\n});\n',
+    "src/int_range.mjs":
+      "// Implement the int_range module.\\nexport function parseIntRange(input) { return null; }\\n",
+    "test/int_range.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { parseIntRange } from "../src/int_range.mjs";\n\ntest("parse int range", () => {\n  assert.deepEqual(parseIntRange("1..10"), { min: 1, max: 10 });\n  assert.deepEqual(parseIntRange(">=5"), { min: 5, max: Infinity });\n});\n',
+    "src/rate_limit.mjs":
+      "// Implement the rate_limit module.\\nexport function parseRateLimit(input) { return null; }\\n",
+    "test/rate_limit.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { parseRateLimit } from "../src/rate_limit.mjs";\n\ntest("parse rate limit", () => {\n  assert.deepEqual(parseRateLimit("100/1h"), { reqs: 100, windowMs: 3600000 });\n});\n',
+    "src/tags.mjs":
+      "// Implement the tags module.\\nexport function normalizeTags(input) { return null; }\\n",
+    "test/tags.test.mjs":
+      'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { normalizeTags } from "../src/tags.mjs";\n\ntest("normalize tags", () => {\n  assert.deepEqual(normalizeTags([" Node.js ", "JS", "JS "]), ["js", "node.js"]);\n});\n',
+  },
+  objective: `This project has 20 unimplemented backend modules. Each has a test file that fully specifies its behaviour. None imports another.
+
+  src/email.mjs: Email parsing and normalization.
+  src/ipv4.mjs: IPv4 CIDR checking.
+  src/uuid.mjs: UUID parsing and normalization.
+  src/pagination.mjs: Base64 cursor encode/decode.
+  src/date_range.mjs: Start/End date parsing and overlap.
+  src/retry.mjs: Retry policy string parser.
+  src/money.mjs: Amount normalization to cents.
+  src/slug.mjs: Title to slug generator.
+  src/http_headers.mjs: Parse raw HTTP header block into map.
+  src/query_filter.mjs: Parse field:op:value filters.
+  src/sort_spec.mjs: Parse sort specifications.
+  src/phone.mjs: Phone number normalization.
+  src/bool_coerce.mjs: String to bool with strict modes.
+  src/idempotency.mjs: Validate idempotency key formats.
+  src/locale.mjs: Parse Accept-Language style weighting.
+  src/content_type.mjs: Parse Content-Type header.
+  src/duration.mjs: Parse duration strings.
+  src/int_range.mjs: Parse integer ranges.
+  src/rate_limit.mjs: Parse rate limit policies.
+  src/tags.mjs: Tag normalization.
+
+Implement all 20 so that every test passes. Do not modify any file under test/.
+
+Verify with:
+  node --test test/email.test.mjs test/ipv4.test.mjs test/uuid.test.mjs test/pagination.test.mjs test/date_range.test.mjs test/retry.test.mjs test/money.test.mjs test/slug.test.mjs test/http_headers.test.mjs test/query_filter.test.mjs test/sort_spec.test.mjs test/phone.test.mjs test/bool_coerce.test.mjs test/idempotency.test.mjs test/locale.test.mjs test/content_type.test.mjs test/duration.test.mjs test/int_range.test.mjs test/rate_limit.test.mjs test/tags.test.mjs`,
+  grade: [
+    {
+      file: process.execPath,
+      args: [
+        "--test",
+        "test/email.test.mjs",
+        "test/ipv4.test.mjs",
+        "test/uuid.test.mjs",
+        "test/pagination.test.mjs",
+        "test/date_range.test.mjs",
+        "test/retry.test.mjs",
+        "test/money.test.mjs",
+        "test/slug.test.mjs",
+        "test/http_headers.test.mjs",
+        "test/query_filter.test.mjs",
+        "test/sort_spec.test.mjs",
+        "test/phone.test.mjs",
+        "test/bool_coerce.test.mjs",
+        "test/idempotency.test.mjs",
+        "test/locale.test.mjs",
+        "test/content_type.test.mjs",
+        "test/duration.test.mjs",
+        "test/int_range.test.mjs",
+        "test/rate_limit.test.mjs",
+        "test/tags.test.mjs",
+      ],
+      label: "all 20 test suites pass",
+    },
+  ],
+} as BenchTask;
+
+export const SCALE_TASKS: BenchTask[] = [
+  svckit,
+  datakit,
+  coupled,
+  scale6,
+  scale12,
+  scale20,
+];

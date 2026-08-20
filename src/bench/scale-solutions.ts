@@ -982,4 +982,86 @@ export function evaluate(source, scope = {}) {
 }
 `,
   },
+  "scale-validators-6": {
+    "src/email.mjs":
+      'export function normalizeEmail(input) {\n  if (typeof input !== "string") return null;\n  const trimmed = input.trim().toLowerCase();\n  if (!/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(trimmed)) return null;\n  return trimmed;\n}\n',
+    "src/ipv4.mjs":
+      'export function parseCidr(input) {\n  if (typeof input !== "string") return null;\n  const parts = input.split("/");\n  if (parts.length !== 2) return null;\n  const ip = parts[0];\n  const prefix = parseInt(parts[1], 10);\n  if (isNaN(prefix) || prefix < 0 || prefix > 32) return null;\n  const octets = ip.split(".");\n  if (octets.length !== 4) return null;\n  for (const octet of octets) {\n    const num = parseInt(octet, 10);\n    if (isNaN(num) || num < 0 || num > 255 || String(num) !== octet) return null;\n  }\n  return { ip, prefix };\n}\n',
+    "src/uuid.mjs":
+      'export function normalizeUuid(input) {\n  if (typeof input !== "string") return null;\n  const cleaned = input.toLowerCase().replace(/[{}-]/g, "");\n  if (cleaned.length !== 32 || !/^[0-9a-f]{32}$/.test(cleaned)) return null;\n  return `${cleaned.slice(0, 8)}-${cleaned.slice(8, 12)}-${cleaned.slice(12, 16)}-${cleaned.slice(16, 20)}-${cleaned.slice(20, 32)}`;\n}\n',
+    "src/pagination.mjs":
+      'export function encodeCursor(data) {\n  try { return Buffer.from(JSON.stringify(data)).toString("base64"); } catch (e) { return null; }\n}\nexport function decodeCursor(cursor) {\n  try { return JSON.parse(Buffer.from(cursor, "base64").toString("utf-8")); } catch (e) { return null; }\n}\n',
+    "src/date_range.mjs":
+      "export function isOverlap(r1, r2) {\n  const s1 = new Date(r1.start).getTime();\n  const e1 = new Date(r1.end).getTime();\n  const s2 = new Date(r2.start).getTime();\n  const e2 = new Date(r2.end).getTime();\n  if (isNaN(s1) || isNaN(e1) || isNaN(s2) || isNaN(e2)) return null;\n  return s1 < e2 && s2 < e1;\n}\n",
+    "src/retry.mjs":
+      'export function parseRetryPolicy(input) {\n  if (typeof input !== "string") return null;\n  const result = {};\n  const pairs = input.split(",");\n  for (const pair of pairs) {\n    const [k, v] = pair.split("=");\n    if (!k || !v) return null;\n    if (k === "max" || k === "delay") {\n      const num = parseInt(v, 10);\n      if (isNaN(num)) return null;\n      result[k] = num;\n    } else {\n      result[k] = v;\n    }\n  }\n  return result;\n}\n',
+  },
+  "scale-validators-12": {
+    "src/email.mjs":
+      'export function normalizeEmail(input) {\n  if (typeof input !== "string") return null;\n  const trimmed = input.trim().toLowerCase();\n  if (!/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(trimmed)) return null;\n  return trimmed;\n}\n',
+    "src/ipv4.mjs":
+      'export function parseCidr(input) {\n  if (typeof input !== "string") return null;\n  const parts = input.split("/");\n  if (parts.length !== 2) return null;\n  const ip = parts[0];\n  const prefix = parseInt(parts[1], 10);\n  if (isNaN(prefix) || prefix < 0 || prefix > 32) return null;\n  const octets = ip.split(".");\n  if (octets.length !== 4) return null;\n  for (const octet of octets) {\n    const num = parseInt(octet, 10);\n    if (isNaN(num) || num < 0 || num > 255 || String(num) !== octet) return null;\n  }\n  return { ip, prefix };\n}\n',
+    "src/uuid.mjs":
+      'export function normalizeUuid(input) {\n  if (typeof input !== "string") return null;\n  const cleaned = input.toLowerCase().replace(/[{}-]/g, "");\n  if (cleaned.length !== 32 || !/^[0-9a-f]{32}$/.test(cleaned)) return null;\n  return `${cleaned.slice(0, 8)}-${cleaned.slice(8, 12)}-${cleaned.slice(12, 16)}-${cleaned.slice(16, 20)}-${cleaned.slice(20, 32)}`;\n}\n',
+    "src/pagination.mjs":
+      'export function encodeCursor(data) {\n  try { return Buffer.from(JSON.stringify(data)).toString("base64"); } catch (e) { return null; }\n}\nexport function decodeCursor(cursor) {\n  try { return JSON.parse(Buffer.from(cursor, "base64").toString("utf-8")); } catch (e) { return null; }\n}\n',
+    "src/date_range.mjs":
+      "export function isOverlap(r1, r2) {\n  const s1 = new Date(r1.start).getTime();\n  const e1 = new Date(r1.end).getTime();\n  const s2 = new Date(r2.start).getTime();\n  const e2 = new Date(r2.end).getTime();\n  if (isNaN(s1) || isNaN(e1) || isNaN(s2) || isNaN(e2)) return null;\n  return s1 < e2 && s2 < e1;\n}\n",
+    "src/retry.mjs":
+      'export function parseRetryPolicy(input) {\n  if (typeof input !== "string") return null;\n  const result = {};\n  const pairs = input.split(",");\n  for (const pair of pairs) {\n    const [k, v] = pair.split("=");\n    if (!k || !v) return null;\n    if (k === "max" || k === "delay") {\n      const num = parseInt(v, 10);\n      if (isNaN(num)) return null;\n      result[k] = num;\n    } else {\n      result[k] = v;\n    }\n  }\n  return result;\n}\n',
+    "src/money.mjs":
+      'export function parseAmount(input) {\n  if (typeof input !== "string") return null;\n  const cleaned = input.replace(/[$,]/g, "");\n  if (!/^\\d+(\\.\\d{1,2})?$/.test(cleaned)) return null;\n  const num = parseFloat(cleaned);\n  if (isNaN(num)) return null;\n  return Math.round(num * 100);\n}\n',
+    "src/slug.mjs":
+      'export function generateSlug(input) {\n  if (typeof input !== "string") return "";\n  return input.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");\n}\n',
+    "src/http_headers.mjs":
+      'export function parseHeaders(input) {\n  if (typeof input !== "string") return {};\n  const result = {};\n  for (const line of input.split(/\\r?\\n/)) {\n    if (!line.trim()) continue;\n    const colon = line.indexOf(":");\n    if (colon === -1) continue;\n    const k = line.slice(0, colon).trim().toLowerCase();\n    const v = line.slice(colon + 1).trim();\n    result[k] = v;\n  }\n  return result;\n}\n',
+    "src/query_filter.mjs":
+      'export function parseFilter(input) {\n  if (typeof input !== "string") return null;\n  const parts = input.split(":");\n  if (parts.length !== 3) return null;\n  return { field: parts[0], op: parts[1], value: parts[2] };\n}\n',
+    "src/sort_spec.mjs":
+      'export function parseSort(input) {\n  if (typeof input !== "string") return [];\n  return input.split(",").filter(Boolean).map(s => {\n    s = s.trim();\n    if (s.startsWith("-")) return { field: s.slice(1), desc: true };\n    return { field: s, desc: false };\n  });\n}\n',
+    "src/phone.mjs":
+      'export function normalizePhone(input) {\n  if (typeof input !== "string") return null;\n  const cleaned = "+" + input.replace(/[^0-9]/g, "");\n  if (cleaned.length < 10 || cleaned.length > 15) return null;\n  return cleaned;\n}\n',
+  },
+  "scale-validators-20": {
+    "src/email.mjs":
+      'export function normalizeEmail(input) {\n  if (typeof input !== "string") return null;\n  const trimmed = input.trim().toLowerCase();\n  if (!/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(trimmed)) return null;\n  return trimmed;\n}\n',
+    "src/ipv4.mjs":
+      'export function parseCidr(input) {\n  if (typeof input !== "string") return null;\n  const parts = input.split("/");\n  if (parts.length !== 2) return null;\n  const ip = parts[0];\n  const prefix = parseInt(parts[1], 10);\n  if (isNaN(prefix) || prefix < 0 || prefix > 32) return null;\n  const octets = ip.split(".");\n  if (octets.length !== 4) return null;\n  for (const octet of octets) {\n    const num = parseInt(octet, 10);\n    if (isNaN(num) || num < 0 || num > 255 || String(num) !== octet) return null;\n  }\n  return { ip, prefix };\n}\n',
+    "src/uuid.mjs":
+      'export function normalizeUuid(input) {\n  if (typeof input !== "string") return null;\n  const cleaned = input.toLowerCase().replace(/[{}-]/g, "");\n  if (cleaned.length !== 32 || !/^[0-9a-f]{32}$/.test(cleaned)) return null;\n  return `${cleaned.slice(0, 8)}-${cleaned.slice(8, 12)}-${cleaned.slice(12, 16)}-${cleaned.slice(16, 20)}-${cleaned.slice(20, 32)}`;\n}\n',
+    "src/pagination.mjs":
+      'export function encodeCursor(data) {\n  try { return Buffer.from(JSON.stringify(data)).toString("base64"); } catch (e) { return null; }\n}\nexport function decodeCursor(cursor) {\n  try { return JSON.parse(Buffer.from(cursor, "base64").toString("utf-8")); } catch (e) { return null; }\n}\n',
+    "src/date_range.mjs":
+      "export function isOverlap(r1, r2) {\n  const s1 = new Date(r1.start).getTime();\n  const e1 = new Date(r1.end).getTime();\n  const s2 = new Date(r2.start).getTime();\n  const e2 = new Date(r2.end).getTime();\n  if (isNaN(s1) || isNaN(e1) || isNaN(s2) || isNaN(e2)) return null;\n  return s1 < e2 && s2 < e1;\n}\n",
+    "src/retry.mjs":
+      'export function parseRetryPolicy(input) {\n  if (typeof input !== "string") return null;\n  const result = {};\n  const pairs = input.split(",");\n  for (const pair of pairs) {\n    const [k, v] = pair.split("=");\n    if (!k || !v) return null;\n    if (k === "max" || k === "delay") {\n      const num = parseInt(v, 10);\n      if (isNaN(num)) return null;\n      result[k] = num;\n    } else {\n      result[k] = v;\n    }\n  }\n  return result;\n}\n',
+    "src/money.mjs":
+      'export function parseAmount(input) {\n  if (typeof input !== "string") return null;\n  const cleaned = input.replace(/[$,]/g, "");\n  if (!/^\\d+(\\.\\d{1,2})?$/.test(cleaned)) return null;\n  const num = parseFloat(cleaned);\n  if (isNaN(num)) return null;\n  return Math.round(num * 100);\n}\n',
+    "src/slug.mjs":
+      'export function generateSlug(input) {\n  if (typeof input !== "string") return "";\n  return input.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");\n}\n',
+    "src/http_headers.mjs":
+      'export function parseHeaders(input) {\n  if (typeof input !== "string") return {};\n  const result = {};\n  for (const line of input.split(/\\r?\\n/)) {\n    if (!line.trim()) continue;\n    const colon = line.indexOf(":");\n    if (colon === -1) continue;\n    const k = line.slice(0, colon).trim().toLowerCase();\n    const v = line.slice(colon + 1).trim();\n    result[k] = v;\n  }\n  return result;\n}\n',
+    "src/query_filter.mjs":
+      'export function parseFilter(input) {\n  if (typeof input !== "string") return null;\n  const parts = input.split(":");\n  if (parts.length !== 3) return null;\n  return { field: parts[0], op: parts[1], value: parts[2] };\n}\n',
+    "src/sort_spec.mjs":
+      'export function parseSort(input) {\n  if (typeof input !== "string") return [];\n  return input.split(",").filter(Boolean).map(s => {\n    s = s.trim();\n    if (s.startsWith("-")) return { field: s.slice(1), desc: true };\n    return { field: s, desc: false };\n  });\n}\n',
+    "src/phone.mjs":
+      'export function normalizePhone(input) {\n  if (typeof input !== "string") return null;\n  const cleaned = "+" + input.replace(/[^0-9]/g, "");\n  if (cleaned.length < 10 || cleaned.length > 15) return null;\n  return cleaned;\n}\n',
+    "src/bool_coerce.mjs":
+      'export function toBool(input) {\n  if (typeof input === "boolean") return input;\n  if (typeof input !== "string" && typeof input !== "number") return null;\n  const str = String(input).trim().toLowerCase();\n  if (["true", "1", "yes", "on", "t", "y"].includes(str)) return true;\n  if (["false", "0", "no", "off", "f", "n"].includes(str)) return false;\n  return null;\n}\n',
+    "src/idempotency.mjs":
+      'export function validateIdempotencyKey(input) {\n  if (typeof input !== "string") return false;\n  return /^[a-zA-Z0-9_-]{10,255}$/.test(input);\n}\n',
+    "src/locale.mjs":
+      'export function parseLocale(input) {\n  if (typeof input !== "string") return [];\n  return input.split(",").filter(Boolean).map(s => {\n    const parts = s.split(";");\n    const lang = parts[0].trim();\n    let q = 1;\n    if (parts[1] && parts[1].trim().startsWith("q=")) {\n      q = parseFloat(parts[1].trim().slice(2));\n    }\n    return { lang, q };\n  }).sort((a, b) => b.q - a.q);\n}\n',
+    "src/content_type.mjs":
+      'export function parseContentType(input) {\n  if (typeof input !== "string") return null;\n  const parts = input.split(";");\n  const type = parts[0].trim().toLowerCase();\n  const params = {};\n  for (let i = 1; i < parts.length; i++) {\n    const [k, v] = parts[i].split("=");\n    if (k && v) params[k.trim().toLowerCase()] = v.trim();\n  }\n  return { type, params };\n}\n',
+    "src/duration.mjs":
+      'export function parseDuration(input) {\n  if (typeof input !== "string") return null;\n  const regex = /(\\d+)\\s*(h|m|s|ms)/g;\n  let match;\n  let total = 0;\n  let found = false;\n  while ((match = regex.exec(input)) !== null) {\n    found = true;\n    const val = parseInt(match[1], 10);\n    const unit = match[2];\n    if (unit === "h") total += val * 3600000;\n    else if (unit === "m") total += val * 60000;\n    else if (unit === "s") total += val * 1000;\n    else if (unit === "ms") total += val;\n  }\n  return found ? total : null;\n}\n',
+    "src/int_range.mjs":
+      'export function parseIntRange(input) {\n  if (typeof input !== "string") return null;\n  const s = input.trim();\n  if (s.includes("..")) {\n    const parts = s.split("..");\n    return { min: parseInt(parts[0], 10), max: parseInt(parts[1], 10) };\n  }\n  if (s.startsWith(">=")) return { min: parseInt(s.slice(2), 10), max: Infinity };\n  if (s.startsWith("<=")) return { min: -Infinity, max: parseInt(s.slice(2), 10) };\n  return null;\n}\n',
+    "src/rate_limit.mjs":
+      'export function parseRateLimit(input) {\n  if (typeof input !== "string") return null;\n  const parts = input.split("/");\n  if (parts.length !== 2) return null;\n  const reqs = parseInt(parts[0], 10);\n  const windowStr = parts[1].trim();\n  let windowMs = 0;\n  if (windowStr.endsWith("h")) windowMs = parseInt(windowStr, 10) * 3600000;\n  else if (windowStr.endsWith("m")) windowMs = parseInt(windowStr, 10) * 60000;\n  else if (windowStr.endsWith("s")) windowMs = parseInt(windowStr, 10) * 1000;\n  if (isNaN(reqs) || isNaN(windowMs) || windowMs === 0) return null;\n  return { reqs, windowMs };\n}\n',
+    "src/tags.mjs":
+      'export function normalizeTags(input) {\n  if (!Array.isArray(input)) return [];\n  const set = new Set();\n  for (const tag of input) {\n    if (typeof tag === "string") set.add(tag.trim().toLowerCase());\n  }\n  return Array.from(set).sort();\n}\n',
+  },
 };

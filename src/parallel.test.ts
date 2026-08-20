@@ -15,6 +15,7 @@ import path from "node:path";
 import test from "node:test";
 import { BatchRejectedError, runBatch } from "./batch.js";
 import {
+  MAX_BATCH_SIZE,
   MAX_PARALLEL,
   MAX_PARALLEL_LIMIT,
   WORKTREE_DIR,
@@ -244,6 +245,7 @@ function fakeExecutor(options: {
   fail?: (task: DelegateTaskInput) => boolean;
   delayMs?: number;
   onConcurrency?: (active: number) => void;
+  barrier?: (active: number, release: () => void) => void;
 }) {
   let active = 0;
 
@@ -254,7 +256,11 @@ function fakeExecutor(options: {
     active += 1;
     options.onConcurrency?.(active);
     try {
-      await new Promise((resolve) => setTimeout(resolve, options.delayMs ?? 25));
+      if (options.barrier) {
+        await new Promise<void>((resolve) => options.barrier!(active, resolve));
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, options.delayMs ?? 25));
+      }
       if (options.fail?.(input)) {
         throw new Error(`worker for ${moduleOf(input)} exploded`);
       }
@@ -1092,7 +1098,7 @@ test("parallel mode outside a git repository fails with a usable message", async
 test("oversized batches are refused", async () => {
   const repo = await makeRepo();
   try {
-    const many = Array.from({ length: 20 }, (_, index) =>
+    const many = Array.from({ length: MAX_BATCH_SIZE + 1 }, (_, index) =>
       makeTask({ objective: `Independent module number ${index} implementation.` }),
     );
     await assert.rejects(
@@ -1157,6 +1163,147 @@ test("linking is a no-op when there is nothing to link", async () => {
   try {
     const warnings = await linkSharedDirectories(repo, repo, ["does-not-exist"]);
     assert.deepEqual(warnings, []);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+// --- Deterministic Concurrency Limits ---
+
+import { Semaphore } from "./worker.js";
+
+async function runConcurrencyTest(
+  taskCount: number,
+  maxConcurrency: number,
+): Promise<{ peak: number; completed: number }> {
+  const repo = await makeRepo();
+  try {
+    let peak = 0;
+    const tasks = Array.from({ length: taskCount }, (_, i) => {
+      const t = makeTask();
+      t.allowedFiles = [`src/mod${i + 1}/**`];
+      return t;
+    });
+    const sem = new Semaphore(maxConcurrency);
+
+    let releases: Array<() => void> = [];
+    let started = 0;
+
+    const result = await runBatch(tasks, {
+      mode: "parallel",
+      workingDirectory: repo,
+      semaphore: sem,
+      executor: fakeExecutor({
+        onConcurrency: (active) => {
+          peak = Math.max(peak, active);
+        },
+        barrier: (active, release) => {
+          releases.push(release);
+          started++;
+          const remaining = taskCount - started;
+          const expectedWaveSize = Math.min(maxConcurrency, releases.length + remaining);
+
+          if (releases.length === expectedWaveSize) {
+            const currentWave = releases;
+            releases = [];
+            // Resolve asynchronously to allow concurrency counting to register properly
+            setTimeout(() => {
+              for (const r of currentWave) r();
+            }, 0);
+          }
+        },
+      }),
+    });
+    return { peak, completed: result.passed };
+  } finally {
+    await cleanupRepo(repo);
+  }
+}
+
+test("1 task with max 20 -> peak concurrency 1", async () => {
+  const { peak, completed } = await runConcurrencyTest(1, 20);
+  assert.equal(completed, 1);
+  assert.equal(peak, 1);
+});
+
+test("6 independent tasks with max 20 -> can reach peak 6", async () => {
+  const { peak, completed } = await runConcurrencyTest(6, 20);
+  assert.equal(completed, 6);
+  assert.equal(peak, 6);
+});
+
+test("12 independent tasks with max 20 -> can reach peak 12", async () => {
+  const { peak, completed } = await runConcurrencyTest(12, 20);
+  assert.equal(completed, 12);
+  assert.equal(peak, 12);
+});
+
+test("20 independent tasks with max 20 -> can reach peak 20", async () => {
+  const { peak, completed } = await runConcurrencyTest(20, 20);
+  assert.equal(completed, 20);
+  assert.equal(peak, 20);
+});
+
+test("25 tasks with max 20 -> never exceeds 20 and remaining tasks run in a later wave", async () => {
+  const { peak, completed } = await runConcurrencyTest(25, 20);
+  assert.equal(completed, 25);
+  assert.equal(peak, 20);
+});
+
+test("max 6 with 20 tasks -> never exceeds 6", async () => {
+  const { peak, completed } = await runConcurrencyTest(20, 6);
+  assert.equal(completed, 20);
+  assert.equal(peak, 6);
+});
+
+test("existing default still behaves according to its current value", async () => {
+  const { peak, completed } = await runConcurrencyTest(6, MAX_PARALLEL);
+  assert.equal(completed, 6);
+  assert.equal(peak, Math.min(6, MAX_PARALLEL));
+});
+
+test("invalid values above ceiling are clamped according to current project conventions", () => {
+  assert.equal(clampParallel(9999), MAX_PARALLEL_LIMIT);
+  assert.ok(MAX_PARALLEL_LIMIT >= 20);
+});
+
+test("cancellation/semaphore cleanup does not leak capacity", async () => {
+  const repo = await makeRepo();
+  try {
+    const sem = new Semaphore(2);
+    const controller = new AbortController();
+
+    let started = 0;
+    const executor = async (
+      input: DelegateTaskInput,
+      options: { signal?: AbortSignal },
+    ) => {
+      started++;
+      if (started === 2) controller.abort();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      if (options.signal?.aborted)
+        return makeOutput({ errors: ["Task was cancelled before it finished."] });
+      return makeOutput();
+    };
+
+    const tasks = Array.from({ length: 4 }, (_, i) => {
+      const t = makeTask();
+      t.allowedFiles = [`src/mod${i + 1}/**`];
+      return t;
+    });
+    await runBatch(tasks, {
+      mode: "parallel",
+      workingDirectory: repo,
+      semaphore: sem,
+      signal: controller.signal,
+      executor,
+    });
+
+    const release1 = await sem.acquire();
+    const release2 = await sem.acquire();
+    release1();
+    release2();
+    assert.ok(true, "Semaphore capacity did not leak");
   } finally {
     await cleanupRepo(repo);
   }

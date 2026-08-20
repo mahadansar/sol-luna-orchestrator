@@ -81,6 +81,8 @@ export async function runBatch(
      * tested without spending model calls. Production always uses the default.
      */
     executor?: TaskExecutor;
+    /** Overridable for testing concurrency limits. */
+    semaphore?: typeof workerSlots;
   },
 ): Promise<BatchOutput> {
   const batchId = makeBatchId();
@@ -169,11 +171,12 @@ export async function runBatch(
   const warnings: string[] = [];
 
   try {
+    const sem = options.semaphore ?? workerSlots;
     if (mode === "sequential") {
-      await runSequential(batchId, running, workspace, run, options.signal);
+      await runSequential(batchId, running, workspace, run, sem, options.signal);
     } else {
       warnings.push(
-        ...(await runParallel(batchId, running, workspace, run, options.signal)),
+        ...(await runParallel(batchId, running, workspace, run, sem, options.signal)),
       );
     }
   } catch (error) {
@@ -288,6 +291,7 @@ async function runSequential(
   running: RunningTask[],
   workspace: string,
   run: TaskExecutor,
+  semaphore: typeof workerSlots,
   signal?: AbortSignal,
 ): Promise<void> {
   for (const task of running) {
@@ -295,7 +299,7 @@ async function runSequential(
       markCancelled(batchId, task);
       continue;
     }
-    const release = await workerSlots.acquire();
+    const release = await semaphore.acquire();
     try {
       await runOne(batchId, task, workspace, run, signal);
     } finally {
@@ -310,6 +314,7 @@ async function runParallel(
   running: RunningTask[],
   workspace: string,
   run: TaskExecutor,
+  semaphore: typeof workerSlots,
   signal?: AbortSignal,
 ): Promise<string[]> {
   const warnings: string[] = [];
@@ -379,7 +384,7 @@ async function runParallel(
         markCancelled(batchId, task);
         return;
       }
-      const release = await workerSlots.acquire();
+      const release = await semaphore.acquire();
       try {
         if (signal?.aborted) {
           markCancelled(batchId, task);
