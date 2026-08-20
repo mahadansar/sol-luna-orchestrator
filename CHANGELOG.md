@@ -4,34 +4,42 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2026-08-20
 
-### Changed
-
-- `ROADMAP.md`: replaced the narrow P1.2 stronger-worker fallback item with
-  adaptive worker routing inside a user-controlled compute policy, which makes
-  a stronger worker one routing decision rather than its own mechanism. Roadmap
-  direction only. No runtime behaviour changed.
-- Reorganised the README into a landing page and moved the detail it carried
-  into focused documents: `docs/CONFIGURATION.md` for environment variables,
-  init flags, Codex settings and log paths, and `docs/TROUBLESHOOTING.md` for
-  symptoms and configuration recovery. Nothing was dropped, and the five
-  overlapping sections that each restated the delegation philosophy are now one.
+Context-efficient delegation with structured worker briefs and compact result
+payloads.
 
 ### Added
 
-- Optional `contextCapsule` on a delegated task: structured background
-  (relevant context, interfaces, dependencies, invariants, upstream decisions,
-  known pitfalls) so a worker gets a selected brief rather than a copy of the
-  supervisor's session. Every field is optional and empty fields are omitted.
-- Optional `resultDetail: "compact"` on `delegate_task` and `delegate_tasks`.
-  It drops the stdout of verification commands that passed, which is the
-  largest and least informative part of a routine result, and keeps every
-  verdict, discrepancy, scope violation and failing command output. That output
-  is the only thing it removes: the readable text block never carried it, so it
-  is identical either way. The default stays `"full"` and is unchanged.
-- `ROADMAP.md`: prioritised future work with the dependencies between items and
-  the design choices that are deliberately not goals.
+- **Context Capsule v2 (`contextCapsule`)**: optional structured worker context
+  allowing the supervisor to pass selected, task-relevant background information
+  without dumping the entire supervisor session.
+  - Supports `relevantContext`, `interfaces`, `dependencies`, `invariants`,
+    `upstreamDecisions`, and `knownPitfalls`.
+  - Empty or whitespace-only fields are automatically omitted from the worker prompt.
+  - Fully backwards compatible with existing task contracts.
+- **Compact Evidence Packets (`resultDetail: "full" | "compact"`)**: optional
+  result detail control on `delegate_task` and `delegate_tasks`.
+  - Schema and API default remains `"full"`, preserving complete backwards compatibility.
+  - Callers omitting `resultDetail` retain previous full behavior.
+  - In `"compact"` mode, clears successful verification command stdout/stderr
+    from `structuredContent`, significantly reducing routine result payload size.
+    Failed, refused, or skipped verification evidence is always retained.
+  - Preserves `filesChanged[].why` and all discrepancies, verdicts, and scope violations.
+  - Readable text result (`content[].text`) remains unchanged across both modes.
+- `ROADMAP.md`: prioritised future work with dependencies between items and
+  design choices that are deliberately not goals.
+
+### Changed
+
+- `ROADMAP.md`: updated roadmap tracking, marking P0.1 (Context Capsule v2) and
+  P0.2 (Compact Evidence Packets) as shipped in v0.7.0 while keeping P0.3+ as
+  future work. Replaced narrow P1.2 fallback item with adaptive worker routing
+  inside a user-controlled compute policy.
+- Reorganised the README into a landing page and moved reference details into
+  focused documents: `docs/CONFIGURATION.md` for environment variables, init
+  flags, Codex settings, and log paths, and `docs/TROUBLESHOOTING.md` for
+  symptoms and configuration recovery.
 
 ## [0.6.1] - 2026-08-17
 
@@ -401,7 +409,8 @@ Initial working version, verified end to end.
 development milestones and were never tagged or published, so they have no
 release links.
 
-[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/mahadansar/sol-luna-orchestrator/releases/tag/v0.5.1

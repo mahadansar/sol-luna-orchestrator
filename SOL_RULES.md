@@ -186,6 +186,17 @@ is optional but worth setting: `investigation` and `bugfix` more often justify
   case by returning 400" beats "handles edge cases".
 - **verificationCommands** — supply these whenever they exist. They are the
   only part of the result that is mechanically proven.
+- **contextCapsule** (optional) — carry selected task-relevant background the
+  worker cannot infer: `relevantContext`, `interfaces`, `dependencies`,
+  `invariants`, `upstreamDecisions`, `knownPitfalls`. Empty fields are omitted.
+  Do not dump your whole supervisor session into it. The capsule supplements,
+  but never replaces: `objective`, `acceptanceCriteria`, `allowedFiles`,
+  `verificationCommands`, or security/scope constraints.
+- **resultDetail** (optional) — routine delegation should explicitly request
+  `resultDetail: "compact"` to reduce payload size. Use `"full"` when
+  successful verification stdout/stderr is genuinely useful to inspect. The
+  public and schema default remains `"full"` for backwards compatibility;
+  failed, refused, or skipped verification output is always retained.
 
 Forbid the test files whenever tests are the verification. It removes the
 cheapest way to fake a PASS.

@@ -1,8 +1,7 @@
 # Roadmap
 
 Where Sol-Luna is going, in priority order, with the dependencies between items
-made explicit. Everything here is future work. Nothing on this page ships today;
-[`CHANGELOG.md`](CHANGELOG.md) is the record of what actually exists.
+made explicit. [`CHANGELOG.md`](CHANGELOG.md) is the record of what actually exists.
 
 ## Direction
 
@@ -27,22 +26,22 @@ or for taking Git actions on the user's behalf.
 
 ## Priorities at a glance
 
-| Priority | Item                                     | Depends on         |
-| -------- | ---------------------------------------- | ------------------ |
-| P0.1     | Context Capsule v2                       | nothing            |
-| P0.2     | Compact Evidence Packets                 | P0.1               |
-| P0.3     | Worker Continuation                      | P0.2               |
-| P0.4     | Bounded Repair Loop                      | P0.3               |
-| P1.1     | Reasoned Retry and Effort Escalation     | P0.4               |
-| P1.2     | Adaptive Worker Routing + Compute Policy | P1.1               |
-| P2.1     | Optional Explorer                        | mostly independent |
-| P2.2     | Cross-Session Handoff                    | mostly independent |
+| Priority | Item                                     | Status / Depends on |
+| -------- | ---------------------------------------- | ------------------- |
+| P0.1     | Context Capsule v2                       | Shipped in v0.7.0   |
+| P0.2     | Compact Evidence Packets                 | Shipped in v0.7.0   |
+| P0.3     | Worker Continuation                      | P0.2                |
+| P0.4     | Bounded Repair Loop                      | P0.3                |
+| P1.1     | Reasoned Retry and Effort Escalation     | P0.4                |
+| P1.2     | Adaptive Worker Routing + Compute Policy | P1.1                |
+| P2.1     | Optional Explorer                        | mostly independent  |
+| P2.2     | Cross-Session Handoff                    | mostly independent  |
 
 ```
-Context Capsule v2
+Context Capsule v2 (shipped in v0.7.0)
         |
         v
-Compact Evidence Packets
+Compact Evidence Packets (shipped in v0.7.0)
         |
         v
 Worker Continuation
@@ -68,48 +67,33 @@ the opposite of the intent. Start at the top.
 
 ## P0.1 Context Capsule v2
 
+**Status.** Shipped in v0.7.0.
+
 **Problem.** A worker receives an objective, a declared scope, acceptance
 criteria and verification commands. That is enough to act, but it leaves the
 worker rediscovering context the supervisor already had: which interfaces it
 must not break, which decisions upstream are already settled, which pitfalls
 were hit last time.
 
-**Direction.** A richer structured work package, assembled by the supervisor.
-Candidate fields include relevant context, interfaces, dependencies, invariants,
-upstream decisions, known pitfalls and previous attempts, alongside the existing
-contract.
-
-**Constraints.**
-
-- Backward compatible. Existing callers keep working.
-- Fields are optional. Nothing should force a caller to fill in a form.
-- The supervisor supplies the minimum relevant context, not a transcript dump.
-  Copying the whole session into every worker would defeat the purpose.
-
-**Not decided.** The final field set and its schema. That gets settled by
-implementing it and seeing which fields workers actually use.
+**Delivered.** A richer structured work package (`contextCapsule`), assembled by
+the supervisor, containing optional fields: `relevantContext`, `interfaces`,
+`dependencies`, `invariants`, `upstreamDecisions`, and `knownPitfalls`. Empty
+fields are omitted from the worker prompt, and existing task contracts remain
+fully compatible.
 
 ## P0.2 Compact Evidence Packets
+
+**Status.** Shipped in v0.7.0.
 
 **Problem.** Reviewing a delegated result costs the supervisor a lot of context.
 The evidence it needs to make a decision is smaller than the evidence it
 receives.
 
-**Direction.** Return a compact, decision-relevant packet: verdict, changed
-files, acceptance result, verification result, scope result, conflicts and
-discrepancies, risk or contract-change signals, and the worker's own summary,
-with a reference to fuller evidence when deeper review is warranted.
-
-**Constraints.**
-
-- This must not become "trust the worker's summary". Orchestrator-derived
-  verification and scope results stay authoritative; the worker's summary is one
-  field among them, labelled as the claim it is.
-- Full diffs and full command output stay reachable. When risk signals or
-  discrepancies appear, the supervisor needs to be able to look properly.
-
-**Depends on** P0.1: what is worth summarising depends on what the worker was
-given.
+**Delivered.** Optional `resultDetail: "compact"` on `delegate_task` and
+`delegate_tasks`. It drops the stdout/stderr of passing verification commands
+from `structuredContent`, preserving verdicts, changed files, scope violations,
+discrepancies, failing command outputs, and the unchanged readable text result.
+The default remains `"full"` for compatibility.
 
 ## P0.3 Worker Continuation
 
