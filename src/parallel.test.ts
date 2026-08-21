@@ -242,6 +242,7 @@ function moduleOf(task: DelegateTaskInput): string {
 function fakeExecutor(options: {
   writes?: (task: DelegateTaskInput) => Record<string, string>;
   fail?: (task: DelegateTaskInput) => boolean;
+  output?: (task: DelegateTaskInput) => Partial<DelegateTaskOutput>;
   delayMs?: number;
   onConcurrency?: (active: number) => void;
 }) {
@@ -267,7 +268,8 @@ function fakeExecutor(options: {
         await fs.writeFile(target, content, "utf8");
         changed.push({ path: relative, kind: "add", why: "test", observed: true });
       }
-      return makeOutput({ effort: input.effort, filesChanged: changed });
+      const overrides = options.output?.(input) ?? {};
+      return makeOutput({ effort: input.effort, filesChanged: changed, ...overrides });
     } finally {
       active -= 1;
     }
@@ -1147,6 +1149,191 @@ test("batch results carry the structure a supervisor needs to act on", async () 
     assert.deepEqual(result.tasks[0]?.changedFiles, ["src/one/mod.ts"]);
     assert.ok(result.tasks[0]?.diff !== undefined, "a worktree task should carry a diff");
     assert.ok(result.reviewChecklist.length > 0);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("clean parallel batch returns risk-based review checklist without unconditional full-suite or diff reread", async () => {
+  const repo = await makeRepo();
+  try {
+    const result = await runBatch(
+      [
+        makeTask({
+          objective: "Implement first module.",
+          allowedFiles: ["src/one/**"],
+        }),
+        makeTask({
+          objective: "Implement second module.",
+          allowedFiles: ["src/two/**"],
+        }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        executor: fakeExecutor({
+          writes: (task) =>
+            moduleOf(task) === "one"
+              ? ({ "src/one/mod.ts": "export const a = 1;\n" } as Record<string, string>)
+              : ({ "src/two/mod.ts": "export const b = 2;\n" } as Record<string, string>),
+        }),
+      },
+    );
+
+    assert.equal(result.passed, 2);
+    assert.equal(result.integrated, true);
+    assert.ok(
+      result.reviewChecklist.some((item) => /high-risk or architecturally/i.test(item)),
+      "clean batch should instruct risk-based diff review",
+    );
+    assert.ok(
+      result.reviewChecklist.some((item) => /if the changes can interact/i.test(item)),
+      "clean batch should instruct risk-based interaction check",
+    );
+    assert.ok(
+      !result.reviewChecklist.some((item) => /Run the full test suite once/i.test(item)),
+      "clean batch must not demand unconditional full test suite rerun",
+    );
+    assert.ok(
+      !result.reviewChecklist.some((item) =>
+        /Read the (actual )?diff of every/i.test(item),
+      ),
+      "clean batch must not demand unconditional diff reread",
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel batch with integration conflicts retains deeper review guidance", async () => {
+  const repo = await makeRepo();
+  try {
+    const result = await runBatch(
+      [
+        makeTask({
+          objective: "First module conflicting.",
+          allowedFiles: ["src/**"],
+        }),
+        makeTask({
+          objective: "Second module conflicting.",
+          allowedFiles: ["src/**"],
+        }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        allowOverlappingScopes: true,
+        executor: fakeExecutor({
+          writes: () => ({ "src/conflict.ts": "content\n" }),
+        }),
+      },
+    );
+
+    assert.equal(result.integrationConflicts.length, 1);
+    assert.equal(result.integrated, false);
+    assert.ok(
+      result.reviewChecklist.some((item) => /Resolve 1 integration conflict/i.test(item)),
+      "conflicts must instruct manual resolution",
+    );
+    assert.ok(
+      result.reviewChecklist.some((item) => /Read the actual diff/i.test(item)),
+      "conflicts must demand diff reading",
+    );
+    assert.ok(
+      result.reviewChecklist.some((item) => /weaken tests, loosen types/i.test(item)),
+      "conflicts must check for test weakening",
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel batch with untrusted worker results retains deeper review guidance", async () => {
+  const repo = await makeRepo();
+  try {
+    const result = await runBatch(
+      [
+        makeTask({
+          objective: "Implement first module.",
+          allowedFiles: ["src/one/**"],
+        }),
+        makeTask({
+          objective: "Implement second module.",
+          allowedFiles: ["src/two/**"],
+        }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        executor: fakeExecutor({
+          writes: (task) =>
+            moduleOf(task) === "one"
+              ? ({ "src/one/mod.ts": "export const a = 1;\n" } as Record<string, string>)
+              : ({ "src/two/mod.ts": "export const b = 2;\n" } as Record<string, string>),
+          output: (task) =>
+            moduleOf(task) === "two"
+              ? {
+                  trustworthy: false,
+                  discrepancies: ["Worker claims contradicted by evidence."],
+                }
+              : {},
+        }),
+      },
+    );
+
+    assert.ok(
+      result.reviewChecklist.some((item) => /Scrutinise t2/i.test(item)),
+      "untrusted worker must be called out for scrutiny",
+    );
+    assert.ok(
+      result.reviewChecklist.some((item) => /Read the actual diff/i.test(item)),
+      "untrusted batch must demand diff reading",
+    );
+    assert.ok(
+      result.reviewChecklist.some((item) => /weaken tests, loosen types/i.test(item)),
+      "untrusted batch must check for test weakening",
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel batch with partial failure retains deeper review guidance", async () => {
+  const repo = await makeRepo();
+  try {
+    const result = await runBatch(
+      [
+        makeTask({
+          objective: "Implement first module.",
+          allowedFiles: ["src/one/**"],
+        }),
+        makeTask({
+          objective: "Implement second module.",
+          allowedFiles: ["src/two/**"],
+        }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        executor: fakeExecutor({
+          fail: (task) => moduleOf(task) === "two",
+          writes: (task) => ({ [`src/${moduleOf(task)}/mod.ts`]: "x\n" }),
+        }),
+      },
+    );
+
+    assert.ok(
+      result.reviewChecklist.some((item) => /Partial success/i.test(item)),
+      "partial success must be called out",
+    );
+    assert.ok(
+      result.reviewChecklist.some((item) => /Read the actual diff/i.test(item)),
+      "partial failures must demand diff reading",
+    );
+    assert.ok(
+      result.reviewChecklist.some((item) => /weaken tests, loosen types/i.test(item)),
+      "partial failures must check for test weakening",
+    );
   } finally {
     await cleanupRepo(repo);
   }

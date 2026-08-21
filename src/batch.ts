@@ -13,7 +13,7 @@ import {
   findScopeConflicts,
   type IntegrationConflict,
 } from "./overlap.js";
-import { executeTask, workerSlots } from "./worker.js";
+import { executeTask, UNCLAIMED_FILE, workerSlots } from "./worker.js";
 import {
   cleanupWorktree,
   createTaskWorktree,
@@ -592,6 +592,42 @@ async function integrateWorktrees(
   return { fileCount, warnings };
 }
 
+function isCleanTask(task: RunningTask): boolean {
+  if (task.state !== "completed" || !task.result.result) {
+    return false;
+  }
+  const res = task.result.result;
+  if (res.verdict !== "PASS" || res.workerClaimedStatus !== "PASS" || !res.trustworthy) {
+    return false;
+  }
+  if (res.discrepancies.length > 0 || res.scopeViolations.length > 0) {
+    return false;
+  }
+  if (task.result.error) {
+    return false;
+  }
+  const orchestratorRuns = res.verification.filter(
+    (run) => run.source === "orchestrator",
+  );
+  const notExecuted = orchestratorRuns.filter(
+    (run) => run.execution === "rejected" || run.execution === "skipped",
+  );
+  if (notExecuted.length > 0) {
+    return false;
+  }
+  const unclaimed = res.filesChanged.filter((file) => file.why === UNCLAIMED_FILE);
+  if (unclaimed.length > 0) {
+    return false;
+  }
+  const executed = orchestratorRuns.filter(
+    (run) => run.execution === "argv" || run.execution === "shell",
+  );
+  if ((task.input.verificationCommands?.length ?? 0) > 0 && executed.length === 0) {
+    return false;
+  }
+  return true;
+}
+
 function buildBatchChecklist(
   running: RunningTask[],
   integrationConflicts: IntegrationConflict[],
@@ -608,8 +644,9 @@ function buildBatchChecklist(
   }
   if (integrated && mode === "parallel") {
     checklist.push(
-      "Workers were verified in isolation. Run the full test suite once now that " +
-        "their changes are combined — passing separately does not mean passing together.",
+      "Workers were verified in isolation. Run an integration or full-suite check " +
+        "if the changes can interact (shared contracts, types, or runtime behavior) — " +
+        "passing separately does not mean passing together.",
     );
   }
 
@@ -632,6 +669,22 @@ function buildBatchChecklist(
     );
   }
 
-  checklist.push("Read the diff of every changed file before accepting this batch.");
+  const isCleanBatch =
+    integrationConflicts.length === 0 && running.length > 0 && running.every(isCleanTask);
+
+  if (isCleanBatch) {
+    checklist.push(
+      "Judge whether the changes are high-risk or architecturally significant, " +
+        "and read the diff if they are. Verified mechanical checks do not make them good.",
+    );
+  } else {
+    checklist.push(
+      "Read the actual diff of every changed file — worker summaries are claims, not evidence.",
+    );
+    checklist.push(
+      "Check workers did not weaken tests, loosen types, or silence errors to reach PASS.",
+    );
+  }
+
   return checklist;
 }
