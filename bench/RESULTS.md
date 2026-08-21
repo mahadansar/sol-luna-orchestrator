@@ -409,6 +409,34 @@ no model calls.
 - **`bench:validate`** proves each fixture fails in its starting state and passes
   with a committed reference solution, so a green score cannot come from a broken
   grader.
+- **Delegating arms wait under one fixed protocol.** `gpt-5.6-sol` is
+  `tool_mode: "code_mode_only"` in Codex's model catalog, so an MCP tool is only
+  reachable from inside a `functions.exec` code cell. A cell still running when
+  its `yield_time_ms` elapses yields, and resuming it costs a model-visible
+  `wait` turn — with the whole transcript as input. Left to the supervisor, that
+  interval is arbitrary: a width-6 run polled 4 times at 55,000 ms and a
+  width-12 run 34 times at mostly 10,000 ms, which moved parent input by 4.5x on
+  a 1.6x change in the result being read. Every delegating arm is now given one
+  interval and one output budget, told to do nothing else until the call returns,
+  and checked against the Codex rollout afterwards. See
+  `src/bench/parent-wait.ts`.
+- **Two verdicts per run, flagged and never adjusted.**
+  `comparability.waitProtocolCompliant` says the supervisor did what the protocol
+  asked. `comparability.parentCostComparable` additionally requires that **no
+  `wait` turn happened at all** — the reference behaviour is one blocking call
+  and one complete result with no supervisor inference in between, so even a
+  compliant poll forced by a clamped yield is cost a directly exposed tool would
+  not have produced. It also requires exactly one `delegate_tasks` call,
+  `resultDetail: "compact"`, the canonical result consumed exactly once, full
+  ingestion proven against what the server returned, and the canonical protocol
+  in force. Both verdicts carry the observed numbers, and no token count is ever
+  netted off to compensate.
+- **The protocol numbers are part of the study's definition.**
+  `BENCH_WAIT_YIELD_MS` and `BENCH_WAIT_OUTPUT_TOKENS` exist to probe the
+  mechanism — to find a clamp, or to reproduce the old polling deliberately. The
+  effective values are recorded per results file and per run, and a run made
+  under an override is marked `canonicalProtocol: false` and is never parent-cost
+  comparable with the study, however well it complied.
 
 ## What was measured, and what was not
 
@@ -421,8 +449,23 @@ no model calls.
   reasoning usage from the orchestrator's own telemetry. Batch records before
   v0.4.0 captured worker output only; missing historical fields remain unknown.
 - Pass/fail, file immutability and mutation detection, by the harness.
+- **How the parent waited**, from the Codex rollout of its own turn: the
+  delegating cell's `yield_time_ms` and output budget, every `wait` and its
+  numbers, anything else the supervisor did while the batch was outstanding, and
+  the characters it actually ingested against the characters the server returned.
+- **Parent cost split three ways**, per delegated run: worker latency (time the
+  parent was blocked inside the delegation call), supervisor active reasoning
+  (time and tokens on inferences that were not polls), and host waiting overhead
+  (the poll turns — their seconds and their input tokens). The buckets sum to the
+  totals; the totals are still reported as the run's cost.
 
 **Not measurable from this integration**
+
+- **A wait that costs the parent nothing.** The Codex SDK writes the prompt to
+  `codex exec` and reads events back; it has no channel through which a host
+  could answer a `wait` on the model's behalf, and there is no CLI setting for
+  the cell's default yield. The waiting protocol is therefore an instruction plus
+  a check, not an enforced mechanism.
 
 - **Cost in currency.** The API exposes token counts, not prices, and the arms use
   different models at different efforts. No cost figure is given; do not derive
@@ -451,3 +494,25 @@ no model calls.
 - The counterfactual in the scale suite is arithmetic on measured worker times,
   not an observed run. It bounds where the obstacle lies; it does not demonstrate
   a crossover.
+- **Every delegated `Sol tokens` figure in this document predates the waiting
+  protocol**, so each includes an unrecorded number of poll turns. Those runs
+  cannot be compared with each other or with later ones on parent cost, and the
+  token ratios quoted for the parallel and scale suites (`5.1x`, `4.8x`, and the
+  rest) are ratios of totals that include it. Wall-clock, pass/fail, worker
+  counts, worker durations and peak concurrency are unaffected: the polling
+  happened while the workers were already running. Delegated parent cost needs
+  re-measuring under the protocol before any token claim about it is repeated.
+- **The protocol removes the supervisor's choice of interval, not its ability to
+  ignore the instruction, and not Codex's ability to clamp the yield.** A run
+  that ignores it is recorded as off-protocol rather than silently averaged in,
+  and the compliance rate is worth watching: the mandated yield deliberately
+  contradicts Codex's own advice to avoid blocking for more than 60 seconds,
+  which is the advice that produced the 55,000 ms polls. **If the yield turns out
+  to be clamped, delegated parent cost is not measurable under this integration
+  at all** — every run would carry at least one poll turn, and every run would
+  therefore be reported and not compared. That would be a finding about the
+  runtime, not a reason to loosen the rule.
+- **What a directly exposed tool would have cost is not measured here.** Every
+  arm reaches the tool through a code cell, because the supervisor model supports
+  no other tool surface. The protocol reproduces a blocking host's _shape_ — one
+  call, one result, nothing in between — not a run made against one.

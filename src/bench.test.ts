@@ -37,6 +37,19 @@ import {
 } from "./bench/run.js";
 import type { Arm } from "./bench/run.js";
 import {
+  CANONICAL_OUTPUT_TOKENS,
+  CANONICAL_YIELD_MS,
+  MANDATED_OUTPUT_TOKENS,
+  MANDATED_YIELD_MS,
+  PROTOCOL_IS_CANONICAL,
+  TOOL_TIMEOUT_SECONDS,
+  WAIT_PROTOCOL,
+  assessComparability,
+  findRolloutFile,
+  readExecPragma,
+  readParentWait,
+} from "./bench/parent-wait.js";
+import {
   REQUIRED_SETTINGS,
   SERVER_NAME,
   serverEnvTable,
@@ -1247,4 +1260,778 @@ test("a benchmark config identifies itself and does not stack banners", () => {
   // Rebuilding from a previous benchmark config is what a reused home does.
   const twice = buildBenchConfig(benchConfigInput(12, once));
   assert.equal(twice, once, "regenerating from its own output is not stable");
+});
+
+// --- Parent waiting protocol -------------------------------------------------
+//
+// The measurement these cover: a width-6 and a width-12 delegated run were not
+// comparable because the supervisor chose its own poll interval (4 waits at 55s
+// against 34 mostly at 10s), which moved parent input 174,664 -> 785,750 while
+// the result crossing the boundary grew only 26,931 -> 42,267 characters. The
+// rollout reader below is what turns that into a recorded, checkable number.
+
+/** Rollout timestamps, as offsets in seconds from a fixed instant. */
+const stampAt = (offsetSeconds: number): string =>
+  new Date(Date.UTC(2026, 7, 21, 12, 0, 0) + offsetSeconds * 1000).toISOString();
+
+const rolloutLine = (offset: number, type: string, payload: object): string =>
+  JSON.stringify({ timestamp: stampAt(offset), type, payload });
+
+const execCall = (offset: number, callId: string, input: string): string =>
+  rolloutLine(offset, "response_item", {
+    type: "custom_tool_call",
+    name: "exec",
+    call_id: callId,
+    input,
+  });
+
+const execOutput = (offset: number, callId: string, text: string): string =>
+  rolloutLine(offset, "response_item", {
+    type: "custom_tool_call_output",
+    call_id: callId,
+    output: [{ type: "input_text", text }],
+  });
+
+const waitCall = (
+  offset: number,
+  callId: string,
+  cellId: string,
+  yieldTimeMs: number,
+  maxTokens: number,
+): string =>
+  rolloutLine(offset, "response_item", {
+    type: "function_call",
+    name: "wait",
+    call_id: callId,
+    arguments: JSON.stringify({
+      cell_id: cellId,
+      yield_time_ms: yieldTimeMs,
+      max_tokens: maxTokens,
+    }),
+  });
+
+const waitOutput = (offset: number, callId: string, text: string): string =>
+  rolloutLine(offset, "response_item", {
+    type: "function_call_output",
+    call_id: callId,
+    output: text,
+  });
+
+const usageLine = (offset: number, input: number, output: number): string =>
+  rolloutLine(offset, "event_msg", {
+    type: "token_count",
+    info: {
+      last_token_usage: {
+        input_tokens: input,
+        cached_input_tokens: Math.floor(input * 0.9),
+        output_tokens: output,
+        reasoning_output_tokens: 0,
+      },
+    },
+  });
+
+const stillRunning = (cellId: string, wall: number): string =>
+  `Script running with cell ID ${cellId}\nWall time ${wall.toFixed(1)} seconds\nOutput:\n`;
+
+const completed = (chars: number): string =>
+  `Script completed\nWall time 0.0 seconds\nOutput:\n${"r".repeat(chars)}`;
+
+/** The delegating cell exactly as the protocol asks for it. */
+const compliantCell = (
+  yieldMs = MANDATED_YIELD_MS,
+  budget = MANDATED_OUTPUT_TOKENS,
+): string =>
+  `// @exec: {"yield_time_ms": ${yieldMs}, "max_output_tokens": ${budget}}
+const result = await tools.mcp__sol_luna_orchestrator__delegate_tasks({
+  mode: "parallel",
+  resultDetail: "compact",
+  tasks: [],
+});
+for (const block of result.content ?? []) {
+  if (block.type === "text") text(block.text);
+}
+text(JSON.stringify(result.structuredContent ?? result.structured_content ?? null));`;
+
+/** A run that followed the protocol: one cell, one call, no polling. */
+const compliantRollout = (options: {
+  /** Seconds the batch took, i.e. the worker window the parent waited out. */
+  batchSeconds: number;
+  /** Characters the canonical result came back as. */
+  resultChars: number;
+}): string[] => [
+  usageLine(1, 12_000, 400),
+  execCall(2, "cell-1", compliantCell()),
+  execOutput(2 + options.batchSeconds, "cell-1", completed(options.resultChars)),
+  usageLine(2 + options.batchSeconds, 14_000, 2_400),
+  usageLine(6 + options.batchSeconds, 30_000, 200),
+];
+
+/**
+ * The width-12 run as it actually happened: a 1,000 ms cell pragma and then a
+ * poll every ~13 seconds for the whole worker window.
+ */
+const pollingRollout = (polls: number): string[] => {
+  const lines = [
+    usageLine(1, 12_000, 400),
+    execCall(2, "cell-1", compliantCell(1_000, 20_000)),
+    execOutput(3, "cell-1", stillRunning("2", 1)),
+    usageLine(3, 14_000, 2_400),
+  ];
+  let at = 3;
+  for (let index = 0; index < polls; index += 1) {
+    const last = index === polls - 1;
+    at += 2; // the inference that decides to poll
+    lines.push(waitCall(at, `wait-${index}`, "2", 10_000, 20_000));
+    at += 11; // the yield itself
+    lines.push(
+      last
+        ? waitOutput(at, `wait-${index}`, completed(42_267))
+        : waitOutput(at, `wait-${index}`, stillRunning("2", 11)),
+    );
+    lines.push(usageLine(at, 22_000, 40));
+  }
+  return lines;
+};
+
+const batchCall = (canonicalChars: number, resultDetail: string | null = "compact") => ({
+  tool: "delegate_tasks",
+  resultDetail,
+  canonicalChars,
+});
+
+test("the mandated yield is the tool timeout, not a number someone liked", () => {
+  // Derived from the one place the timeout is defined, so raising the timeout
+  // cannot leave the benchmark waiting for less time than the call may live.
+  assert.equal(MANDATED_YIELD_MS, TOOL_TIMEOUT_SECONDS * 1000);
+  assert.equal(
+    TOOL_TIMEOUT_SECONDS,
+    Number(
+      REQUIRED_SETTINGS.find((setting) => setting.key === "tool_timeout_sec")!.value,
+    ),
+  );
+});
+
+test("an exec pragma is read, and its absence is not silently a default", () => {
+  assert.deepEqual(readExecPragma(compliantCell()), {
+    yieldTimeMs: MANDATED_YIELD_MS,
+    maxOutputTokens: MANDATED_OUTPUT_TOKENS,
+  });
+
+  // No pragma at all is the case that produced the 10s default in the first
+  // place, so it must read as missing rather than as the mandated value.
+  assert.equal(readExecPragma("const x = 1;\n"), null);
+  assert.deepEqual(readExecPragma("// @exec: {oops}\nconst x = 1;"), {
+    yieldTimeMs: null,
+    maxOutputTokens: null,
+  });
+
+  // Only the first line counts: a pragma-looking comment further down is not one.
+  assert.equal(readExecPragma(`const x = 1;\n// @exec: {"yield_time_ms": 10}`), null);
+});
+
+test("a compliant wait shows one cell, no polls and no poll cost", () => {
+  const wait = readParentWait(
+    compliantRollout({ batchSeconds: 424, resultChars: 42_267 }),
+  );
+
+  assert.equal(wait.delegationCells, 1);
+  assert.equal(wait.delegationCallsInCell, 1);
+  assert.equal(wait.waitTurns, 0);
+  assert.equal(wait.cellYielded, false);
+  assert.equal(wait.seconds.waitTurns, 0);
+  assert.equal(wait.usage.wait.inputTokens, 0);
+
+  // The three quantities the benchmark has to keep apart: worker latency, the
+  // supervisor being sampled, and the polling tax.
+  assert.equal(wait.seconds.blockedOnDelegation, 424);
+  assert.equal(wait.seconds.supervisorActive, 5);
+  assert.equal(wait.interleavedInferences, 0);
+  assert.deepEqual(wait.canonicalPrints, { content: 1, structured: 1 });
+
+  assert.deepEqual(
+    assessComparability({
+      parentWait: wait,
+      mcpCalls: [batchCall(42_267)],
+      delegated: true,
+    }),
+    {
+      waitProtocolCompliant: true,
+      protocolViolations: [],
+      parentCostComparable: true,
+      reasons: [],
+      canonicalProtocol: true,
+      delegated: true,
+    },
+  );
+});
+
+test("the confounded width-12 run is recorded as non-comparable, with its numbers", () => {
+  const wait = readParentWait(pollingRollout(34));
+
+  assert.equal(wait.waitTurns, 34);
+  assert.equal(wait.offProtocolWaits, 34);
+  assert.equal(wait.cellYielded, true);
+  assert.equal(wait.pragma?.yieldTimeMs, 1_000);
+
+  // The confound, in tokens: 34 poll inferences at 22k input each, none of which
+  // a directly exposed tool would have caused.
+  assert.equal(wait.usage.wait.inferences, 34);
+  assert.equal(wait.usage.wait.inputTokens, 34 * 22_000);
+  assert.equal(
+    wait.usage.total.inputTokens,
+    wait.usage.wait.inputTokens +
+      wait.usage.exec.inputTokens +
+      wait.usage.other.inputTokens,
+    "the buckets must account for the whole parent input, not a filtered subset",
+  );
+
+  // And in wall-clock: 2s of sampling per poll is latency the batch did not need.
+  assert.equal(wait.seconds.waitTurns, 68);
+
+  const verdict = assessComparability({
+    parentWait: wait,
+    mcpCalls: [batchCall(42_267)],
+    delegated: true,
+  });
+  // This run fails both verdicts: the supervisor chose its own numbers, and it
+  // polled. The reasons list carries the protocol violations as well as the cost
+  // ones, so one field still tells the whole story.
+  assert.equal(verdict.waitProtocolCompliant, false);
+  assert.equal(verdict.parentCostComparable, false);
+  assert.ok(
+    verdict.protocolViolations.some((reason) =>
+      /cell yield_time_ms was 1000/.test(reason),
+    ),
+    `violations did not name the cell yield: ${verdict.protocolViolations.join(" | ")}`,
+  );
+  assert.ok(
+    verdict.protocolViolations.some((reason) =>
+      /34 of 34 wait\(s\) used other numbers/.test(reason),
+    ),
+    `violations did not name the polls: ${verdict.protocolViolations.join(" | ")}`,
+  );
+  assert.ok(
+    verdict.reasons.some((reason) => /cell yield_time_ms was 1000/.test(reason)),
+    "reasons must include the protocol violations",
+  );
+});
+
+test("the protocol removes width from the parent's waiting cost", () => {
+  // The whole point of the fix: two compliant runs of very different duration
+  // and result size pay nothing for waiting, so a parent-cost difference between
+  // them can only come from the payload they ingested.
+  const six = readParentWait(
+    compliantRollout({ batchSeconds: 181, resultChars: 26_931 }),
+  );
+  const twelve = readParentWait(
+    compliantRollout({ batchSeconds: 424, resultChars: 42_267 }),
+  );
+
+  assert.equal(six.waitTurns, 0);
+  assert.equal(twelve.waitTurns, 0);
+  assert.equal(six.usage.wait.inputTokens, 0);
+  assert.equal(twelve.usage.wait.inputTokens, 0);
+  assert.equal(six.inferences, twelve.inferences);
+  assert.equal(six.usage.total.inputTokens, twelve.usage.total.inputTokens);
+
+  // Real worker latency is preserved, not flattened along with the polling.
+  assert.equal(six.seconds.blockedOnDelegation, 181);
+  assert.equal(twelve.seconds.blockedOnDelegation, 424);
+});
+
+/**
+ * A clamped yield: the supervisor asked for the mandated interval, the runtime
+ * gave it back after a minute, and the protocol's own fallback made it wait
+ * again with the same numbers.
+ */
+const clampedRollout = (polls: number): string[] => {
+  const lines = [
+    usageLine(1, 12_000, 400),
+    execCall(2, "cell-1", compliantCell()),
+    execOutput(62, "cell-1", stillRunning("2", 60)),
+    usageLine(62, 14_000, 2_400),
+  ];
+  let at = 62;
+  for (let index = 0; index < polls; index += 1) {
+    at += 2;
+    lines.push(
+      waitCall(at, `wait-${index}`, "2", MANDATED_YIELD_MS, MANDATED_OUTPUT_TOKENS),
+    );
+    at += 60;
+    lines.push(
+      index === polls - 1
+        ? waitOutput(at, `wait-${index}`, completed(42_267))
+        : waitOutput(at, `wait-${index}`, stillRunning("2", 60)),
+    );
+    lines.push(usageLine(at, 22_000, 40));
+  }
+  return lines;
+};
+
+test("a compliant run that was clamped into polling stays compliant and stops being comparable", () => {
+  // The semantic this test exists for. The reference behaviour is one blocking
+  // call, one complete result, and zero supervisor inference in between. A
+  // clamped yield forces `wait` turns the supervisor did not choose: it followed
+  // the protocol exactly, and it still paid for polls a blocking MCP host would
+  // never have caused. Compliance says yes; comparability must say no.
+  const wait = readParentWait(clampedRollout(3));
+
+  assert.equal(wait.waitTurns, 3);
+  assert.equal(wait.offProtocolWaits, 0, "every wait used the mandated numbers");
+  assert.equal(wait.pragma?.yieldTimeMs, MANDATED_YIELD_MS);
+  // Evidence of the clamp is kept: the runtime honoured 60s of a much longer
+  // ask, twice, and the last wait returned early because the cell had finished.
+  assert.deepEqual(
+    wait.waits.map((call) => call.honoredSeconds),
+    [60, 60, 0],
+  );
+
+  const verdict = assessComparability({
+    parentWait: wait,
+    mcpCalls: [batchCall(42_267)],
+    delegated: true,
+  });
+
+  assert.equal(verdict.waitProtocolCompliant, true);
+  assert.deepEqual(verdict.protocolViolations, []);
+  assert.equal(verdict.parentCostComparable, false);
+  assert.equal(verdict.reasons.length, 1, verdict.reasons.join(" | "));
+  assert.ok(
+    /3 model-visible wait turn\(s\) added polling cost/.test(verdict.reasons[0]!),
+    verdict.reasons[0]!,
+  );
+  assert.ok(
+    /a blocking MCP host would not incur/.test(verdict.reasons[0]!),
+    verdict.reasons[0]!,
+  );
+
+  // The telemetry and the totals survive intact: nothing is dropped or netted
+  // off just because the run cannot be compared.
+  assert.equal(wait.usage.wait.inferences, 3);
+  assert.equal(wait.usage.wait.inputTokens, 3 * 22_000);
+  assert.equal(
+    wait.usage.total.inputTokens,
+    wait.usage.wait.inputTokens +
+      wait.usage.exec.inputTokens +
+      wait.usage.other.inputTokens,
+  );
+  assert.equal(wait.seconds.waitTurns, 6);
+});
+
+test("one single mandated wait is already enough to stop a run being comparable", () => {
+  // No threshold, no tolerance: the boundary is at zero, because one poll turn
+  // is one whole-transcript inference the reference behaviour does not have.
+  const wait = readParentWait(clampedRollout(1));
+  const verdict = assessComparability({
+    parentWait: wait,
+    mcpCalls: [batchCall(42_267)],
+    delegated: true,
+  });
+
+  assert.equal(wait.waitTurns, 1);
+  assert.equal(verdict.waitProtocolCompliant, true);
+  assert.equal(verdict.parentCostComparable, false);
+  assert.ok(
+    verdict.reasons.some((reason) =>
+      /1 model-visible wait turn\(s\) added polling cost/.test(reason),
+    ),
+    verdict.reasons.join(" | "),
+  );
+});
+
+test("work done while the batch is outstanding is caught, not averaged in", () => {
+  const lines = [
+    execCall(2, "cell-1", compliantCell()),
+    execOutput(3, "cell-1", stillRunning("2", 1)),
+    usageLine(3, 14_000, 2_400),
+    // A shell command issued mid-wait: cheap here, but it is the supervisor
+    // spending tokens on something a blocking host would never have let it do.
+    rolloutLine(10, "response_item", {
+      type: "function_call",
+      name: "shell_command",
+      call_id: "shell-1",
+      arguments: "{}",
+    }),
+    rolloutLine(12, "response_item", {
+      type: "function_call_output",
+      call_id: "shell-1",
+      output: "ok",
+    }),
+    usageLine(12, 15_000, 90),
+    waitCall(14, "wait-0", "2", MANDATED_YIELD_MS, MANDATED_OUTPUT_TOKENS),
+    waitOutput(300, "wait-0", completed(42_267)),
+    usageLine(300, 22_000, 40),
+  ];
+  const wait = readParentWait(lines);
+
+  assert.deepEqual(wait.interleavedCalls, ["shell_command"]);
+  // The inference that produced the shell call is also charged, and is counted
+  // separately because a supervisor can spend one without calling anything.
+  assert.equal(wait.interleavedInferences, 1);
+  const verdict = assessComparability({
+    parentWait: wait,
+    mcpCalls: [batchCall(42_267)],
+    delegated: true,
+  });
+  // Interleaving is the supervisor disobeying, so it lands on the protocol
+  // verdict as well as the cost one.
+  assert.equal(verdict.waitProtocolCompliant, false);
+  assert.equal(verdict.parentCostComparable, false);
+  assert.ok(verdict.protocolViolations.some((reason) => /shell_command/.test(reason)));
+});
+
+test("thinking out loud between polls is counted even though it calls nothing", () => {
+  // A poll turn is visible because it issues a `wait`. An inference that only
+  // narrates costs the same full-transcript input and issues nothing, so the
+  // record has to see it on the clock rather than on a tool call.
+  const lines = [
+    execCall(2, "cell-1", compliantCell()),
+    execOutput(3, "cell-1", stillRunning("2", 1)),
+    usageLine(3, 14_000, 2_400),
+    rolloutLine(8, "response_item", {
+      type: "message",
+      role: "assistant",
+      content: [{ type: "output_text", text: "still waiting on the workers" }],
+    }),
+    usageLine(9, 21_000, 120),
+    waitCall(11, "wait-0", "2", MANDATED_YIELD_MS, MANDATED_OUTPUT_TOKENS),
+    waitOutput(200, "wait-0", completed(42_267)),
+    usageLine(200, 22_000, 40),
+  ];
+  const wait = readParentWait(lines);
+
+  assert.deepEqual(wait.interleavedCalls, []);
+  assert.equal(wait.interleavedInferences, 1);
+  assert.equal(wait.offProtocolWaits, 0);
+
+  const verdict = assessComparability({
+    parentWait: wait,
+    mcpCalls: [batchCall(42_267)],
+    delegated: true,
+  });
+  assert.equal(verdict.waitProtocolCompliant, false);
+  assert.equal(verdict.parentCostComparable, false);
+  assert.ok(
+    verdict.protocolViolations.some((reason) =>
+      /1 inference\(s\) ran while the batch was outstanding/.test(reason),
+    ),
+    verdict.protocolViolations.join(" | "),
+  );
+});
+
+test("a discovery cell that merely names the tool is not a delegation", () => {
+  // The real width-12 run opened with `ALL_TOOLS.filter(x =>
+  // x.name.includes("delegate_tasks"))`. Counting that as a second delegating
+  // cell would flag every compliant run.
+  const lines = [
+    execCall(
+      1,
+      "cell-0",
+      `const matches = ALL_TOOLS.filter(x => x.name.includes("delegate_tasks"));\ntext(matches);`,
+    ),
+    execOutput(1, "cell-0", completed(200)),
+    usageLine(1, 12_000, 150),
+    ...compliantRollout({ batchSeconds: 181, resultChars: 26_931 }),
+  ];
+  const wait = readParentWait(lines);
+
+  assert.equal(wait.execCells, 2);
+  assert.equal(wait.delegationCells, 1);
+
+  // Bracket notation is the same call written the other way round, and must be
+  // recognised as one rather than read as a cell that delegated nothing.
+  const bracketed = readParentWait([
+    execCall(
+      1,
+      "cell-1",
+      `// @exec: {"yield_time_ms": 1, "max_output_tokens": 1}
+const result = await tools["mcp__sol_luna_orchestrator__delegate_tasks"]({ mode: "parallel" });`,
+    ),
+    execOutput(2, "cell-1", completed(10)),
+    usageLine(2, 100, 10),
+  ]);
+  assert.equal(bracketed.delegationCells, 1);
+  assert.equal(
+    assessComparability({
+      parentWait: wait,
+      mcpCalls: [batchCall(26_931)],
+      delegated: true,
+    }).parentCostComparable,
+    true,
+  );
+});
+
+test("an ingestion that did not carry the whole canonical result is flagged", () => {
+  // Codex defaults the wait budget to 10,000 tokens, which truncates a wide
+  // batch's result. A truncated parent is a cheaper parent for a reason that has
+  // nothing to do with the width being measured.
+  const wait = readParentWait(
+    compliantRollout({ batchSeconds: 424, resultChars: 9_000 }),
+  );
+  const verdict = assessComparability({
+    parentWait: wait,
+    mcpCalls: [batchCall(42_267)],
+    delegated: true,
+  });
+
+  // Truncation is not the supervisor disobeying — it asked for the mandated
+  // budget — so the protocol verdict stands and only comparability falls.
+  assert.equal(verdict.waitProtocolCompliant, true);
+  assert.equal(verdict.parentCostComparable, false);
+  assert.ok(
+    verdict.reasons.some((reason) =>
+      /ingested \d+ of 42267 canonical characters/.test(reason),
+    ),
+    verdict.reasons.join(" | "),
+  );
+});
+
+test("ingestion that cannot be proven is not treated as proven", () => {
+  // Without a figure from the server there is nothing to check the parent's
+  // ingestion against, and an unchecked ingestion is not a verified one.
+  const wait = readParentWait(
+    compliantRollout({ batchSeconds: 100, resultChars: 5_000 }),
+  );
+  const verdict = assessComparability({
+    parentWait: wait,
+    mcpCalls: [batchCall(0)],
+    delegated: true,
+  });
+
+  assert.equal(verdict.waitProtocolCompliant, true);
+  assert.equal(verdict.parentCostComparable, false);
+  assert.ok(
+    verdict.reasons.some((reason) => /full ingestion is unproven/.test(reason)),
+    verdict.reasons.join(" | "),
+  );
+});
+
+test("consuming the result twice is flagged, on the source and on the volume", () => {
+  const doubled = compliantCell().replace(
+    "text(JSON.stringify(result.structuredContent ?? result.structured_content ?? null));",
+    `text(JSON.stringify(result.structuredContent ?? result.structured_content ?? null));
+text(JSON.stringify(result.structuredContent ?? null));`,
+  );
+  const lines = [
+    execCall(2, "cell-1", doubled),
+    execOutput(200, "cell-1", completed(90_000)),
+    usageLine(200, 40_000, 300),
+  ];
+  const wait = readParentWait(lines);
+
+  assert.deepEqual(wait.canonicalPrints, { content: 1, structured: 2 });
+  const verdict = assessComparability({
+    parentWait: wait,
+    mcpCalls: [batchCall(42_267)],
+    delegated: true,
+  });
+  assert.equal(verdict.parentCostComparable, false);
+  assert.ok(
+    verdict.reasons.some((reason) =>
+      /serialised the structured surface 2 time/.test(reason),
+    ),
+    verdict.reasons.join(" | "),
+  );
+  assert.ok(
+    verdict.reasons.some((reason) => /not consumed exactly once/.test(reason)),
+    verdict.reasons.join(" | "),
+  );
+});
+
+test("the canonical consumption text and the checker cannot drift apart", () => {
+  // The protocol tells the supervisor to print the result with a specific
+  // snippet; the comparability check counts occurrences of that shape. If either
+  // is edited without the other, this fails rather than flagging every run.
+  const snippet = CANONICAL_RESULT_CONSUMPTION;
+  const cell = `// @exec: {"yield_time_ms": 1, "max_output_tokens": 1}\nconst result = await tools.delegate_tasks({});\n${snippet}`;
+  const wait = readParentWait([
+    execCall(1, "cell-1", cell),
+    execOutput(2, "cell-1", completed(10)),
+    usageLine(2, 100, 10),
+  ]);
+
+  assert.deepEqual(
+    wait.canonicalPrints,
+    { content: 1, structured: 1 },
+    "the mandated snippet no longer satisfies the check that polices it",
+  );
+});
+
+test("more than one delegation call, or a non-compact result, is non-comparable", () => {
+  const wait = readParentWait(
+    compliantRollout({ batchSeconds: 100, resultChars: 5_000 }),
+  );
+
+  const twice = assessComparability({
+    parentWait: wait,
+    mcpCalls: [batchCall(5_000), batchCall(5_000)],
+    delegated: true,
+  });
+  // Neither of these is a waiting failure: the supervisor waited correctly and
+  // called or configured the tool wrongly.
+  assert.equal(twice.waitProtocolCompliant, true);
+  assert.equal(twice.parentCostComparable, false);
+  assert.ok(twice.reasons.some((reason) => /called 2 time\(s\)/.test(reason)));
+
+  const full = assessComparability({
+    parentWait: wait,
+    mcpCalls: [batchCall(5_000, "full")],
+    delegated: true,
+  });
+  assert.equal(full.waitProtocolCompliant, true);
+  assert.equal(full.parentCostComparable, false);
+  assert.ok(full.reasons.some((reason) => /resultDetail was full/.test(reason)));
+});
+
+test("an unobserved wait is not a compliant one", () => {
+  const verdict = assessComparability({
+    parentWait: null,
+    mcpCalls: [batchCall(42_267)],
+    delegated: true,
+  });
+  assert.equal(verdict.waitProtocolCompliant, false);
+  assert.equal(verdict.parentCostComparable, false);
+  assert.ok(
+    verdict.protocolViolations.some((reason) => /no Codex rollout found/.test(reason)),
+  );
+});
+
+test("a run that never delegated has no waiting protocol to break", () => {
+  // The free-choice arm regularly decides to do the work itself. That is a
+  // finding, not a protocol violation.
+  assert.deepEqual(
+    assessComparability({ parentWait: null, mcpCalls: [], delegated: false }),
+    {
+      waitProtocolCompliant: true,
+      protocolViolations: [],
+      parentCostComparable: true,
+      reasons: [],
+      canonicalProtocol: true,
+      delegated: false,
+    },
+  );
+});
+
+test("a run made under an overridden protocol is never part of the study", () => {
+  // `BENCH_WAIT_YIELD_MS` and `BENCH_WAIT_OUTPUT_TOKENS` exist to probe the
+  // mechanism — to find a clamp, or to reproduce the old polling deliberately.
+  // A probe that complied perfectly with its own numbers must not quietly join
+  // the study's comparisons, so the effective numbers are recorded per run and
+  // checked against the canonical ones.
+  const probeYield = 55_000;
+  const probeBudget = 20_000;
+  const lines = [
+    usageLine(1, 12_000, 400),
+    execCall(2, "cell-1", compliantCell(probeYield, probeBudget)),
+    execOutput(120, "cell-1", completed(42_267)),
+    usageLine(120, 14_000, 2_400),
+  ];
+  const wait = readParentWait(lines, {
+    mandatedYieldMs: probeYield,
+    mandatedOutputTokens: probeBudget,
+  });
+
+  // The effective protocol is recorded, not inferred from the environment later.
+  assert.deepEqual(wait.mandated, {
+    yieldTimeMs: probeYield,
+    outputTokens: probeBudget,
+  });
+  assert.equal(wait.waitTurns, 0);
+
+  const verdict = assessComparability({
+    parentWait: wait,
+    mcpCalls: [batchCall(42_267)],
+    delegated: true,
+  });
+
+  // Compliant with the protocol it was actually given, and still excluded.
+  assert.equal(verdict.waitProtocolCompliant, true);
+  assert.deepEqual(verdict.protocolViolations, []);
+  assert.equal(verdict.canonicalProtocol, false);
+  assert.equal(verdict.parentCostComparable, false);
+  assert.ok(
+    verdict.reasons.some((reason) =>
+      /the waiting protocol was overridden \(yield 55000, budget 20000/.test(reason),
+    ),
+    verdict.reasons.join(" | "),
+  );
+  assert.ok(
+    verdict.reasons.some((reason) => /not part of the study/.test(reason)),
+    verdict.reasons.join(" | "),
+  );
+});
+
+test("the canonical protocol is the tool timeout and the stated budget", () => {
+  // The canonical numbers are what the study is defined by, so they are asserted
+  // against their source rather than against a copy of themselves.
+  assert.equal(CANONICAL_YIELD_MS, TOOL_TIMEOUT_SECONDS * 1000);
+  assert.equal(CANONICAL_OUTPUT_TOKENS, 60_000);
+
+  // Tests run without overrides, so the effective protocol must be the canonical
+  // one. If this fails, a BENCH_WAIT_* variable is set in the environment and no
+  // run made here would be comparable with the study.
+  assert.equal(MANDATED_YIELD_MS, CANONICAL_YIELD_MS);
+  assert.equal(MANDATED_OUTPUT_TOKENS, CANONICAL_OUTPUT_TOKENS);
+  assert.equal(PROTOCOL_IS_CANONICAL, true);
+});
+
+test("a rollout is found by thread id, and its absence is not an error", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "bench-rollout-"));
+  try {
+    const day = path.join(home, "sessions", "2026", "08", "21");
+    fs.mkdirSync(day, { recursive: true });
+    const file = path.join(day, "rollout-2026-08-21T12-00-00-thread-xyz.jsonl");
+    fs.writeFileSync(file, "", "utf8");
+
+    assert.equal(findRolloutFile(home, "thread-xyz"), file);
+    assert.equal(findRolloutFile(home, "thread-other"), null);
+    assert.equal(findRolloutFile(path.join(home, "missing"), "thread-xyz"), null);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("every delegating arm is given the waiting protocol, and no solo arm is", () => {
+  for (const arm of DELEGATING_ARMS) {
+    const prompt = buildPrompt(FIXTURE!, arm);
+    assert.ok(
+      prompt.includes(WAIT_PROTOCOL),
+      `${arm} was not given the waiting protocol`,
+    );
+  }
+  for (const arm of SOLO_ARMS) {
+    assert.ok(
+      !buildPrompt(FIXTURE!, arm).includes(WAIT_PROTOCOL),
+      `${arm} cannot delegate but was told how to wait for a delegation`,
+    );
+  }
+});
+
+test("the waiting protocol is byte-identical across arms and across widths", () => {
+  const excerpt = (prompt: string): string => prompt.slice(prompt.indexOf(WAIT_PROTOCOL));
+
+  const first = excerpt(buildPrompt(SCALE_WIDTHS[0]!, DELEGATING_ARMS[0]!));
+  for (const task of SCALE_WIDTHS) {
+    for (const arm of DELEGATING_ARMS) {
+      assert.equal(
+        excerpt(buildPrompt(task, arm)),
+        first,
+        `${task.id} / ${arm} was told to wait differently`,
+      );
+    }
+  }
+});
+
+test("the protocol states one interval and one budget, and states them", () => {
+  // Every number a supervisor could otherwise choose has to appear, or the
+  // instruction is not the thing the comparability check is policing.
+  assert.ok(WAIT_PROTOCOL.includes(`"yield_time_ms": ${MANDATED_YIELD_MS}`));
+  assert.ok(WAIT_PROTOCOL.includes(`"max_output_tokens": ${MANDATED_OUTPUT_TOKENS}`));
+  assert.ok(WAIT_PROTOCOL.includes(`"max_tokens": ${MANDATED_OUTPUT_TOKENS}`));
+
+  // No other interval is suggested anywhere in it.
+  const intervals = new Set(
+    (WAIT_PROTOCOL.match(/"yield_time_ms": (\d+)/g) ?? []).map((match) => match),
+  );
+  assert.equal(intervals.size, 1, `the protocol names more than one interval`);
 });

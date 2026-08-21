@@ -33,6 +33,16 @@ import {
   resolveBenchMcpServer,
 } from "./codex-home.js";
 import { PARALLEL_TASKS } from "./parallel-tasks.js";
+import {
+  type Comparability,
+  MANDATED_OUTPUT_TOKENS,
+  MANDATED_YIELD_MS,
+  PROTOCOL_IS_CANONICAL,
+  type ParentWait,
+  WAIT_PROTOCOL,
+  assessComparability,
+  readParentWaitFor,
+} from "./parent-wait.js";
 import { SCALE_TASKS } from "./scale-tasks.js";
 import { BENCH_TASKS, type BenchTask, type GradeCommand } from "./tasks.js";
 
@@ -80,6 +90,10 @@ export type SuiteName = keyof typeof SUITES;
  * text removes the *choice*; it cannot remove the supervisor's ability to
  * ignore it, which is why `readMcpCall` below records what actually crossed the
  * boundary so a reader can tell whether a run is comparable.
+ *
+ * The same cell is also why the supervisor has to decide *how long to wait* for
+ * the call, which turned out to cost far more than the result did. That half is
+ * in `parent-wait.ts`, and its `WAIT_PROTOCOL` is appended alongside this text.
  */
 export const CANONICAL_RESULT_CONSUMPTION = `Print the returned result exactly like this, and print it no other way:
 
@@ -350,6 +364,25 @@ export interface RunRecord {
    * isolated configuration was in effect with the server switched off.
    */
   mcpServer: BenchMcpProvenance;
+  /** The Codex thread this run ran as, which is also its rollout's name. */
+  threadId: string | null;
+  /**
+   * How the parent waited for its delegated batch, read from the Codex rollout.
+   * Null on solo arms, and on a delegating run whose rollout could not be found.
+   *
+   * This is the field the width-6/width-12 confound needed and did not have: it
+   * separates real worker latency from the supervisor re-sampling itself while
+   * the call was outstanding. See `parent-wait.ts`.
+   */
+  parentWait: ParentWait | null;
+  /**
+   * Two verdicts: whether the supervisor followed the waiting protocol, and
+   * whether the parent cost that resulted may be compared with another run's.
+   * They differ when Codex clamps the mandated yield — the supervisor complies
+   * and still pays for polls. Never used to adjust a number, only to say which
+   * rows belong in the same table.
+   */
+  comparability: Comparability;
   integrationConflicts: number;
   breakdown: Breakdown;
   verificationFailed: number;
@@ -413,15 +446,15 @@ async function materialize(task: BenchTask): Promise<string> {
 /**
  * The exact text sent to a supervisor.
  *
- * Every delegating arm gets {@link DELEGATION_POLICY} appended here rather than
- * in its own `guidance`, so the policy — and in particular the canonical
- * result-consumption path — is byte-identical across arms and across fixture
- * widths, and a new arm cannot be added without it.
+ * Every delegating arm gets {@link DELEGATION_POLICY} and {@link WAIT_PROTOCOL}
+ * appended here rather than in its own `guidance`, so both — the canonical
+ * result-consumption path and the waiting protocol — are byte-identical across
+ * arms and across fixture widths, and a new arm cannot be added without them.
  */
 export const buildPrompt = (task: BenchTask, arm: Arm): string => {
   const spec = ARMS[arm];
   const parts = [task.objective, spec.guidance];
-  if (spec.delegation) parts.push(DELEGATION_POLICY);
+  if (spec.delegation) parts.push(DELEGATION_POLICY, WAIT_PROTOCOL);
   return parts.join("\n\n");
 };
 
@@ -757,6 +790,7 @@ async function runArm(
 
   let supervisorUsage: RunRecord["supervisorUsage"] = null;
   let agentError: string | null = null;
+  let threadId: string | null = null;
   const mcpCalls: McpCallRecord[] = [];
 
   const controller = new AbortController();
@@ -767,7 +801,12 @@ async function runArm(
       signal: controller.signal,
     });
     for await (const event of events as AsyncGenerator<ThreadEvent>) {
-      if (event.type === "turn.completed") {
+      if (event.type === "thread.started") {
+        // Recorded because the rollout Codex writes for this turn is named after
+        // it, and that rollout is the only place the parent's waiting behaviour
+        // is observable.
+        threadId = event.thread_id;
+      } else if (event.type === "turn.completed") {
         supervisorUsage = {
           inputTokens: event.usage.input_tokens,
           cachedInputTokens: event.usage.cached_input_tokens,
@@ -830,6 +869,17 @@ async function runArm(
 
   const workerEfforts = telemetry.efforts;
 
+  // Read after the turn has ended, so the rollout on disk is complete. Solo
+  // arms have no delegation to wait for and are not looked up at all.
+  const parentWait = armSpec.delegation ? readParentWaitFor(mcp.home, threadId) : null;
+  const comparability = assessComparability({
+    parentWait,
+    mcpCalls,
+    // A free-choice arm that decided to do the work itself delegated nothing, so
+    // there is no delegated parent cost to compare and no protocol to break.
+    delegated: mcpCalls.some((call) => call.tool === "delegate_tasks"),
+  });
+
   await fs.promises
     .rm(workspace, { recursive: true, force: true, maxRetries: 3 })
     .catch(() => undefined);
@@ -858,6 +908,9 @@ async function runArm(
     batches: telemetry.batches,
     mcpCalls,
     mcpServer: mcp.provenance,
+    threadId,
+    parentWait,
+    comparability,
     integrationConflicts: telemetry.integrationConflicts,
     breakdown: telemetry.breakdown,
     verificationFailed: telemetry.verificationFailed,
@@ -961,6 +1014,13 @@ async function main(): Promise<void> {
       `MAX_PARALLEL_LIMIT ${mcpServer.maxParallelLimit})`,
   );
   console.log(`Isolated CODEX_HOME: ${benchCodexHome()} (${requiredSettingSummary()})`);
+  console.log(
+    `Wait protocol: yield_time_ms ${MANDATED_YIELD_MS}, ` +
+      `output budget ${MANDATED_OUTPUT_TOKENS} tokens` +
+      (PROTOCOL_IS_CANONICAL
+        ? ""
+        : " — OVERRIDDEN, so no run in this file is parent-cost comparable with the study"),
+  );
   console.log(`Results: ${resultsFile}\n`);
 
   const records: RunRecord[] = [];
@@ -980,15 +1040,35 @@ async function main(): Promise<void> {
           record.workerCount > 0
             ? ` (${record.workerCount} worker(s): ${record.workerEfforts.join(", ") || "?"})`
             : "";
+        // Waiting behaviour is printed as it happens rather than only landing in
+        // the JSON, because a run whose parent polled is a run whose parent cost
+        // cannot be compared, and that is worth seeing before the next one
+        // starts rather than afterwards.
+        const wait = record.parentWait;
+        const waiting =
+          wait === null
+            ? ""
+            : ` [waits ${wait.waitTurns}, poll ${wait.seconds.waitTurns ?? "?"}s]`;
+        // Compliance and comparability are printed separately: a compliant run
+        // that was clamped into polling is a different situation from a
+        // supervisor that ignored the protocol, and the two want different
+        // responses from whoever is watching the run.
+        const offProtocol = record.comparability.waitProtocolCompliant
+          ? ""
+          : ` OFF-PROTOCOL: ${record.comparability.protocolViolations.join("; ")}`;
+        const flagged = record.comparability.parentCostComparable
+          ? ""
+          : ` NON-COMPARABLE: ${record.comparability.reasons.join("; ")}`;
         console.log(
-          `${record.passed ? "PASS" : "FAIL"} in ${record.durationSeconds}s${detail}`,
+          `${record.passed ? "PASS" : "FAIL"} in ${record.durationSeconds}s${detail}` +
+            `${waiting}${offProtocol}${flagged}`,
         );
 
         fs.writeFileSync(
           resultsFile,
           JSON.stringify(
             {
-              schema: 4,
+              schema: 5,
               suite,
               supervisorModel: SUPERVISOR_MODEL,
               startedAt: stamp,
@@ -999,6 +1079,19 @@ async function main(): Promise<void> {
               // for these two fields and the per-record `mcpServer`.
               mcpServer,
               benchCodexHome: benchCodexHome(),
+              // The waiting protocol every delegating arm in this file was run
+              // under. Schema 5 exists for this and for the per-record
+              // `parentWait` / `comparability`: a file written before it has no
+              // record of how its parents waited, so its delegated parent costs
+              // are not comparable with a file written after it.
+              waitProtocol: {
+                yieldTimeMs: MANDATED_YIELD_MS,
+                outputTokens: MANDATED_OUTPUT_TOKENS,
+                // False when an env override changed the protocol. Such a run is
+                // a probe of the mechanism, not a member of the study, and every
+                // record in the file says so per run as well.
+                canonical: PROTOCOL_IS_CANONICAL,
+              },
               reps,
               records,
             },

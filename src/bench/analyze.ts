@@ -133,9 +133,9 @@ function main(): void {
   // --- The question the suite exists to answer ------------------------------
   console.log("\n## Crossover verdict\n");
   console.log(
-    "| Fixture | Streams | Solo median | Best orchestrated median | Arm | Delta | Latency crossover | Token crossover |",
+    "| Fixture | Streams | Solo median | Best orchestrated median | Arm | Delta | Latency crossover | Token crossover | Parent cost comparable |",
   );
-  console.log("|---|---|---|---|---|---|---|---|");
+  console.log("|---|---|---|---|---|---|---|---|---|");
 
   for (const [taskId, records] of byTask) {
     const solo = records.filter((r) => r.arm === "solo-high");
@@ -152,7 +152,7 @@ function main(): void {
     }
     if (best === null) {
       console.log(
-        `| ${taskId} | ${solo[0]!.streams ?? "-"} | ${show(soloMedian)}s | never delegated | - | - | NO | NO |`,
+        `| ${taskId} | ${solo[0]!.streams ?? "-"} | ${show(soloMedian)}s | never delegated | - | - | NO | NO | n/a |`,
       );
       continue;
     }
@@ -173,11 +173,22 @@ function main(): void {
     const tokenCross =
       soloTokens !== null && orchTokens !== null && orchTokens <= soloTokens;
 
+    // A token crossover is a statement about parent cost as much as worker cost,
+    // so it is only readable when every contributing orchestrated run waited
+    // under the same protocol and paid nothing for polling. Runs recorded before
+    // that protocol existed have no `comparability` field at all, which is
+    // itself a "no".
+    const comparable = orchRows.every(
+      (r) => r.comparability?.parentCostComparable === true,
+    );
+    const unrecorded = orchRows.filter((r) => r.comparability === undefined).length;
+
     const delta = ((best.value - soloMedian) / soloMedian) * 100;
     console.log(
       `| ${taskId} | ${solo[0]!.streams ?? "-"} | ${show(soloMedian)}s | ${show(best.value)}s | ` +
         `${best.arm} | ${delta >= 0 ? "+" : ""}${Math.round(delta)}% | ` +
-        `${latency ? "**YES**" : "NO"} | ${tokenCross ? "YES" : "NO"} |`,
+        `${latency ? "**YES**" : "NO"} | ${tokenCross ? "YES" : "NO"} | ` +
+        `${comparable ? "yes" : unrecorded > 0 ? `no (${unrecorded} unrecorded)` : "**NO**"} |`,
     );
   }
 
@@ -235,6 +246,81 @@ function main(): void {
   console.log(
     `- runs with an agent error: ${delegating.filter((r) => r.agentError).length}`,
   );
+
+  // --- How parents waited, across every delegating run ----------------------
+  //
+  // The width-6/width-12 pair that motivated this section differed by 4.5x in
+  // parent input tokens with one delegation call each; the difference was poll
+  // turns. Any cross-file token comparison has to be able to see that.
+  const delegatingParents = all.filter((r) => (r.workerCount ?? 0) > 0);
+  if (delegatingParents.length > 0) {
+    const recorded = delegatingParents.filter((r) => r.parentWait);
+    const offProtocol = delegatingParents.filter(
+      (r) => r.comparability && !r.comparability.waitProtocolCompliant,
+    );
+    const flagged = delegatingParents.filter(
+      (r) => r.comparability && !r.comparability.parentCostComparable,
+    );
+    const overridden = delegatingParents.filter(
+      (r) => r.comparability?.canonicalProtocol === false,
+    );
+    const polled = recorded.filter((r) => r.parentWait!.waitTurns > 0);
+    console.log("\n## Parent waiting, across every delegating run\n");
+    console.log(`- delegating runs: ${delegatingParents.length}`);
+    const unrecorded = delegatingParents.length - recorded.length;
+    console.log(
+      `- with waiting telemetry: ${recorded.length}` +
+        (unrecorded > 0
+          ? ` (${unrecorded} predate it, and their delegated parent cost is not ` +
+            `comparable with the ones that have it)`
+          : ""),
+    );
+    if (recorded.length > 0) {
+      console.log(
+        `- median wait turns: ${show(median(recorded.map((r) => r.parentWait!.waitTurns)))}`,
+      );
+      console.log(
+        `- median seconds spent issuing waits: ` +
+          `${show(median(recorded.map((r) => r.parentWait!.seconds.waitTurns ?? 0)))}s`,
+      );
+      console.log(
+        `- median parent input tokens on wait turns: ` +
+          `${show(median(recorded.map((r) => r.parentWait!.usage.wait.inputTokens)))}`,
+      );
+      console.log(
+        `- median parent input tokens in total: ` +
+          `${show(median(recorded.map((r) => r.parentWait!.usage.total.inputTokens)))}`,
+      );
+    }
+    // Counted over the recorded runs only, and said so: a zero here must not read
+    // as "every run was fine" when most of them were measured before the
+    // protocol existed and cannot be judged either way.
+    console.log(
+      `- of those ${recorded.length}: did not follow the waiting protocol: ` +
+        `${offProtocol.length}`,
+    );
+    console.log(
+      `- of those ${recorded.length}: polled at all (any wait turn, compliant or ` +
+        `not): ${polled.length} — a blocking MCP host produces none, so none of ` +
+        `these are parent-cost comparable`,
+    );
+    if (overridden.length > 0) {
+      console.log(
+        `- ran under an overridden protocol: ${overridden.length} (probes of the ` +
+          `mechanism, excluded from the study by construction)`,
+      );
+    }
+    console.log(
+      `- parent cost not comparable: ${flagged.length} of ${recorded.length} recorded` +
+        (unrecorded > 0 ? `, plus all ${unrecorded} unrecorded` : ""),
+    );
+    for (const record of flagged) {
+      console.log(
+        `  - ${record.taskId} / ${record.arm} rep ${record.repetition}: ` +
+          record.comparability.reasons.join("; "),
+      );
+    }
+  }
 
   // --- Free-choice behaviour -------------------------------------------------
   const adaptive = all.filter((r) => r.arm === "adaptive");

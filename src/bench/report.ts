@@ -181,6 +181,90 @@ function main(): void {
     lines.push("");
   }
 
+  // --- How the parent waited, and whether the run is comparable -------------
+  //
+  // Kept separate from the wall-clock breakdown above because it answers a
+  // different question: that table says where the run's time went, this one says
+  // how much of the *parent's* cost was the supervisor waking itself up while a
+  // single delegation call was outstanding. Reported, never netted off.
+  // A free-choice run that stayed solo has a rollout but nothing to wait for, so
+  // it is not a row here. It is still counted as delegating-or-not elsewhere.
+  const waited = data.records.filter(
+    (record) => record.parentWait && record.comparability?.delegated,
+  );
+  if (waited.length > 0) {
+    lines.push("## How the parent waited");
+    lines.push("");
+    lines.push(
+      "| Task | Arm | Rep | Cell yield | Waits | Poll turns | Blocked | Active | " +
+        "Wait-turn input | Total input | Ingested/canonical | Protocol | Parent cost comparable |",
+    );
+    lines.push("|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+    for (const record of waited) {
+      const wait = record.parentWait!;
+      const batch = record.mcpCalls.find((call) => call.tool === "delegate_tasks");
+      const secs = (value: number | null): string =>
+        value === null ? "unknown" : `${value}s`;
+      lines.push(
+        `| ${record.taskId} | ${record.arm} | ${record.repetition} | ` +
+          `${wait.pragma?.yieldTimeMs ?? "unset"} | ${wait.waitTurns} | ` +
+          `${secs(wait.seconds.waitTurns)} | ${secs(wait.seconds.blockedOnDelegation)} | ` +
+          `${secs(wait.seconds.supervisorActive)} | ${wait.usage.wait.inputTokens} | ` +
+          `${wait.usage.total.inputTokens} | ` +
+          `${wait.resultIngestChars ?? "unknown"}/${batch?.canonicalChars ?? "unknown"} | ` +
+          `${record.comparability.waitProtocolCompliant ? "followed" : "**broken**"} | ` +
+          `${record.comparability.parentCostComparable ? "yes" : "**NO**"} |`,
+      );
+    }
+    lines.push("");
+
+    // Two lists, because the two verdicts call for different responses: a broken
+    // protocol is the supervisor to look at, while a compliant run that still
+    // polled is the runtime clamping a yield it was given.
+    const offProtocol = data.records.filter(
+      (record) => record.comparability && !record.comparability.waitProtocolCompliant,
+    );
+    if (offProtocol.length > 0) {
+      lines.push("Runs that did not follow the waiting protocol:");
+      lines.push("");
+      for (const record of offProtocol) {
+        lines.push(
+          `- \`${record.taskId}\` / ${record.arm} / rep ${record.repetition}: ` +
+            record.comparability.protocolViolations.join("; "),
+        );
+      }
+      lines.push("");
+    }
+
+    const flagged = data.records.filter(
+      (record) => record.comparability && !record.comparability.parentCostComparable,
+    );
+    if (flagged.length > 0) {
+      lines.push("Runs whose parent cost is not comparable, and why:");
+      lines.push("");
+      for (const record of flagged) {
+        lines.push(
+          `- \`${record.taskId}\` / ${record.arm} / rep ${record.repetition}: ` +
+            record.comparability.reasons.join("; "),
+        );
+      }
+      lines.push("");
+    }
+
+    const overridden = waited.filter(
+      (record) => record.comparability.canonicalProtocol === false,
+    );
+    if (overridden.length > 0) {
+      lines.push(
+        `**${overridden.length} run(s) ran under an overridden waiting protocol** ` +
+          `(\`BENCH_WAIT_YIELD_MS\` / \`BENCH_WAIT_OUTPUT_TOKENS\`). Those are probes ` +
+          `of the mechanism, not members of the study, and none of their parent ` +
+          `costs may be compared with a canonical run.`,
+      );
+      lines.push("");
+    }
+  }
+
   lines.push("## By task");
   lines.push("");
   lines.push(
@@ -320,6 +404,45 @@ function main(): void {
       "independent stream count, which is above the shipped default of 3. That " +
       "value is recorded per run as `maxParallelConfigured`. The solo arms have " +
       "no workers, so the setting does not affect them.",
+  );
+  lines.push(
+    "- Delegating arms wait for the delegation call under one fixed protocol: a " +
+      "single code cell with a stated `yield_time_ms` and output budget, resumed " +
+      "only by `wait` calls carrying the same numbers, with nothing else done " +
+      "until the result arrives. This exists because the supervisor otherwise " +
+      "picks the poll interval itself, and a width-6 run that polled 4 times is " +
+      "not comparable with a width-12 run that polled 34. What actually happened " +
+      "is recorded per run as `parentWait`, and a run that broke the protocol is " +
+      "flagged rather than adjusted.",
+  );
+  lines.push(
+    "- **Following the protocol and being comparable are two verdicts.** " +
+      "`comparability.waitProtocolCompliant` says the supervisor did what it was " +
+      "asked. `comparability.parentCostComparable` additionally requires that " +
+      "**no `wait` turn happened at all** — the behaviour being approximated is " +
+      "one blocking call and one complete result, with no supervisor inference in " +
+      "between, so a clamped yield that forces even one compliant poll leaves the " +
+      "run reportable but not comparable. It also requires exactly one " +
+      '`delegate_tasks` call, `resultDetail: "compact"`, the canonical result ' +
+      "consumed exactly once, full ingestion proven against what the server " +
+      "returned, and the canonical protocol in force.",
+  );
+  lines.push(
+    "- `comparability.canonicalProtocol` is false when `BENCH_WAIT_YIELD_MS` or " +
+      "`BENCH_WAIT_OUTPUT_TOKENS` changed the protocol. Such a run is a probe of " +
+      "the mechanism and is never parent-cost comparable with the study, however " +
+      "well it complied.",
+  );
+  lines.push(
+    "- `Wait-turn input` is the input tokens of the inferences that produced a " +
+      "`wait`, i.e. the cost of polling. It is reported beside the total and " +
+      "never subtracted from it: the total is what the run cost.",
+  );
+  lines.push(
+    "- `Blocked` is time the parent spent inside the delegation call — real worker " +
+      "latency. `Active` is time it spent being sampled. `Poll turns` is the part " +
+      "of `Active` that went on issuing waits, which is the only part a directly " +
+      "exposed tool would not have.",
   );
   lines.push(
     "- Delegating arms are told to read a tool result as both of the surfaces the " +
