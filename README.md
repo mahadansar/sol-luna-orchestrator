@@ -278,7 +278,9 @@ not establish that single-agent execution is universally better.
 - **Integration is a file copy, not a merge.** It is only attempted when worker
   file sets are disjoint; anything else is handed back to you.
 - **Workers are verified in isolation.** Passing separately is not passing
-  together, so the supervisor is told to run the full suite after integration.
+  together, so the supervisor is told to run an integration check whenever the
+  integrated changes can interact. It is not told to rerun everything by reflex
+  after every parallel batch.
 - **Verification is not sandboxed.**
 - **File-scope validation is detective, not preventive.**
 - **Built against experimental surfaces.** Several behaviours this depends on

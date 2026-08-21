@@ -186,17 +186,21 @@ is optional but worth setting: `investigation` and `bugfix` more often justify
   case by returning 400" beats "handles edge cases".
 - **verificationCommands** — supply these whenever they exist. They are the
   only part of the result that is mechanically proven.
-- **contextCapsule** (optional) — carry selected task-relevant background the
-  worker cannot infer: `relevantContext`, `interfaces`, `dependencies`,
-  `invariants`, `upstreamDecisions`, `knownPitfalls`. Empty fields are omitted.
-  Do not dump your whole supervisor session into it. The capsule supplements,
-  but never replaces: `objective`, `acceptanceCriteria`, `allowedFiles`,
-  `verificationCommands`, or security/scope constraints.
-- **resultDetail** (optional) — routine delegation should explicitly request
-  `resultDetail: "compact"` to reduce payload size. Use `"full"` when
-  successful verification stdout/stderr is genuinely useful to inspect. The
-  public and schema default remains `"full"` for backwards compatibility;
-  failed, refused, or skipped verification output is always retained.
+- **contextCapsule** (optional) — always consider it; include it only when it
+  helps. It carries selected task-relevant background the worker cannot infer:
+  `relevantContext`, `interfaces`, `dependencies`, `invariants`,
+  `upstreamDecisions`, `knownPitfalls`. Omit it when unnecessary. Never dump
+  the parent transcript or session into it, and never duplicate what
+  `objective`, `acceptanceCriteria`, `allowedFiles` or `verificationCommands`
+  already express adequately. The capsule supplements those fields; it never
+  replaces them, or the security and scope constraints. Empty fields are
+  omitted from the worker's prompt.
+- **resultDetail** (optional) — choose it explicitly. Default supervisor
+  behaviour for routine delegation is `compact`. Use `full` only when the
+  stdout of verification commands that _passed_ is genuinely needed for your
+  next decision — it is not retrievable afterwards. The schema default remains
+  `full` solely for backwards compatibility; failed, refused and skipped
+  verification output is always retained either way.
 
 Forbid the test files whenever tests are the verification. It removes the
 cheapest way to fake a PASS.
@@ -230,17 +234,36 @@ Read these fields first:
 | `escalationAdvice`         | What to change before retrying, when it did not pass.                                   |
 | `attempt`                  | Which attempt this was, from `previousAttempts`.                                        |
 
-Then, regardless of verdict:
+Then, apply risk-based review:
 
-1. Read the actual diff of every changed file. Always.
-2. Check nothing was disclosed only in `notes` that should have been a BLOCKED.
-3. Check tests weren't weakened, deleted, skipped, or made vacuous.
-4. Check types weren't loosened (`any`, non-null assertions, `@ts-ignore`) and
-   errors weren't silenced to make things pass.
-5. Confirm each acceptance criterion yourself.
+If the result is a clean PASS — `verdict: PASS`, `trustworthy: true`, no
+discrepancies, no scope violations, the orchestrator's own verification passed,
+only the expected files changed, and nothing in `notes` or the evidence
+suggests risk:
 
-`verdict: PASS` with `trustworthy: true` means the mechanical checks agree with
-the worker. It does not mean the code is good. That judgement is yours.
+- Do NOT automatically reread every implementation file or request the full
+  diff.
+- Do NOT repeat expensive inspection or verification solely to reproduce
+  evidence the orchestrator has already established. Spend supervisor context
+  only where it can change the acceptance decision.
+
+Deep diff and code inspection SHOULD happen when any of these hold:
+
+1. The change is high-risk or architecturally significant.
+2. Unexpected files were touched, or the behaviour is not what you asked for.
+3. An acceptance criterion cannot be judged from the returned evidence.
+4. Verification coverage is insufficient for what the task claimed to do.
+5. The result is suspicious: `FAILED`, `BLOCKED`, `trustworthy: false`,
+   discrepancies, scope violations, a worker claim conflicting with the
+   orchestrator's evidence, or an integration conflict.
+6. Tests look weakened, deleted, skipped, or made vacuous.
+7. Types were loosened (`any`, non-null assertions, `@ts-ignore`) or errors
+   were silenced.
+8. Anything else in `notes` or the evidence gives reasonable concern.
+
+Confirm each acceptance criterion yourself. `verdict: PASS` with
+`trustworthy: true` means the mechanical checks agree with the worker. It does
+not mean the code is good. That judgement is yours.
 
 When `verdict` and `workerClaimedStatus` disagree, the worker was wrong about
 its own work — read that diff especially carefully.
@@ -269,9 +292,16 @@ A batch adds three things to check on top of each task's own result:
 
 Two rules specific to parallel work:
 
-1. **Workers were verified in isolation.** Each one passed its own checks in its
-   own worktree. That is not the same as passing together. Run the full suite
-   yourself once the batch is integrated.
+1. **Integration verification is risk-based.** Each worker passed its own
+   checks in its own worktree, which is not the same as passing together. Run
+   an integration or full-suite check yourself once the batch is integrated
+   when the changes can actually interact: shared contracts, shared types,
+   shared runtime behaviour, anything the isolated verification could not have
+   exercised, or anything the task explicitly requires.
+   Do NOT automatically rerun a full suite solely because the batch ran in
+   parallel, when the scopes were genuinely disjoint, each required
+   verification passed, no integration conflict occurred, and there is no
+   meaningful cross-task interaction.
 2. **Partial failure is normal.** If one worker fails, the others' work is still
    there and still valid. Decide per task whether to retry, re-scope, or accept —
    do not throw away three good modules because a fourth failed.

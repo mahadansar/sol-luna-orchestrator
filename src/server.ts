@@ -67,7 +67,7 @@ const recordEvent = (result: DelegateTaskOutput): void => {
   }
 };
 
-const TOOL_DESCRIPTION = `Delegate ONE bounded implementation task to an isolated ${LUNA_MODEL} worker thread.
+export const TOOL_DESCRIPTION = `Delegate ONE bounded implementation task to an isolated ${LUNA_MODEL} worker thread.
 
 Use this when a task is well-specified enough to hand off: you can state the
 objective, what "done" looks like, and which files may change. Keep architecture,
@@ -116,14 +116,29 @@ The worker cannot delegate further and cannot see this conversation.
 The result is evidence, not a conclusion. The orchestrator independently re-runs
 your \`verificationCommands\` after the worker exits and checks which files were
 actually touched, then returns \`verdict\`, \`discrepancies\`, and
-\`reviewChecklist\`. A worker PASS with a FAILED verdict means the worker was
-wrong. Always review the diff before accepting.
+\`reviewChecklist\`.
 
-\`resultDetail\` controls how much of the result you get back. \`"full"\` is the
-default and is unchanged. \`"compact"\` drops the stdout/stderr of verification
-commands that *passed*, keeping every verdict, discrepancy, scope violation and
-failing command output. Use compact when routine verified evidence is enough,
-and full when you need the successful command output too.
+Apply risk-based review:
+If the result is a clean PASS (\`verdict: PASS\`, \`trustworthy: true\`, no discrepancies,
+no scope violations, orchestrator verification passed, expected changed files, and
+nothing in notes/evidence indicates risk):
+- Do NOT automatically reread every implementation file or request the full diff.
+- Do NOT repeat expensive inspection or verification solely to reproduce evidence
+  the orchestrator has already established. Spend additional supervisor context
+  only when it can change the acceptance decision.
+
+Deep diff/code inspection SHOULD happen when justified: high-risk or architecturally
+significant changes, unexpected files/behavior, acceptance criteria cannot be judged
+from returned evidence, insufficient verification coverage, suspicious paths (FAILED,
+BLOCKED, trustworthy: false, discrepancies, scope violations), tests weakened, or
+types loosened.
+
+\`resultDetail\` controls how much of the result you get back. Choose it explicitly.
+Default supervisor behavior for routine delegation is \`"compact"\` (drops stdout/stderr
+of passed commands, keeping all verdicts, discrepancies, scope violations, and failed
+command output). Use \`"full"\` only when successful verification stdout/stderr is
+genuinely needed for your next decision. The schema default remains \`"full"\` solely
+for backwards compatibility.
 
 \`verificationCommands\` run without a shell: one allowlisted executable per
 command, no pipes, redirects, \`&&\` or \`;\`. Use \`npm test\` or \`pytest -q\`,
@@ -264,16 +279,25 @@ export function renderResult(result: DelegateTaskOutput): string {
   return lines.join("\n");
 }
 
+/**
+ * Sent to the client at initialize, so this is the first and most general
+ * statement of policy the supervisor sees. It must not contradict the
+ * per-tool descriptions below: it used to end "Never accept a worker's PASS
+ * without reading the diff", which is exactly the unconditional ritual the
+ * tool descriptions now replace with risk-based review.
+ */
+export const SERVER_INSTRUCTIONS =
+  `Delegation bridge from a supervising Codex agent (Sol) to isolated ` +
+  `${LUNA_MODEL} implementation workers. Use \`delegate_task\` for bounded, ` +
+  `well-specified implementation work; keep architecture and review for ` +
+  `yourself. Default worker effort is ${DEFAULT_EFFORT}; reserve \`max\` for ` +
+  `genuinely hard tasks. A worker's PASS is a claim; the orchestrator's ` +
+  `\`verdict\` is the evidence. Review in proportion to the evidence: a clean ` +
+  `verified PASS needs no diff re-read, anything doubtful does.`;
+
 const server = new McpServer(
   { name: "sol-luna-orchestrator", version: "1.0.0" },
-  {
-    instructions:
-      `Delegation bridge from a supervising Codex agent (Sol) to isolated ` +
-      `${LUNA_MODEL} implementation workers. Use \`delegate_task\` for bounded, ` +
-      `well-specified implementation work; keep architecture and review for ` +
-      `yourself. Default worker effort is ${DEFAULT_EFFORT}; reserve \`max\` for ` +
-      `genuinely hard tasks. Never accept a worker's PASS without reading the diff.`,
-  },
+  { instructions: SERVER_INSTRUCTIONS },
 );
 
 // Backstop against recursive delegation: if this process was launched from
@@ -327,7 +351,7 @@ function registerDelegateTask(): void {
   );
 }
 
-const BATCH_TOOL_DESCRIPTION = `Delegate SEVERAL bounded tasks to ${LUNA_MODEL} workers, in parallel or in sequence.
+export const BATCH_TOOL_DESCRIPTION = `Delegate SEVERAL bounded tasks to ${LUNA_MODEL} workers, in parallel or in sequence.
 
 This is where delegation can actually pay for itself. A single small task is
 faster done yourself; several substantial, independent tasks are not.
@@ -358,7 +382,15 @@ change so finely that coordinating the pieces costs more than writing them.
 
 Partial failure is normal and is reported, not hidden: successful tasks are kept
 and you decide per task whether to retry, re-scope, or accept. Nothing is merged
-automatically when workers collide.`;
+automatically when workers collide.
+
+Each worker was verified alone in its own worktree, which is not the same as
+being verified together. Run an integration or full-suite check yourself when
+the integrated changes can actually interact — shared contracts, shared types,
+shared runtime behaviour, or anything the isolated verification could not have
+exercised. Genuinely disjoint scopes that each passed their own required
+verification, with no integration conflict, do not need one merely because the
+batch ran in parallel.`;
 
 function registerDelegateTasks(): void {
   server.registerTool(

@@ -327,7 +327,7 @@ export function buildDelegationResult({
     filesChanged.push({
       path: relative,
       kind,
-      why: "(not mentioned in the worker's report)",
+      why: UNCLAIMED_FILE,
       observed: true,
     });
   }
@@ -445,6 +445,7 @@ export function buildDelegationResult({
     workerClaimedStatus,
     discrepancies,
     orchestratorRuns,
+    filesChanged,
   );
 
   return {
@@ -604,12 +605,20 @@ function buildEscalationAdvice(
   );
 }
 
+/**
+ * Marks a file the orchestrator saw change that the worker never mentioned.
+ * No discrepancy rule covers this, so the marker is the only carrier of the
+ * signal — and an unexplained edit is a reason to look at the diff.
+ */
+export const UNCLAIMED_FILE = "(not mentioned in the worker's report)";
+
 function buildReviewChecklist(
   input: DelegateTaskInput,
   verdict: Status,
   claimed: Status,
   discrepancies: string[],
   orchestratorRuns: VerificationRun[],
+  filesChanged: DelegateTaskOutput["filesChanged"],
 ): string[] {
   const checklist: string[] = [];
 
@@ -623,10 +632,6 @@ function buildReviewChecklist(
       `The worker claimed ${claimed} but the orchestrator's verdict is ${verdict}. Read the diff before deciding.`,
     );
   }
-
-  checklist.push(
-    "Read the actual diff of every file in `filesChanged` — the worker's summary is a claim, not evidence.",
-  );
 
   for (const criterion of input.acceptanceCriteria) {
     checklist.push(`Confirm acceptance criterion holds: ${criterion}`);
@@ -655,9 +660,39 @@ function buildReviewChecklist(
     );
   }
 
-  checklist.push(
-    "Check the worker did not weaken tests, loosen types, or silence errors to reach PASS.",
-  );
+  const unclaimed = filesChanged.filter((file) => file.why === UNCLAIMED_FILE);
+  for (const file of unclaimed) {
+    checklist.push(
+      `\`${file.path}\` changed but the worker never mentioned it — read that diff.`,
+    );
+  }
+
+  // Whether to re-read the diff is the expensive part of accepting a result,
+  // so it is asked for when something actually warrants it rather than every
+  // time. A result that is PASS on the orchestrator's own re-run, with no
+  // discrepancy, no refused or skipped command and no unexplained edit, has
+  // already produced the evidence a diff re-read would be reconstructing.
+  const clean =
+    verdict === "PASS" &&
+    claimed === "PASS" &&
+    discrepancies.length === 0 &&
+    notExecuted.length === 0 &&
+    unclaimed.length === 0 &&
+    (input.verificationCommands.length === 0 || executed.length > 0);
+
+  if (clean) {
+    checklist.push(
+      "Judge whether the change is high-risk or architecturally significant, " +
+        "and read the diff if it is. Verified mechanical checks do not make it good.",
+    );
+  } else {
+    checklist.push(
+      "Read the actual diff of every file in `filesChanged` — the worker's summary is a claim, not evidence.",
+    );
+    checklist.push(
+      "Check the worker did not weaken tests, loosen types, or silence errors to reach PASS.",
+    );
+  }
 
   return checklist;
 }
