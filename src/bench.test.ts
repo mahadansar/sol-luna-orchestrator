@@ -11,6 +11,17 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  PACKAGE_NAME,
+  assertBenchConfig,
+  assertLocalServer,
+  benchCodexHome,
+  benchEnv,
+  buildBenchConfig,
+  isPackageInstall,
+  prepareBenchCodexHome,
+  resolveBenchMcpServer,
+} from "./bench/codex-home.js";
+import {
   ARMS,
   CANONICAL_RESULT_CONSUMPTION,
   DELEGATION_POLICY,
@@ -18,15 +29,23 @@ import {
   SUITES,
   buildPrompt,
   getConfiguredConcurrency,
+  mcpConfigOverlay,
   parseArgs,
   peakOverlap,
   readMcpCall,
   readTelemetry,
 } from "./bench/run.js";
 import type { Arm } from "./bench/run.js";
+import {
+  REQUIRED_SETTINGS,
+  SERVER_NAME,
+  serverEnvTable,
+  serverTable,
+} from "./cli/settings.js";
+import { findTable, readKey, toTomlValue } from "./cli/toml-edit.js";
 import type { BatchOutput } from "./contract.js";
 import { compactBatch, renderBatch } from "./server.js";
-import { MAX_PARALLEL, MAX_PARALLEL_LIMIT } from "./config.js";
+import { MAX_PARALLEL, MAX_PARALLEL_LIMIT, clampParallel } from "./config.js";
 import { SCALE_SOLUTIONS } from "./bench/scale-solutions.js";
 import { SCALE_TASKS } from "./bench/scale-tasks.js";
 import type { BenchTask } from "./bench/tasks.js";
@@ -819,9 +838,413 @@ test("existing result artifacts survive a workspace reset", () => {
 test("the harness never invokes a git clean", async () => {
   // Untracked-but-unignored result files are exactly what `git clean -fd`
   // removes while leaving ignored ones behind, so the harness must not run it.
+  //
+  // Checked against how commands are actually built rather than by searching
+  // the file for a word: the harness reaches a process in exactly two ways,
+  // and prose is not one of them. (Searching the text matches "a clean PASS"
+  // in the delegation policy, so that form of the check could only ever be
+  // vacuous or wrong.)
+  //
+  //   1. runGit(args, cwd), which spawns `git` with args[0] as the subcommand.
   const source = await fs.promises.readFile(
     path.join(RESULTS_DIR, "..", "..", "src", "bench", "run.ts"),
     "utf8",
   );
-  assert.ok(!/clean/.test(source), "run.ts mentions a git clean");
+  const subcommands = [...source.matchAll(/runGit\(\s*\[\s*"([^"]+)"/g)].map(
+    (m) => m[1]!,
+  );
+  assert.deepEqual(
+    [...new Set(subcommands)].sort(),
+    ["add", "commit", "config", "init"],
+    "the harness runs a git subcommand this test has not vetted",
+  );
+  // Every call site must have been read. An argument list the pattern above
+  // cannot see — a variable, or a subcommand built at runtime — would
+  // otherwise go unexamined and pass.
+  assert.equal(
+    subcommands.length,
+    (source.match(/runGit\(/g) ?? []).length,
+    "a runGit call site was not readable as a literal argument list",
+  );
+
+  //   2. execFile(command.file, command.args) for each fixture's grading and
+  //      mutation commands, which are data rather than source.
+  for (const [suite, tasks] of Object.entries(SUITES)) {
+    for (const task of tasks) {
+      const commands = [...task.grade, ...(task.mutation ? [task.mutation.command] : [])];
+      for (const command of commands) {
+        // Either separator: `command.file` is an absolute path on Windows.
+        const isGit = /(^|[\\/])git(\.exe)?$/i.test(command.file);
+        assert.ok(
+          !(isGit && command.args.includes("clean")),
+          `${suite}/${task.id} runs ${command.file} ${command.args.join(" ")}`,
+        );
+      }
+    }
+  }
+});
+
+// --- Which MCP server a live run is actually given ---------------------------
+
+/**
+ * The registration this machine had when a width-12 run recorded a ceiling of
+ * eight: the globally installed npm package rather than the branch under test.
+ *
+ * Used as the base config below so the tests prove two things at once — that
+ * the harness overrides exactly this entry, and that it disturbs nothing else
+ * in a file it does not own.
+ */
+const GLOBAL_INSTALL_ENTRY =
+  "C:\\Users\\mahad\\AppData\\Local\\nvm\\v26.7.0\\node_modules\\sol-luna-orchestrator\\dist\\server.js";
+
+const USER_CONFIG = `model = "gpt-5.6-sol"
+model_reasoning_effort = "medium"
+
+[windows]
+sandbox = "elevated"
+
+[projects.'d:\\code\\gpt-test']
+trust_level = "trusted"
+
+# Docs lookup. Do not remove.
+[mcp_servers.context7]
+command = "npx"
+args = ["-y", "@upstash/context7-mcp"]
+startup_timeout_sec = 15
+
+[mcp_servers.sol-luna-orchestrator]
+command = 'C:\\nvm4w\\nodejs\\node.exe'
+args = ['${GLOBAL_INSTALL_ENTRY}']
+tool_timeout_sec = 3600
+startup_timeout_sec = 30
+default_tools_approval_mode = "approve"
+
+[mcp_servers.sol-luna-orchestrator.env]
+SOL_LUNA_LOG = 'C:\\Users\\mahad\\.codex\\orchestrator.log'
+`;
+
+/** This repository's own built server, derived without touching the filesystem. */
+const LOCAL_ENTRY = path.join(path.resolve(RESULTS_DIR, "..", ".."), "dist", "server.js");
+
+const benchConfigInput = (
+  maxParallel: number | null,
+  baseConfig = USER_CONFIG,
+): Parameters<typeof buildBenchConfig>[0] => ({
+  baseConfig,
+  command: process.execPath,
+  serverEntry: LOCAL_ENTRY,
+  logPath: path.join(os.tmpdir(), "sol-luna-bench-codex-home", "orchestrator.log"),
+  eventsPath: path.join(RESULTS_DIR, "2026-01-01T00-00-00-000Z.events.jsonl"),
+  maxParallel,
+});
+
+const benchConfigFor = (maxParallel: number | null, baseConfig = USER_CONFIG): string =>
+  buildBenchConfig(benchConfigInput(maxParallel, baseConfig));
+
+test("the benchmark registers this repository's own build, not an installed package", () => {
+  const server = resolveBenchMcpServer();
+  const repository = path.resolve(RESULTS_DIR, "..", "..");
+
+  assert.equal(server.packageRoot, repository);
+  assert.equal(server.entry, path.join(repository, "dist", "server.js"));
+  assert.equal(fs.existsSync(server.entry), true, `${server.entry} is missing`);
+  assert.equal(isPackageInstall(server.entry), false);
+  assert.match(server.sha256, /^[0-9a-f]{64}$/);
+
+  // The one number that made the original mismatch visible: the published
+  // package clamps a batch at 8, this build at MAX_PARALLEL_LIMIT.
+  assert.equal(server.maxParallelLimit, MAX_PARALLEL_LIMIT);
+});
+
+test("the isolated configuration never names the global installation", () => {
+  const text = benchConfigFor(12);
+
+  assert.equal(readKey(text, serverTable(), "args"), toTomlValue([LOCAL_ENTRY]));
+  assert.equal(readKey(text, serverTable(), "command"), toTomlValue(process.execPath));
+  assert.ok(
+    !text.includes(GLOBAL_INSTALL_ENTRY),
+    "the globally installed server path survived into the benchmark config",
+  );
+
+  const table = findTable(text, serverTable());
+  assert.ok(table, "the benchmark config does not register the orchestrator");
+  const ours = text.split(/\r?\n/).slice(table.start, table.end).join("\n");
+  assert.ok(!/node_modules/i.test(ours), `registration still names an install:\n${ours}`);
+
+  // Everything else in the user's file is the environment previous benchmarks
+  // were measured in, so it has to survive verbatim.
+  for (const artifact of [
+    "# Docs lookup. Do not remove.",
+    "[mcp_servers.context7]",
+    'args = ["-y", "@upstash/context7-mcp"]',
+    'sandbox = "elevated"',
+    "[projects.'d:\\code\\gpt-test']",
+    'model_reasoning_effort = "medium"',
+  ]) {
+    assert.ok(text.includes(artifact), `carried-over config lost ${artifact}`);
+  }
+});
+
+test("the isolated configuration keeps every setting delegation needs", () => {
+  // Read from the shipped list rather than restated here, so a setting added to
+  // the product cannot be silently missing from the benchmark's own config.
+  const text = benchConfigFor(12);
+  for (const setting of REQUIRED_SETTINGS) {
+    assert.equal(
+      readKey(text, serverTable(), setting.key),
+      setting.expected,
+      setting.key,
+    );
+  }
+  assert.equal(readKey(text, serverTable(), "tool_timeout_sec"), "3600");
+  assert.equal(readKey(text, serverTable(), "default_tools_approval_mode"), '"approve"');
+});
+
+test("6, 12 and 20 reach the MCP server on both surfaces", () => {
+  for (const width of [6, 12, 20]) {
+    // What the harness chooses for a fixture of this width...
+    assert.equal(getConfiguredConcurrency(ARMS["par-forced"], { streams: width }), width);
+
+    // ...is what the isolated config hands the server...
+    assert.equal(
+      readKey(benchConfigFor(width), serverEnvTable(), "SOL_LUNA_MAX_PARALLEL"),
+      toTomlValue(String(width)),
+      `width ${width} did not reach the config`,
+    );
+
+    // ...and what the --config overlay says, which must agree with it...
+    const overlay = mcpConfigOverlay("events.jsonl", width).mcp_servers[SERVER_NAME];
+    const env = overlay?.env as Record<string, string> | undefined;
+    assert.equal(env?.SOL_LUNA_MAX_PARALLEL, String(width));
+
+    // ...and the build being registered honours it rather than clamping it,
+    // which is the half that was untrue while a v0.7.0 package was launched.
+    assert.equal(clampParallel(width), width);
+  }
+});
+
+test("a solo arm cannot reach the server, and the next arm still can", () => {
+  const solo = benchConfigFor(null);
+  assert.equal(readKey(solo, serverTable(), "enabled"), "false");
+  assert.equal(readKey(solo, serverEnvTable(), "SOL_LUNA_MAX_PARALLEL"), null);
+  assert.equal(
+    mcpConfigOverlay("events.jsonl", null).mcp_servers[SERVER_NAME]?.enabled,
+    false,
+  );
+
+  // Feeding a solo arm's own output back in as the base proves the per-arm
+  // rewrite cannot leave `enabled = false` behind for a delegating arm.
+  const delegating = benchConfigFor(12, solo);
+  assert.equal(readKey(delegating, serverTable(), "enabled"), "true");
+  assert.equal(readKey(delegating, serverTable(), "args"), toTomlValue([LOCAL_ENTRY]));
+  assert.equal(
+    readKey(delegating, serverEnvTable(), "SOL_LUNA_MAX_PARALLEL"),
+    toTomlValue("12"),
+  );
+});
+
+test("a config still pointing at the global install is refused, not used", () => {
+  assert.throws(
+    () => assertBenchConfig(USER_CONFIG, benchConfigInput(12)),
+    /Benchmark config points at/,
+  );
+  // And a benchmark config whose concurrency went missing is refused too: a
+  // run at a silently different width is not a measurement.
+  assert.throws(
+    () => assertBenchConfig(benchConfigFor(null), benchConfigInput(12)),
+    /SOL_LUNA_MAX_PARALLEL/,
+  );
+});
+
+test("a missing local build fails the run instead of falling back to npm", () => {
+  const repository = path.resolve(RESULTS_DIR, "..", "..");
+  assert.throws(
+    () =>
+      assertLocalServer({
+        entry: path.join(repository, "dist", "server.js"),
+        exists: false,
+        packageRoot: repository,
+        packageName: PACKAGE_NAME,
+        hasSources: true,
+      }),
+    (error: Error) =>
+      /npm run build/.test(error.message) && /will not fall back/.test(error.message),
+  );
+});
+
+test("an installed package is refused even when it is present and complete", () => {
+  assert.equal(isPackageInstall(GLOBAL_INSTALL_ENTRY), true);
+  assert.equal(isPackageInstall("/home/me/repo/dist/server.js"), false);
+
+  assert.throws(
+    () =>
+      assertLocalServer({
+        entry: GLOBAL_INSTALL_ENTRY,
+        exists: true,
+        packageRoot: path.dirname(path.dirname(GLOBAL_INSTALL_ENTRY)),
+        packageName: PACKAGE_NAME,
+        hasSources: false,
+      }),
+    /resolved to an installed package/,
+  );
+
+  // A dist-only tree outside node_modules is not the local repository either.
+  assert.throws(
+    () =>
+      assertLocalServer({
+        entry: "/opt/sol-luna/dist/server.js",
+        exists: true,
+        packageRoot: "/opt/sol-luna",
+        packageName: PACKAGE_NAME,
+        hasSources: false,
+      }),
+    /not the current local repository/,
+  );
+});
+
+test("preparing the benchmark home never touches the user's Codex config", () => {
+  const userHome = fs.mkdtempSync(path.join(os.tmpdir(), "bench-user-home-"));
+  const benchHome = fs.mkdtempSync(path.join(os.tmpdir(), "bench-codex-home-"));
+  const previousUser = process.env.CODEX_HOME;
+  const previousBench = process.env.BENCH_CODEX_HOME;
+
+  try {
+    fs.writeFileSync(path.join(userHome, "config.toml"), USER_CONFIG, "utf8");
+    // Not a credential: only its presence and its copying are asserted.
+    fs.writeFileSync(path.join(userHome, "auth.json"), '{"fake":true}\n', "utf8");
+    process.env.CODEX_HOME = userHome;
+    process.env.BENCH_CODEX_HOME = benchHome;
+
+    const session = prepareBenchCodexHome({
+      eventsPath: path.join(benchHome, "events.jsonl"),
+      maxParallel: 12,
+    });
+
+    // The user's home, byte for byte, with nothing added beside it — no
+    // rewritten registration and no backup file either.
+    assert.equal(
+      fs.readFileSync(path.join(userHome, "config.toml"), "utf8"),
+      USER_CONFIG,
+    );
+    assert.deepEqual(fs.readdirSync(userHome).sort(), ["auth.json", "config.toml"]);
+
+    // The benchmark's own home is where everything happened.
+    assert.equal(session.home, benchHome);
+    assert.equal(session.configPath, path.join(benchHome, "config.toml"));
+    assert.equal(session.env.CODEX_HOME, benchHome);
+
+    const written = fs.readFileSync(session.configPath, "utf8");
+    assert.ok(!written.includes(GLOBAL_INSTALL_ENTRY));
+    assert.equal(
+      readKey(written, serverEnvTable(), "SOL_LUNA_MAX_PARALLEL"),
+      toTomlValue("12"),
+    );
+    assert.equal(
+      readKey(written, serverTable(), "args"),
+      toTomlValue([resolveBenchMcpServer().entry]),
+    );
+
+    // Credentials are copied in, because an isolated home has none of its own.
+    assert.equal(fs.existsSync(path.join(benchHome, "auth.json")), true);
+
+    // Provenance is what proves, after the fact, which server a run had.
+    assert.equal(session.provenance.isolated, true);
+    assert.equal(session.provenance.maxParallel, 12);
+    assert.equal(session.provenance.serverEnabled, true);
+    assert.equal(session.provenance.maxParallelLimit, MAX_PARALLEL_LIMIT);
+    assert.equal(session.provenance.toolTimeoutSec, "3600");
+    assert.equal(session.provenance.approvalMode, '"approve"');
+    assert.equal(session.provenance.codexHome, benchHome);
+    assert.match(session.provenance.configSha256, /^[0-9a-f]{64}$/);
+  } finally {
+    if (previousUser === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousUser;
+    if (previousBench === undefined) delete process.env.BENCH_CODEX_HOME;
+    else process.env.BENCH_CODEX_HOME = previousBench;
+    fs.rmSync(userHome, { recursive: true, force: true, maxRetries: 3 });
+    fs.rmSync(benchHome, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+
+test("the benchmark refuses to run inside the user's own Codex home", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "bench-same-home-"));
+  const previousUser = process.env.CODEX_HOME;
+  const previousBench = process.env.BENCH_CODEX_HOME;
+
+  try {
+    process.env.CODEX_HOME = home;
+    process.env.BENCH_CODEX_HOME = home;
+    assert.throws(
+      () =>
+        prepareBenchCodexHome({
+          eventsPath: path.join(home, "events.jsonl"),
+          maxParallel: 12,
+        }),
+      /must be a separate one/,
+    );
+    assert.deepEqual(fs.readdirSync(home), []);
+  } finally {
+    if (previousUser === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousUser;
+    if (previousBench === undefined) delete process.env.BENCH_CODEX_HOME;
+    else process.env.BENCH_CODEX_HOME = previousBench;
+    fs.rmSync(home, { recursive: true, force: true, maxRetries: 3 });
+  }
+});
+
+test("the parent session is pointed at the benchmark home and nothing else moves", () => {
+  const env = benchEnv("/bench/home", {
+    PATH: "/usr/bin",
+    CODEX_HOME: "/user/home",
+    Codex_Home: "/user/home",
+    UNSET: undefined,
+  });
+
+  assert.equal(env.CODEX_HOME, "/bench/home");
+  assert.equal(env.PATH, "/usr/bin");
+  assert.equal("UNSET" in env, false);
+  assert.deepEqual(
+    Object.keys(env).filter((key) => /^codex_home$/i.test(key)),
+    ["CODEX_HOME"],
+  );
+});
+
+test("the benchmark's Codex home is its own directory, beside the user's", () => {
+  const previous = process.env.BENCH_CODEX_HOME;
+  try {
+    delete process.env.BENCH_CODEX_HOME;
+    const home = benchCodexHome();
+    assert.ok(path.isAbsolute(home));
+
+    // Never the user's own home: that is the file this whole module exists to
+    // leave alone.
+    assert.notEqual(
+      path.resolve(home).toLowerCase(),
+      path.resolve(path.join(os.homedir(), ".codex")).toLowerCase(),
+    );
+
+    // Never inside the repository either: a copied credential must not be able
+    // to land somewhere a commit could pick it up.
+    const inside = path.relative(path.resolve(RESULTS_DIR, "..", ".."), home);
+    assert.ok(
+      inside.startsWith("..") || path.isAbsolute(inside),
+      `${home} sits inside the repository`,
+    );
+
+    // An explicit override is honoured, so a run can be pointed elsewhere.
+    process.env.BENCH_CODEX_HOME = path.join(os.tmpdir(), "elsewhere");
+    assert.equal(benchCodexHome(), path.resolve(path.join(os.tmpdir(), "elsewhere")));
+  } finally {
+    if (previous === undefined) delete process.env.BENCH_CODEX_HOME;
+    else process.env.BENCH_CODEX_HOME = previous;
+  }
+});
+
+test("a benchmark config identifies itself and does not stack banners", () => {
+  const once = benchConfigFor(12);
+  assert.match(once, /^# Generated by the sol-luna-orchestrator benchmark harness/);
+
+  // Rebuilding from a previous benchmark config is what a reused home does.
+  const twice = buildBenchConfig(benchConfigInput(12, once));
+  assert.equal(twice, once, "regenerating from its own output is not stable");
 });

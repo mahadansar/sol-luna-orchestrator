@@ -25,6 +25,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { clampParallel } from "../config.js";
 import { runGit } from "../git.js";
+import {
+  type BenchMcpProvenance,
+  benchCodexHome,
+  prepareBenchCodexHome,
+  requiredSettingSummary,
+  resolveBenchMcpServer,
+} from "./codex-home.js";
 import { PARALLEL_TASKS } from "./parallel-tasks.js";
 import { SCALE_TASKS } from "./scale-tasks.js";
 import { BENCH_TASKS, type BenchTask, type GradeCommand } from "./tasks.js";
@@ -332,6 +339,17 @@ export interface RunRecord {
    * rather than something a reader has to infer from the parent's token count.
    */
   mcpCalls: McpCallRecord[];
+  /**
+   * Which MCP server this run actually had in front of it.
+   *
+   * Recorded because `maxParallelConfigured` alone cannot be trusted: a run once
+   * reported 12 while a globally installed v0.7.0 build clamped the batch to 8.
+   * The server path, its content hash and the `MAX_PARALLEL_LIMIT` compiled into
+   * it make that class of mismatch visible in the results rather than only in a
+   * batch's telemetry. Present on solo arms too, where it records that the same
+   * isolated configuration was in effect with the server switched off.
+   */
+  mcpServer: BenchMcpProvenance;
   integrationConflicts: number;
   breakdown: Breakdown;
   verificationFailed: number;
@@ -661,6 +679,39 @@ export function getConfiguredConcurrency(
   return clampParallel(Math.max(task.streams ?? 3, 1));
 }
 
+/**
+ * The `--config` overlay handed to the Codex CLI for one arm.
+ *
+ * Deliberately redundant with the isolated config file written by
+ * {@link prepareBenchCodexHome}: the file is what decides *which* server binary
+ * Codex launches, and this overlay is what has always carried the per-arm
+ * values. Keeping both means the two can only agree — a change in how Codex
+ * merges `--config` into a table cannot silently drop the concurrency, and
+ * cannot resurrect a globally registered server either, because the file no
+ * longer names one.
+ *
+ * `maxParallel: null` is a solo arm: the server is disabled on both surfaces, so
+ * those arms genuinely cannot delegate.
+ */
+export function mcpConfigOverlay(
+  eventsFile: string,
+  maxParallel: number | null,
+): { mcp_servers: Record<string, Record<string, boolean | Record<string, string>>> } {
+  if (maxParallel === null) {
+    return { mcp_servers: { [ORCHESTRATOR_NAME]: { enabled: false } } };
+  }
+  return {
+    mcp_servers: {
+      [ORCHESTRATOR_NAME]: {
+        env: {
+          SOL_LUNA_EVENTS: eventsFile,
+          SOL_LUNA_MAX_PARALLEL: String(maxParallel),
+        },
+      },
+    },
+  };
+}
+
 async function runArm(
   suite: SuiteName,
   task: BenchTask,
@@ -684,20 +735,17 @@ async function runArm(
   // so no reader has to assume otherwise. See getConfiguredConcurrency above.
   const maxParallel = getConfiguredConcurrency(armSpec, task);
 
-  const config = armSpec.delegation
-    ? {
-        mcp_servers: {
-          [ORCHESTRATOR_NAME]: {
-            env: {
-              SOL_LUNA_EVENTS: eventsFile,
-              SOL_LUNA_MAX_PARALLEL: String(maxParallel),
-            },
-          },
-        },
-      }
-    : { mcp_servers: { [ORCHESTRATOR_NAME]: { enabled: false } } };
+  // The isolated benchmark CODEX_HOME, established fresh for this arm. This is
+  // what makes the server Codex launches this repository's own `dist/server.js`
+  // instead of whatever the user happens to have registered globally, and it
+  // throws rather than falling back if that build is missing. `maxParallel` is
+  // null exactly for the solo arms, which is what disables the server there.
+  const mcp = prepareBenchCodexHome({ eventsPath: eventsFile, maxParallel });
 
-  const codex = new Codex({ config });
+  const codex = new Codex({
+    config: mcpConfigOverlay(eventsFile, maxParallel),
+    env: mcp.env,
+  });
   const thread = codex.startThread({
     model: SUPERVISOR_MODEL,
     modelReasoningEffort: armSpec.effort as "high",
@@ -809,6 +857,7 @@ async function runArm(
     workerEfforts,
     batches: telemetry.batches,
     mcpCalls,
+    mcpServer: mcp.provenance,
     integrationConflicts: telemetry.integrationConflicts,
     breakdown: telemetry.breakdown,
     verificationFailed: telemetry.verificationFailed,
@@ -890,6 +939,12 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Before anything is spent: the harness must be able to point Codex at this
+  // repository's own build. A missing or non-local `dist/server.js` ends the run
+  // here rather than being quietly replaced by the globally installed package,
+  // which is how a width-12 run came to be measured at a ceiling of 8.
+  const mcpServer = resolveBenchMcpServer();
+
   fs.mkdirSync(RESULTS_DIR, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const eventsFile = path.join(RESULTS_DIR, `${stamp}.events.jsonl`);
@@ -900,6 +955,12 @@ async function main(): Promise<void> {
     `Suite: ${suite} | ${tasks.length} task(s) x ${arms.length} arm(s) x ${reps} rep(s) = ${total} runs`,
   );
   console.log(`Supervisor model: ${SUPERVISOR_MODEL}`);
+  console.log(
+    `MCP server: ${mcpServer.entry} (v${mcpServer.packageVersion}, ` +
+      `sha256 ${mcpServer.sha256.slice(0, 12)}, ` +
+      `MAX_PARALLEL_LIMIT ${mcpServer.maxParallelLimit})`,
+  );
+  console.log(`Isolated CODEX_HOME: ${benchCodexHome()} (${requiredSettingSummary()})`);
   console.log(`Results: ${resultsFile}\n`);
 
   const records: RunRecord[] = [];
@@ -927,12 +988,17 @@ async function main(): Promise<void> {
           resultsFile,
           JSON.stringify(
             {
-              schema: 3,
+              schema: 4,
               suite,
               supervisorModel: SUPERVISOR_MODEL,
               startedAt: stamp,
               platform: `${process.platform} ${process.arch}`,
               nodeVersion: process.version,
+              // Which build every record in this file was measured against, and
+              // the isolated Codex home it was registered in. Schema 4 exists
+              // for these two fields and the per-record `mcpServer`.
+              mcpServer,
+              benchCodexHome: benchCodexHome(),
               reps,
               records,
             },
