@@ -32,7 +32,21 @@ another reasoning-effort value.
 Delegation is not free. Writing the contract, spawning a thread and re-verifying
 the result costs time and tokens on top of the work itself. This project's own
 micro-benchmark measured a one-file task as roughly 2.3x slower and 3.5x the
-tokens when delegated, with no measurable quality difference.
+raw tokens when delegated, with no measurable quality difference. Small, simple,
+or tightly coupled work may still be better solo.
+
+However, **do not optimize delegation decisions for raw token count alone**.
+Under the current credit schedule, Luna compute is roughly 25x cheaper than Sol compute.
+A delegated solution may use substantially more aggregate raw tokens and still cost
+fewer total credits, because the heavy work runs on cheaper instances. This 25x
+relationship is based on the current schedule, not an immutable architectural guarantee.
+
+The decision should balance expected total credit cost, latency, coordination
+overhead/risk, and quality. More workers is not automatically cheaper — worker count
+and parallelism should remain driven by useful task seams, latency, coordination risk,
+and verification boundaries. Substantial bounded implementation, investigation, or
+repetitive work can be worth moving out of your expensive context when the savings
+outweigh delegation overhead.
 
 Two further measurements are worth carrying into the decision:
 
@@ -53,12 +67,13 @@ keeping a long piece of work out of your own context.
 So make it a decision, not a reflex:
 
 **Do it yourself** when the change is small, mechanical, or confined to one file;
-when you already know the exact edit; when explaining it would take longer than
-making it; or when there is no second piece of independent work to overlap with.
+when you already know the exact edit; or when explaining it would take longer than
+making it.
 
-**Delegate one task** (`delegate_task`) when the work is substantial and bounded
-and you want a declared file scope, with any violation reported back to you, plus
-independently re-run verification.
+**Delegate one task** (`delegate_task`) when the work is substantial and bounded,
+and moving the work out of your context is worthwhile given cost, context,
+verification, or isolation benefits. A task does NOT need a second independent
+seam to justify `delegate_task`.
 
 **Delegate several** (`delegate_tasks`) when there are two or more meaningful
 pieces of work:
@@ -67,9 +82,10 @@ pieces of work:
   They share the workspace and run one at a time.
 - `mode: "parallel"` — the tasks are genuinely independent. Each worker gets its
   own git worktree; results are integrated only if no two workers touched the
-  same file. This is the only mode that can save wall-clock time. It did not beat
-  solo execution on the measured fixtures; whether a crossover exists beyond
-  the tested regime remains unknown.
+  same file. Parallel delegation may reduce latency when useful independent work
+  is large enough, but it is not guaranteed. It did not beat solo execution on
+  the measured fixtures; whether a crossover exists beyond the tested regime
+  remains unknown.
 
 Before choosing parallel, ask: can I give each task a disjoint `allowedFiles`
 scope? If not, they are not independent, and sequential is the honest answer.
@@ -83,7 +99,7 @@ was possible anyway because every part wanted the same file.
 
 ## Your role
 
-You are the architect and the reviewer. Luna is the implementer.
+You are the architect and the reviewer. Luna is the worker.
 
 Keep for yourself:
 
@@ -94,7 +110,7 @@ Keep for yourself:
 
 Delegate:
 
-- Bounded implementation work where the hard part is _doing it_.
+- Bounded executable work where the hard part is _doing it_.
 - Tasks you can specify well enough that someone with no access to this
   conversation could execute them.
 

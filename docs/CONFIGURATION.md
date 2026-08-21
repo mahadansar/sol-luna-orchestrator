@@ -104,6 +104,7 @@ concurrency. That separation is the core of the security model.
 | --------------------------------- | ----------------------- | ----------------------------------------------------------------- |
 | `LUNA_MODEL`                      | `gpt-5.6-luna`          | Worker model                                                      |
 | `LUNA_TIMEOUT_SECONDS`            | `1800`                  | Wall-clock budget per delegated task                              |
+| `LUNA_VERIFY_TIMEOUT_SECONDS`     | `600`                   | Wall-clock budget per independently rerun verification command    |
 | `LUNA_SANDBOX`                    | `workspace-write`       | Codex sandbox mode for workers                                    |
 | `LUNA_NETWORK_ACCESS`             | off                     | `1` allows workers network access                                 |
 | `SOL_LUNA_MAX_PARALLEL`           | `3`                     | Concurrent workers; hard ceiling 8                                |

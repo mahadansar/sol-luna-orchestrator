@@ -171,6 +171,77 @@ test("parallel integration verification is conditional, not automatic", () => {
   );
 });
 
+// --- Cost awareness ----------------------------------------------------------
+
+test("runtime guidance explicitly distinguishes raw-token volume from credit cost", () => {
+  assert.match(TOOL_DESCRIPTION, /do NOT optimize[\s\S]*raw token/i);
+  assert.match(
+    TOOL_DESCRIPTION,
+    /substantially more[\s\S]*raw tokens[\s\S]*fewer total credits/i,
+  );
+});
+
+test("current Luna-vs-Sol cost advantage is represented without claiming it is permanent", () => {
+  assert.match(TOOL_DESCRIPTION, /Luna compute is roughly 25x cheaper/i);
+  assert.match(TOOL_DESCRIPTION, /based on the current schedule[\s\S]*not an immutable/i);
+});
+
+test("existing 'small tasks may be better solo' guidance remains", () => {
+  assert.match(TOOL_DESCRIPTION, /small[\s\S]*overhead exceeds the work/i);
+  assert.match(TOOL_DESCRIPTION, /Do it yourself when:/i);
+  assert.match(TOOL_DESCRIPTION, /change is small, mechanical, or confined to one file/i);
+});
+
+test("guidance does not imply 'always delegate' or 'more workers is cheaper'", () => {
+  assert.match(TOOL_DESCRIPTION, /More workers is not automatically cheaper/i);
+  assert.match(TOOL_DESCRIPTION, /driven by useful task seams/i);
+});
+
+// --- Framing & applicability -------------------------------------------------
+
+test("delegate_task is not framed as implementation-only", () => {
+  const surfaces = [
+    TOOL_DESCRIPTION,
+    SERVER_INSTRUCTIONS,
+    delegateTaskInputShape.objective.description,
+  ];
+  for (const text of surfaces) {
+    assert.ok(
+      !/implementation task/i.test(text ?? ""),
+      "should not say 'implementation task'",
+    );
+    assert.ok(
+      !/implementation work;/i.test(text ?? ""),
+      "should not say 'implementation work;'",
+    );
+    assert.match(text ?? "", /executable( task| work)/i);
+  }
+});
+
+test("investigation, tests, refactor remain legitimate delegated work", () => {
+  const schemaDesc = delegateTaskInputShape.taskCategory.description ?? "";
+  assert.match(schemaDesc, /investigation/i);
+  assert.match(schemaDesc, /bugfix/i);
+  assert.match(schemaDesc, /chore/i);
+  assert.match(schemaDesc, /tests/i);
+});
+
+test("one substantial bounded task may be delegated without requiring a second seam", () => {
+  assert.ok(
+    !/no second independent piece of work to overlap it with/i.test(TOOL_DESCRIPTION),
+    "should not use lack of a second task as a reason to do it yourself",
+  );
+  assert.match(TOOL_DESCRIPTION, /does NOT need a second independent seam/i);
+});
+
+test("parallel delegation is not described as guaranteed faster", () => {
+  assert.ok(
+    !/can actually save wall-clock time/i.test(TOOL_DESCRIPTION),
+    "should not guarantee wall-clock savings",
+  );
+  assert.match(TOOL_DESCRIPTION, /may reduce latency[\s\S]*not guaranteed/i);
+});
+
 // --- The document must not contradict the runtime ----------------------------
 
 test("SOL_RULES.md carries the same policy as the runtime surfaces", async () => {
@@ -191,6 +262,8 @@ test("SOL_RULES.md carries the same policy as the runtime surfaces", async () =>
   // Deeper review must survive in the document too, or it reads as "trust it".
   assert.match(rules, /trustworthy: false/);
   assert.match(rules, /Do\s+NOT\s+automatically\s+rerun\s+a\s+full\s+suite/i);
+  assert.match(rules, /roughly 25x cheaper/i);
+  assert.match(rules, /not automatically cheaper/i);
 });
 
 test("the README does not promise a full suite rerun after every parallel batch", async () => {

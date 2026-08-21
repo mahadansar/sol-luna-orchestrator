@@ -67,17 +67,17 @@ const recordEvent = (result: DelegateTaskOutput): void => {
   }
 };
 
-export const TOOL_DESCRIPTION = `Delegate ONE bounded implementation task to an isolated ${LUNA_MODEL} worker thread.
+export const TOOL_DESCRIPTION = `Delegate ONE bounded, well-specified executable task to an isolated ${LUNA_MODEL} worker thread.
 
 Use this when a task is well-specified enough to hand off: you can state the
 objective, what "done" looks like, and which files may change. Keep architecture,
-sequencing, and final judgement for yourself.
+sequencing, unresolved design decisions, and final judgement for yourself.
 
 Choosing \`effort\` — rate THIS TASK's intrinsic difficulty, never the parent
 project's importance:
   medium  Mechanical and fully specified. Rename, move, boilerplate, obvious
           test cases, applying a pattern that already exists in the codebase.
-  high    DEFAULT. Real implementation work needing judgement within one area:
+  high    DEFAULT. Real execution work needing judgement within one area:
           a new endpoint, a bug fix with a known repro, a focused refactor.
   xhigh   Subtle or cross-cutting. Concurrency, tricky state, non-obvious
           performance work, changes rippling across several modules, or a bug
@@ -95,21 +95,35 @@ brief instead — the same objective at higher effort usually fails again, slowe
 
 BEFORE delegating at all, decide whether it is worth it. Delegation has a fixed
 overhead — writing the contract, spawning a thread, re-verifying the result — and
-on small work that overhead exceeds the work itself. Measured on this project's
-own micro-benchmark, delegating a one-file task was ~2.3x slower and ~3.5x the
-tokens of just doing it, with no quality difference.
+on small/simple/tightly coupled work that overhead exceeds the work itself. Measured
+on this project's own micro-benchmark, delegating a one-file task was ~2.3x slower
+and ~3.5x the raw tokens of just doing it, with no quality difference.
+
+However, do NOT optimize delegation decisions for raw token count alone.
+Under the current credit schedule, Luna compute is roughly 25x cheaper than Sol compute.
+A delegated solution may use substantially more aggregate raw tokens and still cost
+fewer total credits, because the heavy work runs on cheaper instances. This 25x
+relationship is based on the current schedule, not an immutable architectural guarantee.
+
+The decision should balance expected total credit cost, latency, coordination
+overhead/risk, and quality. More workers is not automatically cheaper — worker count
+and parallelism should remain driven by useful task seams, latency, coordination risk,
+and verification boundaries. Substantial bounded implementation, investigation, or
+repetitive work can be worth moving out of your expensive context when the savings
+outweigh delegation overhead.
 
 Do it yourself when:
   - the change is small, mechanical, or confined to one file
   - you already know the exact edit
   - explaining the task would take longer than making the change
-  - there is no second independent piece of work to overlap it with
 
-Delegate a single task when the work is substantial and bounded, and you want
-declared file-scope validation plus independently re-run verification.
+Delegate a single task when the work is substantial and bounded, and moving the
+work out of your context is worthwhile given cost, context, verification, or isolation
+benefits. A task does NOT need a second independent seam to justify delegate_task.
 
-For two or more independent pieces of work, use \`delegate_tasks\` instead — that
-is where delegation can actually save wall-clock time.
+For two or more independent pieces of work, use \`delegate_tasks\` instead. Parallel
+delegation may reduce latency when useful independent work is large enough, but it
+is not guaranteed.
 
 The worker cannot delegate further and cannot see this conversation.
 
@@ -288,8 +302,8 @@ export function renderResult(result: DelegateTaskOutput): string {
  */
 export const SERVER_INSTRUCTIONS =
   `Delegation bridge from a supervising Codex agent (Sol) to isolated ` +
-  `${LUNA_MODEL} implementation workers. Use \`delegate_task\` for bounded, ` +
-  `well-specified implementation work; keep architecture and review for ` +
+  `${LUNA_MODEL} workers. Use \`delegate_task\` for bounded, ` +
+  `well-specified executable work; keep architecture and review for ` +
   `yourself. Default worker effort is ${DEFAULT_EFFORT}; reserve \`max\` for ` +
   `genuinely hard tasks. A worker's PASS is a claim; the orchestrator's ` +
   `\`verdict\` is the evidence. Review in proportion to the evidence: a clean ` +
@@ -353,8 +367,9 @@ function registerDelegateTask(): void {
 
 export const BATCH_TOOL_DESCRIPTION = `Delegate SEVERAL bounded tasks to ${LUNA_MODEL} workers, in parallel or in sequence.
 
-This is where delegation can actually pay for itself. A single small task is
-faster done yourself; several substantial, independent tasks are not.
+This is where delegation can pay for itself across multiple seams. A single small
+task is faster done yourself; several substantial, independent tasks may reduce
+overall latency if the work is large enough, though wall-clock savings are not guaranteed.
 
 Pick the mode deliberately:
 

@@ -27,7 +27,7 @@ export const delegateTaskInputShape = {
     .string()
     .min(20, "objective must be a concrete, self-contained brief")
     .describe(
-      "Single bounded implementation task, written so a worker with no access " +
+      "One bounded, well-specified executable task, written so a worker with no access " +
         "to your conversation can execute it. State the what and the why.",
     ),
 

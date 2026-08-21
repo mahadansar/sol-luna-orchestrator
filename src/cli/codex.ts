@@ -6,10 +6,9 @@ import { codexConfigPath } from "./paths.js";
 /**
  * Wrapper around the Codex CLI and its config file.
  *
- * Registration goes through `codex mcp add` / `codex mcp remove` wherever it
- * can: they are the officially supported way to touch that table, and they
- * already understand Codex's own format. Only the two settings the CLI cannot
- * express are written directly, and those go through the surgical TOML editor.
+ * Read-only checks use the Codex CLI where it is authoritative. Registration
+ * writes go through the surgical TOML editor so this project changes only the
+ * table and keys it owns, without round-tripping unrelated user configuration.
  */
 
 export interface CommandResult {

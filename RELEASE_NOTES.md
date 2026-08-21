@@ -13,7 +13,7 @@ body can be written and reviewed before the tag exists. Once a release has
 shipped, clear this file back to the outline below: a copy of an entry that is
 already published only drifts from it.
 
-**Currently in preparation: nothing.** The latest release is v0.6.1.
+**Currently in preparation: nothing.** The latest release is v0.7.0.
 
 ---
 

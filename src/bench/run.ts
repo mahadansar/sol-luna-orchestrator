@@ -2,12 +2,14 @@
  * Benchmark harness.
  *
  * Compares a supervisor working alone against a supervisor that delegates,
- * across two suites:
+ * across three suites:
  *
  *   micro     - small single-file tasks, where delegation overhead is expected
  *               to hurt. Kept because that negative result is the point.
  *   parallel  - projects containing three independent modules, where
  *               orchestration has something to actually overlap.
+ *   scale     - four- and six-stream projects plus a coupled control, built to
+ *               look for a solo/orchestrated crossover at larger task sizes.
  *
  * Every arm gets the same fixtures and the same objective text. Only the
  * supervisor's effort, and whether delegation is available, differ. Grading is
