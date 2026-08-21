@@ -8,11 +8,13 @@
  * are git's and the filesystem's, not a mock's.
  */
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { readdirSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { BatchRejectedError, runBatch } from "./batch.js";
 import {
   MAX_PARALLEL,
@@ -934,6 +936,48 @@ test("one worker failing does not discard the others", async () => {
   }
 });
 
+test("a completed FAILED result can still contribute disjoint integrated edits", async () => {
+  const repo = await makeRepo();
+  try {
+    const result = await runBatch(
+      [
+        makeTask({
+          objective: "Complete the passing independent module.",
+          allowedFiles: ["src/pass/**"],
+        }),
+        makeTask({
+          objective: "Attempt the failing independent module.",
+          allowedFiles: ["src/fail/**"],
+        }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        executor: fakeExecutor({
+          writes: (task) => ({ [`src/${moduleOf(task)}/mod.ts`]: "changed\n" }),
+          output: (task) =>
+            moduleOf(task) === "fail"
+              ? { verdict: "FAILED", workerClaimedStatus: "FAILED" }
+              : {},
+        }),
+      },
+    );
+
+    assert.equal(result.integrated, true, describeBatch(result));
+    assert.equal(result.passed, 1, describeBatch(result));
+    assert.equal(
+      result.tasks.find((task) => task.objective.includes("failing"))?.state,
+      "completed",
+    );
+    assert.ok(
+      await fs.stat(path.join(repo, "src", "fail", "mod.ts")).catch(() => null),
+      "completed FAILED edits should be visible for supervisor review",
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
 test("a cancelled batch starts nothing and leaves no worktrees behind", async () => {
   const repo = await makeRepo();
   try {
@@ -1348,3 +1392,122 @@ test("linking is a no-op when there is nothing to link", async () => {
     await cleanupRepo(repo);
   }
 });
+
+async function captureBatchEvents(
+  mode: "parallel" | "sequential",
+  workingDirectory: string,
+  abortBeforeStart = false,
+): Promise<Record<string, unknown>[]> {
+  const eventRoot = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-events-"));
+  const eventsPath = path.join(eventRoot, "events.jsonl");
+  const batchModule = pathToFileURL(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "batch.js"),
+  ).href;
+  const tasks = [
+    makeTask({
+      objective: "Complete the first event task.",
+      allowedFiles: ["src/one/**"],
+    }),
+    makeTask({
+      objective: "Throw from the second event task.",
+      allowedFiles: ["src/two/**"],
+    }),
+    makeTask({
+      objective: "Return no output from the third event task.",
+      allowedFiles: ["src/three/**"],
+    }),
+  ];
+  const runner = `
+const { runBatch } = await import(${JSON.stringify(batchModule)});
+const tasks = ${JSON.stringify(tasks)};
+const controller = new AbortController();
+if (${JSON.stringify(abortBeforeStart)}) controller.abort();
+await runBatch(tasks, {
+  mode: ${JSON.stringify(mode)},
+  workingDirectory: ${JSON.stringify(workingDirectory)},
+  signal: controller.signal,
+  executor: async (input) => {
+    if (input.objective.includes("Throw")) throw new Error("fixture failure");
+    if (input.objective.includes("no output")) return undefined;
+    return {
+      verdict: "PASS",
+      workerClaimedStatus: "PASS",
+      trustworthy: true,
+      workerThreadId: "fixture-thread",
+      model: "fixture-model",
+      effort: input.effort,
+      effortReason: input.effortReason,
+      attempt: 1,
+      summary: "fixture result",
+      notes: "",
+      followUps: [],
+      filesChanged: [],
+      verification: [],
+      verificationMode: "allowlist",
+      scopeViolations: [],
+      discrepancies: [],
+      reviewChecklist: [],
+      escalationAdvice: null,
+      durationSeconds: 0,
+      usage: null,
+      errors: [],
+    };
+  },
+});
+`;
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(process.execPath, ["-e", runner], {
+        env: { ...process.env, SOL_LUNA_EVENTS: eventsPath },
+        stdio: ["ignore", "ignore", "pipe"],
+        windowsHide: true,
+      });
+      let stderr = "";
+      child.stderr?.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString("utf8");
+      });
+      child.on("error", reject);
+      child.on("exit", (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`event fixture exited ${code}: ${stderr}`));
+      });
+    });
+    const lines = (await fs.readFile(eventsPath, "utf8")).trim().split("\n");
+    return lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+  } finally {
+    await fs.rm(eventRoot, { recursive: true, force: true });
+  }
+}
+
+for (const mode of ["parallel", "sequential"] as const) {
+  test(`${mode} batches record one completion per returned result`, async () => {
+    const repo =
+      mode === "parallel"
+        ? await makeRepo()
+        : await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-events-work-"));
+    try {
+      const events = await captureBatchEvents(mode, repo);
+      const completed = events.filter((event) => event.type === "worker.completed");
+      assert.equal(completed.length, 1);
+      assert.equal(events.filter((event) => event.type === "worker.failed").length, 2);
+      assert.equal(new Set(completed.map((event) => event.taskId)).size, 1);
+    } finally {
+      await cleanupRepo(repo);
+    }
+  });
+
+  test(`${mode} batches with no started tasks record no completions`, async () => {
+    const repo =
+      mode === "parallel"
+        ? await makeRepo()
+        : await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-events-cancelled-"));
+    try {
+      const events = await captureBatchEvents(mode, repo, true);
+      assert.equal(events.filter((event) => event.type === "worker.completed").length, 0);
+      assert.equal(events.filter((event) => event.type === "worker.cancelled").length, 3);
+    } finally {
+      await cleanupRepo(repo);
+    }
+  });
+}

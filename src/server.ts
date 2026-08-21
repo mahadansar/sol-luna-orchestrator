@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLogger } from "./log.js";
@@ -38,14 +38,26 @@ import { WorkspaceError } from "./workspace.js";
  */
 const LOG_FILE = process.env.SOL_LUNA_LOG;
 
+const manifest = JSON.parse(
+  readFileSync(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "package.json"),
+    "utf8",
+  ),
+) as { version?: unknown };
+export const SERVER_VERSION =
+  typeof manifest.version === "string" ? manifest.version : "unknown";
+
 const log = createLogger(LOG_FILE);
 
 /** Append one machine-readable record per delegation, for measurement. */
-const recordEvent = (result: DelegateTaskOutput): void => {
-  if (!EVENTS_FILE) return;
+export const recordEvent = (
+  result: DelegateTaskOutput,
+  eventsFile = EVENTS_FILE,
+): void => {
+  if (!eventsFile) return;
   try {
     appendFileSync(
-      EVENTS_FILE,
+      eventsFile,
       `${JSON.stringify({
         timestamp: new Date().toISOString(),
         model: result.model,
@@ -67,96 +79,32 @@ const recordEvent = (result: DelegateTaskOutput): void => {
   }
 };
 
-export const TOOL_DESCRIPTION = `Delegate ONE bounded, well-specified executable task to an isolated ${LUNA_MODEL} worker thread.
+export const TOOL_DESCRIPTION = `Delegate ONE substantial, bounded, well-specified executable task to an isolated ${LUNA_MODEL} worker.
 
-Use this when a task is well-specified enough to hand off: you can state the
-objective, what "done" looks like, and which files may change. Keep architecture,
-sequencing, unresolved design decisions, and final judgement for yourself.
+Use this for implementation, tests, bug fixing, refactoring, investigation, or
+chores when the objective, scope, acceptance criteria, and verification can be
+stated clearly and moving execution out of Sol's context is worthwhile. One task
+does not need a second independent seam to justify delegation. Keep small,
+simple, tightly coupled, or already-obvious work solo when fixed coordination
+overhead would dominate.
 
-Choosing \`effort\` — rate THIS TASK's intrinsic difficulty, never the parent
-project's importance:
-  medium  Mechanical and fully specified. Rename, move, boilerplate, obvious
-          test cases, applying a pattern that already exists in the codebase.
-  high    DEFAULT. Real execution work needing judgement within one area:
-          a new endpoint, a bug fix with a known repro, a focused refactor.
-  xhigh   Subtle or cross-cutting. Concurrency, tricky state, non-obvious
-          performance work, changes rippling across several modules, or a bug
-          whose cause is not yet identified.
-  max     Genuinely hard problems only. Reserve for tasks where a strong
-          engineer would expect to be stuck for a while: intricate algorithms,
-          deep debugging with no clear lead, or a task that already came back
-          FAILED at xhigh. An important task that is straightforward is still
-          "high" — importance is not difficulty.
+Be cost-aware, not raw-token-minimal: under the current pricing schedule,
+equivalent Luna tokens are roughly 25x cheaper than Sol tokens, so substantially
+more aggregate raw tokens can still cost fewer total credits. This ratio is
+current pricing, not an architectural guarantee. Balance expected credit cost,
+latency, context use, fixed overhead, verification or isolation benefits,
+coordination risk, and quality. More workers is not automatically cheaper.
 
-Prefer escalating over starting high: run at \`high\`, and if it comes back FAILED
-because the task was genuinely hard, re-delegate at \`xhigh\` with
-\`previousAttempts\` filled in. If it failed because your brief was vague, fix the
-brief instead — the same objective at higher effort usually fails again, slower.
+Sol retains architecture, decomposition, unresolved design and sequencing
+decisions, and final judgement. The worker cannot see the conversation or
+delegate further.
 
-BEFORE delegating at all, decide whether it is worth it. Delegation has a fixed
-overhead — writing the contract, spawning a thread, re-verifying the result — and
-on small/simple/tightly coupled work that overhead exceeds the work itself. Measured
-on this project's own micro-benchmark, delegating a one-file task was ~2.3x slower
-and ~3.5x the raw tokens of just doing it, with no quality difference.
-
-However, do NOT optimize delegation decisions for raw token count alone.
-Under the current credit schedule, Luna compute is roughly 25x cheaper than Sol compute.
-A delegated solution may use substantially more aggregate raw tokens and still cost
-fewer total credits, because the heavy work runs on cheaper instances. This 25x
-relationship is based on the current schedule, not an immutable architectural guarantee.
-
-The decision should balance expected total credit cost, latency, coordination
-overhead/risk, and quality. More workers is not automatically cheaper — worker count
-and parallelism should remain driven by useful task seams, latency, coordination risk,
-and verification boundaries. Substantial bounded implementation, investigation, or
-repetitive work can be worth moving out of your expensive context when the savings
-outweigh delegation overhead.
-
-Do it yourself when:
-  - the change is small, mechanical, or confined to one file
-  - you already know the exact edit
-  - explaining the task would take longer than making the change
-
-Delegate a single task when the work is substantial and bounded, and moving the
-work out of your context is worthwhile given cost, context, verification, or isolation
-benefits. A task does NOT need a second independent seam to justify delegate_task.
-
-For two or more independent pieces of work, use \`delegate_tasks\` instead. Parallel
-delegation may reduce latency when useful independent work is large enough, but it
-is not guaranteed.
-
-The worker cannot delegate further and cannot see this conversation.
-
-The result is evidence, not a conclusion. The orchestrator independently re-runs
-your \`verificationCommands\` after the worker exits and checks which files were
-actually touched, then returns \`verdict\`, \`discrepancies\`, and
-\`reviewChecklist\`.
-
-Apply risk-based review:
-If the result is a clean PASS (\`verdict: PASS\`, \`trustworthy: true\`, no discrepancies,
-no scope violations, orchestrator verification passed, expected changed files, and
-nothing in notes/evidence indicates risk):
-- Do NOT automatically reread every implementation file or request the full diff.
-- Do NOT repeat expensive inspection or verification solely to reproduce evidence
-  the orchestrator has already established. Spend additional supervisor context
-  only when it can change the acceptance decision.
-
-Deep diff/code inspection SHOULD happen when justified: high-risk or architecturally
-significant changes, unexpected files/behavior, acceptance criteria cannot be judged
-from returned evidence, insufficient verification coverage, suspicious paths (FAILED,
-BLOCKED, trustworthy: false, discrepancies, scope violations), tests weakened, or
-types loosened.
-
-\`resultDetail\` controls how much of the result you get back. Choose it explicitly.
-Default supervisor behavior for routine delegation is \`"compact"\` (drops stdout/stderr
-of passed commands, keeping all verdicts, discrepancies, scope violations, and failed
-command output). Use \`"full"\` only when successful verification stdout/stderr is
-genuinely needed for your next decision. The schema default remains \`"full"\` solely
-for backwards compatibility.
-
-\`verificationCommands\` run without a shell: one allowlisted executable per
-command, no pipes, redirects, \`&&\` or \`;\`. Use \`npm test\` or \`pytest -q\`,
-not \`npm run build && npm test\` (pass those as two commands).`;
+Use the returned evidence. Worker claims are not authoritative; judge the
+orchestrator's verdict, verification, observed files, discrepancies, scope
+violations, and review checklist. A clean verified PASS with expected changes
+deserves proportionate review, not automatic re-derivation. Inspect more deeply
+for risk, weak coverage, unexpected changes, FAILED or BLOCKED results,
+trustworthy: false, discrepancies, or scope violations.`;
 
 /**
  * Strip the output of verification commands that passed.
@@ -293,24 +241,14 @@ export function renderResult(result: DelegateTaskOutput): string {
   return lines.join("\n");
 }
 
-/**
- * Sent to the client at initialize, so this is the first and most general
- * statement of policy the supervisor sees. It must not contradict the
- * per-tool descriptions below: it used to end "Never accept a worker's PASS
- * without reading the diff", which is exactly the unconditional ritual the
- * tool descriptions now replace with risk-based review.
- */
+/** The short general policy sent to the supervisor during MCP initialization. */
 export const SERVER_INSTRUCTIONS =
-  `Delegation bridge from a supervising Codex agent (Sol) to isolated ` +
-  `${LUNA_MODEL} workers. Use \`delegate_task\` for bounded, ` +
-  `well-specified executable work; keep architecture and review for ` +
-  `yourself. Default worker effort is ${DEFAULT_EFFORT}; reserve \`max\` for ` +
-  `genuinely hard tasks. A worker's PASS is a claim; the orchestrator's ` +
-  `\`verdict\` is the evidence. Review in proportion to the evidence: a clean ` +
-  `verified PASS needs no diff re-read, anything doubtful does.`;
+  `Sol supervises architecture, delegation, and final judgement; ${LUNA_MODEL} ` +
+  `workers execute bounded tasks. Worker claims are not orchestrator evidence. ` +
+  `Judge returned verdicts and checks, reviewing in proportion to their risk and evidence.`;
 
 const server = new McpServer(
-  { name: "sol-luna-orchestrator", version: "1.0.0" },
+  { name: "sol-luna-orchestrator", version: SERVER_VERSION },
   { instructions: SERVER_INSTRUCTIONS },
 );
 
@@ -365,47 +303,30 @@ function registerDelegateTask(): void {
   );
 }
 
-export const BATCH_TOOL_DESCRIPTION = `Delegate SEVERAL bounded tasks to ${LUNA_MODEL} workers, in parallel or in sequence.
+export const BATCH_TOOL_DESCRIPTION = `Delegate two or more meaningful bounded tasks to ${LUNA_MODEL} workers.
 
-This is where delegation can pay for itself across multiple seams. A single small
-task is faster done yourself; several substantial, independent tasks may reduce
-overall latency if the work is large enough, though wall-clock savings are not guaranteed.
+Choose sequential mode when tasks depend on earlier changes, share workspace
+state, or may touch the same files; they run one at a time in the shared
+workspace. Choose parallel mode only for genuinely independent tasks with
+disjoint declared scopes. Parallel tasks run in separate git worktrees from
+HEAD, require a repository with a commit and no uncommitted in-scope changes,
+and are integrated only when their observed changed-file sets do not collide.
+Parallelism may reduce latency but does not guarantee it.
 
-Pick the mode deliberately:
+Do not create artificial seams or split work so finely that coordination
+dominates. Whether to delegate and whether to run in parallel are separate
+decisions.
 
-  parallel    Two or more tasks that do NOT depend on each other. Each worker
-              gets its own git worktree branched from HEAD, so they cannot see
-              or clobber each other. Afterwards their changes are integrated
-              only if no two workers touched the same file.
-              Requires: a git repository with at least one commit, and no
-              uncommitted changes inside the declared task scopes.
+Partial outcomes remain visible for Sol to judge. A completed worker's edits may
+be integrated even when its verdict is FAILED or BLOCKED. Declared scope
+conflicts can reject a batch; actual same-file edits prevent automatic
+integration and retain worktrees for manual resolution.
 
-  sequential  Tasks that build on each other, or that must touch the same
-              files. They share the workspace and run one at a time, so a later
-              task sees the earlier one's work. No git requirement.
-
-Give every parallel task a DISJOINT \`allowedFiles\` scope — e.g. \`src/auth/**\`
-and \`src/payments/**\`, never \`src/auth/**\` and \`src/**\`. Overlapping scopes are
-rejected up front, because the outcome would depend on which worker finished
-last. Choose sequential mode instead when the work genuinely shares files.
-
-Each task carries its own \`effort\`. Rate each task separately: a batch may mix
-\`medium\`, \`high\` and \`xhigh\` workers, and usually should.
-
-Do NOT use this to fan out work that is really one task, and do not split a
-change so finely that coordinating the pieces costs more than writing them.
-
-Partial failure is normal and is reported, not hidden: successful tasks are kept
-and you decide per task whether to retry, re-scope, or accept. Nothing is merged
-automatically when workers collide.
-
-Each worker was verified alone in its own worktree, which is not the same as
-being verified together. Run an integration or full-suite check yourself when
-the integrated changes can actually interact — shared contracts, shared types,
-shared runtime behaviour, or anything the isolated verification could not have
-exercised. Genuinely disjoint scopes that each passed their own required
-verification, with no integration conflict, do not need one merely because the
-batch ran in parallel.`;
+Parallel workers are verified in isolation. After integration, run additional
+integration or full-suite verification when changes can meaningfully interact
+through shared contracts, types, or runtime behavior. Disjoint tasks with
+adequate isolated verification do not require a full-suite rerun merely because
+they ran in parallel.`;
 
 function registerDelegateTasks(): void {
   server.registerTool(

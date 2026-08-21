@@ -91,6 +91,28 @@ const BASE_INPUT = {
   effortReason: "simple task because it is short",
 };
 
+test("legacy context and structured context are both rendered", () => {
+  const input = delegateTaskInputSchema.parse({
+    ...BASE_INPUT,
+    context: "Plain background",
+    contextCapsule: { interfaces: "Stable interface" },
+  });
+  const prompt = buildWorkerPrompt(input, "/fake/dir");
+  assert.match(prompt, /## Context from the supervisor\n\nPlain background/);
+  assert.match(prompt, /## Interfaces\n\nStable interface/);
+});
+
+test("worker prompt describes the default verification mode conditionally", () => {
+  const input = delegateTaskInputSchema.parse({
+    ...BASE_INPUT,
+    verificationCommands: ["npm test"],
+  });
+  const prompt = buildWorkerPrompt(input, "/fake/dir");
+  assert.match(prompt, /configured verification policy/i);
+  assert.match(prompt, /default[\s\S]*allowlist mode/i);
+  assert.doesNotMatch(prompt, /re-runs happen without a shell:/i);
+});
+
 /** Every heading the capsule can produce, in the order it must produce them. */
 const CAPSULE_HEADINGS = [
   "## Relevant context",

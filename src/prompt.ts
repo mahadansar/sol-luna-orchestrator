@@ -17,7 +17,7 @@ export function buildWorkerPrompt(
   const sections: string[] = [];
 
   sections.push(
-    `You are Luna, an implementation worker running as an isolated Codex thread.
+    `You are Luna, a bounded execution worker running as an isolated Codex thread.
 
 A supervisor agent (Sol) has delegated ONE bounded task to you. You have no
 access to Sol's conversation — this brief is everything. You cannot delegate
@@ -106,8 +106,9 @@ Working directory: ${workingDirectory}`,
 results against your report. Fabricated or guessed output will be detected, so
 report failures honestly — an honest FAILED is more useful than a false PASS.
 
-Those re-runs happen without a shell: only the listed executable is launched, and
-pipes, redirects, \`&&\` and \`;\` are refused. Run them the same way yourself.`,
+The orchestrator applies its configured verification policy. In the default
+allowlist mode, re-runs happen without a shell and shell syntax such as pipes,
+redirects, \`&&\`, and \`;\` is refused. Run commands directly yourself.`,
     );
   } else {
     sections.push(

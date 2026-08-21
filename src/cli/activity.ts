@@ -193,18 +193,28 @@ export async function activityCommand(argv: string[]): Promise<number> {
 
   return new Promise<number>((resolve) => {
     let watcher: FSWatcher;
+    let changeQueue = Promise.resolve();
+
+    const scheduleFileChange = (): void => {
+      changeQueue = changeQueue.then(onFileChange, onFileChange);
+    };
+
     try {
       watcher = watch(eventsFile, () => {
-        void onFileChange();
+        scheduleFileChange();
       });
     } catch {
       // file may not exist yet — poll until it does
       const interval = setInterval(() => {
         try {
           watcher = watch(eventsFile, () => {
-            void onFileChange();
+            scheduleFileChange();
           });
           clearInterval(interval);
+          // The file may have been created and populated before the delayed
+          // watcher attachment. Catch up from currentSize before waiting for
+          // the next filesystem notification.
+          scheduleFileChange();
         } catch {
           // keep waiting
         }
@@ -212,6 +222,7 @@ export async function activityCommand(argv: string[]): Promise<number> {
 
       const cleanup = () => {
         clearInterval(interval);
+        watcher?.close();
         out();
         resolve(0);
       };

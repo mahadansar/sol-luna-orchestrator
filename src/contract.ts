@@ -27,85 +27,73 @@ export const delegateTaskInputShape = {
     .string()
     .min(20, "objective must be a concrete, self-contained brief")
     .describe(
-      "One bounded, well-specified executable task, written so a worker with no access " +
-        "to your conversation can execute it. State the what and the why.",
+      "One bounded executable task. Make the what, why, and expected outcome " +
+        "self-contained because the worker cannot see the conversation.",
     ),
 
   effort: z
     .enum(EFFORTS)
     .default(DEFAULT_EFFORT)
     .describe(
-      "Reasoning effort for the worker. medium = mechanical, high = default for " +
-        "real implementation work, xhigh = subtle or cross-cutting, max = " +
-        "genuinely hard problems only. Rate the DELEGATED TASK's own difficulty, " +
-        "never the parent project's importance.",
+      "Worker reasoning effort: medium = mechanical; high = bounded work needing " +
+        "judgement (routine default); xhigh = subtle, cross-cutting, or unclear cause; " +
+        "max = genuinely hard. Rate this task's difficulty, not project importance.",
     ),
 
   effortReason: z
     .string()
     .min(10)
-    .describe(
-      "One sentence justifying the effort in terms of this task's difficulty. " +
-        "Required so effort selection stays deliberate.",
-    ),
+    .describe("One sentence justifying the effort from this task's difficulty."),
 
   taskCategory: z
     .enum(TASK_CATEGORIES)
     .optional()
-    .describe(
-      "Shape of the work. 'investigation' and 'bugfix' more often justify xhigh; " +
-        "'chore' and 'tests' rarely do.",
-    ),
+    .describe("Kind of executable work; it does not determine effort."),
 
   allowedFiles: z
     .array(z.string())
     .default([])
     .describe(
-      "Glob patterns the worker may create or modify (e.g. 'src/auth/**'). " +
-        "Empty means unrestricted, which is discouraged. Checked after the run.",
+      "Declared workspace-relative glob scope, checked against observed edits after " +
+        "the run. Empty declares no in-workspace allowlist; workspace confinement remains.",
     ),
 
   forbiddenFiles: z
     .array(z.string())
     .default([])
     .describe(
-      "Glob patterns the worker must not touch (e.g. 'package.json'). Takes " +
-        "precedence over allowedFiles. Forbid the test files when tests are the " +
-        "verification.",
+      "Workspace-relative globs observed edits must not match. Checked after the " +
+        "run and takes precedence over allowedFiles.",
     ),
 
   acceptanceCriteria: z
     .array(z.string().min(1))
     .min(1, "at least one acceptance criterion is required")
-    .describe(
-      "Observable, checkable conditions that define done — something you can " +
-        "confirm by reading the diff or running a command.",
-    ),
+    .describe("Observable conditions that define done and can be judged from evidence."),
 
   verificationCommands: z
     .array(z.string().min(1))
     .default([])
     .describe(
-      "Shell-free commands proving the work (e.g. 'npm test', 'pytest -q'). The " +
-        "worker runs them AND the orchestrator independently re-runs them after " +
-        "the worker exits; the orchestrator's exit codes are authoritative. " +
-        "Only allowlisted executables run, and pipes/redirects/&&/; are refused.",
+      "Commands the worker should run and report. The orchestrator independently " +
+        "processes each under the configured policy; executed orchestrator rows are " +
+        "authoritative, while refused or skipped rows prove nothing. Default allowlist " +
+        "mode refuses shell syntax.",
     ),
 
   workingDirectory: z
     .string()
     .optional()
     .describe(
-      "Absolute path the worker operates in. Defaults to the orchestrator's " +
-        "current working directory.",
+      "Absolute worker directory; defaults to the orchestrator's current directory.",
     ),
 
   context: z
     .string()
     .optional()
     .describe(
-      "Background the worker cannot infer from the repo: prior decisions, " +
-        "constraints, gotchas, relevant files.",
+      "Legacy plain-text task background. If contextCapsule is also supplied, both " +
+        "are sent; avoid duplication.",
     ),
 
   contextCapsule: z
@@ -113,48 +101,39 @@ export const delegateTaskInputShape = {
       relevantContext: z
         .string()
         .optional()
-        .describe(
-          "Background the worker cannot infer from the repo: constraints, gotchas, relevant files.",
-        ),
+        .describe("Task background the worker cannot infer from the repository."),
       interfaces: z
         .string()
         .optional()
-        .describe("Signatures, contracts, or boundaries the worker must not break."),
+        .describe("Signatures, contracts, or boundaries that must remain stable."),
       dependencies: z
         .string()
         .optional()
-        .describe("Services, libraries, or internal modules this work depends on."),
-      invariants: z
-        .string()
-        .optional()
-        .describe("Rules that must remain true (e.g. 'auth must precede routing')."),
+        .describe("Services, libraries, or internal modules the task depends on."),
+      invariants: z.string().optional().describe("Rules that must remain true."),
       upstreamDecisions: z
         .string()
         .optional()
-        .describe("Architecture or design decisions already settled by the supervisor."),
+        .describe("Architecture or design decisions already settled by Sol."),
       knownPitfalls: z
         .string()
         .optional()
-        .describe("Mistakes to avoid, especially those seen in previous attempts."),
+        .describe("Task-specific mistakes or failed approaches to avoid."),
     })
     .optional()
     .describe(
-      "Optional structured context. Always consider it. Include only when useful " +
-        "to carry selected task-relevant background the worker cannot infer. " +
-        "Omit when unnecessary. Never dump the parent transcript/session. " +
-        "Never duplicate information adequately expressed in other fields. " +
-        "The capsule supplements, but never replaces those fields. " +
-        "Empty fields are omitted.",
+      "Optional structured task background the worker cannot infer. It supplements " +
+        "the contract and legacy context; include only useful fields, omit empty fields, " +
+        "never copy the parent transcript, and do not duplicate other fields.",
     ),
 
   resultDetail: z
     .enum(["full", "compact"])
     .default("full")
     .describe(
-      "Choose explicitly. Default supervisor behavior for routine delegation is compact. " +
-        "Use full only when successful verification output is genuinely needed. " +
-        "The schema default remains full solely for backwards compatibility; " +
-        "failed, refused, or skipped verification output is always retained in compact mode.",
+      "Choose compact routinely; it removes only successful verification output. " +
+        "Use full when that output is needed. The schema default remains full for " +
+        "backwards compatibility; failed, refused, and skipped output is retained.",
     ),
 
   previousAttempts: z
@@ -169,9 +148,8 @@ export const delegateTaskInputShape = {
     )
     .default([])
     .describe(
-      "Escalation history for this same objective. Supply it when re-delegating " +
-        "after a FAILED or BLOCKED result: the worker sees what already failed, " +
-        "and the orchestrator reports the attempt number back to you.",
+      "Prior FAILED or BLOCKED attempts at this objective, so a retry can avoid " +
+        "repeating them and the result can report its attempt number.",
     ),
 
   timeoutSeconds: z
@@ -180,7 +158,10 @@ export const delegateTaskInputShape = {
     .positive()
     .max(7200)
     .optional()
-    .describe("Wall-clock budget for the worker turn. Defaults to 1800."),
+    .describe(
+      "Optional per-turn wall-clock budget; otherwise uses the configured default " +
+        "(normally 1800 seconds).",
+    ),
 };
 
 export const delegateTaskInputSchema = z.object(delegateTaskInputShape);
@@ -271,8 +252,8 @@ export const delegateTaskOutputShape = {
   verdict: z
     .enum(STATUSES)
     .describe(
-      "Orchestrator's verdict, derived from independently re-run verification " +
-        "and scope checks — NOT copied from the worker's claim.",
+      "Orchestrator verdict from observed scope and configured verification; not " +
+        "copied from the worker's claim.",
     ),
   workerClaimedStatus: z
     .enum(STATUSES)
@@ -280,8 +261,8 @@ export const delegateTaskOutputShape = {
   trustworthy: z
     .boolean()
     .describe(
-      "False when the worker's claim conflicts with observed evidence. False " +
-        "demands a careful diff review before accepting anything.",
+      "False when claims conflict with observed evidence or runtime errors occurred; " +
+        "scrutinize the result before accepting.",
     ),
   workerThreadId: z
     .string()
@@ -308,8 +289,8 @@ export const delegateTaskOutputShape = {
       }),
     )
     .describe(
-      "Union of edits observed by the Codex runtime and edits the worker " +
-        "claimed. `observed: false` means the runtime saw no such patch.",
+      "Union of runtime-observed and worker-claimed edits. observed: false means " +
+        "the runtime recorded no matching patch.",
     ),
   verification: z
     .array(
@@ -317,38 +298,43 @@ export const delegateTaskOutputShape = {
         command: z.string(),
         source: z
           .enum(["orchestrator", "worker"])
-          .describe("`orchestrator` results are ground truth."),
+          .describe(
+            "Result provenance. Orchestrator rows authoritatively record execution, " +
+              "refusal, or skipping; worker rows are self-reported.",
+          ),
         execution: z
           .enum(["argv", "shell", "rejected", "skipped", "reported"])
           .describe(
-            "How the orchestrator ran it. `argv` = no shell (normal). " +
-              "`rejected` = refused by policy and NOT run. `skipped` = " +
-              "verification disabled. `reported` = the worker's own claim, not " +
-              "executed here. Only argv/shell rows prove anything.",
+            "argv or shell = executed here; rejected = refused; skipped = disabled; " +
+              "reported = worker-only. Only successful executed rows prove a command.",
           ),
         exitCode: z.number().nullable(),
         passed: z.boolean(),
         output: z.string(),
       }),
     )
-    .describe("Verification outcomes. Prefer `source: orchestrator` rows."),
+    .describe(
+      "Verification outcomes with provenance and execution status; use orchestrator " +
+        "rows to determine what actually ran.",
+    ),
   verificationMode: z
     .string()
     .describe("Execution policy in force: allowlist, off, or shell."),
   scopeViolations: z
     .array(z.string())
     .describe(
-      "Files touched outside allowedFiles, inside forbiddenFiles, or outside the workspace.",
+      "Observed edits outside allowedFiles, matching forbiddenFiles, or escaping " +
+        "the workspace. Non-empty requires deeper review.",
     ),
   discrepancies: z
     .array(z.string())
     .describe(
-      "Concrete mismatches between the worker's claims and observed reality. " +
-        "Non-empty means do not accept the result as-is.",
+      "Concrete mismatches between claims and observed evidence. Non-empty means " +
+        "do not accept the result as-is.",
     ),
   reviewChecklist: z
     .array(z.string())
-    .describe("What you, Sol, must still check yourself before accepting."),
+    .describe("Risk-based checks Sol must still make before accepting."),
   escalationAdvice: z
     .string()
     .nullable()
@@ -404,10 +390,9 @@ export const delegateTasksInputShape = {
   mode: z
     .enum(["parallel", "sequential"])
     .describe(
-      "parallel = tasks are independent; each runs in its own git worktree and " +
-        "results are integrated afterwards. sequential = tasks may depend on each " +
-        "other; they share the workspace and run one at a time, so a later task " +
-        "sees the earlier one's changes.",
+      "sequential = dependent or shared-workspace tasks run in order; parallel = " +
+        "independent tasks run in isolated git worktrees and may be copied back only " +
+        "when integration is enabled and observed changed files do not collide.",
     ),
 
   resultDetail: delegateTaskInputShape.resultDetail,
@@ -416,8 +401,8 @@ export const delegateTasksInputShape = {
     .array(batchTaskShape)
     .min(1)
     .describe(
-      "Task contracts. For parallel mode give each a disjoint allowedFiles scope; " +
-        "overlapping scopes are rejected unless you opt in.",
+      "Task contracts; batch delegation is normally for two or more meaningful tasks. " +
+        "Parallel tasks need disjoint scopes unless overlap is explicitly allowed.",
     ),
 
   workingDirectory: z
@@ -429,17 +414,16 @@ export const delegateTasksInputShape = {
     .boolean()
     .default(false)
     .describe(
-      "Run in parallel even when two tasks could touch the same files. Off by " +
-        "default because the result then depends on which worker finishes last.",
+      "Parallel only: permit potentially overlapping declared scopes. Actual " +
+        "same-file edits still prevent automatic integration.",
     ),
 
   integrate: z
     .boolean()
     .default(true)
     .describe(
-      "Parallel mode only. Copy each worker's changes back into the workspace when " +
-        "no two workers touched the same file. Set false to review the worktrees " +
-        "yourself before anything moves.",
+      "Parallel only: copy completed worker edits back when observed changed files " +
+        "do not collide. Set false to leave changes in worktrees for review.",
     ),
 };
 
@@ -456,7 +440,9 @@ export const batchTaskResultSchema = z.object({
   effortReason: z.string(),
   result: delegateTaskOutputObject
     .nullable()
-    .describe("Full single-task result, or null if the task never ran."),
+    .describe(
+      "Single-task result at the requested resultDetail, or null if the task never ran.",
+    ),
   changedFiles: z
     .array(z.string())
     .describe("Workspace-relative paths this task changed."),
@@ -491,10 +477,14 @@ export const delegateTasksOutputShape = {
     ),
   integrated: z
     .boolean()
-    .describe("Whether worker changes are now present in the workspace."),
+    .describe(
+      "Whether completed worker edits are now present in the requested workspace.",
+    ),
   integrationSummary: z.string(),
   warnings: z.array(z.string()),
-  reviewChecklist: z.array(z.string()),
+  reviewChecklist: z
+    .array(z.string())
+    .describe("Batch-level integration and risk checks Sol must still make."),
 };
 
 export type BatchOutput = z.infer<z.ZodObject<typeof delegateTasksOutputShape>>;

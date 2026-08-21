@@ -61,6 +61,8 @@ SOL_LUNA_EVENTS = "/home/you/.codex/sol-luna-orchestrator.events.jsonl"
 # --- Optional worker tuning ------------------------------------------------
 # LUNA_MODEL = "gpt-5.6-luna"
 # LUNA_TIMEOUT_SECONDS = "1800"
+# Per-command wall-clock budget for independently rerun verification commands.
+# LUNA_VERIFY_TIMEOUT_SECONDS = "600"
 # LUNA_SANDBOX = "workspace-write"
 # LUNA_NETWORK_ACCESS = "0"
 

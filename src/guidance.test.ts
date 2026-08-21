@@ -1,16 +1,8 @@
 /**
- * Supervisor guidance tests.
+ * Semantic synchronization tests for supervisor guidance.
  *
- * Sol never reads `SOL_RULES.md` at runtime. What actually reaches a supervisor
- * is the MCP server's `instructions`, the two tool descriptions, and the Zod
- * `.describe()` text on each input field — all of which live in `server.ts` and
- * `contract.ts`. `SOL_RULES.md` is the human-facing copy of the same policy,
- * shipped in the package and optionally installed as `AGENTS.md`.
- *
- * Two copies of a policy drift. These tests assert the runtime strings first,
- * then assert that the document does not contradict them. They deliberately
- * check for the *presence of a distinction* rather than matching whole
- * paragraphs, so wording can be improved without a test rewrite.
+ * Runtime strings are the always-exposed policy. SOL_RULES.md is the optional
+ * human reference. These assertions pin distinctions, not paragraphs.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -22,254 +14,221 @@ import {
   SERVER_INSTRUCTIONS,
   TOOL_DESCRIPTION,
 } from "./server.js";
-import { delegateTaskInputSchema, delegateTaskInputShape } from "./contract.js";
+import {
+  delegateTaskInputSchema,
+  delegateTaskInputShape,
+  delegateTaskOutputShape,
+  delegateTasksInputShape,
+} from "./contract.js";
+import { buildWorkerPrompt } from "./prompt.js";
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readDoc = (name: string): Promise<string> =>
   fs.readFile(path.join(ROOT_DIR, name), "utf8");
 
-/** Every string a connected supervisor is actually shown. */
-const RUNTIME_SURFACES: Array<[string, string]> = [
-  ["server instructions", SERVER_INSTRUCTIONS],
-  ["delegate_task description", TOOL_DESCRIPTION],
-  ["delegate_tasks description", BATCH_TOOL_DESCRIPTION],
-  ["resultDetail field", delegateTaskInputShape.resultDetail.description ?? ""],
-  ["contextCapsule field", delegateTaskInputShape.contextCapsule.description ?? ""],
-];
+const BASE_INPUT = {
+  objective: "Complete one bounded executable task safely.",
+  effortReason: "The task needs routine judgement in one area.",
+  acceptanceCriteria: ["The requested behavior is present."],
+};
 
-// --- The API contract itself is unchanged ------------------------------------
-
-test("resultDetail still defaults to full when omitted", () => {
-  const parsed = delegateTaskInputSchema.parse({
-    objective: "Just an objective 1234567890",
-    acceptanceCriteria: ["done"],
-    effortReason: "simple task because it is short",
-  });
+test("backwards-compatible guidance fields retain their API defaults", () => {
+  const parsed = delegateTaskInputSchema.parse(BASE_INPUT);
   assert.equal(parsed.resultDetail, "full");
-});
-
-test("contextCapsule is still optional and absent when not supplied", () => {
-  const parsed = delegateTaskInputSchema.parse({
-    objective: "Just an objective 1234567890",
-    acceptanceCriteria: ["done"],
-    effortReason: "simple task because it is short",
-  });
   assert.equal(parsed.contextCapsule, undefined);
 });
 
-// --- resultDetail guidance ---------------------------------------------------
+test("server instructions keep roles, evidence authority, and proportional review", () => {
+  assert.match(SERVER_INSTRUCTIONS, /Sol supervises/i);
+  assert.match(SERVER_INSTRUCTIONS, /workers execute bounded tasks/i);
+  assert.match(SERVER_INSTRUCTIONS, /claims are not orchestrator evidence/i);
+  assert.match(SERVER_INSTRUCTIONS, /proportion/i);
+});
 
-test("every runtime surface that mentions resultDetail asks for it explicitly", () => {
-  for (const [label, text] of RUNTIME_SURFACES) {
-    if (!/resultDetail/.test(text)) continue;
-    assert.match(
-      text,
-      /compact/,
-      `${label} mentions resultDetail without naming compact`,
-    );
-    assert.match(
-      text,
-      /routine|explicit/i,
-      `${label} should say when compact is the routine choice`,
-    );
+test("one substantial bounded task may be delegated without another seam", () => {
+  assert.match(TOOL_DESCRIPTION, /ONE substantial, bounded/i);
+  assert.match(TOOL_DESCRIPTION, /does not need a second independent seam/i);
+  assert.match(TOOL_DESCRIPTION, /small,[\s\S]*simple,[\s\S]*tightly coupled/i);
+  assert.match(TOOL_DESCRIPTION, /overhead/i);
+});
+
+test("single-task guidance is cost-aware without treating pricing as permanent", () => {
+  assert.match(TOOL_DESCRIPTION, /current pricing schedule/i);
+  assert.match(TOOL_DESCRIPTION, /roughly 25x cheaper/i);
+  assert.match(TOOL_DESCRIPTION, /more aggregate raw tokens[\s\S]*fewer total credits/i);
+  assert.match(TOOL_DESCRIPTION, /not an architectural guarantee/i);
+  assert.match(TOOL_DESCRIPTION, /More workers is not automatically cheaper/i);
+  for (const factor of [
+    "credit cost",
+    "latency",
+    "context",
+    "overhead",
+    "verification",
+    "isolation",
+    "coordination risk",
+    "quality",
+  ]) {
+    assert.match(TOOL_DESCRIPTION, new RegExp(factor, "i"));
   }
 });
 
-test("the runtime keeps full available as a deliberate exception, not a ban", () => {
-  const text = `${TOOL_DESCRIPTION}\n${delegateTaskInputShape.resultDetail.description}`;
-  assert.match(text, /full/);
-  // The schema default is a compatibility promise, so the guidance has to say
-  // so rather than implying compact is the default the API applies.
-  assert.match(text, /default\s+remains\s+.?"?full/i);
-  assert.ok(
-    !/never\s+use\s+.?"?full/i.test(text),
-    "full must remain a legitimate choice",
-  );
-});
-
-test("compact is described as dropping only passed-command output", () => {
-  const text = TOOL_DESCRIPTION;
-  assert.match(text, /passed/);
-  for (const kept of ["discrepancies", "scope violations", "verdict"]) {
-    assert.ok(
-      text.toLowerCase().includes(kept.toLowerCase()),
-      `the description should say ${kept} survive compact`,
-    );
+test("delegation remains broader than implementation", () => {
+  for (const kind of [
+    "implementation",
+    "tests",
+    "bug fixing",
+    "refactoring",
+    "investigation",
+    "chores",
+  ]) {
+    assert.match(TOOL_DESCRIPTION, new RegExp(kind, "i"));
   }
+  const prompt = buildWorkerPrompt(delegateTaskInputSchema.parse(BASE_INPUT), ROOT_DIR);
+  assert.doesNotMatch(prompt, /implementation worker/i);
+  assert.match(prompt, /bounded execution worker/i);
 });
 
-// --- contextCapsule guidance -------------------------------------------------
-
-test("the capsule is described as conditional, bounded, and non-duplicating", () => {
-  const text = delegateTaskInputShape.contextCapsule.description ?? "";
-  assert.match(text, /optional/i);
-  assert.match(text, /only\s+when\s+useful|include\s+only/i);
-  assert.match(text, /omit/i);
-  assert.match(text, /never\s+dump|not\s+a\s+dump/i);
-  assert.match(text, /duplicate/i);
-});
-
-// --- Review policy -----------------------------------------------------------
-
-/** The unconditional ritual the live cost study argued against. */
-const UNCONDITIONAL_REVIEW =
-  /(always|never\s+accept)[^.]{0,80}(read|review)[^.]{0,40}diff|read\s+the\s+(actual\s+)?diff\s+of\s+every\s+changed\s+file/i;
-
-test("no runtime surface still demands an unconditional diff re-read", () => {
-  for (const [label, text] of RUNTIME_SURFACES) {
-    assert.ok(
-      !UNCONDITIONAL_REVIEW.test(text),
-      `${label} still demands an unconditional diff re-read`,
-    );
+test("Sol retains strategy and final judgment", () => {
+  for (const retained of [
+    "architecture",
+    "decomposition",
+    "unresolved design",
+    "sequencing",
+    "final judgement",
+  ]) {
+    assert.match(TOOL_DESCRIPTION, new RegExp(retained, "i"));
   }
+  assert.match(TOOL_DESCRIPTION, /cannot see the conversation or[\s\S]*delegate/i);
 });
 
-test("a clean verified PASS is told not to re-derive existing evidence", () => {
-  assert.match(TOOL_DESCRIPTION, /clean\s+PASS/i);
-  assert.match(TOOL_DESCRIPTION, /Do\s+NOT\s+automatically\s+reread/i);
-  assert.match(TOOL_DESCRIPTION, /trustworthy: true/);
-  // A clean PASS is defined by all of these together, not by the verdict alone.
-  for (const signal of ["discrepancies", "scope violations", "verification"]) {
-    assert.ok(
-      TOOL_DESCRIPTION.toLowerCase().includes(signal),
-      `the clean-PASS definition should include ${signal}`,
-    );
+test("single-task results drive risk-based review", () => {
+  for (const evidence of [
+    "verdict",
+    "verification",
+    "observed files",
+    "discrepancies",
+    "scope violations",
+    "review checklist",
+  ]) {
+    assert.match(TOOL_DESCRIPTION, new RegExp(evidence, "i"));
   }
-});
-
-test("suspicious evidence still calls for deeper review", () => {
-  for (const trigger of [
+  assert.match(TOOL_DESCRIPTION, /clean verified PASS/i);
+  assert.match(TOOL_DESCRIPTION, /proportionate review/i);
+  for (const suspicious of [
     "FAILED",
     "BLOCKED",
     "trustworthy: false",
     "discrepancies",
     "scope violations",
   ]) {
-    assert.ok(
-      TOOL_DESCRIPTION.includes(trigger),
-      `${trigger} should still trigger deeper review`,
-    );
+    assert.match(TOOL_DESCRIPTION, new RegExp(suspicious, "i"));
   }
-  assert.match(TOOL_DESCRIPTION, /SHOULD\s+happen\s+when\s+justified/);
 });
 
-test("this is not a licence to trust workers blindly", () => {
-  const text = `${SERVER_INSTRUCTIONS}\n${TOOL_DESCRIPTION}`;
-  assert.match(text, /claim|evidence,\s+not\s+a\s+conclusion/i);
-  assert.ok(
-    !/trust\s+the\s+worker/i.test(text),
-    "nothing should tell the supervisor to trust the worker",
-  );
+test("batch guidance distinguishes sequential and parallel semantics", () => {
+  assert.match(BATCH_TOOL_DESCRIPTION, /two or more meaningful bounded tasks/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /sequential[\s\S]*depend/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /share\s+workspace\s+state/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /parallel[\s\S]*genuinely independent/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /disjoint declared scopes/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /does not guarantee/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /Do not create artificial seams/i);
 });
 
-test("parallel integration verification is conditional, not automatic", () => {
-  assert.match(BATCH_TOOL_DESCRIPTION, /verified\s+alone|in\s+isolation/i);
-  assert.match(BATCH_TOOL_DESCRIPTION, /can\s+actually\s+interact/i);
+test("batch guidance states integration and partial-outcome behavior", () => {
   assert.match(
     BATCH_TOOL_DESCRIPTION,
-    /merely\s+because\s+the\s+batch\s+ran\s+in\s+parallel/i,
+    /same-file edits prevent automatic[\s\S]*integration/i,
   );
+  assert.match(BATCH_TOOL_DESCRIPTION, /FAILED or BLOCKED/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /verified in isolation/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /when changes can meaningfully interact/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /merely because[\s\S]*parallel/i);
 });
 
-// --- Cost awareness ----------------------------------------------------------
-
-test("runtime guidance explicitly distinguishes raw-token volume from credit cost", () => {
-  assert.match(TOOL_DESCRIPTION, /do NOT optimize[\s\S]*raw token/i);
-  assert.match(
-    TOOL_DESCRIPTION,
-    /substantially more[\s\S]*raw tokens[\s\S]*fewer total credits/i,
-  );
-});
-
-test("current Luna-vs-Sol cost advantage is represented without claiming it is permanent", () => {
-  assert.match(TOOL_DESCRIPTION, /Luna compute is roughly 25x cheaper/i);
-  assert.match(TOOL_DESCRIPTION, /based on the current schedule[\s\S]*not an immutable/i);
-});
-
-test("existing 'small tasks may be better solo' guidance remains", () => {
-  assert.match(TOOL_DESCRIPTION, /small[\s\S]*overhead exceeds the work/i);
-  assert.match(TOOL_DESCRIPTION, /Do it yourself when:/i);
-  assert.match(TOOL_DESCRIPTION, /change is small, mechanical, or confined to one file/i);
-});
-
-test("guidance does not imply 'always delegate' or 'more workers is cheaper'", () => {
-  assert.match(TOOL_DESCRIPTION, /More workers is not automatically cheaper/i);
-  assert.match(TOOL_DESCRIPTION, /driven by useful task seams/i);
-});
-
-// --- Framing & applicability -------------------------------------------------
-
-test("delegate_task is not framed as implementation-only", () => {
-  const surfaces = [
-    TOOL_DESCRIPTION,
-    SERVER_INSTRUCTIONS,
-    delegateTaskInputShape.objective.description,
-  ];
-  for (const text of surfaces) {
-    assert.ok(
-      !/implementation task/i.test(text ?? ""),
-      "should not say 'implementation task'",
-    );
-    assert.ok(
-      !/implementation work;/i.test(text ?? ""),
-      "should not say 'implementation work;'",
-    );
-    assert.match(text ?? "", /executable( task| work)/i);
+test("resultDetail pins compact preference and full compatibility default", () => {
+  const text = delegateTaskInputShape.resultDetail.description ?? "";
+  assert.match(text, /compact routinely/i);
+  assert.match(text, /only successful verification output/i);
+  assert.match(text, /schema default remains full[\s\S]*backwards compatibility/i);
+  for (const retained of ["failed", "refused", "skipped"]) {
+    assert.match(text, new RegExp(retained, "i"));
   }
 });
 
-test("investigation, tests, refactor remain legitimate delegated work", () => {
-  const schemaDesc = delegateTaskInputShape.taskCategory.description ?? "";
-  assert.match(schemaDesc, /investigation/i);
-  assert.match(schemaDesc, /bugfix/i);
-  assert.match(schemaDesc, /chore/i);
-  assert.match(schemaDesc, /tests/i);
+test("plain and structured context are complementary and bounded", () => {
+  const plain = delegateTaskInputShape.context.description ?? "";
+  const capsule = delegateTaskInputShape.contextCapsule.description ?? "";
+  assert.match(plain, /Legacy plain-text/i);
+  assert.match(plain, /both are sent/i);
+  assert.match(capsule, /supplements[\s\S]*legacy context/i);
+  assert.match(capsule, /omit empty/i);
+  assert.match(capsule, /never copy the parent transcript/i);
+  assert.match(capsule, /do not duplicate/i);
 });
 
-test("one substantial bounded task may be delegated without requiring a second seam", () => {
-  assert.ok(
-    !/no second independent piece of work to overlap it with/i.test(TOOL_DESCRIPTION),
-    "should not use lack of a second task as a reason to do it yourself",
-  );
-  assert.match(TOOL_DESCRIPTION, /does NOT need a second independent seam/i);
+test("verification fields preserve authority without treating non-execution as proof", () => {
+  const input = delegateTaskInputShape.verificationCommands.description ?? "";
+  const row = delegateTaskOutputShape.verification.element;
+  const source = row.shape.source.description ?? "";
+  const execution = row.shape.execution.description ?? "";
+  assert.match(input, /configured policy/i);
+  assert.match(input, /executed orchestrator rows are authoritative/i);
+  assert.match(input, /refused or skipped rows prove nothing/i);
+  assert.match(source, /Orchestrator rows authoritatively record/i);
+  assert.match(source, /worker rows are self-reported/i);
+  assert.match(execution, /rejected/);
+  assert.match(execution, /skipped/);
+  assert.match(execution, /Only successful executed rows prove a command/i);
 });
 
-test("parallel delegation is not described as guaranteed faster", () => {
-  assert.ok(
-    !/can actually save wall-clock time/i.test(TOOL_DESCRIPTION),
-    "should not guarantee wall-clock savings",
-  );
-  assert.match(TOOL_DESCRIPTION, /may reduce latency[\s\S]*not guaranteed/i);
-});
-
-// --- The document must not contradict the runtime ----------------------------
-
-test("SOL_RULES.md carries the same policy as the runtime surfaces", async () => {
-  const rules = await readDoc("SOL_RULES.md");
-
-  assert.ok(
-    !UNCONDITIONAL_REVIEW.test(rules),
-    "SOL_RULES.md still demands an unconditional diff re-read",
-  );
-  assert.match(rules, /clean\s+PASS/i);
-  assert.match(rules, /risk-based/i);
+test("scope, discrepancy, and checklist descriptions demand review", () => {
+  assert.match(delegateTaskOutputShape.scopeViolations.description ?? "", /workspace/i);
   assert.match(
-    rules,
-    /Default\s+supervisor\s+behaviou?r\s+for\s+routine\s+delegation\s+is\s+`?compact/i,
+    delegateTaskOutputShape.scopeViolations.description ?? "",
+    /deeper review/i,
   );
-  assert.match(rules, /schema\s+default\s+remains\s+`?full/i);
-  assert.match(rules, /Never\s+dump\s+the\s+parent\s+transcript/i);
-  // Deeper review must survive in the document too, or it reads as "trust it".
-  assert.match(rules, /trustworthy: false/);
-  assert.match(rules, /Do\s+NOT\s+automatically\s+rerun\s+a\s+full\s+suite/i);
-  assert.match(rules, /roughly 25x cheaper/i);
-  assert.match(rules, /not automatically cheaper/i);
+  assert.match(delegateTaskOutputShape.discrepancies.description ?? "", /do not accept/i);
+  assert.match(delegateTaskOutputShape.reviewChecklist.description ?? "", /Sol/i);
 });
 
-test("the README does not promise a full suite rerun after every parallel batch", async () => {
+test("batch input descriptions qualify overlap and integration", () => {
+  assert.match(
+    delegateTasksInputShape.mode.description ?? "",
+    /sequential[\s\S]*dependent/i,
+  );
+  assert.match(
+    delegateTasksInputShape.mode.description ?? "",
+    /parallel[\s\S]*isolated/i,
+  );
+  assert.match(
+    delegateTasksInputShape.allowOverlappingScopes.description ?? "",
+    /same-file edits[\s\S]*prevent automatic integration/i,
+  );
+  assert.match(delegateTasksInputShape.integrate.description ?? "", /Set false/i);
+});
+
+test("SOL_RULES carries the runtime's operational distinctions without benchmark narration", async () => {
+  const rules = await readDoc("SOL_RULES.md");
+  for (const invariant of [
+    /Zero workers is valid/i,
+    /No second seam is required/i,
+    /roughly\s+25x\s+cheaper/i,
+    /not an immutable architectural guarantee/i,
+    /more workers are not[\s\S]*automatically[\s\S]*cheaper/i,
+    /schema default remains[\s\S]*full/i,
+    /trustworthy: false/i,
+    /Do not automatically rerun a full suite/i,
+  ]) {
+    assert.match(rules, invariant);
+  }
+  assert.doesNotMatch(rules, /2\.3x|3\.5x|V6|around 70 seconds|four and six/i);
+});
+
+test("README does not require unconditional integration verification", async () => {
   const readme = await readDoc("README.md");
-  assert.ok(
-    !/told\s+to\s+run\s+the\s+full\s+suite\s+after\s+integration/i.test(readme),
-    "README still states the old unconditional rule",
+  assert.doesNotMatch(
+    readme,
+    /told\s+to\s+run\s+the\s+full\s+suite\s+after\s+integration/i,
   );
 });

@@ -4,6 +4,37 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.7.1] - 2026-08-22
+
+A focused consistency, context-efficiency, and activity reliability patch.
+
+### Changed
+
+- Substantially reduced always-exposed supervisor guidance, tool descriptions,
+  schema descriptions, and `SOL_RULES.md` while preserving public delegation
+  semantics, compatibility defaults, cost awareness, and risk-based review.
+- Corrected delegation framing to cover one bounded executable task as well as
+  sequential dependent/shared-workspace and parallel independent/disjoint
+  batches, without narrowing valid work to implementation.
+- Clarified architecture, legacy `context` versus structured `contextCapsule`,
+  compact versus full result detail, verification authority, and the treatment
+  of completed worker results that still require supervisor review.
+- Aligned the README, contributor guidance, troubleshooting command, package
+  description, and annotated Codex configuration example with current behavior.
+- Kept benchmark evidence separate from operational guidance and distinguished
+  raw token counts from model-priced credit cost.
+
+### Fixed
+
+- MCP `serverInfo.version` now follows the package implementation version rather
+  than advertising the initial hard-coded `1.0.0` placeholder.
+- Worker and schema wording no longer narrows valid delegated work to
+  implementation or assumes the default verification policy is always active.
+- `activity --watch` now catches events written before a delayed watcher attaches
+  and serializes file-change processing, avoiding missed or overlapping updates.
+
 ## [0.7.0] - 2026-08-20
 
 Context-efficient delegation with structured worker briefs and compact result
@@ -409,7 +440,8 @@ Initial working version, verified end to end.
 development milestones and were never tagged or published, so they have no
 release links.
 
-[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.5.1...v0.6.0

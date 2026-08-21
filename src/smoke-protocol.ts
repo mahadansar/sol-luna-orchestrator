@@ -4,12 +4,18 @@
  * tool. Makes no model calls, so it is free and safe to run repeatedly.
  */
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const packageVersion = (
+  JSON.parse(fs.readFileSync(path.join(here, "..", "package.json"), "utf8")) as {
+    version: string;
+  }
+).version;
 
 // Overridable so the same protocol checks can be pointed at a packed install
 // rather than the source tree — proving what an npm user actually receives.
@@ -45,8 +51,14 @@ async function main(): Promise<void> {
     assert.equal(info?.name, "sol-luna-orchestrator");
   });
 
+  check("server advertises the package implementation version", () => {
+    assert.equal(info?.version, packageVersion);
+  });
+
   check("server sends supervisor instructions", () => {
-    assert.match(client.getInstructions() ?? "", /delegate_task/);
+    const instructions = client.getInstructions() ?? "";
+    assert.match(instructions, /Sol supervises/);
+    assert.match(instructions, /claims are not orchestrator evidence/);
   });
 
   const { tools } = await client.listTools();
@@ -83,7 +95,7 @@ async function main(): Promise<void> {
   });
 
   check("the batch description tells Sol when parallel is inappropriate", () => {
-    assert.match(batchTool?.description ?? "", /DISJOINT/);
+    assert.match(batchTool?.description ?? "", /disjoint/i);
     assert.match(batchTool?.description ?? "", /sequential/);
   });
 
@@ -120,9 +132,10 @@ async function main(): Promise<void> {
     assert.equal(effort.default, "high");
   });
 
-  check("description tells Sol when to pick max", () => {
-    assert.match(tool?.description ?? "", /max\s+Genuinely hard problems only/);
-    assert.match(tool?.description ?? "", /importance is not difficulty/);
+  check("effort field tells Sol when to pick max", () => {
+    const effort = properties.effort as { description?: string };
+    assert.match(effort.description ?? "", /max = genuinely hard/i);
+    assert.match(effort.description ?? "", /task's difficulty/i);
   });
 
   check("input schema carries escalation metadata", () => {
@@ -131,8 +144,10 @@ async function main(): Promise<void> {
     }
   });
 
-  check("description warns that verification runs without a shell", () => {
-    assert.match(tool?.description ?? "", /without a shell/);
+  check("verification field describes configured policy and default refusal", () => {
+    const verification = properties.verificationCommands as { description?: string };
+    assert.match(verification.description ?? "", /configured policy/i);
+    assert.match(verification.description ?? "", /Default allowlist mode refuses/i);
   });
 
   check("output schema exposes verdict and review fields", () => {

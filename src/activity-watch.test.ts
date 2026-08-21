@@ -82,3 +82,113 @@ test("watch mode partial line and UTF-8 split handling", async () => {
     await fs.rm(workRoot, { recursive: true, force: true }).catch(() => {});
   }
 });
+
+test("watch mode catches events written before a missing file is attached", async () => {
+  const workRoot = await fs.mkdtemp(path.join(os.tmpdir(), "luna-watch-missing-"));
+  const eventsPath = path.join(workRoot, "events.jsonl");
+  process.env.SOL_LUNA_EVENTS = eventsPath;
+
+  const originalStdoutWrite = process.stdout.write;
+  let output = "";
+  let renderCount = 0;
+  let watchPromise: Promise<number> | undefined;
+
+  process.stdout.write = ((
+    chunk: string | Uint8Array,
+    encoding?: unknown,
+    cb?: unknown,
+  ) => {
+    const text = chunk.toString();
+    output += text;
+    if (text.includes("Sol-Luna Activity")) {
+      renderCount++;
+    }
+    if (typeof encoding === "function") encoding();
+    else if (typeof cb === "function") cb();
+    return true;
+  }) as any;
+
+  const waitFor = async (condition: () => boolean): Promise<void> => {
+    const deadline = Date.now() + 5_000;
+    while (!condition()) {
+      if (Date.now() >= deadline) {
+        throw new Error(`Timed out waiting for activity output:\n${output}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  };
+
+  try {
+    const { activityCommand } = await import("./cli/activity.js");
+    watchPromise = activityCommand(["--watch"]);
+    await waitFor(() => renderCount === 1);
+
+    // The polling branch attaches after the file exists. All of these records
+    // are deliberately written before that attachment, so the watcher must
+    // perform an initial catch-up read rather than wait for another append.
+    const events = [
+      {
+        timestamp: "2024-02-01T00:00:00Z",
+        type: "batch.started",
+        batchId: "b-delayed",
+        mode: "parallel",
+        taskCount: 1,
+        maxParallel: 1,
+      },
+      {
+        timestamp: "2024-02-01T00:00:01Z",
+        type: "task.queued",
+        batchId: "b-delayed",
+        taskId: "t-delayed",
+        effort: "high",
+      },
+      {
+        timestamp: "2024-02-01T00:00:02Z",
+        type: "worker.started",
+        batchId: "b-delayed",
+        taskId: "t-delayed",
+        effort: "high",
+        workingDirectory: "w",
+      },
+      {
+        timestamp: "2024-02-01T00:00:03Z",
+        type: "worker.completed",
+        batchId: "b-delayed",
+        taskId: "t-delayed",
+        verdict: "PASS",
+        claimed: "PASS",
+        durationSeconds: 1,
+        threadId: "thread-delayed",
+        model: "test-model",
+        effort: "high",
+        usage: null,
+      },
+      {
+        timestamp: "2024-02-01T00:00:04Z",
+        type: "batch.completed",
+        batchId: "b-delayed",
+        durationSeconds: 4,
+        passed: 1,
+        failed: 0,
+      },
+    ];
+    await fs.writeFile(
+      eventsPath,
+      `${events.map((event) => JSON.stringify(event)).join("\n")}\n`,
+      "utf8",
+    );
+
+    await waitFor(
+      () => output.includes("Batch       b-delayed") && output.includes("t-delayed"),
+    );
+    assert.match(output, /State\s+completed/);
+    assert.ok(renderCount >= 2, "the delayed initial read should render activity");
+  } finally {
+    if (watchPromise) {
+      process.emit("SIGINT", "SIGINT");
+      await watchPromise.catch(() => undefined);
+    }
+    process.stdout.write = originalStdoutWrite;
+    await fs.rm(workRoot, { recursive: true, force: true }).catch(() => {});
+  }
+});

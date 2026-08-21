@@ -11,7 +11,7 @@ low-effort model will cheerfully claim it has a tool it does not have.
 
 | Symptom                                                | Cause                                                                                                                      |
 | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| Log file never created                                 | Codex never started the server — config or path problem. Check `codex mcp get`.                                            |
+| Log file never created                                 | Codex never started the server — config or path problem. Check `codex mcp get sol-luna-orchestrator`.                      |
 | Log has `client connected` but no `delegate_task` line | The server is fine; the model chose not to call it. Prompt more directly.                                                  |
 | `user cancelled MCP tool call`                         | `default_tools_approval_mode` missing or `"auto"`. It must be `"approve"`.                                                 |
 | Delegations die at ~60 seconds                         | `tool_timeout_sec` is missing.                                                                                             |

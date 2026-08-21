@@ -13,26 +13,55 @@ body can be written and reviewed before the tag exists. Once a release has
 shipped, clear this file back to the outline below: a copy of an entry that is
 already published only drifts from it.
 
-**Currently in preparation: nothing.** The latest release is v0.7.0.
+**Currently in preparation: v0.7.1.** This is a focused consistency,
+supervisor-context-efficiency, and activity reliability patch.
 
 ---
 
-## Outline for the next release
+## sol-luna-orchestrator v0.7.1
 
-Title the body `sol-luna-orchestrator vX.Y.Z`, then:
+### What this release is for
 
-1. **What this release is for** — one or two sentences, in the reader's terms
-   rather than the diff's, saying who should care.
-2. **Install** — a fenced `bash` block with `npm install -g sol-luna-orchestrator`
-   followed by `sol-luna-orchestrator init`.
-3. **Fixed / Added / Changed** — what actually shipped. State plainly when a
-   release contains no runtime change, and equally plainly when it does; 0.5.1
-   was briefly described as documentation-only when it also carried a real
-   concurrency fix.
-4. **Unchanged** — anything a reader might reasonably assume changed but did not,
-   particularly the benchmark conclusions, which no release so far has altered.
-5. **Links** — README, [`CHANGELOG.md`](CHANGELOG.md), [`SECURITY.md`](SECURITY.md),
-   and the MIT licence.
+This patch makes delegation guidance more concise and consistent with the
+current bounded-work model, while making live activity monitoring more reliable.
+
+### Install
+
+```bash
+npm install -g sol-luna-orchestrator
+sol-luna-orchestrator init
+```
+
+### Changed
+
+- Substantially reduced supervisor guidance and repeated schema narration without
+  changing public delegation semantics. One bounded executable task, sequential
+  dependent work, and parallel independent work retain their existing roles.
+- Corrected implementation-only wording and aligned the README, worker brief,
+  tool contracts, contributor guidance, troubleshooting command, and annotated
+  configuration example with current behavior.
+- Clarified context and result-detail guidance so supervisors can send smaller,
+  task-relevant briefs and review returned evidence proportionally.
+- Made the MCP server advertise the package implementation version instead of a
+  hard-coded placeholder.
+
+### Fixed
+
+- Fixed an `activity --watch` startup race that could miss events when the event
+  file was created and populated before the delayed watcher attached. File-change
+  processing is also serialized to avoid overlapping reads.
+
+### Unchanged
+
+- Worker scheduling, concurrency limits, model routing, cost rates, verification,
+  isolation, scope checks, and public schema shapes/defaults are unchanged.
+
+### Links
+
+- [README](README.md)
+- [`CHANGELOG.md`](CHANGELOG.md)
+- [`SECURITY.md`](SECURITY.md)
+- [MIT licence](LICENSE)
 
 Keep every claim traceable to something measured or shipped. No performance or
 cost claim belongs here that `bench/RESULTS.md` does not support.

@@ -1,9 +1,17 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { compactBatch, compactResult, renderBatch, renderResult } from "./server.js";
+import {
+  compactBatch,
+  compactResult,
+  recordEvent,
+  renderBatch,
+  renderResult,
+} from "./server.js";
 import {
   delegateTaskInputSchema,
   delegateTasksInputSchema,
@@ -387,6 +395,38 @@ test("importing the server module does not start the stdio server", async () => 
   });
 
   assert.ok(exited, "importing server.js hung: the entry-point guard is missing");
+});
+
+test("single-task delegation records its result exactly once with the existing shape", async () => {
+  const workRoot = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-single-event-"));
+  const eventsPath = path.join(workRoot, "events.jsonl");
+
+  try {
+    recordEvent(mockResult(), eventsPath);
+
+    const lines = (await fs.readFile(eventsPath, "utf8")).trim().split("\n");
+    assert.equal(lines.length, 1);
+    const event = JSON.parse(lines[0]!) as Record<string, unknown>;
+    assert.deepEqual(Object.keys(event).sort(), [
+      "attempt",
+      "discrepancies",
+      "durationSeconds",
+      "effort",
+      "filesChanged",
+      "model",
+      "scopeViolations",
+      "timestamp",
+      "trustworthy",
+      "usage",
+      "verdict",
+      "workerClaimedStatus",
+      "workerThreadId",
+    ]);
+    assert.equal(event.workerThreadId, "thread_123");
+    assert.equal(event.verdict, "PASS");
+  } finally {
+    await fs.rm(workRoot, { recursive: true, force: true });
+  }
 });
 
 // --- resultDetail contract ---------------------------------------------------
