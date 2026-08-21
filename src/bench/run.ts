@@ -23,13 +23,19 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { clampParallel } from "../config.js";
 import { runGit } from "../git.js";
 import { PARALLEL_TASKS } from "./parallel-tasks.js";
 import { SCALE_TASKS } from "./scale-tasks.js";
 import { BENCH_TASKS, type BenchTask, type GradeCommand } from "./tasks.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const RESULTS_DIR = path.resolve(HERE, "..", "..", "bench", "results");
+/**
+ * Where run artifacts are written. Resolved from this module's location rather
+ * than the cwd, and deliberately outside the OS temp tree: the per-arm reset
+ * removes a temp workspace, so the two must never be able to nest.
+ */
+export const RESULTS_DIR = path.resolve(HERE, "..", "..", "bench", "results");
 
 const SUPERVISOR_MODEL = process.env.BENCH_SUPERVISOR_MODEL ?? "gpt-5.6-sol";
 const ORCHESTRATOR_NAME = process.env.SOL_LUNA_SERVER_NAME ?? "sol-luna-orchestrator";
@@ -41,6 +47,67 @@ export const SUITES = {
   scale: SCALE_TASKS,
 } as const;
 export type SuiteName = keyof typeof SUITES;
+
+/**
+ * How a delegated result must be read back into the supervisor's transcript.
+ *
+ * This exists because the first width-12 run was not comparable to the width-6
+ * one for a reason that had nothing to do with width. The two supervisors chose
+ * different ways to print the same tool result: width 6 printed only
+ * `result.content`'s text (~3.6k chars), width 12 printed the whole object
+ * including `structuredContent` (~42.8k chars). Parent cost then differed by
+ * roughly 12x on a 2x change in task count, and none of that was measurement.
+ *
+ * The canonical representation is both surfaces, text first. That is what the
+ * server returns — `{ content: [{ type: "text", ... }], structuredContent }`,
+ * see `renderBatch` and the handlers in `server.ts` — and both cross the wire
+ * to the client, which is why the SDK types an MCP result as
+ * `{ content, structured_content }`. It is deliberately the *larger* of the two
+ * behaviours observed: the cheaper one silently discarded a surface a real host
+ * delivers, and picking a representation because it is cheap is how a benchmark
+ * ends up measuring its own prompt.
+ *
+ * Limitation: in this harness Codex reaches the tool through a code-execution
+ * cell, so the supervisor decides what its own transcript receives. A host that
+ * exposes the tool directly injects both surfaces itself and never asks. This
+ * text removes the *choice*; it cannot remove the supervisor's ability to
+ * ignore it, which is why `readMcpCall` below records what actually crossed the
+ * boundary so a reader can tell whether a run is comparable.
+ */
+export const CANONICAL_RESULT_CONSUMPTION = `Print the returned result exactly like this, and print it no other way:
+
+    for (const block of result.content ?? []) {
+      if (block.type === "text") text(block.text);
+    }
+    text(JSON.stringify(result.structuredContent ?? result.structured_content ?? null));
+
+Those are the two surfaces an MCP host puts in front of you when you call the
+tool directly. Print both, in that order, once, unsummarised and unfiltered.`;
+
+/**
+ * The delegation policy every delegating arm runs under.
+ *
+ * It restates what the product's own guidance already says, so the benchmark
+ * measures the shipped policy rather than a benchmark-only one. The lead-in is
+ * conditional so that attaching it to the free-choice arm does not read as an
+ * instruction to delegate.
+ */
+export const DELEGATION_POLICY = `When you delegate, apply the same policy the orchestrator's own guidance states:
+
+- Request \`resultDetail: "compact"\` for every delegated task. Output from
+  verification that failed, was refused or was skipped is retained either way.
+- Consider \`contextCapsule\`, and include it only where it carries something the
+  worker cannot infer from its objective and the files in its scope. Omit it
+  otherwise, and never restate the objective, acceptance criteria, file scope or
+  verification commands in it.
+- Review the returned evidence in proportion to the evidence. A clean PASS —
+  every verdict PASS, trustworthy true, no discrepancies, no scope violations,
+  no integration conflict, integration applied — is accepted as it stands: no
+  \`git diff\`, no rereading the implementations, no rerunning verification the
+  orchestrator already ran, no manual integration review. Anything else is
+  investigated properly.
+
+${CANONICAL_RESULT_CONSUMPTION}`;
 
 /**
  * The four comparison arms.
@@ -83,7 +150,7 @@ delegation is genuinely not workable.`,
 subtasks and delegate them with the delegate_tasks tool using mode:"parallel", so
 the workers run at the same time. Give each task a DISJOINT allowedFiles scope.
 Choose each worker's effort from that subtask's own difficulty — they need not be
-the same. Review what comes back, integrate it, and confirm the whole suite passes.
+the same. Review what comes back and integrate it.
 Only implement something yourself if delegation is genuinely not workable.`,
   },
 
@@ -114,8 +181,7 @@ soonest. Make sure the required checks pass before you finish.`,
 Do not implement any module yourself. Call the delegate_tasks tool exactly once with
 mode:"sequential" and one task per module. Choose each worker's effort from that
 subtask's own difficulty. Give each task its own allowedFiles scope, acceptance
-criteria and verification command. Afterwards, review the results and confirm the
-whole suite passes.`,
+criteria and verification command. Afterwards, review the results.`,
   },
   "par-forced": {
     label: "Sol high + parallel Luna (mandated)",
@@ -124,12 +190,10 @@ whole suite passes.`,
     guidance: `You are a supervising architect and you MUST delegate this work.
 Do not implement any module yourself.
 
-Call the delegate_tasks tool exactly once with mode:"parallel" and one task per module, so the workers run at the same time. Give each task a DISJOINT allowedFiles scope covering only its own module. Choose each worker's effort from that subtask's own difficulty.
-
-You MUST request \`resultDetail: "compact"\` in your delegation.
-
-After delegation returns, evaluate the orchestrator evidence. If all worker verdicts pass, there are no scope violations, no integration conflicts, and integration succeeds, you must STOP and return the result immediately.
-Do NOT subsequently run git diff, do NOT reread the implementations, do NOT rerun verification commands, and do NOT perform manual integration review. The orchestrator evidence is sufficient.`,
+Call the delegate_tasks tool exactly once with mode:"parallel" and one task per
+module, so the workers run at the same time. Give each task a DISJOINT
+allowedFiles scope covering only its own module. Choose each worker's effort
+from that subtask's own difficulty.`,
   },
 } as const;
 
@@ -174,6 +238,70 @@ export interface Breakdown {
   peakConcurrency: number | null;
 }
 
+/** One MCP tool call the supervisor made, as observed on the event stream. */
+export interface McpCallRecord {
+  tool: string;
+  /** Tasks in the call, for `delegate_tasks`; null for a single delegation. */
+  taskCount: number | null;
+  /** `resultDetail` the supervisor actually asked for, or null if it omitted it. */
+  resultDetail: string | null;
+  /** Whether any task in the call carried a context capsule. */
+  contextCapsule: boolean;
+  /** Characters in the readable text surface the server returned. */
+  contentChars: number;
+  /** Characters in `structuredContent`, serialised as it crosses the wire. */
+  structuredChars: number;
+  /**
+   * Characters in the canonical representation: both surfaces, text first.
+   * See {@link CANONICAL_RESULT_CONSUMPTION}. This is what the supervisor was
+   * told to ingest, so two runs whose parent costs differ can be checked
+   * against it before the difference is attributed to anything else.
+   */
+  canonicalChars: number;
+}
+
+/**
+ * Read one `mcp_tool_call` item into a record.
+ *
+ * Deliberately total: a call that failed, returned nothing, or arrived in a
+ * shape this harness did not expect still produces a record with zeroes rather
+ * than throwing, because losing a whole benchmark run to a telemetry surprise
+ * is worse than an incomplete row.
+ */
+export function readMcpCall(item: {
+  tool?: unknown;
+  arguments?: unknown;
+  result?: { content?: unknown; structured_content?: unknown } | undefined;
+}): McpCallRecord {
+  const args = (item.arguments ?? {}) as Record<string, unknown>;
+  const tasks = Array.isArray(args.tasks)
+    ? (args.tasks as Record<string, unknown>[])
+    : null;
+
+  const content = Array.isArray(item.result?.content) ? item.result.content : [];
+  const contentChars = content.reduce(
+    (total: number, block: unknown) =>
+      total + String((block as { text?: unknown })?.text ?? "").length,
+    0,
+  );
+  const structured = item.result?.structured_content;
+  const structuredChars =
+    structured === undefined ? 0 : JSON.stringify(structured ?? null).length;
+
+  const capsuleOn = (task: Record<string, unknown>): boolean =>
+    task.contextCapsule !== undefined && task.contextCapsule !== null;
+
+  return {
+    tool: typeof item.tool === "string" ? item.tool : "unknown",
+    taskCount: tasks ? tasks.length : null,
+    resultDetail: typeof args.resultDetail === "string" ? args.resultDetail : null,
+    contextCapsule: tasks ? tasks.some(capsuleOn) : capsuleOn(args),
+    contentChars,
+    structuredChars,
+    canonicalChars: contentChars + structuredChars,
+  };
+}
+
 export interface RunRecord {
   suite: SuiteName;
   taskId: string;
@@ -197,6 +325,13 @@ export interface RunRecord {
   workerCount: number;
   workerEfforts: string[];
   batches: Array<{ mode: string; taskCount: number; maxParallel: number }>;
+  /**
+   * What actually crossed the MCP boundary, one entry per delegation call.
+   * Empty when the supervisor never called a delegation tool, and empty for
+   * every solo arm. Makes the canonical ingestion volume a recorded number
+   * rather than something a reader has to infer from the parent's token count.
+   */
+  mcpCalls: McpCallRecord[];
   integrationConflicts: number;
   breakdown: Breakdown;
   verificationFailed: number;
@@ -257,8 +392,20 @@ async function materialize(task: BenchTask): Promise<string> {
   return workspace;
 }
 
-const buildPrompt = (task: BenchTask, arm: Arm): string =>
-  `${task.objective}\n\n${ARMS[arm].guidance}`;
+/**
+ * The exact text sent to a supervisor.
+ *
+ * Every delegating arm gets {@link DELEGATION_POLICY} appended here rather than
+ * in its own `guidance`, so the policy — and in particular the canonical
+ * result-consumption path — is byte-identical across arms and across fixture
+ * widths, and a new arm cannot be added without it.
+ */
+export const buildPrompt = (task: BenchTask, arm: Arm): string => {
+  const spec = ARMS[arm];
+  const parts = [task.objective, spec.guidance];
+  if (spec.delegation) parts.push(DELEGATION_POLICY);
+  return parts.join("\n\n");
+};
 
 interface Telemetry {
   delegations: DelegationRecord[];
@@ -473,6 +620,47 @@ export function readTelemetry(
   };
 }
 
+/**
+ * How many workers the orchestrator is allowed to run at once for one arm.
+ *
+ * A fixture with N independent streams needs N concurrent workers before
+ * parallel execution can show what it is worth. The shipped default of 3 would
+ * queue the rest and cap the speedup regardless of fixture size, which is what
+ * made the first width-12 run measure a peak of 8 and therefore measure waves
+ * rather than 12-way concurrency.
+ *
+ * The value is clamped by the runtime's own {@link clampParallel}, so a
+ * benchmark can never ask the orchestrator for more than it will honour and
+ * then record a number it did not actually run at. `BENCH_MAX_PARALLEL` is an
+ * explicit operator override; a value that is not a usable number is an error
+ * rather than something silently coerced to 1, because a silently-1 run looks
+ * like a valid measurement afterwards.
+ *
+ * This changes nothing for the solo arms, which have no workers, and nothing
+ * for the production default — that still comes from `SOL_LUNA_MAX_PARALLEL`
+ * in `config.ts` and is still 3 when unset.
+ */
+export function getConfiguredConcurrency(
+  armSpec: { delegation: boolean },
+  task: { streams?: number | null },
+): number | null {
+  if (!armSpec.delegation) return null;
+
+  const override = process.env.BENCH_MAX_PARALLEL;
+  if (override !== undefined) {
+    const parsed = Number(override);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      throw new Error(
+        `BENCH_MAX_PARALLEL must be a number >= 1, got "${override}". ` +
+          `Unset it to derive concurrency from the fixture's stream count.`,
+      );
+    }
+    return clampParallel(parsed);
+  }
+
+  return clampParallel(Math.max(task.streams ?? 3, 1));
+}
+
 async function runArm(
   suite: SuiteName,
   task: BenchTask,
@@ -492,15 +680,9 @@ async function runArm(
 
   const eventsOffset = fs.existsSync(eventsFile) ? fs.statSync(eventsFile).size : 0;
 
-  // A fixture with N independent streams needs N concurrent workers before
-  // parallel execution can show what it is worth; the shipped default of 3
-  // would otherwise queue the rest and cap the speedup at 3x regardless of
-  // fixture size. This is a non-default configuration and is recorded in the
-  // results file so no reader has to assume otherwise. It changes nothing for
-  // the solo arms, which have no workers.
-  const maxParallel = armSpec.delegation
-    ? Math.min(Math.max(task.streams ?? 3, 1), 8)
-    : null;
+  // A non-default configuration, recorded per run as `maxParallelConfigured`
+  // so no reader has to assume otherwise. See getConfiguredConcurrency above.
+  const maxParallel = getConfiguredConcurrency(armSpec, task);
 
   const config = armSpec.delegation
     ? {
@@ -527,6 +709,7 @@ async function runArm(
 
   let supervisorUsage: RunRecord["supervisorUsage"] = null;
   let agentError: string | null = null;
+  const mcpCalls: McpCallRecord[] = [];
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TASK_TIMEOUT_SECONDS * 1000);
@@ -543,6 +726,8 @@ async function runArm(
           outputTokens: event.usage.output_tokens,
           reasoningOutputTokens: event.usage.reasoning_output_tokens,
         };
+      } else if (event.type === "item.completed" && event.item.type === "mcp_tool_call") {
+        mcpCalls.push(readMcpCall(event.item));
       } else if (event.type === "turn.failed") {
         agentError = event.error.message;
       } else if (event.type === "error") {
@@ -623,6 +808,7 @@ async function runArm(
     workerCount: Math.max(telemetry.delegations.length, workerEfforts.length),
     workerEfforts,
     batches: telemetry.batches,
+    mcpCalls,
     integrationConflicts: telemetry.integrationConflicts,
     breakdown: telemetry.breakdown,
     verificationFailed: telemetry.verificationFailed,
@@ -652,7 +838,18 @@ export function parseArgs(argv: string[]): {
 
   const suiteRaw = get("--suite");
   if (!suiteRaw) {
-    throw new Error("A --suite must be specified to avoid accidentally invoking a live benchmark.");
+    throw new Error(
+      "A --suite must be specified to avoid accidentally invoking a live benchmark.",
+    );
+  }
+  if (!Object.prototype.hasOwnProperty.call(SUITES, suiteRaw)) {
+    // Catches both a typo and `--suite --reps 1`, where the next flag would
+    // otherwise be taken as the suite name and fall through to a default arm
+    // list. Either way the operator asked for something that does not exist,
+    // and a live benchmark is too expensive to start on a guess.
+    throw new Error(
+      `Unknown --suite "${suiteRaw}". Available: ${Object.keys(SUITES).join(", ")}.`,
+    );
   }
   const suite = suiteRaw as SuiteName;
   const arms = list(get("--arms")) as Arm[];

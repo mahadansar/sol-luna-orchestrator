@@ -139,19 +139,22 @@ export const delegateTaskInputShape = {
     })
     .optional()
     .describe(
-      "Optional structured context giving the worker a richer brief: selected " +
-        "relevant information rather than a dump of your whole session. Every " +
-        "field is optional and empty fields are omitted from the worker's prompt.",
+      "Optional structured context. Always consider it. Include only when useful " +
+        "to carry selected task-relevant background the worker cannot infer. " +
+        "Omit when unnecessary. Never dump the parent transcript/session. " +
+        "Never duplicate information adequately expressed in other fields. " +
+        "The capsule supplements, but never replaces those fields. " +
+        "Empty fields are omitted.",
     ),
 
   resultDetail: z
     .enum(["full", "compact"])
     .default("full")
     .describe(
-      "full (default) = every field, including the stdout/stderr of verification " +
-        "commands that passed. compact = the same packet with the output of passed " +
-        "commands dropped; verdicts, discrepancies, scope violations and the output " +
-        "of failing or refused commands are always kept.",
+      "Choose explicitly. Default supervisor behavior for routine delegation is compact. " +
+        "Use full only when successful verification output is genuinely needed. " +
+        "The schema default remains full solely for backwards compatibility; " +
+        "failed, refused, or skipped verification output is always retained in compact mode.",
     ),
 
   previousAttempts: z

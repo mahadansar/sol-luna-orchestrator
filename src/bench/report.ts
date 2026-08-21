@@ -321,6 +321,14 @@ function main(): void {
       "value is recorded per run as `maxParallelConfigured`. The solo arms have " +
       "no workers, so the setting does not affect them.",
   );
+  lines.push(
+    "- Delegating arms are told to read a tool result as both of the surfaces the " +
+      "server returns — the `content` text, then `structuredContent` — so parent " +
+      "cost is comparable between arms and between fixture widths. What actually " +
+      "crossed the boundary is recorded per run as `mcpCalls[].canonicalChars`; a " +
+      "parent cost out of proportion to it means that run was not read the " +
+      "canonical way and is not comparable.",
+  );
 
   const report = lines.join("\n");
   console.log(report);

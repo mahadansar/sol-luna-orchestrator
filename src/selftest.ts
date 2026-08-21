@@ -370,15 +370,77 @@ test("unparseable worker output fails the task without inventing a summary", () 
   assert.ok(result.errors.some((e) => /not valid JSON/.test(e)));
 });
 
-test("the review checklist always tells Sol to read the diff", () => {
+test("the review checklist always restates every acceptance criterion", () => {
   const result = analyze(makeReport(), [passingRun]);
-  assert.ok(result.reviewChecklist.some((item) => /Read the actual diff/.test(item)));
-  // Every acceptance criterion becomes its own checklist line.
   assert.ok(
     result.reviewChecklist.some((item) =>
       item.includes("Pagination returns the correct final page."),
     ),
   );
+});
+
+const readsTheDiff = (items: string[]): boolean =>
+  items.some((item) => /Read the actual diff/.test(item));
+
+test("a clean verified PASS is not told to reread the whole diff", () => {
+  // The orchestrator re-ran the command itself and it passed, the worker's
+  // claims match, and nothing changed that it did not declare. A diff re-read
+  // would be reconstructing evidence that is already in the result.
+  const result = analyze(makeReport(), [passingRun]);
+  assert.equal(result.verdict, "PASS");
+  assert.equal(result.trustworthy, true);
+  assert.equal(readsTheDiff(result.reviewChecklist), false);
+  assert.ok(
+    result.reviewChecklist.some((item) => /high-risk or architecturally/.test(item)),
+    "judgement about risk is still Sol's to make",
+  );
+});
+
+test("a failing verdict still demands the diff", () => {
+  const result = analyze(makeReport(), [failingRun]);
+  assert.equal(result.verdict, "FAILED");
+  assert.ok(readsTheDiff(result.reviewChecklist));
+});
+
+test("a discrepancy still demands the diff", () => {
+  const result = analyze(makeReport(), [rejectedRun]);
+  assert.equal(result.trustworthy, false);
+  assert.ok(readsTheDiff(result.reviewChecklist));
+});
+
+test("a passing run that was never executed still demands the diff", () => {
+  const result = analyze(makeReport({ verification: [] }), [
+    { ...passingRun, execution: "skipped" },
+  ]);
+  assert.ok(readsTheDiff(result.reviewChecklist));
+});
+
+test("a file the worker never mentioned is named and still demands the diff", () => {
+  const result = analyze(
+    makeReport(),
+    [passingRun],
+    {},
+    {
+      filesChanged: [
+        { path: "src/pagination.ts", kind: "update" },
+        { path: "src/secrets.ts", kind: "update" },
+      ],
+    },
+  );
+  assert.equal(result.verdict, "PASS");
+  assert.ok(
+    result.reviewChecklist.some((item) => item.includes("src/secrets.ts")),
+    result.reviewChecklist.join(" | "),
+  );
+  assert.ok(readsTheDiff(result.reviewChecklist));
+});
+
+test("test-weakening is still called out whenever the diff is", () => {
+  for (const runs of [[failingRun], [rejectedRun]]) {
+    const items = analyze(makeReport(), runs).reviewChecklist;
+    assert.equal(readsTheDiff(items), true);
+    assert.ok(items.some((item) => /weaken tests, loosen types/.test(item)));
+  }
 });
 
 test("the thread id is always returned so Sol can inspect the session", () => {
