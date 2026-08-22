@@ -1,5 +1,5 @@
 /**
- * Static configuration for the Sol -> Luna delegation bridge.
+ * Static configuration for the Sol-Luna delegation bridge.
  *
  * Everything here is operator-controlled: it comes from the environment the
  * server was launched with, never from the model. That separation matters —
@@ -34,11 +34,11 @@ export const WORKER_MARKER_ENV = "SOL_LUNA_WORKER";
 export const IS_WORKER_PROCESS = process.env[WORKER_MARKER_ENV] === "1";
 
 /**
- * Reasoning efforts Sol is allowed to select for a delegated task.
+ * Reasoning efforts the parent orchestrator may select for a delegated task.
  *
  * `gpt-5.6-luna` advertises low|medium|high|xhigh|max. We deliberately expose
  * only the top four: delegation always carries a fixed handoff cost, so a
- * `low`-effort worker is never the right trade against Sol just doing it.
+ * `low`-effort worker is never the right trade against the parent doing it.
  */
 export const EFFORTS = ["medium", "high", "xhigh", "max"] as const;
 export type Effort = (typeof EFFORTS)[number];
@@ -197,5 +197,5 @@ export const KEEP_WORKTREES = (
  */
 export const ALLOW_DIRTY_WORKTREE_BASE = process.env.SOL_LUNA_ALLOW_DIRTY === "1";
 
-/** Truncation limit for command output echoed back to Sol. */
+/** Truncation limit for command output echoed back to the parent orchestrator. */
 export const MAX_OUTPUT_CHARS = 4000;

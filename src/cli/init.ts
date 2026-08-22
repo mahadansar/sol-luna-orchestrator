@@ -6,6 +6,13 @@ import {
   readConfig,
   writeConfig,
 } from "./codex.js";
+import {
+  discoveryHintPath,
+  ensureDiscoveryHint,
+  inspectDiscoveryHint,
+  readDiscoveryInstructions,
+  writeDiscoveryInstructions,
+} from "./discovery-hint.js";
 import { defaultEventsPath } from "./events-path.js";
 import { codexConfigPath, installLocation } from "./paths.js";
 import {
@@ -47,6 +54,7 @@ export interface InitOptions {
   dryRun: boolean;
   force: boolean;
   allowEphemeral: boolean;
+  noDiscoveryHint: boolean;
   logPath?: string;
   eventsPath?: string;
   /** Arguments that matched no known flag. */
@@ -55,7 +63,12 @@ export interface InitOptions {
   missingValue: string[];
 }
 
-const INIT_BOOLEAN_FLAGS = ["--dry-run", "--force", "--allow-ephemeral"];
+const INIT_BOOLEAN_FLAGS = [
+  "--dry-run",
+  "--force",
+  "--allow-ephemeral",
+  "--no-discovery-hint",
+];
 const INIT_VALUE_FLAGS = ["--log", "--events"];
 
 /**
@@ -72,6 +85,7 @@ export function parseInitOptions(argv: string[]): InitOptions {
     dryRun: false,
     force: false,
     allowEphemeral: false,
+    noDiscoveryHint: false,
     unknown: [],
     missingValue: [],
   };
@@ -83,6 +97,7 @@ export function parseInitOptions(argv: string[]): InitOptions {
       if (arg === "--dry-run") options.dryRun = true;
       if (arg === "--force") options.force = true;
       if (arg === "--allow-ephemeral") options.allowEphemeral = true;
+      if (arg === "--no-discovery-hint") options.noDiscoveryHint = true;
       continue;
     }
 
@@ -214,6 +229,9 @@ export async function initCommand(argv: string[]): Promise<number> {
 
   const configPath = codexConfigPath();
   const before = readConfig(configPath);
+  const instructionsPath = discoveryHintPath();
+  const instructionsBefore = readDiscoveryInstructions(instructionsPath);
+  const discoveryBefore = inspectDiscoveryHint(instructionsBefore);
   const settingsBefore = inspectSettings(before);
 
   // The config file is what Codex actually loads, so it is the authority here.
@@ -233,8 +251,13 @@ export async function initCommand(argv: string[]): Promise<number> {
   const eventsConfigured = readKey(before, serverEnvTable(), "SOL_LUNA_EVENTS") !== null;
 
   const registrationOk = isRegistered && pathMatches && commandMatches;
+  const discoveryHintConfigured =
+    options.noDiscoveryHint || discoveryBefore.exactCount > 0;
   const alreadyDone =
-    registrationOk && settingsSatisfied(settingsBefore) && eventsConfigured;
+    registrationOk &&
+    settingsSatisfied(settingsBefore) &&
+    eventsConfigured &&
+    discoveryHintConfigured;
 
   // `--log` and `--events` each name a specific path, so either is a request to
   // change one. Letting the "nothing to do" shortcut swallow them would make
@@ -277,6 +300,13 @@ export async function initCommand(argv: string[]): Promise<number> {
   } else if (!eventsConfigured) {
     planned.push(`set SOL_LUNA_EVENTS so \`activity\` works (${eventsPath})`);
   }
+  if (options.noDiscoveryHint) {
+    if (discoveryBefore.exactCount === 0) {
+      planned.push(`skip Codex discovery hint (--no-discovery-hint)`);
+    }
+  } else if (discoveryBefore.exactCount === 0) {
+    planned.push(`install Codex discovery hint in ${instructionsPath}`);
+  }
 
   out();
   out(bold("Planned changes"));
@@ -305,6 +335,13 @@ export async function initCommand(argv: string[]): Promise<number> {
     ({ backupPath } = writeConfig(text, configPath));
   }
 
+  if (!options.noDiscoveryHint) {
+    const instructionsAfter = ensureDiscoveryHint(instructionsBefore);
+    if (instructionsAfter !== instructionsBefore) {
+      writeDiscoveryInstructions(instructionsAfter, instructionsPath);
+    }
+  }
+
   // --- Verify what we wrote ------------------------------------------------
   const after = readConfig(configPath);
   const settingsAfter = inspectSettings(after);
@@ -331,6 +368,17 @@ export async function initCommand(argv: string[]): Promise<number> {
     return 1;
   }
 
+  const discoveryAfter = inspectDiscoveryHint(
+    readDiscoveryInstructions(instructionsPath),
+  );
+  if (!options.noDiscoveryHint && discoveryAfter.exactCount === 0) {
+    out();
+    out(`${symbols.fail} Codex discovery hint did not verify after writing.`);
+    out(`    Expected managed content in ${instructionsPath}`);
+    if (backupPath) out(`    Previous config saved at ${backupPath}`);
+    return 1;
+  }
+
   out();
   out(`${symbols.ok} ${bold("Sol-Luna Orchestrator configured.")}`);
   printSummary(location.serverEntry, after);
@@ -339,7 +387,9 @@ export async function initCommand(argv: string[]): Promise<number> {
   out();
   out("Next:");
   out("  1. Open Codex");
-  out("  2. Select GPT-5.6 Sol at High effort");
+  out(
+    "  2. Select GPT-5.6 Sol at Medium effort (creator example only; compatible parent models are supported)",
+  );
   out("  3. Work normally");
   out();
   out(dim("Run `sol-luna-orchestrator doctor` any time."));

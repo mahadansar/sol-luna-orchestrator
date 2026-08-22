@@ -125,13 +125,21 @@ Only control characters are stripped, from both — enough to stop a crafted
 string forging a log line, not a secret filter. Keep both outside the
 repository, and read either before attaching it to a public issue.
 
-**`init` configures both by default**, under your Codex home, because
+**`init` configures both logs by default**, under your Codex home, because
 `sol-luna-orchestrator activity` cannot work without the event log. Nothing is
 transmitted anywhere — these are local files — but they do accumulate a record
 of what you delegated across every project. To turn either off, delete its key
 from `[mcp_servers.sol-luna-orchestrator.env]`; the server treats an unset value
 as "do not write". `uninstall` removes those keys but deliberately leaves the
 files themselves alone, since the history is yours rather than ours to delete.
+
+Normal `init` also writes a tiny exact discovery block to the active user-owned
+global Codex instructions (`AGENTS.override.md` when active, otherwise
+`AGENTS.md`). The block names this MCP but does not force delegation or start
+workers. Existing instructions are preserved byte-for-byte; uninstall removes
+only exact managed blocks from those two global files, and
+`init --no-discovery-hint` opts out. `status` and `doctor` report missing or
+modified active hint content so an operator can review it without a model call.
 
 ## What is NOT enforced — read this
 

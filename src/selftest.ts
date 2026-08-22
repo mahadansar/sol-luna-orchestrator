@@ -170,7 +170,7 @@ test("verification captures output and enforces its timeout", async () => {
   assert.match(slow.output, /timed out/);
 });
 
-// --- Claim checking: the part that stops Sol trusting a bogus PASS ----------
+// --- Claim checking: stops the parent trusting a bogus PASS -----------------
 
 const REPO = path.resolve("/repo");
 
@@ -392,7 +392,7 @@ test("a clean verified PASS is not told to reread the whole diff", () => {
   assert.equal(readsTheDiff(result.reviewChecklist), false);
   assert.ok(
     result.reviewChecklist.some((item) => /high-risk or architecturally/.test(item)),
-    "judgement about risk is still Sol's to make",
+    "judgement about risk is still the parent's to make",
   );
 });
 
@@ -443,7 +443,7 @@ test("test-weakening is still called out whenever the diff is", () => {
   }
 });
 
-test("the thread id is always returned so Sol can inspect the session", () => {
+test("the thread id is always returned so the parent can inspect the session", () => {
   assert.equal(analyze(makeReport(), [passingRun]).workerThreadId, "thread-abc");
 });
 
@@ -519,7 +519,7 @@ test("BLOCKED advises fixing the brief at the same effort", () => {
   assert.match(result.escalationAdvice ?? "", /same effort \(high\)/);
 });
 
-test("the verification policy in force is reported to Sol", () => {
+test("the verification policy in force is reported to the parent", () => {
   assert.equal(typeof analyze(makeReport(), [passingRun]).verificationMode, "string");
 });
 

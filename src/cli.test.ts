@@ -29,6 +29,7 @@ import {
   upsertKey,
 } from "./cli/toml-edit.js";
 import { parseInitOptions } from "./cli/init.js";
+import { ensureDiscoveryHint } from "./cli/discovery-hint.js";
 import { minimumNode } from "./cli/paths.js";
 import { inspectSettings, settingsSatisfied } from "./cli/settings.js";
 
@@ -416,13 +417,38 @@ test("init --dry-run writes nothing", async () => {
 test("uninstall --dry-run writes nothing and reports scope", async () => {
   const home = emptyCodexHome();
   const configPath = path.join(home, "config.toml");
+  const instructionsPath = path.join(home, "AGENTS.md");
   fs.writeFileSync(configPath, REALISTIC_CONFIG, "utf8");
+  fs.writeFileSync(instructionsPath, ensureDiscoveryHint("# Keep this.\n"), "utf8");
   const before = fs.readFileSync(configPath, "utf8");
+  const instructionsBefore = fs.readFileSync(instructionsPath, "utf8");
 
   const result = await runCli(["uninstall", "--dry-run"], { CODEX_HOME: home });
 
   assert.equal(fs.readFileSync(configPath, "utf8"), before);
+  assert.equal(fs.readFileSync(instructionsPath, "utf8"), instructionsBefore);
   assert.equal(result.code, 0);
+});
+
+test("status and doctor report the deterministic discovery-hint state", async () => {
+  const home = emptyCodexHome();
+  fs.writeFileSync(
+    path.join(home, "AGENTS.md"),
+    ensureDiscoveryHint("# Keep this.\n"),
+    "utf8",
+  );
+
+  const status = await runCli(["status"], { CODEX_HOME: home });
+  assert.match(status.stdout, /Discovery hint/);
+  assert.match(status.stdout, /installed/);
+
+  const doctor = await runCli(["doctor", "--json"], { CODEX_HOME: home });
+  const report = JSON.parse(doctor.stdout) as {
+    checks: Array<{ name: string; status: string; detail?: string }>;
+  };
+  const check = report.checks.find((entry) => entry.name === "Codex discovery hint");
+  assert.equal(check?.status, "ok");
+  assert.match(check?.detail ?? "", /AGENTS\.md/);
 });
 
 test("uninstall on an unconfigured machine is a safe no-op", async () => {

@@ -61,13 +61,22 @@ interface CliResult {
 
 function cli(args: string[], home: string): Promise<CliResult> {
   return new Promise((resolve) => {
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      CODEX_HOME: home,
+      NO_COLOR: "1",
+    };
+    // This smoke owns an isolated Codex home. A caller's one-off activity/log
+    // override would otherwise leak global state into that isolated lifecycle.
+    delete env.SOL_LUNA_EVENTS;
+    delete env.SOL_LUNA_LOG;
     execFile(
       process.execPath,
       [CLI, ...args],
       {
         timeout: 120_000,
         windowsHide: true,
-        env: { ...process.env, CODEX_HOME: home, NO_COLOR: "1" },
+        env,
       },
       (error, stdout, stderr) => {
         const code =
@@ -102,6 +111,14 @@ const writeConfig = (home: string, contents: string): void => {
   fs.writeFileSync(path.join(home, "config.toml"), contents, "utf8");
 };
 
+const readInstructions = (home: string): string => {
+  try {
+    return fs.readFileSync(path.join(home, "AGENTS.md"), "utf8");
+  } catch {
+    return "";
+  }
+};
+
 const cleanup = (home: string): void => {
   fs.rmSync(home, { recursive: true, force: true, maxRetries: 3 });
 };
@@ -129,6 +146,8 @@ const assertUserConfigIntact = (text: string, context: string): void => {
 async function scenarioFreshInstall(): Promise<void> {
   console.log("\n[1] init on a machine with an existing hand-written config");
   const home = makeHome(UNRELATED_CONFIG);
+  const userInstructions = "# Personal instructions\r\nKeep this byte-for-byte.\r\n";
+  fs.writeFileSync(path.join(home, "AGENTS.md"), userInstructions, "utf8");
   try {
     const result = await cli(["init"], home);
     check("init succeeds", () =>
@@ -148,6 +167,11 @@ async function scenarioFreshInstall(): Promise<void> {
     check("unrelated config survived init", () =>
       assertUserConfigIntact(text, "after init"),
     );
+    check("managed discovery hint preserves user instructions", () => {
+      const instructions = readInstructions(home);
+      assert.match(instructions, /BEGIN SOL-LUNA-ORCHESTRATOR DISCOVERY HINT/);
+      assert.ok(instructions.endsWith(userInstructions));
+    });
     check("init printed next steps", () =>
       assert.match(result.stdout, /Select GPT-5\.6 Sol/),
     );
@@ -228,6 +252,7 @@ async function scenarioIdempotent(): Promise<void> {
   try {
     await cli(["init"], home);
     const first = readConfig(home);
+    const firstInstructions = readInstructions(home);
 
     const second = await cli(["init"], home);
     const after = readConfig(home);
@@ -236,6 +261,9 @@ async function scenarioIdempotent(): Promise<void> {
       assert.match(second.stdout, /Already configured/),
     );
     check("second init changed nothing", () => assert.equal(after, first));
+    check("second init did not duplicate or rewrite the discovery hint", () =>
+      assert.equal(readInstructions(home), firstInstructions),
+    );
     check("no duplicate server table", () =>
       assert.equal(after.match(/\[mcp_servers\.sol-luna-orchestrator\]/g)?.length, 1),
     );
@@ -325,6 +353,8 @@ async function scenarioDoctorHealthy(): Promise<void> {
 async function scenarioUninstall(): Promise<void> {
   console.log("\n[5] uninstall removes only our entry");
   const home = makeHome(UNRELATED_CONFIG);
+  const userInstructions = "# Keep my Codex instructions.\n";
+  fs.writeFileSync(path.join(home, "AGENTS.md"), userInstructions, "utf8");
   try {
     await cli(["init"], home);
 
@@ -342,6 +372,9 @@ async function scenarioUninstall(): Promise<void> {
     });
     check("unrelated config survived uninstall", () =>
       assertUserConfigIntact(text, "after uninstall"),
+    );
+    check("uninstall removed only the managed discovery hint", () =>
+      assert.equal(readInstructions(home), userInstructions),
     );
 
     const again = await cli(["uninstall"], home);
@@ -410,6 +443,61 @@ async function scenarioEmptyConfig(): Promise<void> {
   }
 }
 
+async function scenarioDiscoveryOptOut(): Promise<void> {
+  console.log("\n[10] init can opt out of the discovery hint");
+  const home = makeHome();
+  const userInstructions = "# Keep this opt-out instruction.\n";
+  fs.writeFileSync(path.join(home, "AGENTS.md"), userInstructions, "utf8");
+  try {
+    const result = await cli(["init", "--no-discovery-hint"], home);
+    check("opt-out init succeeds", () =>
+      assert.equal(result.code, 0, result.stdout + result.stderr),
+    );
+    check("opt-out leaves AGENTS.md byte-identical", () =>
+      assert.equal(readInstructions(home), userInstructions),
+    );
+  } finally {
+    cleanup(home);
+  }
+}
+
+async function scenarioDiscoveryOverride(): Promise<void> {
+  console.log("\n[11] init targets an active global AGENTS.override.md");
+  const home = makeHome();
+  const baseInstructions = "# Base instructions stay inactive and untouched.\n";
+  const overrideInstructions = "# Active override stays intact.\n";
+  fs.writeFileSync(path.join(home, "AGENTS.md"), baseInstructions, "utf8");
+  fs.writeFileSync(path.join(home, "AGENTS.override.md"), overrideInstructions, "utf8");
+  try {
+    const init = await cli(["init"], home);
+    check("override init succeeds", () =>
+      assert.equal(init.code, 0, init.stdout + init.stderr),
+    );
+    check("inactive AGENTS.md is untouched", () =>
+      assert.equal(readInstructions(home), baseInstructions),
+    );
+    check("managed hint is installed in the active override", () => {
+      const override = fs.readFileSync(path.join(home, "AGENTS.override.md"), "utf8");
+      assert.match(override, /BEGIN SOL-LUNA-ORCHESTRATOR DISCOVERY HINT/);
+      assert.ok(override.endsWith(overrideInstructions));
+    });
+
+    const uninstall = await cli(["uninstall"], home);
+    check("override uninstall succeeds", () =>
+      assert.equal(uninstall.code, 0, uninstall.stdout + uninstall.stderr),
+    );
+    check("uninstall restores both instruction files", () => {
+      assert.equal(readInstructions(home), baseInstructions);
+      assert.equal(
+        fs.readFileSync(path.join(home, "AGENTS.override.md"), "utf8"),
+        overrideInstructions,
+      );
+    });
+  } finally {
+    cleanup(home);
+  }
+}
+
 async function scenarioMalformedConfig(): Promise<void> {
   console.log("\n[8] a malformed config is not silently destroyed");
   const home = makeHome("[unclosed\nthis is not valid toml = = =\n");
@@ -455,6 +543,8 @@ async function main(): Promise<void> {
   await scenarioEmptyConfig();
   await scenarioMalformedConfig();
   await scenarioMigrateFromV060();
+  await scenarioDiscoveryOptOut();
+  await scenarioDiscoveryOverride();
 
   console.log(
     failures === 0

@@ -57,7 +57,8 @@ async function main(): Promise<void> {
 
   check("server sends supervisor instructions", () => {
     const instructions = client.getInstructions() ?? "";
-    assert.match(instructions, /Sol supervises/);
+    assert.match(instructions, /compatible parent Codex model/);
+    assert.match(instructions, /Sol-Luna Orchestrator/);
     assert.match(instructions, /claims are not orchestrator evidence/);
   });
 
@@ -94,7 +95,7 @@ async function main(): Promise<void> {
     }
   });
 
-  check("the batch description tells Sol when parallel is inappropriate", () => {
+  check("the batch description tells the parent when parallel is inappropriate", () => {
     assert.match(batchTool?.description ?? "", /disjoint/i);
     assert.match(batchTool?.description ?? "", /sequential/);
   });
@@ -132,7 +133,7 @@ async function main(): Promise<void> {
     assert.equal(effort.default, "high");
   });
 
-  check("effort field tells Sol when to pick max", () => {
+  check("effort field tells the parent when to pick max", () => {
     const effort = properties.effort as { description?: string };
     assert.match(effort.description ?? "", /max = genuinely hard/i);
     assert.match(effort.description ?? "", /task's difficulty/i);

@@ -39,10 +39,18 @@ test("backwards-compatible guidance fields retain their API defaults", () => {
 });
 
 test("server instructions keep roles, evidence authority, and proportional review", () => {
-  assert.match(SERVER_INSTRUCTIONS, /Sol supervises/i);
+  assert.doesNotMatch(SERVER_INSTRUCTIONS, /Sol supervises/i);
+  assert.match(SERVER_INSTRUCTIONS, /Sol-Luna Orchestrator/i);
+  assert.match(SERVER_INSTRUCTIONS, /compatible parent Codex model/i);
+  assert.match(SERVER_INSTRUCTIONS, /parent supervisor owns/i);
   assert.match(SERVER_INSTRUCTIONS, /workers execute bounded tasks/i);
   assert.match(SERVER_INSTRUCTIONS, /claims are not orchestrator evidence/i);
   assert.match(SERVER_INSTRUCTIONS, /proportion/i);
+  assert.match(SERVER_INSTRUCTIONS, /without repetitive polling or status narration/i);
+  assert.match(
+    SERVER_INSTRUCTIONS,
+    /result, error, cancellation, timeout, or meaningful new state/i,
+  );
 });
 
 test("one substantial bounded task may be delegated without another seam", () => {
@@ -88,7 +96,7 @@ test("delegation remains broader than implementation", () => {
   assert.match(prompt, /bounded execution worker/i);
 });
 
-test("Sol retains strategy and final judgment", () => {
+test("the parent orchestrator retains strategy and final judgment", () => {
   for (const retained of [
     "architecture",
     "decomposition",
@@ -98,7 +106,7 @@ test("Sol retains strategy and final judgment", () => {
   ]) {
     assert.match(TOOL_DESCRIPTION, new RegExp(retained, "i"));
   }
-  assert.match(TOOL_DESCRIPTION, /cannot see the conversation or[\s\S]*delegate/i);
+  assert.match(TOOL_DESCRIPTION, /cannot see the\s+conversation or[\s\S]*delegate/i);
 });
 
 test("single-task results drive risk-based review", () => {
@@ -107,19 +115,21 @@ test("single-task results drive risk-based review", () => {
     "verification",
     "observed files",
     "discrepancies",
-    "scope violations",
+    "scope\\s+violations",
     "review checklist",
   ]) {
     assert.match(TOOL_DESCRIPTION, new RegExp(evidence, "i"));
   }
-  assert.match(TOOL_DESCRIPTION, /clean verified PASS/i);
-  assert.match(TOOL_DESCRIPTION, /proportionate review/i);
+  assert.match(TOOL_DESCRIPTION, /clean\s+verified PASS/i);
+  assert.match(TOOL_DESCRIPTION, /proportionate\s+review/i);
+  assert.match(TOOL_DESCRIPTION, /Choose review depth after seeing that evidence/i);
+  assert.match(TOOL_DESCRIPTION, /do not pre-commit to rereading every file/i);
   for (const suspicious of [
     "FAILED",
     "BLOCKED",
     "trustworthy: false",
     "discrepancies",
-    "scope violations",
+    "scope\\s+violations",
   ]) {
     assert.match(TOOL_DESCRIPTION, new RegExp(suspicious, "i"));
   }
@@ -173,6 +183,8 @@ test("verification fields preserve authority without treating non-execution as p
   const source = row.shape.source.description ?? "";
   const execution = row.shape.execution.description ?? "";
   assert.match(input, /configured policy/i);
+  assert.match(input, /Targeted deterministic checks/i);
+  assert.match(input, /full suite[\s\S]*genuinely requires/i);
   assert.match(input, /executed orchestrator rows are authoritative/i);
   assert.match(input, /refused or skipped rows prove nothing/i);
   assert.match(source, /Orchestrator rows authoritatively record/i);
@@ -189,7 +201,10 @@ test("scope, discrepancy, and checklist descriptions demand review", () => {
     /deeper review/i,
   );
   assert.match(delegateTaskOutputShape.discrepancies.description ?? "", /do not accept/i);
-  assert.match(delegateTaskOutputShape.reviewChecklist.description ?? "", /Sol/i);
+  assert.match(
+    delegateTaskOutputShape.reviewChecklist.description ?? "",
+    /parent orchestrator/i,
+  );
 });
 
 test("batch input descriptions qualify overlap and integration", () => {
@@ -219,6 +234,9 @@ test("SOL_RULES carries the runtime's operational distinctions without benchmark
     /schema default remains[\s\S]*full/i,
     /trustworthy: false/i,
     /Do not automatically rerun a full suite/i,
+    /without repetitive polling\s+or status narration/i,
+    /normally leave broader final validation to the parent/i,
+    /do not pre-commit to rereading[\s\S]*every changed file/i,
   ]) {
     assert.match(rules, invariant);
   }
@@ -230,5 +248,9 @@ test("README does not require unconditional integration verification", async () 
   assert.doesNotMatch(
     readme,
     /told\s+to\s+run\s+the\s+full\s+suite\s+after\s+integration/i,
+  );
+  assert.match(
+    readme,
+    /Use the sol-luna-orchestrator MCP for this task\. Decide whether delegate_task or[\s\S]*delegate_tasks is appropriate based on the work\./,
   );
 });

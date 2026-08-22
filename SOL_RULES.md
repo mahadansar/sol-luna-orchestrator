@@ -1,4 +1,4 @@
-# Sol's delegation rules
+# Sol-Luna Orchestrator delegation rules
 
 This is the concise optional reference for supervising Codex agents using
 `delegate_task` and `delegate_tasks`. Runtime tool and schema descriptions remain
@@ -6,24 +6,25 @@ authoritative for the exact call and result fields.
 
 ## Roles and adaptive delegation
 
-Sol owns architecture, decomposition, unresolved design and sequencing decisions,
-and final judgement. Luna workers execute bounded tasks from self-contained
-contracts, cannot see Sol's conversation, and cannot delegate further.
+The parent orchestrator owns architecture, decomposition, unresolved design and
+sequencing decisions, and final judgement. Luna workers execute bounded tasks
+from self-contained contracts, cannot see the parent's conversation, and cannot
+delegate further.
 
 Delegation is adaptive. Zero workers is valid, and more workers are not
 automatically better or cheaper.
 
-| Choice           | Use when                                                                                                                                                                                    |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Solo             | Work is small, simple, tightly coupled, already obvious, or cheaper to do than coordinate.                                                                                                  |
-| `delegate_task`  | One substantial, bounded, well-specified executable task is worth moving out of Sol's context for cost, context, isolation, verification, or execution benefit. No second seam is required. |
-| Sequential batch | Two or more meaningful tasks depend on earlier changes, share workspace state, or may touch the same files.                                                                                 |
-| Parallel batch   | Two or more genuinely independent tasks have disjoint declared scopes.                                                                                                                      |
+| Choice           | Use when                                                                                                                                                                                           |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Solo             | Work is small, simple, tightly coupled, already obvious, or cheaper to do than coordinate.                                                                                                         |
+| `delegate_task`  | One substantial, bounded, well-specified executable task is worth moving out of the parent's context for cost, context, isolation, verification, or execution benefit. No second seam is required. |
+| Sequential batch | Two or more meaningful tasks depend on earlier changes, share workspace state, or may touch the same files.                                                                                        |
+| Parallel batch   | Two or more genuinely independent tasks have disjoint declared scopes.                                                                                                                             |
 
 Delegable executable work includes implementation, tests, bug fixing,
 refactoring, investigation, and chores. Keep strategy and work that cannot yet
-be specified or judged with observable acceptance criteria with Sol. Do not
-create artificial seams merely to use cheap workers.
+be specified or judged with observable acceptance criteria with the parent. Do
+not create artificial seams merely to use cheap workers.
 
 ## Cost and parallelism
 
@@ -65,10 +66,12 @@ so the retry does not repeat failed approaches.
   File scope is detective: violations are reported after execution, not
   prevented. Workspace confinement still applies, and forbidden patterns take
   precedence.
-- Supply focused `verificationCommands` when available. The orchestrator
-  processes them independently under the configured policy. In default
-  allowlist mode, commands run without a shell and shell syntax is refused.
-  Refused or skipped commands prove nothing.
+- Supply targeted deterministic `verificationCommands` that prove the bounded
+  task. The orchestrator independently re-runs them under the configured policy;
+  normally leave broader final validation to the parent. Use a full suite when
+  the delegated task genuinely requires it. In default allowlist mode, commands
+  run without a shell and shell syntax is refused. Refused or skipped commands
+  prove nothing.
 - Use legacy plain `context` only for task background. Prefer
   `contextCapsule` for structured background the repository cannot supply.
   If both are present, both reach the worker; avoid duplication. Never copy the
@@ -83,6 +86,10 @@ so the retry does not repeat failed approaches.
 - Set effort deliberately, explain it in `effortReason`, and use
   `timeoutSeconds` only when the configured default is unsuitable.
 
+After invoking a Sol-Luna tool, await the active call without repetitive polling
+or status narration. Intervene only for a result, error, cancellation, timeout,
+or meaningful new state.
+
 ## Evidence and review
 
 A worker's status, summary, changed-file list, and verification report are
@@ -95,9 +102,11 @@ Start with `verdict`, `trustworthy`, `discrepancies`,
 `scopeViolations`, observed files, verification provenance and execution, and
 `reviewChecklist`. Confirm the acceptance criteria and retain final judgement.
 
-Use risk-based review. A clean PASS has `verdict: PASS`, `trustworthy: true`,
-no discrepancies or scope violations, successful relevant orchestrator
-verification, expected changed files, and no risk signal in notes or evidence.
+Choose review depth after seeing the evidence; do not pre-commit to rereading
+every changed file or rerunning every check. A clean PASS has `verdict: PASS`,
+`trustworthy: true`, no discrepancies or scope violations, successful relevant
+orchestrator verification, expected changed files, and no risk signal in notes
+or evidence.
 Do not automatically reread every changed file or repeat established
 verification. Spend extra supervisor context only where it can change the
 acceptance decision.

@@ -1,4 +1,12 @@
 import { codexVersion, getRegisteredServer, readConfig, writeConfig } from "./codex.js";
+import {
+  discoveryHintPath,
+  discoveryHintPaths,
+  inspectDiscoveryHint,
+  readDiscoveryInstructions,
+  removeDiscoveryHints,
+  writeDiscoveryInstructions,
+} from "./discovery-hint.js";
 import { codexConfigPath } from "./paths.js";
 import { SERVER_NAME, serverTable } from "./settings.js";
 import { findTable, listSubTables, removeTable } from "./toml-edit.js";
@@ -25,6 +33,7 @@ export interface UninstallOptions {
 export async function uninstallCommand(argv: string[]): Promise<number> {
   const options: UninstallOptions = { dryRun: argv.includes("--dry-run") };
   const configPath = codexConfigPath();
+  const instructionsPaths = discoveryHintPaths();
 
   out(bold("Sol-Luna Orchestrator uninstall"));
   out();
@@ -40,6 +49,10 @@ export async function uninstallCommand(argv: string[]): Promise<number> {
   }
 
   const before = readConfig(configPath);
+  const discoveriesBefore = instructionsPaths.map((instructionsPath) => ({
+    instructionsPath,
+    inspection: inspectDiscoveryHint(readDiscoveryInstructions(instructionsPath)),
+  }));
   const othersBefore = listSubTables(before, ["mcp_servers"]).filter(
     (name) => name !== SERVER_NAME,
   );
@@ -50,7 +63,12 @@ export async function uninstallCommand(argv: string[]): Promise<number> {
     : { registered: false };
   const inConfig = findTable(before, serverTable()) !== null;
 
-  if (!registered.registered && !inConfig) {
+  const managedHintsBefore = discoveriesBefore.reduce(
+    (count, discovery) => count + discovery.inspection.exactCount,
+    0,
+  );
+
+  if (!registered.registered && !inConfig && managedHintsBefore === 0) {
     out(`${symbols.ok} Not configured. Nothing to remove.`);
     if (othersBefore.length > 0) {
       out(dim(`Left untouched: ${othersBefore.join(", ")}`));
@@ -58,7 +76,16 @@ export async function uninstallCommand(argv: string[]): Promise<number> {
     return 0;
   }
 
-  out(`Will remove MCP server "${SERVER_NAME}" from ${configPath}`);
+  if (registered.registered || inConfig) {
+    out(`Will remove MCP server "${SERVER_NAME}" from ${configPath}`);
+  }
+  for (const discovery of discoveriesBefore) {
+    if (discovery.inspection.exactCount > 0) {
+      out(
+        `Will remove the managed Codex discovery hint from ${discovery.instructionsPath}`,
+      );
+    }
+  }
   if (othersBefore.length > 0) {
     out(dim(`Leaving untouched: ${othersBefore.join(", ")}`));
   }
@@ -78,6 +105,14 @@ export async function uninstallCommand(argv: string[]): Promise<number> {
     }
   }
 
+  for (const instructionsPath of instructionsPaths) {
+    const currentInstructions = readDiscoveryInstructions(instructionsPath);
+    const removedInstructions = removeDiscoveryHints(currentInstructions);
+    if (removedInstructions.removedCount > 0) {
+      writeDiscoveryInstructions(removedInstructions.text, instructionsPath);
+    }
+  }
+
   // --- Verify the blast radius --------------------------------------------
   const after = readConfig(configPath);
   const stillThere = findTable(after, serverTable()) !== null;
@@ -89,6 +124,17 @@ export async function uninstallCommand(argv: string[]): Promise<number> {
   if (stillThere) {
     out();
     out(`${symbols.fail} The configuration entry is still present.`);
+    if (backupPath) out(dim(`Backup at ${backupPath}`));
+    return 1;
+  }
+
+  const hintStillThere = instructionsPaths.some(
+    (instructionsPath) =>
+      inspectDiscoveryHint(readDiscoveryInstructions(instructionsPath)).exactCount > 0,
+  );
+  if (hintStillThere) {
+    out();
+    out(`${symbols.fail} The managed Codex discovery hint is still present.`);
     if (backupPath) out(dim(`Backup at ${backupPath}`));
     return 1;
   }

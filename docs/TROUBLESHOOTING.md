@@ -9,35 +9,39 @@ Symptoms and what they usually mean. For configuration detail see
 `SOL_LUNA_LOG` is ground truth for the first three. Model self-reports are not: a
 low-effort model will cheerfully claim it has a tool it does not have.
 
-| Symptom                                                | Cause                                                                                                                      |
-| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| Log file never created                                 | Codex never started the server — config or path problem. Check `codex mcp get sol-luna-orchestrator`.                      |
-| Log has `client connected` but no `delegate_task` line | The server is fine; the model chose not to call it. Prompt more directly.                                                  |
-| `user cancelled MCP tool call`                         | `default_tools_approval_mode` missing or `"auto"`. It must be `"approve"`.                                                 |
-| Delegations die at ~60 seconds                         | `tool_timeout_sec` is missing.                                                                                             |
-| `not inside a git repository` on a parallel batch      | Parallel mode needs git worktrees. Use `mode: "sequential"`, or `git init` + one commit.                                   |
-| `uncommitted changes inside the file scopes`           | Workers branch from `HEAD` and would not see that work. Commit, stash, narrow the scopes, or set `SOL_LUNA_ALLOW_DIRTY=1`. |
-| `overlapping file scopes`                              | Working as intended. Give disjoint scopes or use sequential mode.                                                          |
-| Verification fails with "module not found" in a batch  | The worktree link for `node_modules` failed. Check the task warnings; see `SOL_LUNA_WORKTREE_LINK`.                        |
-| Worktrees left in `.sol-luna/worktrees/`               | Expected after a failure or a conflict (`SOL_LUNA_KEEP_WORKTREES`). Safe to delete; a later batch prunes stale ones.       |
-| `Command refused by verification policy`               | Working as intended. One command per entry, no `&&`; or permit the executable via `SOL_LUNA_VERIFY_ALLOW`.                 |
-| A worker appears able to delegate                      | Don't trust the model's answer. Run `npm run smoke:isolation`.                                                             |
+| Symptom                                                | Cause                                                                                                                                   |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Log file never created                                 | Codex never started the server — config or path problem. Check `codex mcp get sol-luna-orchestrator`.                                   |
+| Log has `client connected` but no `delegate_task` line | The server is fine; the model chose not to call it. Prompt more directly.                                                               |
+| `user cancelled MCP tool call`                         | `default_tools_approval_mode` missing or `"auto"`. It must be `"approve"`.                                                              |
+| Delegations die at ~60 seconds                         | `tool_timeout_sec` is missing.                                                                                                          |
+| `not inside a git repository` on a parallel batch      | Parallel mode needs git worktrees. Use `mode: "sequential"`, or `git init` + one commit.                                                |
+| `uncommitted changes inside the file scopes`           | Workers branch from `HEAD` and would not see that work. Commit, stash, narrow the scopes, or set `SOL_LUNA_ALLOW_DIRTY=1`.              |
+| `overlapping file scopes`                              | Working as intended. Give disjoint scopes or use sequential mode.                                                                       |
+| Verification fails with "module not found" in a batch  | The worktree link for `node_modules` failed. Check the task warnings; see `SOL_LUNA_WORKTREE_LINK`.                                     |
+| Worktrees left in `.sol-luna/worktrees/`               | Expected after a failure or a conflict (`SOL_LUNA_KEEP_WORKTREES`). Safe to delete; a later batch prunes stale ones.                    |
+| `Command refused by verification policy`               | Working as intended. One command per entry, no `&&`; or permit the executable via `SOL_LUNA_VERIFY_ALLOW`.                              |
+| A worker appears able to delegate                      | Don't trust the model's answer. Run `npm run smoke:isolation`.                                                                          |
+| Fresh chat does not find this MCP                      | Codex may defer MCP discovery. Use the canonical prompt from the README, or check the managed hint with `sol-luna-orchestrator status`. |
+| Discovery hint is missing or modified                  | Run `sol-luna-orchestrator init`, or keep it absent with `init --no-discovery-hint`. User-edited marker content is preserved.           |
 
 ## Recovering a broken configuration
 
 Start with `sol-luna-orchestrator doctor`. It checks Node, git, Codex, the
 login, the registration, the resolved server path, both required settings, the
-activity log and the verification mode, and prints the command that fixes each
-failure. `--json` gives the same report for scripts.
+activity log, the discovery hint and the verification mode, and prints the
+command that fixes each failure. `--json` gives the same report for scripts.
 
 Most problems are repaired by re-running `sol-luna-orchestrator init`. It is
 idempotent, it repairs only what is wrong, and it preserves any custom paths
 you set. Every write is atomic and leaves a `config.toml.sol-luna-backup`
 beside the original.
 
-`sol-luna-orchestrator uninstall` removes this project's MCP table and nothing
-else. It deliberately leaves your log and activity files on disk: that history
-is yours, not the installer's to delete.
+`sol-luna-orchestrator uninstall` removes this project's MCP table and exact
+managed discovery hint, and nothing else. It deliberately leaves your other
+`AGENTS.md` instructions, log and activity files on disk: that history is yours,
+not the installer's to delete. Use `--dry-run` to inspect the removal without
+writing.
 
 ## Activity shows nothing
 

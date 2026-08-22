@@ -89,7 +89,7 @@ async function main(): Promise<void> {
     ["no discrepancies", () => assert.deepEqual(result.discrepancies, [])],
     ["result is marked trustworthy", () => assert.equal(result.trustworthy, true)],
     [
-      "a review checklist was produced for Sol",
+      "a review checklist was produced for the parent",
       () => assert.ok(result.reviewChecklist.length > 0),
     ],
     ["token usage was reported", () => assert.ok(result.usage)],

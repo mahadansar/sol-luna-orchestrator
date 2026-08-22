@@ -11,9 +11,9 @@ executable work as one task, dependent tasks in sequence, or independent tasks
 in parallel. Delegated tasks carry a declared file scope, scope-violation
 detection, and results the orchestrator verifies instead of taking on trust.
 
-The supervisor (`gpt-5.6-sol`, high effort recommended) decides what should
-happen, whether delegating is worth it at all, and reviews what comes back.
-Workers (`gpt-5.6-luna`, at an effort chosen per task) carry out bounded
+The parent supervisor is model-agnostic: it decides what should happen, whether
+delegating is worth it at all, and reviews what comes back. Workers
+(`gpt-5.6-luna`, at an effort chosen per task) carry out bounded
 implementation, testing, investigation and other executable work in their own
 Codex threads.
 
@@ -22,7 +22,7 @@ conclusion**, and **not every task should be delegated**.
 
 ## The core idea
 
-Sol first decides whether delegation is worthwhile. More agents are not
+The parent orchestrator first decides whether delegation is worthwhile. More agents are not
 automatically better, and the optimal worker count can be zero. Good
 orchestration is not about maximising agent count; it includes knowing when one
 strong supervisor should do the work itself.
@@ -33,7 +33,7 @@ context. Workers do bounded executable work—implementation, test writing,
 mechanical refactors, focused investigation and chores—because they need a clear
 brief rather than the whole picture.
 
-There is a second adaptive layer once Sol does delegate: each worker gets
+There is a second adaptive layer once the parent does delegate: each worker gets
 `medium`, `high`, `xhigh` or `max` reasoning effort based on that task's
 difficulty. Running everything at maximum wastes time on work that was
 mechanical to begin with. Worker count and worker effort are separate decisions.
@@ -43,7 +43,7 @@ equivalent Luna input, cached-input and output tokens are roughly 25x cheaper
 than Sol tokens; that ratio is schedule-dependent, not an architectural
 guarantee.
 
-**Worth using when** one substantial bounded task is worth moving out of Sol's
+**Worth using when** one substantial bounded task is worth moving out of the parent orchestrator's
 context, dependent tasks benefit from sequential execution, independent tasks
 can run in parallel, or declared scopes and independently re-run verification
 justify the fixed coordination cost.
@@ -61,29 +61,36 @@ npm install -g sol-luna-orchestrator
 sol-luna-orchestrator init
 ```
 
-Then open Codex, select **GPT-5.6 Sol at High effort**, and work normally.
+Then open Codex with any compatible parent model and work normally. Creator
+examples (not requirements): **GPT-5.6 Sol at Medium effort** is commonly
+sufficient for substantial repository work; **GPT-5.6 Luna at High effort** has
+successfully handled simpler docs and maintenance work and can delegate bounded
+Luna work.
 
 ```
 Fix the failing tests in src/auth/, src/payments/, and src/search/.
 Review the changes and run the full test suite.
 ```
 
-You do not need to tell Sol it is the supervisor, call any tool by hand, or
-decide worker counts and efforts. Sol decides whether delegation is worthwhile:
+You do not need to identify a particular parent model, call any tool by hand, or
+decide worker counts and efforts. The parent orchestrator decides whether
+delegation is worthwhile:
 
 - If the work is small, tightly coupled, or better done directly, it handles it
   itself. Zero workers is a valid outcome.
-- If one substantial task is worth moving out of Sol's context, it delegates one
+- If one substantial task is worth moving out of the parent's context, it delegates one
   bounded task with `delegate_task`.
 - If two or more tasks depend on earlier changes, share workspace state, or may
   touch the same files, it runs them sequentially in the shared workspace.
 - If two or more tasks are genuinely independent and have disjoint declared
   scopes, it runs them in parallel, one isolated worktree per task.
 
-`init` registers the MCP server with Codex and applies the two settings Codex
-needs for delegation to work at all. It changes only the keys it owns, so your
-comments, formatting and other MCP servers are left exactly as they were. Run it
-twice and it says `Already configured`.
+`init` registers the MCP server with Codex, applies the two settings Codex needs
+for delegation to work at all, and adds a tiny managed discovery hint to the
+active global Codex instructions (`AGENTS.override.md` when active, otherwise
+`AGENTS.md`). It changes only the keys and exact marker block it owns and
+preserves the rest of the user-owned file. Run it twice and it says `Already
+configured`; use `init --no-discovery-hint` to opt out.
 
 ```bash
 sol-luna-orchestrator activity    # print a snapshot of the latest batch, then exit
@@ -92,20 +99,29 @@ sol-luna-orchestrator status      # short summary
 sol-luna-orchestrator uninstall   # remove this project's entry, nothing else
 ```
 
+Uninstall removes only this project's MCP table and the exact managed discovery
+hint. It leaves your other `AGENTS.md` instructions, logs, and activity history
+alone. Both `init --dry-run` and `uninstall --dry-run` write nothing.
+
 Full install options, environment variables and Codex settings are in
 [Configuration](docs/CONFIGURATION.md).
 
-### Requesting delegation explicitly
+### Fresh-chat discovery and explicit delegation
 
-Explicit delegation is optional. Normally Sol decides whether delegation is
-worthwhile. In a fresh Codex chat, naming sol-luna-orchestrator can be useful
-when you specifically want delegation or want to ensure its tools are discovered
-from the deferred tool catalog.
+Codex may defer MCP tools in a fresh chat, and a generic delegation request may
+surface built-in multi-agent tools instead. The managed hint does not force a
+delegation or start workers: the parent may choose `delegate_task`,
+`delegate_tasks`, or zero workers. When you want to name this MCP explicitly,
+use this canonical fresh-chat prompt:
 
 ```
 Use the sol-luna-orchestrator MCP for this task. Decide whether delegate_task or
 delegate_tasks is appropriate based on the work.
+```
 
+For an explicit batch request, use:
+
+```
 Use sol-luna-orchestrator's delegate_tasks tool for this task. Split the work
 only where the tasks are genuinely independent, otherwise use sequential mode.
 ```
@@ -156,7 +172,7 @@ be exported.
 You
  |
  v
-Sol supervisor  ......  decides whether delegating is worth it
+Parent supervisor  ......  decides whether delegating is worth it
  |
  |-- handles it directly  ......................  zero workers, a valid outcome
  |
@@ -182,7 +198,7 @@ Sol supervisor  ......  decides whether delegating is worth it
      integrate parallel changes only when file sets are disjoint
         |
         v
-Sol reviews the evidence proportionally and decides
+Parent reviews the evidence proportionally and decides
 ```
 
 Workers are siblings, never a hierarchy: a Luna worker has no delegation tools,
@@ -196,6 +212,13 @@ their tasks must be independent and their declared scopes disjoint.
 with no git requirement. `delegate_tasks` runs several with `mode: "parallel"`
 or `mode: "sequential"`, each carrying its own contract and effort.
 
+After invoking either tool, await the active call without repetitive polling or
+status narration. Intervene only for a result, error, cancellation, timeout, or
+meaningful new state. Delegated `verificationCommands` should normally be
+targeted deterministic checks for the bounded task; leave broader final
+validation to the parent unless the delegated task genuinely requires a full
+suite. The orchestrator still independently processes the supplied checks.
+
 The runtime schema is the field-level contract. Legacy plain `context` and
 structured `contextCapsule` may be used together without duplication; neither
 replaces objective, scope, acceptance, verification, or security constraints.
@@ -204,7 +227,7 @@ verification output. Failed, refused, and skipped output and all verdict, scope,
 discrepancy, and file evidence remain; the schema default stays `"full"` for
 compatibility.
 
-Concise supervisor policy reaches Sol through the MCP instructions, tool
+Concise supervisor policy reaches the parent through the MCP instructions, tool
 descriptions, and schemas. [`SOL_RULES.md`](SOL_RULES.md) is the optional fuller
 human/AGENTS reference.
 

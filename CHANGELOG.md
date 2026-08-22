@@ -6,6 +6,19 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- Normal `init` now installs an idempotent, surgical discovery hint in the
+  user's Codex `AGENTS.md`; `status`, `doctor`, dry-run, opt-out, and uninstall
+  lifecycle behavior report or manage only that exact block.
+- Fresh-chat guidance documents the canonical MCP prompt and an explicit
+  `delegate_tasks` batch prompt while keeping delegation optional.
+
+### Changed
+
+- Parent-orchestrator guidance is model-agnostic while preserving the
+  Sol-Luna product identity and GPT-5.6 Luna worker default.
+
 ## [0.7.1] - 2026-08-22
 
 A focused consistency, context-efficiency, and activity reliability patch.

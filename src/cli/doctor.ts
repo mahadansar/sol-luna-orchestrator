@@ -13,6 +13,11 @@ import {
   minimumNode,
   packageVersion,
 } from "./paths.js";
+import {
+  discoveryHintPath,
+  inspectDiscoveryHint,
+  readDiscoveryInstructions,
+} from "./discovery-hint.js";
 import { SERVER_NAME, inspectSettings, serverTable } from "./settings.js";
 import { fromTomlValue, readKey } from "./toml-edit.js";
 import { bold, dim, out, symbols } from "./ui.js";
@@ -139,6 +144,7 @@ export async function collectChecks(): Promise<Check[]> {
 
   // --- Required settings ---------------------------------------------------
   const configText = readConfig();
+  const discovery = inspectDiscoveryHint(readDiscoveryInstructions());
   for (const setting of inspectSettings(configText)) {
     const label =
       setting.key === "tool_timeout_sec"
@@ -201,6 +207,21 @@ export async function collectChecks(): Promise<Check[]> {
     remedy: events.path
       ? undefined
       : "`sol-luna-orchestrator activity` needs this. Run: sol-luna-orchestrator init",
+  });
+
+  checks.push({
+    name: "Codex discovery hint",
+    status: discovery.state === "installed" ? "ok" : "warn",
+    detail:
+      discovery.state === "installed"
+        ? `installed at ${discoveryHintPath()}`
+        : discovery.state === "modified"
+          ? `modified or partial content at ${discoveryHintPath()}`
+          : `not installed at ${discoveryHintPath()}`,
+    remedy:
+      discovery.state === "installed"
+        ? undefined
+        : "Run: sol-luna-orchestrator init (or init --no-discovery-hint to opt out)",
   });
 
   const roots = process.env.SOL_LUNA_ALLOWED_ROOTS;

@@ -7,7 +7,7 @@ Everything the orchestrator reads, and how to change it. The
 - [Advanced installation](#advanced-installation)
 - [Codex settings and environment variables](#codex-settings-and-environment-variables)
 - [Activity and diagnostics logs](#activity-and-diagnostics-logs)
-- [Supervisor effort](#supervisor-effort)
+- [Parent model and effort](#parent-model-and-effort)
 - [Platform support](#platform-support)
 
 ---
@@ -18,8 +18,9 @@ Everything the orchestrator reads, and how to change it. The
   and earlier are end-of-life and are neither tested nor supported.
 - **OpenAI Codex CLI**, logged in (`codex login`). Built against `codex-cli 0.147.0`.
 - **git ≥ 2.20** — only for parallel batches, which use `git worktree`.
-- Access to `gpt-5.6-sol` and `gpt-5.6-luna`. Check with
-  `codex exec -m gpt-5.6-luna "say ok"`.
+- Access to a compatible parent Codex model and the configured worker model
+  `gpt-5.6-luna`. The creator's examples are `gpt-5.6-sol` for the parent and
+  `gpt-5.6-luna` for workers; compatible parent models are allowed.
 
 `sol-luna-orchestrator doctor` verifies all of this and tells you what to do
 about anything missing.
@@ -40,7 +41,8 @@ node dist/cli.js init
 
 ### What init writes
 
-One table in `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`):
+One table in `~/.codex/config.toml` (or `$CODEX_HOME/config.toml`) plus the
+managed discovery hint in `$CODEX_HOME/AGENTS.md` (described below):
 
 ```toml
 [mcp_servers.sol-luna-orchestrator]
@@ -65,6 +67,18 @@ Both env paths default to your Codex home (`$CODEX_HOME`, or `~/.codex`), so
 they accumulate across projects rather than inside whichever repository you ran
 `init` from. Override either with `init --log <path>` or `init --events <path>`;
 a plain `init` never overwrites a path you set.
+
+Normal `init` also adds one exact, managed discovery hint to the active global
+Codex instruction file: a non-empty `$CODEX_HOME/AGENTS.override.md` when one
+exists, otherwise `$CODEX_HOME/AGENTS.md` (normally `~/.codex/AGENTS.md`). It is
+intentionally tiny and helps fresh chats distinguish this MCP from built-in
+delegation while Codex's MCP catalog is deferred. It asks the parent to consider
+the MCP only when delegated work may be useful; delegation remains optional and
+zero workers is valid. The file is user-owned, so init preserves its existing bytes,
+repeated init is idempotent, and uninstall removes only exact managed blocks from
+either global instruction file. Use
+`sol-luna-orchestrator init --no-discovery-hint` to opt out. Both
+`init --dry-run` and `uninstall --dry-run` write nothing.
 
 A fully annotated example is in [`examples/codex-config.toml`](../examples/codex-config.toml).
 
@@ -175,10 +189,14 @@ things, and the event log is the less sensitive of the two — see
   per-worker numbers are all there.
 - Nothing in this project claims a cost saving, because none has been measured.
 
-## Supervisor effort
+## Parent model and effort
 
-The supervisor model is `gpt-5.6-sol`. Its effort is yours to set, not the
-model's to change mid-session.
+The parent model is yours to choose; the orchestrator does not require a
+particular model. Creator experience, documented as examples rather than
+requirements: `gpt-5.6-sol` at `medium` is commonly sufficient for substantial
+repository work, while `gpt-5.6-luna` at `high` has successfully handled simpler
+docs and maintenance work and can delegate bounded Luna work. The effort is
+yours to set, not the model's to change mid-session.
 
 | Effort     | Use for                                                                                                         |
 | ---------- | --------------------------------------------------------------------------------------------------------------- |
@@ -187,8 +205,8 @@ model's to change mid-session.
 | `xhigh`    | Difficult architecture, subtle production bugs, cross-service reasoning, tricky concurrency, hard decomposition |
 | `max`      | Exceptional supervisor-level problems only — not a routine setting                                              |
 
-The orchestrator does not set the parent Sol effort; select it in the Codex
-session. `ultra` is a separate Codex multi-agent execution mode, not another
+The orchestrator does not set the parent effort; select it in the Codex session.
+`ultra` is a separate Codex multi-agent execution mode, not another
 reasoning-effort value.
 
 ## Platform support
@@ -199,7 +217,7 @@ Two different things get called "supported", so they are reported separately.
 **Deterministic CI** runs the build, typecheck, format check, unit, security,
 parallel-orchestration and CLI suites, the MCP protocol handshake and the
 benchmark fixture validation — no model access. **Live model testing** drives
-real Codex sessions with real Sol and Luna turns.
+real Codex sessions with real parent and Luna turns.
 
 | Platform       | Deterministic CI | Live Codex delegation | Notes                                                                       |
 | -------------- | ---------------- | --------------------- | --------------------------------------------------------------------------- |

@@ -18,6 +18,15 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { applyInitConfig, parseInitOptions } from "./cli/init.js";
 import {
+  DISCOVERY_HINT_END,
+  DISCOVERY_HINT_START,
+  DISCOVERY_HINT_TEXT,
+  discoveryHintPath,
+  ensureDiscoveryHint,
+  inspectDiscoveryHint,
+  removeDiscoveryHints,
+} from "./cli/discovery-hint.js";
+import {
   defaultEventsPath,
   describeEventsSource,
   resolveEventsPath,
@@ -156,6 +165,74 @@ test("a fresh init applied twice is byte-identical", () => {
   const once = applyInitConfig(REALISTIC, INPUT);
   const twice = applyInitConfig(once, INPUT);
   assert.equal(twice, once);
+});
+
+// --- Codex discovery hint lifecycle ----------------------------------------
+
+test("discovery hint is tiny, exact, idempotent, and round-trips user bytes", () => {
+  const user = "# Keep this instruction\r\nUse my preferred tools.\r\n";
+  const once = ensureDiscoveryHint(user);
+  const twice = ensureDiscoveryHint(once);
+
+  assert.equal(twice, once);
+  assert.equal(inspectDiscoveryHint(once).state, "installed");
+  assert.match(
+    once,
+    new RegExp(`${DISCOVERY_HINT_START}[\\s\\S]*${DISCOVERY_HINT_TEXT}`),
+  );
+  assert.match(once, new RegExp(`${DISCOVERY_HINT_TEXT}[\\s\\S]*${DISCOVERY_HINT_END}`));
+  assert.ok(once.includes(user), "pre-existing AGENTS.md bytes must survive init");
+  assert.ok(once.includes("\r\n"));
+  assert.equal(
+    DISCOVERY_HINT_TEXT,
+    "When delegated work may be useful, consider the configured sol-luna-orchestrator MCP before Codex built-in delegation. Delegation is optional; zero workers is valid.",
+  );
+
+  const removed = removeDiscoveryHints(once);
+  assert.equal(removed.removedCount, 1);
+  assert.equal(removed.text, user);
+});
+
+test("discovery hint preserves surrounding content and does not remove an altered block", () => {
+  const altered = [
+    "# User content",
+    DISCOVERY_HINT_START,
+    "A user-edited instruction",
+    DISCOVERY_HINT_END,
+    "Keep this too.",
+  ].join("\n");
+  assert.equal(inspectDiscoveryHint(altered).state, "modified");
+
+  const installed = ensureDiscoveryHint(altered);
+  assert.equal(inspectDiscoveryHint(installed).exactCount, 1);
+  const removed = removeDiscoveryHints(installed);
+  assert.equal(removed.text, altered);
+});
+
+test("discovery hint targets the active global Codex instruction file", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-discovery-"));
+  try {
+    assert.equal(discoveryHintPath(home), path.join(home, "AGENTS.md"));
+
+    fs.writeFileSync(path.join(home, "AGENTS.override.md"), "\n", "utf8");
+    assert.equal(discoveryHintPath(home), path.join(home, "AGENTS.md"));
+
+    fs.writeFileSync(
+      path.join(home, "AGENTS.override.md"),
+      "# Active override\n",
+      "utf8",
+    );
+    assert.equal(discoveryHintPath(home), path.join(home, "AGENTS.override.md"));
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("init opt-out is explicit and does not get swallowed by another flag", () => {
+  const options = parseInitOptions(["--no-discovery-hint", "--dry-run"]);
+  assert.equal(options.noDiscoveryHint, true);
+  assert.equal(options.dryRun, true);
+  assert.deepEqual(options.unknown, []);
 });
 
 // --- init: custom value preservation ----------------------------------------

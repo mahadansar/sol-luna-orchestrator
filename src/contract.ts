@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { DEFAULT_EFFORT, EFFORTS, type Effort } from "./config.js";
 
-/** Coarse shape of the delegated work. Helps Sol reason about effort. */
+/** Coarse shape of the delegated work. Helps the parent reason about effort. */
 export const TASK_CATEGORIES = [
   "implementation",
   "tests",
@@ -17,7 +17,7 @@ export const STATUSES = ["PASS", "BLOCKED", "FAILED"] as const;
 export type Status = (typeof STATUSES)[number];
 
 /**
- * The task contract Sol fills in when delegating.
+ * The task contract the parent orchestrator fills in when delegating.
  *
  * Exported as a raw Zod shape because `McpServer.registerTool` takes a shape,
  * not a `z.object`.
@@ -75,10 +75,11 @@ export const delegateTaskInputShape = {
     .array(z.string().min(1))
     .default([])
     .describe(
-      "Commands the worker should run and report. The orchestrator independently " +
-        "processes each under the configured policy; executed orchestrator rows are " +
-        "authoritative, while refused or skipped rows prove nothing. Default allowlist " +
-        "mode refuses shell syntax.",
+      "Targeted deterministic checks that prove the bounded task; use a full suite " +
+        "only when the task genuinely requires it. The worker runs and reports them, " +
+        "and the orchestrator independently processes each under the configured " +
+        "policy. Executed orchestrator rows are authoritative, while refused or " +
+        "skipped rows prove nothing. Default allowlist mode refuses shell syntax.",
     ),
 
   workingDirectory: z
@@ -114,7 +115,9 @@ export const delegateTaskInputShape = {
       upstreamDecisions: z
         .string()
         .optional()
-        .describe("Architecture or design decisions already settled by Sol."),
+        .describe(
+          "Architecture or design decisions already settled by the parent orchestrator.",
+        ),
       knownPitfalls: z
         .string()
         .optional()
@@ -247,7 +250,7 @@ export interface WorkerReport {
   followUps: string[];
 }
 
-/** Shape of what `delegate_task` returns to Sol. */
+/** Shape of what `delegate_task` returns to the parent orchestrator. */
 export const delegateTaskOutputShape = {
   verdict: z
     .enum(STATUSES)
@@ -334,7 +337,9 @@ export const delegateTaskOutputShape = {
     ),
   reviewChecklist: z
     .array(z.string())
-    .describe("Risk-based checks Sol must still make before accepting."),
+    .describe(
+      "Risk-based checks the parent orchestrator must still make before accepting.",
+    ),
   escalationAdvice: z
     .string()
     .nullable()
@@ -484,7 +489,9 @@ export const delegateTasksOutputShape = {
   warnings: z.array(z.string()),
   reviewChecklist: z
     .array(z.string())
-    .describe("Batch-level integration and risk checks Sol must still make."),
+    .describe(
+      "Batch-level integration and risk checks the parent orchestrator must still make.",
+    ),
 };
 
 export type BatchOutput = z.infer<z.ZodObject<typeof delegateTasksOutputShape>>;

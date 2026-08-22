@@ -157,10 +157,10 @@ export const TOOL_DESCRIPTION = `Delegate ONE substantial, bounded, well-specifi
 
 Use this for implementation, tests, bug fixing, refactoring, investigation, or
 chores when the objective, scope, acceptance criteria, and verification can be
-stated clearly and moving execution out of Sol's context is worthwhile. One task
-does not need a second independent seam to justify delegation. Keep small,
-simple, tightly coupled, or already-obvious work solo when fixed coordination
-overhead would dominate.
+stated clearly and moving execution out of the parent orchestrator's context is
+worthwhile. One task does not need a second independent seam to justify
+delegation. Keep small, simple, tightly coupled, or already-obvious work solo
+when fixed coordination overhead would dominate.
 
 Be cost-aware, not raw-token-minimal: under the current pricing schedule,
 equivalent Luna tokens are roughly 25x cheaper than Sol tokens, so substantially
@@ -169,16 +169,18 @@ current pricing, not an architectural guarantee. Balance expected credit cost,
 latency, context use, fixed overhead, verification or isolation benefits,
 coordination risk, and quality. More workers is not automatically cheaper.
 
-Sol retains architecture, decomposition, unresolved design and sequencing
-decisions, and final judgement. The worker cannot see the conversation or
-delegate further.
+The parent orchestrator retains architecture, decomposition, unresolved design
+and sequencing decisions, and final judgement. The worker cannot see the
+conversation or delegate further.
 
 Use the returned evidence. Worker claims are not authoritative; judge the
 orchestrator's verdict, verification, observed files, discrepancies, scope
-violations, and review checklist. A clean verified PASS with expected changes
-deserves proportionate review, not automatic re-derivation. Inspect more deeply
-for risk, weak coverage, unexpected changes, FAILED or BLOCKED results,
-trustworthy: false, discrepancies, or scope violations.`;
+violations, and review checklist. Choose review depth after seeing that evidence;
+do not pre-commit to rereading every file or rerunning every check. A clean
+verified PASS with expected changes deserves proportionate review, not automatic
+re-derivation. Inspect more deeply for risk, weak coverage, unexpected changes,
+FAILED or BLOCKED results, trustworthy: false, discrepancies, or scope
+violations.`;
 
 /**
  * Strip the output of verification commands that passed.
@@ -315,11 +317,15 @@ export function renderResult(result: DelegateTaskOutput): string {
   return lines.join("\n");
 }
 
-/** The short general policy sent to the supervisor during MCP initialization. */
+/** The short general policy sent to the parent during MCP initialization. */
 export const SERVER_INSTRUCTIONS =
-  `Sol supervises architecture, delegation, and final judgement; ${LUNA_MODEL} ` +
-  `workers execute bounded tasks. Worker claims are not orchestrator evidence. ` +
-  `Judge returned verdicts and checks, reviewing in proportion to their risk and evidence.`;
+  `Any compatible parent Codex model may use the Sol-Luna Orchestrator. The parent ` +
+  `supervisor owns architecture, delegation, and final judgement; ${LUNA_MODEL} ` +
+  `workers execute bounded tasks. ` +
+  `Worker claims are not orchestrator evidence. Judge returned verdicts and checks, ` +
+  `reviewing in proportion to their risk and evidence. Await an active Sol-Luna ` +
+  `tool call without repetitive polling or status narration; intervene only for ` +
+  `a result, error, cancellation, timeout, or meaningful new state.`;
 
 const server = new McpServer(
   { name: "sol-luna-orchestrator", version: SERVER_VERSION },
@@ -439,7 +445,7 @@ function registerDelegateTask(): void {
         }
 
         log(`error: ${message}`);
-        // Returned as a tool error (not a thrown protocol error) so Sol can read
+        // Returned as a tool error (not a thrown protocol error) so the parent can read
         // the reason and adapt instead of seeing an opaque transport failure.
         return {
           content: [{ type: "text" as const, text: message }],
@@ -464,7 +470,7 @@ Do not create artificial seams or split work so finely that coordination
 dominates. Whether to delegate and whether to run in parallel are separate
 decisions.
 
-Partial outcomes remain visible for Sol to judge. A completed worker's edits may
+Partial outcomes remain visible for the parent orchestrator to judge. A completed worker's edits may
 be integrated even when its verdict is FAILED or BLOCKED. Declared scope
 conflicts can reject a batch; actual same-file edits prevent automatic
 integration and retain worktrees for manual resolution.

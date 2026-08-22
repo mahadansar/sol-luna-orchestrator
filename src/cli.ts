@@ -10,6 +10,11 @@
 import { activityCommand } from "./cli/activity.js";
 import { readConfig } from "./cli/codex.js";
 import { doctorCommand } from "./cli/doctor.js";
+import {
+  discoveryHintPath,
+  inspectDiscoveryHint,
+  readDiscoveryInstructions,
+} from "./cli/discovery-hint.js";
 import { describeEventsSource, resolveEventsPath } from "./cli/events-path.js";
 import { initCommand } from "./cli/init.js";
 import { codexConfigPath, installLocation, packageVersion } from "./cli/paths.js";
@@ -39,11 +44,12 @@ ${bold("Options")}
   init --log <path>        Set the diagnostic log path, replacing any existing one
   init --events <path>     Set the activity event path, replacing any existing one
   init --allow-ephemeral   Permit registering a temporary npx install
+  init --no-discovery-hint Skip the optional fresh-chat discovery hint
   doctor --json            Machine-readable report
   uninstall --dry-run      Show what would be removed, write nothing
 
 ${bold("After init")}
-  Open Codex, select GPT-5.6 Sol at High effort, and work normally.
+  Open Codex with a compatible parent model; creator example: Select GPT-5.6 Sol at Medium effort.
 
 ${dim("The MCP server itself runs as `sol-luna-orchestrator-mcp` and is launched by Codex.")}`;
 
@@ -53,6 +59,7 @@ function statusCommand(): number {
   const configured = findTable(configText, ["mcp_servers", SERVER_NAME]) !== null;
   const settings = inspectSettings(configText);
   const events = resolveEventsPath(configText);
+  const discovery = inspectDiscoveryHint(readDiscoveryInstructions());
   const value = (key: string): string =>
     settings.find((setting) => setting.key === key)?.actual ?? "unset";
 
@@ -77,6 +84,14 @@ function statusCommand(): number {
       events.path
         ? `${events.path}  ${dim(`(${describeEventsSource(events.source)})`)}`
         : "not configured  (run: sol-luna-orchestrator init)",
+    ],
+    [
+      "Discovery hint",
+      discovery.state === "installed"
+        ? `installed  (${discoveryHintPath()})`
+        : discovery.state === "modified"
+          ? `modified/partial  (${discoveryHintPath()}; run init to add the exact hint)`
+          : "not installed  (run init, or opt out with --no-discovery-hint)",
     ],
     ["Codex config", codexConfigPath()],
   ]);

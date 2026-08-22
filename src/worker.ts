@@ -435,7 +435,7 @@ export function buildDelegationResult({
   ) {
     verdict = "FAILED";
   } else if (scopeViolations.length > 0) {
-    // The code may be fine, but the contract was broken. Sol decides.
+    // The code may be fine, but the contract was broken. The parent decides.
     verdict = "FAILED";
   }
 
