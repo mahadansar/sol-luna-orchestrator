@@ -484,6 +484,12 @@ export interface ExecuteOptions {
   onVerificationStart?: (commandCount: number) => void;
 }
 
+/** Optional lifecycle hooks used by the single-task MCP surface. */
+export interface DelegateHooks {
+  onStarted?: (workingDirectory: string) => void;
+  onVerificationStart?: (commandCount: number) => void;
+}
+
 /**
  * Run one task in an already-prepared directory.
  *
@@ -530,12 +536,18 @@ export async function executeTask(
 export async function delegateToLuna(
   input: DelegateTaskInput,
   signal?: AbortSignal,
+  hooks?: DelegateHooks,
 ): Promise<DelegateTaskOutput> {
   // Validate and canonicalise before the worker gets write access to it.
   const workingDirectory = resolveWorkspace(input.workingDirectory);
   const release = await workerSlots.acquire();
   try {
-    return await executeTask(input, { workingDirectory, signal });
+    hooks?.onStarted?.(workingDirectory);
+    return await executeTask(input, {
+      workingDirectory,
+      signal,
+      onVerificationStart: hooks?.onVerificationStart,
+    });
   } finally {
     release();
   }

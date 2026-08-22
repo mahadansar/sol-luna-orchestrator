@@ -192,3 +192,183 @@ test("watch mode catches events written before a missing file is attached", asyn
     await fs.rm(workRoot, { recursive: true, force: true }).catch(() => {});
   }
 });
+
+test("watch startup silently folds historical runs into one current render", async () => {
+  const workRoot = await fs.mkdtemp(path.join(os.tmpdir(), "luna-watch-history-"));
+  const eventsPath = path.join(workRoot, "events.jsonl");
+  process.env.SOL_LUNA_EVENTS = eventsPath;
+
+  const events = [
+    {
+      timestamp: "2024-02-01T00:00:00Z",
+      type: "batch.started",
+      batchId: "b-old",
+      mode: "sequential",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-02-01T00:00:01Z",
+      type: "batch.completed",
+      batchId: "b-old",
+      durationSeconds: 1,
+      passed: 1,
+      failed: 0,
+    },
+    {
+      timestamp: "2024-02-02T00:00:00Z",
+      type: "batch.started",
+      batchId: "b-latest",
+      mode: "parallel",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-02-02T00:00:01Z",
+      type: "worker.completed",
+      batchId: "b-latest",
+      taskId: "t-latest",
+      verdict: "PASS",
+      claimed: "PASS",
+      durationSeconds: 1,
+      threadId: null,
+      model: "test-model",
+      effort: "high",
+      usage: null,
+    },
+    {
+      timestamp: "2024-02-02T00:00:02Z",
+      type: "batch.completed",
+      batchId: "b-latest",
+      durationSeconds: 2,
+      passed: 1,
+      failed: 0,
+    },
+  ];
+  await fs.writeFile(
+    eventsPath,
+    `${events.map((event) => JSON.stringify(event)).join("\n")}\n`,
+    "utf8",
+  );
+
+  const originalStdoutWrite = process.stdout.write;
+  let output = "";
+  let renderCount = 0;
+  process.stdout.write = ((
+    chunk: string | Uint8Array,
+    encoding?: unknown,
+    cb?: unknown,
+  ) => {
+    const text = chunk.toString();
+    output += text;
+    if (text.includes("Sol-Luna Activity")) renderCount++;
+    if (typeof encoding === "function") encoding();
+    else if (typeof cb === "function") cb();
+    return true;
+  }) as any;
+
+  let watchPromise: Promise<number> | undefined;
+  try {
+    const { activityCommand } = await import("./cli/activity.js");
+    watchPromise = activityCommand(["--watch"]);
+
+    const deadline = Date.now() + 5_000;
+    while (renderCount === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    assert.equal(renderCount, 1);
+    assert.match(output, /Batch\s+b-latest/);
+    assert.match(output, /State\s+completed/);
+    assert.doesNotMatch(output, /Batch\s+b-old/);
+  } finally {
+    if (watchPromise) {
+      process.emit("SIGINT", "SIGINT");
+      await watchPromise.catch(() => undefined);
+    }
+    process.stdout.write = originalStdoutWrite;
+    await fs.rm(workRoot, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("startup folds history once and catches an append during attachment", async () => {
+  const workRoot = await fs.mkdtemp(path.join(os.tmpdir(), "luna-watch-catchup-"));
+  const eventsPath = path.join(workRoot, "events.jsonl");
+  process.env.SOL_LUNA_EVENTS = eventsPath;
+
+  const oldBatch = {
+    timestamp: "2024-03-01T00:00:00Z",
+    type: "batch.started",
+    batchId: "b-old",
+    mode: "sequential",
+    taskCount: 1,
+    maxParallel: 1,
+  };
+  const currentBatch = {
+    timestamp: "2024-03-02T00:00:00Z",
+    type: "batch.started",
+    batchId: "b-current",
+    mode: "parallel",
+    taskCount: 1,
+    maxParallel: 1,
+  };
+  await fs.writeFile(
+    eventsPath,
+    `${JSON.stringify(oldBatch)}\n${JSON.stringify(currentBatch)}\n`,
+    "utf8",
+  );
+
+  const originalStdoutWrite = process.stdout.write;
+  let output = "";
+  let renderCount = 0;
+  process.stdout.write = ((
+    chunk: string | Uint8Array,
+    encoding?: unknown,
+    cb?: unknown,
+  ) => {
+    const text = chunk.toString();
+    output += text;
+    if (text.includes("Sol-Luna Activity")) renderCount++;
+    if (typeof encoding === "function") encoding();
+    else if (typeof cb === "function") cb();
+    return true;
+  }) as any;
+
+  let watchPromise: Promise<number> | undefined;
+  try {
+    const { activityCommand } = await import("./cli/activity.js");
+    watchPromise = activityCommand(["--watch"]);
+
+    // The command has attached its watcher synchronously before its first
+    // awaited stat. This append therefore needs startup catch-up to observe it;
+    // no later append is made to trigger the live path.
+    await fs.appendFile(
+      eventsPath,
+      `${JSON.stringify({
+        timestamp: "2024-03-02T00:00:01Z",
+        type: "worker.started",
+        batchId: "b-current",
+        taskId: "t-current",
+        effort: "high",
+        workingDirectory: "w",
+      })}\n`,
+      "utf8",
+    );
+
+    const deadline = Date.now() + 5_000;
+    while (!output.includes("t-current") && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.match(output, /Batch\s+b-current/);
+    assert.match(output, /t-current/);
+    assert.doesNotMatch(output, /Batch\s+b-old/);
+    assert.ok(renderCount >= 1 && renderCount <= 2);
+  } finally {
+    if (watchPromise) {
+      process.emit("SIGINT", "SIGINT");
+      await watchPromise.catch(() => undefined);
+    }
+    process.stdout.write = originalStdoutWrite;
+    await fs.rm(workRoot, { recursive: true, force: true }).catch(() => {});
+  }
+});

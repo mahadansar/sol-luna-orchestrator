@@ -2,6 +2,12 @@ import { OrchestratorEvent } from "../events.js";
 
 export type TimestampedEvent = OrchestratorEvent & { timestamp: string };
 
+/** Treat only the runtime's ISO timestamps as sortable wall-clock values. */
+function eventTime(timestamp: string): number {
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(timestamp)) return Number.NaN;
+  return Date.parse(timestamp);
+}
+
 export type WorkerState =
   "queued" | "running" | "verifying" | "completed" | "failed" | "cancelled" | "timedOut";
 
@@ -38,9 +44,9 @@ export interface ActivitySnapshot {
   durationSeconds: number | null;
   workers: WorkerActivity[];
   supervisor: {
-    /** What can truthfully be inferred about Sol's state from the event stream. */
+    /** What can truthfully be inferred about the parent from the event stream. */
     state: "awaiting delegation" | "not observable";
-    /** Parent Sol token usage is not visible to MCP servers. Always null. */
+    /** Parent token usage is not visible to MCP servers. Always null. */
     usage: null;
   };
   concurrency: {
@@ -116,7 +122,39 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
   const workerMap = new Map<string, WorkerActivity>();
   const activeWorkerIds = new Set<string>();
 
-  for (const event of events) {
+  // A shared append-only log can contain records from more than one process.
+  // Select the newest batch by its event timestamp before reducing, so a stale
+  // batch appended late cannot make the operational view jump backwards.
+  const batchStarts = events.filter((event) => event.type === "batch.started");
+  const latestBatch = batchStarts.reduce<TimestampedEvent | null>((latest, event) => {
+    if (!latest) return event;
+    const latestTimestamp = eventTime(latest.timestamp);
+    const currentTimestamp = eventTime(event.timestamp);
+    if (Number.isFinite(latestTimestamp) && Number.isFinite(currentTimestamp)) {
+      return currentTimestamp >= latestTimestamp ? event : latest;
+    }
+    if (Number.isFinite(latestTimestamp)) return latest;
+    if (Number.isFinite(currentTimestamp)) return event;
+    return event;
+  }, null);
+  const selectedEvents = latestBatch
+    ? events.filter((event) => event.batchId === latestBatch.batchId)
+    : events;
+
+  // Timestamps are normally ISO strings. Keep the physical append order for
+  // legacy/non-date timestamps, while making reconstruction deterministic when
+  // valid records arrive out of order.
+  const orderedEvents = selectedEvents
+    .map((event, index) => ({ event, index, time: eventTime(event.timestamp) }))
+    .sort((a, b) => {
+      if (Number.isFinite(a.time) && Number.isFinite(b.time)) return a.time - b.time;
+      if (Number.isFinite(a.time)) return -1;
+      if (Number.isFinite(b.time)) return 1;
+      return a.index - b.index;
+    })
+    .map(({ event }) => event);
+
+  for (const event of orderedEvents) {
     if (!event.timestamp) continue;
     snapshot.updatedAt = event.timestamp;
 
@@ -208,7 +246,10 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
         activeWorkerIds.add(event.taskId);
         break;
       case "worker.completed":
-        worker.state = "completed";
+        // Older/runtime paths may emit timedOut followed by the normal
+        // completion record. Keep the timeout visible rather than rewriting it
+        // as a successful-looking completion.
+        if (worker.state !== "timedOut") worker.state = "completed";
         worker.endTime = event.timestamp;
         worker.verdict = event.verdict;
         worker.model = event.model;

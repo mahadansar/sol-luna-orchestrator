@@ -7,6 +7,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   DEFAULT_EFFORT,
+  DEFAULT_TIMEOUT_SECONDS,
   EVENTS_FILE,
   IS_WORKER_PROCESS,
   LUNA_MODEL,
@@ -27,6 +28,7 @@ import {
 import { BatchRejectedError, runBatch } from "./batch.js";
 import { WorkerBusyError, delegateToLuna } from "./worker.js";
 import { WorkspaceError } from "./workspace.js";
+import { emitEvent } from "./events.js";
 
 /**
  * stdout is the MCP transport. Anything written there that is not a JSON-RPC
@@ -78,6 +80,78 @@ export const recordEvent = (
     // Telemetry must never break a delegation.
   }
 };
+
+function makeSingleBatchId(): string {
+  return `b${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
+}
+
+function emitSingleCompletion(
+  batchId: string,
+  taskId: string,
+  timeoutSeconds: number,
+  result: DelegateTaskOutput,
+): void {
+  const cancelled = result.errors.some((error) =>
+    /was cancelled before it finished/i.test(error),
+  );
+  const timedOut = result.errors.some((error) => /exceeded its .* budget/.test(error));
+
+  if (cancelled) {
+    emitEvent({ type: "worker.cancelled", batchId, taskId });
+    emitEvent({
+      type: "batch.cancelled",
+      batchId,
+      reason: "worker cancelled",
+    });
+  } else {
+    const orchestratorRuns = result.verification.filter(
+      (run) => run.source === "orchestrator",
+    );
+    if (orchestratorRuns.length > 0) {
+      emitEvent({
+        type: "verification.completed",
+        batchId,
+        taskId,
+        passed: orchestratorRuns.filter((run) => run.passed).length,
+        failed: orchestratorRuns.filter(
+          (run) => !run.passed && (run.execution === "argv" || run.execution === "shell"),
+        ).length,
+        refused: orchestratorRuns.filter(
+          (run) => run.execution === "rejected" || run.execution === "skipped",
+        ).length,
+      });
+    }
+    if (timedOut) {
+      emitEvent({
+        type: "worker.timedOut",
+        batchId,
+        taskId,
+        timeoutSeconds,
+      });
+    }
+    // Keep the existing completion record for compatibility. The activity
+    // reducer preserves timedOut when this record follows it.
+    emitEvent({
+      type: "worker.completed",
+      batchId,
+      taskId,
+      verdict: result.verdict,
+      claimed: result.workerClaimedStatus,
+      durationSeconds: result.durationSeconds,
+      threadId: result.workerThreadId,
+      model: result.model,
+      effort: result.effort,
+      usage: result.usage,
+    });
+    emitEvent({
+      type: "batch.completed",
+      batchId,
+      durationSeconds: result.durationSeconds,
+      passed: result.verdict === "PASS" ? 1 : 0,
+      failed: result.verdict === "PASS" ? 0 : 1,
+    });
+  }
+}
 
 export const TOOL_DESCRIPTION = `Delegate ONE substantial, bounded, well-specified executable task to an isolated ${LUNA_MODEL} worker.
 
@@ -267,13 +341,56 @@ function registerDelegateTask(): void {
     },
     async (input, extra) => {
       const task = input as DelegateTaskInput;
+      const batchId = makeSingleBatchId();
+      const taskId = "t1";
+      const startedAt = Date.now();
+      let workerStarted = false;
       log(
         `delegate_task: effort=${task.effort} cwd=${task.workingDirectory ?? process.cwd()} ` +
           `objective="${task.objective.slice(0, 80)}..."`,
       );
 
+      emitEvent({
+        type: "batch.started",
+        batchId,
+        mode: "single",
+        taskCount: 1,
+        maxParallel: 1,
+      });
+      emitEvent({
+        type: "task.queued",
+        batchId,
+        taskId,
+        effort: task.effort,
+        category: task.taskCategory,
+      });
+
       try {
-        const result = await delegateToLuna(task, extra?.signal);
+        const result = await delegateToLuna(task, extra?.signal, {
+          onStarted: (workingDirectory) => {
+            workerStarted = true;
+            emitEvent({
+              type: "worker.started",
+              batchId,
+              taskId,
+              effort: task.effort,
+              workingDirectory,
+            });
+          },
+          onVerificationStart: (commandCount) =>
+            emitEvent({
+              type: "verification.started",
+              batchId,
+              taskId,
+              commandCount,
+            }),
+        });
+        emitSingleCompletion(
+          batchId,
+          taskId,
+          task.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS,
+          result,
+        );
         log(
           `done: verdict=${result.verdict} claimed=${result.workerClaimedStatus} ` +
             `thread=${result.workerThreadId ?? "?"} in ${result.durationSeconds}s`,
@@ -291,6 +408,36 @@ function registerDelegateTask(): void {
           error instanceof WorkerBusyError || error instanceof WorkspaceError
             ? error.message
             : `Delegation failed: ${(error as Error).message}`;
+
+        if (workerStarted) {
+          const durationSeconds = Math.round((Date.now() - startedAt) / 1000);
+          if (extra?.signal?.aborted) {
+            emitEvent({ type: "worker.cancelled", batchId, taskId });
+            emitEvent({
+              type: "batch.cancelled",
+              batchId,
+              reason: "worker cancelled",
+            });
+          } else {
+            emitEvent({ type: "worker.failed", batchId, taskId, reason: message });
+            emitEvent({
+              type: "batch.completed",
+              batchId,
+              durationSeconds,
+              passed: 0,
+              failed: 1,
+            });
+          }
+        } else if (extra?.signal?.aborted) {
+          emitEvent({
+            type: "batch.cancelled",
+            batchId,
+            reason: "cancelled before worker start",
+          });
+        } else {
+          emitEvent({ type: "batch.rejected", batchId, reason: message });
+        }
+
         log(`error: ${message}`);
         // Returned as a tool error (not a thrown protocol error) so Sol can read
         // the reason and adapt instead of seeing an opaque transport failure.

@@ -140,9 +140,12 @@ sol-luna-orchestrator activity --watch
 ```
 
 It refreshes as each worker starts, verifies and completes, and stops on Ctrl+C.
-Before anything has been delegated it shows `No orchestration activity found.`
-and keeps waiting, so you can start it first. `activity --json` prints a
-machine-readable snapshot instead; `--watch` and `--json` cannot be combined.
+At startup it folds existing history silently and renders only the latest run;
+records appended during that catch-up are picked up without needing another
+append. Before anything has been delegated it shows
+`No orchestration activity found.` and keeps waiting, so you can start it first.
+`activity --json` prints one machine-readable snapshot of the latest run instead;
+`--watch` and `--json` cannot be combined.
 
 `init` configures the event log this reads, so no environment variable needs to
 be exported.

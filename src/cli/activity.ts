@@ -55,7 +55,7 @@ export function renderHuman(snapshot: ActivitySnapshot): void {
   out();
 
   out(bold("SUPERVISOR"));
-  out(`Sol         ${snapshot.supervisor.state}`);
+  out(`Parent      ${snapshot.supervisor.state}`);
   out(`Usage       unavailable to MCP`);
   out();
 
@@ -160,132 +160,222 @@ export async function activityCommand(argv: string[]): Promise<number> {
   }
 
   const eventsFile = resolved.path;
-  const events = await readEvents(eventsFile);
+  if (!watchMode) {
+    const events = await readEvents(eventsFile);
+    const snapshot = reduceEvents(events);
+    if (jsonMode) {
+      out(JSON.stringify(snapshot, null, 2));
+    } else {
+      renderHuman(snapshot);
+    }
+    return 0;
+  }
+
+  const events: TimestampedEvent[] = [];
   let snapshot = reduceEvents(events);
 
-  if (jsonMode) {
-    out(JSON.stringify(snapshot, null, 2));
-    return 0;
-  }
-
-  if (!watchMode) {
-    renderHuman(snapshot);
-    return 0;
-  }
-
-  // --- Watch mode ---
-  // Render initial state, then use fs.watch to detect appends.
-  renderHuman(snapshot);
-
-  let currentSize = 0;
-  try {
-    const s = await stat(eventsFile);
-    currentSize = s.size;
-  } catch {
-    // fine if file doesn't exist yet
-  }
-
-  // Buffer for incomplete trailing lines between reads. When the event writer
-  // is mid-way through appending a JSONL record, the reader may see a partial
-  // final line. We hold the fragment here until the next read completes it.
-  let trailingFragment = "";
-  let decoder = new StringDecoder("utf-8");
-
+  // --- Watch mode ---------------------------------------------------------
+  // Attach before the historical read. Notifications received while the
+  // initial snapshot is reconstructed are held silent and replayed as a
+  // normal incremental read after startup, so no append can fall into a gap.
   return new Promise<number>((resolve) => {
-    let watcher: FSWatcher;
+    let watcher: FSWatcher | undefined;
+    let missingFilePoll: NodeJS.Timeout | undefined;
+    let elapsedTimer: NodeJS.Timeout | undefined;
     let changeQueue = Promise.resolve();
+    let currentSize = 0;
+    let trailingFragment = "";
+    let decoder = new StringDecoder("utf-8");
+    let ready = false;
+    let pendingChange = false;
+    let closed = false;
 
-    const scheduleFileChange = (): void => {
-      changeQueue = changeQueue.then(onFileChange, onFileChange);
+    const resetReadState = (): void => {
+      currentSize = 0;
+      trailingFragment = "";
+      decoder = new StringDecoder("utf-8");
+      events.length = 0;
     };
 
-    try {
-      watcher = watch(eventsFile, () => {
-        scheduleFileChange();
-      });
-    } catch {
-      // file may not exist yet — poll until it does
-      const interval = setInterval(() => {
-        try {
-          watcher = watch(eventsFile, () => {
-            scheduleFileChange();
-          });
-          clearInterval(interval);
-          // The file may have been created and populated before the delayed
-          // watcher attachment. Catch up from currentSize before waiting for
-          // the next filesystem notification.
-          scheduleFileChange();
-        } catch {
-          // keep waiting
-        }
-      }, 1000);
-
-      const cleanup = () => {
-        clearInterval(interval);
-        watcher?.close();
-        out();
-        resolve(0);
-      };
-      process.on("SIGINT", cleanup);
-      return;
-    }
-
-    async function onFileChange(): Promise<void> {
+    const fileSize = async (): Promise<number | null> => {
       try {
-        const s = await stat(eventsFile);
-
-        if (s.size < currentSize) {
-          // File was truncated — re-read from scratch
-          currentSize = 0;
-          trailingFragment = "";
-          decoder = new StringDecoder("utf-8");
-          events.length = 0;
-        }
-
-        if (s.size <= currentSize) return;
-
-        // Read only the new bytes appended since last read
-        const chunks: Buffer[] = [];
-        const stream = createReadStream(eventsFile, {
-          start: currentSize,
-          end: s.size - 1,
-        });
-
-        for await (const chunk of stream) {
-          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string));
-        }
-
-        const raw = trailingFragment + decoder.write(Buffer.concat(chunks));
-        currentSize = s.size;
-
-        // Split into lines. The last element may be a partial line (no trailing
-        // newline yet) — hold it in trailingFragment for the next read.
-        const parts = raw.split(/\r?\n/);
-        trailingFragment = parts.pop() ?? "";
-
-        let changed = false;
-        for (const line of parts) {
-          const ev = parseEventLine(line);
-          if (ev) {
-            events.push(ev);
-            changed = true;
-          }
-        }
-
-        if (changed) {
-          snapshot = reduceEvents(events);
-          clearScreen();
-          renderHuman(snapshot);
-        }
+        const current = await stat(eventsFile);
+        return current.isFile() ? current.size : null;
       } catch {
-        // File could be temporarily unavailable
+        return null;
       }
-    }
+    };
 
-    process.on("SIGINT", () => {
-      watcher.close();
+    /** Consume complete records from the current file tail. */
+    const readAvailable = async (): Promise<boolean> => {
+      const size = await fileSize();
+      if (size === null) return false;
+
+      if (size < currentSize) resetReadState();
+      if (size <= currentSize) return false;
+
+      const chunks: Buffer[] = [];
+      const stream = createReadStream(eventsFile, {
+        start: currentSize,
+        end: size - 1,
+      });
+      for await (const chunk of stream) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string));
+      }
+
+      const raw = trailingFragment + decoder.write(Buffer.concat(chunks));
+      currentSize = size;
+
+      // The last element may be a partial line. Keep it, including a split
+      // UTF-8 sequence retained by StringDecoder, until the next append.
+      const parts = raw.split(/\r?\n/);
+      trailingFragment = parts.pop() ?? "";
+
+      let changed = false;
+      for (const line of parts) {
+        const event = parseEventLine(line);
+        if (event) {
+          events.push(event);
+          changed = true;
+        }
+      }
+      return changed;
+    };
+
+    const updateElapsedTimer = (): void => {
+      const active =
+        snapshot.state === "running" &&
+        snapshot.workers.some(
+          (worker) => worker.state === "running" || worker.state === "verifying",
+        );
+      if (active && !elapsedTimer) {
+        elapsedTimer = setInterval(() => {
+          if (closed) return;
+          const stillActive =
+            snapshot.state === "running" &&
+            snapshot.workers.some(
+              (worker) => worker.state === "running" || worker.state === "verifying",
+            );
+          if (stillActive) renderCurrent();
+        }, 1000);
+      } else if (!active && elapsedTimer) {
+        clearInterval(elapsedTimer);
+        elapsedTimer = undefined;
+      }
+    };
+
+    const renderCurrent = (): void => {
+      snapshot = reduceEvents(events);
+      clearScreen();
+      renderHuman(snapshot);
+      updateElapsedTimer();
+    };
+
+    const onFileChange = async (render = true): Promise<void> => {
+      try {
+        const changed = await readAvailable();
+        if (!closed && changed && render) renderCurrent();
+      } catch {
+        // The file can be temporarily unavailable while it is replaced.
+      }
+    };
+
+    const scheduleFileChange = (): void => {
+      if (closed) return;
+      if (!ready) {
+        pendingChange = true;
+        return;
+      }
+      changeQueue = changeQueue.then(
+        () => onFileChange(),
+        () => onFileChange(),
+      );
+    };
+
+    const attachWatcher = (): boolean => {
+      if (watcher) return true;
+      try {
+        // This is deliberately done before the initial read. The immediate
+        // catch-up below handles records written before or during attachment.
+        const nextWatcher = watch(eventsFile, () => scheduleFileChange());
+        // On Windows, a watcher can report EPERM asynchronously (including
+        // while its directory is being cleaned up). Never let that become an
+        // uncaught process error in a long-running CLI command.
+        nextWatcher.on("error", () => {
+          if (watcher === nextWatcher) watcher = undefined;
+          nextWatcher.close();
+          startMissingFilePoll();
+        });
+        watcher = nextWatcher;
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    const startMissingFilePoll = (): void => {
+      if (missingFilePoll || closed) return;
+      missingFilePoll = setInterval(() => {
+        if (closed || watcher) return;
+        if (!attachWatcher()) return;
+        if (missingFilePoll) clearInterval(missingFilePoll);
+        missingFilePoll = undefined;
+        scheduleFileChange();
+      }, 100);
+    };
+
+    const onSigint = (): void => {
+      if (closed) return;
+      closed = true;
+      if (missingFilePoll) clearInterval(missingFilePoll);
+      if (elapsedTimer) clearInterval(elapsedTimer);
+      watcher?.close();
+      process.off("SIGINT", onSigint);
       out();
       resolve(0);
+    };
+
+    process.on("SIGINT", onSigint);
+
+    const initialize = async (): Promise<void> => {
+      const attached = attachWatcher();
+      if (!attached) {
+        // A configured file may not exist until the first event is emitted.
+        // Polling is only for that missing-file case; once it exists, attach
+        // first and then schedule a full catch-up from currentSize.
+        startMissingFilePoll();
+      }
+
+      // Fold history silently. Repeat while notifications or file growth show
+      // that an append raced this catch-up. This avoids needing a later append
+      // to make a record written during startup visible.
+      for (;;) {
+        pendingChange = false;
+        await onFileChange(false);
+        if (closed) return;
+        const size = await fileSize();
+        if (!pendingChange && (size === null || size <= currentSize)) break;
+      }
+
+      if (closed) return;
+      // Exactly one startup render, containing the reconstructed latest state.
+      snapshot = reduceEvents(events);
+      renderHuman(snapshot);
+      updateElapsedTimer();
+      ready = true;
+      if (pendingChange) {
+        pendingChange = false;
+        scheduleFileChange();
+      }
+    };
+
+    void initialize().catch(() => {
+      if (closed) return;
+      // Keep watch mode useful even if a transient startup read failed.
+      snapshot = reduceEvents(events);
+      renderHuman(snapshot);
+      ready = true;
+      scheduleFileChange();
     });
   });
 }

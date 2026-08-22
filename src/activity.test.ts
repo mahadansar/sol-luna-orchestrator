@@ -609,6 +609,51 @@ test("worker timeout is captured", () => {
   assert.equal(snap.concurrency.current, 0);
 });
 
+test("a completion record after timeout does not erase the timeout", () => {
+  const events: TimestampedEvent[] = [
+    {
+      timestamp: "2024-01-01T00:00:00Z",
+      type: "batch.started",
+      batchId: "b1",
+      mode: "single",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T00:00:01Z",
+      type: "worker.started",
+      batchId: "b1",
+      taskId: "t1",
+      effort: "high",
+      workingDirectory: "w",
+    },
+    {
+      timestamp: "2024-01-01T00:00:02Z",
+      type: "worker.timedOut",
+      batchId: "b1",
+      taskId: "t1",
+      timeoutSeconds: 1,
+    },
+    {
+      timestamp: "2024-01-01T00:00:03Z",
+      type: "worker.completed",
+      batchId: "b1",
+      taskId: "t1",
+      verdict: "FAILED",
+      claimed: "FAILED",
+      durationSeconds: 2,
+      threadId: null,
+      model: "m",
+      effort: "high",
+      usage: null,
+    },
+  ];
+
+  const snap = reduceEvents(events);
+  assert.equal(snap.workers[0]!.state, "timedOut");
+  assert.equal(snap.concurrency.current, 0);
+});
+
 test("worker cancellation is captured", () => {
   const events: TimestampedEvent[] = [
     {
@@ -1011,4 +1056,59 @@ test("batch rejected before workers start has no workers", () => {
   assert.equal(snap.workers.length, 0);
   assert.equal(snap.concurrency.peak, 0);
   assert.equal(snap.supervisor.state, "not observable");
+});
+
+test("a stale batch appended after the latest run cannot replace it", () => {
+  const events: TimestampedEvent[] = [
+    {
+      timestamp: "2024-01-01T00:00:00Z",
+      type: "batch.started",
+      batchId: "old",
+      mode: "parallel",
+      taskCount: 3,
+      maxParallel: 3,
+    },
+    {
+      timestamp: "2024-01-01T00:00:01Z",
+      type: "worker.started",
+      batchId: "old",
+      taskId: "old-task",
+      effort: "high",
+      workingDirectory: "w",
+    },
+    {
+      timestamp: "2024-01-01T00:00:02Z",
+      type: "batch.started",
+      batchId: "new",
+      mode: "sequential",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T00:00:03Z",
+      type: "worker.started",
+      batchId: "new",
+      taskId: "new-task",
+      effort: "medium",
+      workingDirectory: "w",
+    },
+    // Simulate a delayed stale writer. It is physically last but older by time.
+    {
+      timestamp: "2024-01-01T00:00:01Z",
+      type: "batch.started",
+      batchId: "old-delayed",
+      mode: "parallel",
+      taskCount: 2,
+      maxParallel: 2,
+    },
+  ];
+
+  const snap = reduceEvents(events);
+  assert.equal(snap.batchId, "new");
+  assert.deepEqual(
+    snap.workers.map((worker) => worker.taskId),
+    ["new-task"],
+  );
+  assert.equal(snap.concurrency.current, 1);
+  assert.equal(snap.concurrency.peak, 1);
 });
