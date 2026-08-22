@@ -329,9 +329,10 @@ export const SERVER_INSTRUCTIONS =
   `supervisor owns architecture, delegation, and final judgement; ${LUNA_MODEL} ` +
   `workers execute bounded tasks. ` +
   `Worker claims are not orchestrator evidence. Judge returned verdicts and checks, ` +
-  `reviewing in proportion to their risk and evidence. Await an active Sol-Luna ` +
-  `tool call without repetitive polling or status narration; intervene only for ` +
-  `a result, error, cancellation, timeout, or meaningful new state.`;
+  `reviewing in proportion to their risk and evidence. While an active Sol-Luna ` +
+  `tool call has no meaningful new state, remain silent: do not narrate polling, ` +
+  `waiting, elapsed time, or that it is still running. Report only a result, error, ` +
+  `cancellation, timeout, or actionable state change.`;
 
 const server = new McpServer(
   { name: "sol-luna-orchestrator", version: SERVER_VERSION },

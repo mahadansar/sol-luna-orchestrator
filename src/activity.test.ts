@@ -50,6 +50,42 @@ test("parseEventLine: partial/incomplete JSON line", () => {
   assert.equal(parseEventLine('{"timestamp":"2024-01-01T00:00:00Z","type":"bat'), null);
 });
 
+test("parseEventLine validates optional field types without crashing activity", () => {
+  const queued = parseEventLine(
+    JSON.stringify({
+      timestamp: "2024-01-01T00:00:00Z",
+      type: "task.queued",
+      batchId: "b1",
+      taskId: "t1",
+      effort: "high",
+      activityLabel: { unexpected: true },
+    }),
+  );
+  assert.ok(queued);
+
+  const snapshot = reduceEvents([queued]);
+  assert.equal(snapshot.workers[0]?.activityLabel, null);
+  assert.doesNotThrow(() => renderHumanLines(snapshot));
+});
+
+test("parseEventLine sanitizes control characters in existing event logs", () => {
+  const queued = parseEventLine(
+    JSON.stringify({
+      timestamp: "2024-01-01T00:00:00Z",
+      type: "task.queued",
+      batchId: "b1",
+      taskId: "t1",
+      effort: "high",
+      activityLabel: "Update\u001b[2J\nauth retries",
+    }),
+  );
+  assert.ok(queued);
+
+  const snapshot = reduceEvents([queued]);
+  assert.equal(snapshot.workers[0]?.activityLabel, "Update [2J auth retries");
+  assert.doesNotMatch(renderHumanLines(snapshot).join("\n"), /\u001b\[2J/);
+});
+
 test("event rendering omits prompt objectives while sanitizing other strings", () => {
   const rendered = renderEvent({
     type: "task.queued",

@@ -222,12 +222,19 @@ their tasks must be independent and their declared scopes disjoint.
 with no git requirement. `delegate_tasks` runs several with `mode: "parallel"`
 or `mode: "sequential"`, each carrying its own contract and effort.
 
-After invoking either tool, await the active call without repetitive polling or
-status narration. Intervene only for a result, error, cancellation, timeout, or
-meaningful new state. Delegated `verificationCommands` should normally be
-targeted deterministic checks for the bounded task; leave broader final
-validation to the parent unless the delegated task genuinely requires a full
-suite. The orchestrator still independently processes the supplied checks.
+While either tool is active and has no meaningful new state, remain silent: do
+not narrate polling, waiting, elapsed time, or that it is still running. Report
+only a result, error, cancellation, timeout, or actionable state change.
+Delegated `verificationCommands` should normally be targeted deterministic
+checks for the bounded task; leave broader final validation to the parent unless
+the delegated task genuinely requires a full suite. The orchestrator still
+independently processes the supplied checks.
+
+Silent waiting is parent guidance, not a server-enforced behavior. The MCP
+server awaits worker or batch completion and cannot control commentary that a
+parent model or client generates while the request is pending. Compliance must
+therefore be confirmed with a fresh live acceptance run for the relevant parent
+and client/runtime combination.
 
 The runtime schema is the field-level contract. Legacy plain `context` and
 structured `contextCapsule` may be used together without duplication; neither

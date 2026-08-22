@@ -1,6 +1,131 @@
+import { z } from "zod";
 import { OrchestratorEvent } from "../events.js";
+import { sanitizeForLog } from "../log.js";
 
 export type TimestampedEvent = OrchestratorEvent & { timestamp: string };
+
+const eventString = z.string().transform(sanitizeForLog);
+const optionalEventString = eventString.optional().catch(undefined);
+const optionalEventNumber = z.number().finite().optional().catch(undefined);
+const optionalEventBoolean = z.boolean().optional().catch(undefined);
+const eventBase = { timestamp: eventString, batchId: eventString };
+
+/**
+ * JSONL is local but still untrusted: it may be hand-edited, truncated, or
+ * produced by an older version. Validate fields used by the reducer while
+ * dropping unknown properties and malformed optional legacy fields.
+ */
+const timestampedEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    ...eventBase,
+    type: z.literal("batch.started"),
+    mode: eventString,
+    taskCount: z.number().finite(),
+    maxParallel: z.number().finite(),
+  }),
+  z.object({
+    ...eventBase,
+    type: z.literal("batch.completed"),
+    durationSeconds: optionalEventNumber,
+    passed: optionalEventNumber,
+    failed: optionalEventNumber,
+  }),
+  z.object({ ...eventBase, type: z.literal("batch.cancelled"), reason: eventString }),
+  z.object({ ...eventBase, type: z.literal("batch.rejected"), reason: eventString }),
+  z.object({
+    ...eventBase,
+    type: z.literal("task.queued"),
+    taskId: eventString,
+    effort: optionalEventString,
+    category: optionalEventString,
+    activityLabel: optionalEventString,
+    objective: optionalEventString,
+    model: optionalEventString,
+  }),
+  z.object({
+    ...eventBase,
+    type: z.literal("worker.started"),
+    taskId: eventString,
+    effort: optionalEventString,
+    workingDirectory: optionalEventString,
+    model: optionalEventString,
+  }),
+  z.object({
+    ...eventBase,
+    type: z.literal("worker.completed"),
+    taskId: eventString,
+    verdict: optionalEventString,
+    claimed: optionalEventString,
+    durationSeconds: optionalEventNumber,
+    threadId: optionalEventString.nullable().catch(undefined),
+    model: optionalEventString,
+    effort: optionalEventString,
+    changedFiles: optionalEventNumber,
+    failureReason: optionalEventString,
+    usage: z
+      .object({
+        inputTokens: z.number().finite(),
+        cachedInputTokens: z.number().finite(),
+        outputTokens: z.number().finite(),
+        reasoningOutputTokens: z.number().finite(),
+      })
+      .nullable()
+      .optional()
+      .catch(undefined),
+  }),
+  z.object({
+    ...eventBase,
+    type: z.literal("worker.failed"),
+    taskId: eventString,
+    reason: optionalEventString,
+  }),
+  z.object({ ...eventBase, type: z.literal("worker.cancelled"), taskId: eventString }),
+  z.object({
+    ...eventBase,
+    type: z.literal("worker.timedOut"),
+    taskId: eventString,
+    timeoutSeconds: optionalEventNumber,
+  }),
+  z.object({
+    ...eventBase,
+    type: z.literal("worktree.created"),
+    taskId: eventString,
+    path: optionalEventString,
+  }),
+  z.object({
+    ...eventBase,
+    type: z.literal("worktree.removed"),
+    taskId: eventString,
+    kept: optionalEventBoolean,
+  }),
+  z.object({
+    ...eventBase,
+    type: z.literal("verification.started"),
+    taskId: eventString,
+    commandCount: optionalEventNumber,
+  }),
+  z.object({
+    ...eventBase,
+    type: z.literal("verification.completed"),
+    taskId: eventString,
+    passed: z.number().finite().catch(0),
+    failed: z.number().finite().catch(0),
+    refused: z.number().finite().catch(0),
+  }),
+  z.object({ ...eventBase, type: z.literal("scope.conflict"), detail: eventString }),
+  z.object({
+    ...eventBase,
+    type: z.literal("integration.conflict"),
+    path: eventString,
+    tasks: z.array(eventString),
+  }),
+  z.object({
+    ...eventBase,
+    type: z.literal("integration.applied"),
+    taskId: eventString,
+    fileCount: optionalEventNumber,
+  }),
+]);
 
 /** Treat only the runtime's ISO timestamps as sortable wall-clock values. */
 function eventTime(timestamp: string): number {
@@ -119,11 +244,8 @@ export function parseEventLine(line: string): TimestampedEvent | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
   try {
-    const ev = JSON.parse(trimmed) as Record<string, unknown>;
-    if (ev && typeof ev.type === "string" && typeof ev.timestamp === "string") {
-      return ev as unknown as TimestampedEvent;
-    }
-    return null;
+    const parsed = timestampedEventSchema.safeParse(JSON.parse(trimmed));
+    return parsed.success ? (parsed.data as TimestampedEvent) : null;
   } catch {
     return null;
   }
@@ -318,20 +440,20 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
       case "worker.timedOut":
         worker.state = "timedOut";
         worker.endTime = event.timestamp;
-        worker.timeoutSeconds = event.timeoutSeconds;
+        worker.timeoutSeconds = event.timeoutSeconds ?? null;
         activeWorkerIds.delete(event.taskId);
         break;
       case "worktree.created":
-        worker.worktreePath = event.path;
+        worker.worktreePath = event.path ?? null;
         break;
       case "worktree.removed":
-        worker.worktreeKept = event.kept;
+        worker.worktreeKept = event.kept ?? null;
         break;
       case "verification.started":
         worker.state = "verifying";
         worker.verification = {
           started: true,
-          total: event.commandCount,
+          total: event.commandCount ?? null,
           passed: 0,
           failed: 0,
           refused: 0,
@@ -351,7 +473,7 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
         break;
       case "integration.applied":
         worker.integration = {
-          appliedFiles: event.fileCount,
+          appliedFiles: event.fileCount ?? null,
           conflicted: false,
         };
         break;

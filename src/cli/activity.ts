@@ -267,7 +267,8 @@ export function renderHuman(snapshot: ActivitySnapshot): void {
 
 /**
  * Read all events from a JSONL file. Each line is parsed independently;
- * malformed lines are silently dropped.
+ * invalid events are silently dropped, while malformed optional legacy fields
+ * are ignored by the shared parser.
  */
 async function readEvents(file: string): Promise<TimestampedEvent[]> {
   const events: TimestampedEvent[] = [];

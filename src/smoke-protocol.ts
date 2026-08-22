@@ -76,6 +76,8 @@ async function main(): Promise<void> {
     assert.match(instructions, /compatible parent Codex model/);
     assert.match(instructions, /Sol-Luna Orchestrator/);
     assert.match(instructions, /claims are not orchestrator evidence/);
+    assert.match(instructions, /has no meaningful new state, remain silent/i);
+    assert.match(instructions, /result, error, cancellation, timeout/i);
   });
 
   const { tools } = await client.listTools();

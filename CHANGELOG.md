@@ -18,6 +18,16 @@ All notable changes to this project are documented here. Format follows
 
 - Parent-orchestrator guidance is model-agnostic while preserving the
   Sol-Luna product identity and GPT-5.6 Luna worker default.
+- Parent guidance now explicitly requires silence while an active delegation has
+  no meaningful new state, while preserving result, error, cancellation,
+  timeout, and actionable-state reporting. This remains guidance to the parent
+  model/client rather than server-enforced output behavior.
+
+### Fixed
+
+- Activity parsing now validates known event shapes and sanitizes strings read
+  from existing JSONL, so malformed legacy or hand-edited fields cannot crash
+  the human view or inject terminal control sequences.
 
 ## [0.7.1] - 2026-08-22
 

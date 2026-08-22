@@ -90,9 +90,9 @@ retries`) for the local activity view. It is not required, is bounded, and is
 - Set effort deliberately, explain it in `effortReason`, and use
   `timeoutSeconds` only when the configured default is unsuitable.
 
-After invoking a Sol-Luna tool, await the active call without repetitive polling
-or status narration. Intervene only for a result, error, cancellation, timeout,
-or meaningful new state.
+While an active Sol-Luna tool call has no meaningful new state, remain silent:
+do not narrate polling, waiting, elapsed time, or that it is still running.
+Report only a result, error, cancellation, timeout, or actionable state change.
 
 ## Evidence and review
 

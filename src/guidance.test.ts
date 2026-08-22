@@ -70,10 +70,14 @@ test("server instructions keep roles, evidence authority, and proportional revie
   assert.match(SERVER_INSTRUCTIONS, /workers execute bounded tasks/i);
   assert.match(SERVER_INSTRUCTIONS, /claims are not orchestrator evidence/i);
   assert.match(SERVER_INSTRUCTIONS, /proportion/i);
-  assert.match(SERVER_INSTRUCTIONS, /without repetitive polling or status narration/i);
+  assert.match(SERVER_INSTRUCTIONS, /has no meaningful new state, remain silent/i);
   assert.match(
     SERVER_INSTRUCTIONS,
-    /result, error, cancellation, timeout, or meaningful new state/i,
+    /do not narrate polling, waiting, elapsed time, or that it is still running/i,
+  );
+  assert.match(
+    SERVER_INSTRUCTIONS,
+    /result, error, cancellation, timeout, or actionable state change/i,
   );
 });
 
@@ -265,7 +269,8 @@ test("SOL_RULES carries the runtime's operational distinctions without benchmark
     /schema default remains[\s\S]*full/i,
     /trustworthy: false/i,
     /Do not automatically rerun a full suite/i,
-    /without repetitive polling\s+or status narration/i,
+    /has no meaningful new state,[\s\S]*remain silent/i,
+    /do not narrate polling,[\s\S]*waiting,[\s\S]*elapsed time/i,
     /normally leave broader final validation to the parent/i,
     /do not pre-commit to rereading[\s\S]*every changed file/i,
   ]) {
@@ -284,4 +289,10 @@ test("README does not require unconditional integration verification", async () 
     readme,
     /Use the sol-luna-orchestrator MCP for this task\. Decide whether delegate_task or[\s\S]*delegate_tasks is appropriate based on the work\./,
   );
+  assert.match(
+    readme,
+    /Silent waiting is parent guidance, not a server-enforced behavior/i,
+  );
+  assert.match(readme, /cannot control commentary[\s\S]*while the request is pending/i);
+  assert.match(readme, /confirmed with a fresh live acceptance run/i);
 });
