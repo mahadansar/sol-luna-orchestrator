@@ -28,7 +28,7 @@ import {
 import { BatchRejectedError, runBatch } from "./batch.js";
 import { WorkerBusyError, delegateToLuna } from "./worker.js";
 import { WorkspaceError } from "./workspace.js";
-import { emitEvent } from "./events.js";
+import { activityFailureReason, emitEvent } from "./events.js";
 
 /**
  * stdout is the MCP transport. Anything written there that is not a JSON-RPC
@@ -141,6 +141,8 @@ function emitSingleCompletion(
       threadId: result.workerThreadId,
       model: result.model,
       effort: result.effort,
+      changedFiles: result.filesChanged.filter((file) => file.observed).length,
+      failureReason: activityFailureReason(result),
       usage: result.usage,
     });
     emitEvent({
@@ -161,6 +163,10 @@ stated clearly and moving execution out of the parent orchestrator's context is
 worthwhile. One task does not need a second independent seam to justify
 delegation. Keep small, simple, tightly coupled, or already-obvious work solo
 when fixed coordination overhead would dominate.
+
+When delegating, optionally provide a useful concise activityLabel (for example,
+"Update auth retries") for the local activity view. It is not required, and it
+should not copy the full objective or include sensitive details.
 
 Be cost-aware, not raw-token-minimal: under the current pricing schedule,
 equivalent Luna tokens are roughly 25x cheaper than Sol tokens, so substantially
@@ -369,6 +375,8 @@ function registerDelegateTask(): void {
         taskId,
         effort: task.effort,
         category: task.taskCategory,
+        activityLabel: task.activityLabel,
+        model: LUNA_MODEL,
       });
 
       try {
@@ -381,6 +389,7 @@ function registerDelegateTask(): void {
               taskId,
               effort: task.effort,
               workingDirectory,
+              model: LUNA_MODEL,
             });
           },
           onVerificationStart: (commandCount) =>
@@ -469,6 +478,10 @@ Parallelism may reduce latency but does not guarantee it.
 Do not create artificial seams or split work so finely that coordination
 dominates. Whether to delegate and whether to run in parallel are separate
 decisions.
+
+Optionally give each task a useful concise activityLabel for the local activity
+view; labels are not required and should not copy the full objective or include
+sensitive details.
 
 Partial outcomes remain visible for the parent orchestrator to judge. A completed worker's edits may
 be integrated even when its verdict is FAILED or BLOCKED. Declared scope

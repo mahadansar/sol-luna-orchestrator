@@ -1,13 +1,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { MAX_BATCH_SIZE, MAX_PARALLEL } from "./config.js";
+import { LUNA_MODEL, MAX_BATCH_SIZE, MAX_PARALLEL } from "./config.js";
 import type {
   BatchOutput,
   BatchTaskResult,
   DelegateTaskInput,
   TaskState,
 } from "./contract.js";
-import { emitEvent } from "./events.js";
+import { activityFailureReason, emitEvent, type EventEmitter } from "./events.js";
 import {
   findIntegrationConflicts,
   findScopeConflicts,
@@ -32,14 +32,9 @@ export class BatchRejectedError extends Error {
   }
 }
 
-/** Short, filesystem-safe identifier for a task's worktree directory. */
-function makeTaskId(index: number, seed: string): string {
-  const slug = seed
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 24);
-  return `t${index + 1}${slug ? `-${slug}` : ""}`;
+/** Stable, non-sensitive identifier for a task's worktree directory. */
+function makeTaskId(index: number): string {
+  return `t${index + 1}`;
 }
 
 function makeBatchId(): string {
@@ -81,11 +76,17 @@ export async function runBatch(
      * tested without spending model calls. Production always uses the default.
      */
     executor?: TaskExecutor;
+    /**
+     * Per-run event sink. Production uses the append-only configured emitter;
+     * deterministic callers inject an isolated sink without mutating process env.
+     */
+    eventEmitter?: EventEmitter;
   },
 ): Promise<BatchOutput> {
   const batchId = makeBatchId();
   const startedAt = Date.now();
   const mode = options.mode;
+  const emit = options.eventEmitter ?? emitEvent;
 
   if (tasks.length === 0) {
     throw new BatchRejectedError("A batch needs at least one task.");
@@ -101,7 +102,7 @@ export async function runBatch(
   const run = options.executor ?? executeTask;
 
   const running: RunningTask[] = tasks.map((input, index) => {
-    const taskId = makeTaskId(index, input.objective.split(/\s+/).slice(0, 4).join("-"));
+    const taskId = makeTaskId(index);
     return {
       taskId,
       input,
@@ -122,7 +123,7 @@ export async function runBatch(
     };
   });
 
-  emitEvent({
+  emit({
     type: "batch.started",
     batchId,
     mode,
@@ -130,12 +131,14 @@ export async function runBatch(
     maxParallel: mode === "parallel" ? MAX_PARALLEL : 1,
   });
   for (const task of running) {
-    emitEvent({
+    emit({
       type: "task.queued",
       batchId,
       taskId: task.taskId,
       effort: task.input.effort,
       category: task.input.taskCategory,
+      activityLabel: task.input.activityLabel,
+      model: LUNA_MODEL,
     });
   }
 
@@ -151,11 +154,11 @@ export async function runBatch(
       : [];
 
   for (const conflict of scopeConflicts) {
-    emitEvent({ type: "scope.conflict", batchId, detail: conflict.detail });
+    emit({ type: "scope.conflict", batchId, detail: conflict.detail });
   }
 
   if (scopeConflicts.length > 0 && !options.allowOverlappingScopes) {
-    emitEvent({ type: "batch.rejected", batchId, reason: "overlapping scopes" });
+    emit({ type: "batch.rejected", batchId, reason: "overlapping scopes" });
     throw new BatchRejectedError(
       `These tasks declare overlapping file scopes, so running them in parallel ` +
         `would make the outcome depend on which worker finishes last:\n` +
@@ -170,15 +173,15 @@ export async function runBatch(
 
   try {
     if (mode === "sequential") {
-      await runSequential(batchId, running, workspace, run, options.signal);
+      await runSequential(batchId, running, workspace, run, emit, options.signal);
     } else {
       warnings.push(
-        ...(await runParallel(batchId, running, workspace, run, options.signal)),
+        ...(await runParallel(batchId, running, workspace, run, emit, options.signal)),
       );
     }
   } catch (error) {
     if (error instanceof WorktreeUnavailableError) {
-      emitEvent({ type: "batch.rejected", batchId, reason: error.message });
+      emit({ type: "batch.rejected", batchId, reason: error.message });
       throw new BatchRejectedError(error.message);
     }
     throw error;
@@ -195,7 +198,7 @@ export async function runBatch(
     })),
   );
   for (const conflict of integrationConflicts) {
-    emitEvent({
+    emit({
       type: "integration.conflict",
       batchId,
       path: conflict.path,
@@ -222,7 +225,7 @@ export async function runBatch(
   } else if (completed.length === 0) {
     integrationSummary = "No worker produced changes, so there was nothing to integrate.";
   } else {
-    const applied = await integrateWorktrees(batchId, completed, workspace);
+    const applied = await integrateWorktrees(batchId, completed, workspace, emit);
     integrated = true;
     warnings.push(...applied.warnings);
     integrationSummary =
@@ -243,7 +246,7 @@ export async function runBatch(
           : "failure";
 
     const cleanup = await cleanupWorktree(task.worktree, reason);
-    emitEvent({
+    emit({
       type: "worktree.removed",
       batchId,
       taskId: task.taskId,
@@ -259,7 +262,7 @@ export async function runBatch(
   const passed = running.filter((task) => task.result.result?.verdict === "PASS").length;
   const failed = running.length - passed;
 
-  emitEvent({ type: "batch.completed", batchId, durationSeconds, passed, failed });
+  emit({ type: "batch.completed", batchId, durationSeconds, passed, failed });
 
   return {
     batchId,
@@ -288,16 +291,17 @@ async function runSequential(
   running: RunningTask[],
   workspace: string,
   run: TaskExecutor,
+  emit: EventEmitter,
   signal?: AbortSignal,
 ): Promise<void> {
   for (const task of running) {
     if (signal?.aborted) {
-      markCancelled(batchId, task);
+      markCancelled(batchId, task, emit);
       continue;
     }
     const release = await workerSlots.acquire();
     try {
-      await runOne(batchId, task, workspace, run, signal);
+      await runOne(batchId, task, workspace, run, emit, signal);
     } finally {
       release();
     }
@@ -310,6 +314,7 @@ async function runParallel(
   running: RunningTask[],
   workspace: string,
   run: TaskExecutor,
+  emit: EventEmitter,
   signal?: AbortSignal,
 ): Promise<string[]> {
   const warnings: string[] = [];
@@ -343,11 +348,17 @@ async function runParallel(
   // scheduling choice rather than the safety mechanism.
   for (const task of running) {
     if (signal?.aborted) {
-      markCancelled(batchId, task);
+      markCancelled(batchId, task, emit);
       continue;
     }
     try {
-      task.worktree = await createTaskWorktreeTracked(batchId, base, task, workspace);
+      task.worktree = await createTaskWorktreeTracked(
+        batchId,
+        base,
+        task,
+        workspace,
+        emit,
+      );
       task.result.warnings.push(...task.worktree.warnings);
     } catch (error) {
       // Partial failure is preserved: this task is marked failed and the rest
@@ -355,7 +366,7 @@ async function runParallel(
       task.state = "failed";
       task.result.state = "failed";
       task.result.error = `Could not create an isolated worktree: ${(error as Error).message}`;
-      emitEvent({
+      emit({
         type: "worker.failed",
         batchId,
         taskId: task.taskId,
@@ -376,17 +387,17 @@ async function runParallel(
       if (!worktree || task.state === "failed" || task.state === "cancelled") return;
 
       if (signal?.aborted) {
-        markCancelled(batchId, task);
+        markCancelled(batchId, task, emit);
         return;
       }
       const release = await workerSlots.acquire();
       try {
         if (signal?.aborted) {
-          markCancelled(batchId, task);
+          markCancelled(batchId, task, emit);
           return;
         }
 
-        await runOne(batchId, task, worktree.path, run, signal);
+        await runOne(batchId, task, worktree.path, run, emit, signal);
 
         const outcome = await readWorktreeOutcome(worktree);
         task.result.warnings.push(...outcome.warnings);
@@ -406,9 +417,10 @@ async function createTaskWorktreeTracked(
   base: Awaited<ReturnType<typeof prepareWorktreeBase>>,
   task: RunningTask,
   workspace: string,
+  emit: EventEmitter,
 ): Promise<TaskWorktree> {
   const worktree = await createTaskWorktree(base, task.taskId, workspace);
-  emitEvent({
+  emit({
     type: "worktree.created",
     batchId,
     taskId: task.taskId,
@@ -423,16 +435,18 @@ async function runOne(
   task: RunningTask,
   workingDirectory: string,
   run: TaskExecutor,
+  emit: EventEmitter,
   signal?: AbortSignal,
 ): Promise<void> {
   task.state = "running";
   task.result.state = "running";
-  emitEvent({
+  emit({
     type: "worker.started",
     batchId,
     taskId: task.taskId,
     effort: task.input.effort,
     workingDirectory,
+    model: LUNA_MODEL,
   });
 
   try {
@@ -440,7 +454,7 @@ async function runOne(
       workingDirectory,
       signal,
       onVerificationStart: (commandCount) =>
-        emitEvent({
+        emit({
           type: "verification.started",
           batchId,
           taskId: task.taskId,
@@ -454,7 +468,7 @@ async function runOne(
       (run) => run.source === "orchestrator",
     );
     if (orchestratorRuns.length > 0) {
-      emitEvent({
+      emit({
         type: "verification.completed",
         batchId,
         taskId: task.taskId,
@@ -474,7 +488,7 @@ async function runOne(
     if (result.errors.some((error) => /was cancelled before it finished/i.test(error))) {
       task.state = "cancelled";
       task.result.state = "cancelled";
-      emitEvent({ type: "worker.cancelled", batchId, taskId: task.taskId });
+      emit({ type: "worker.cancelled", batchId, taskId: task.taskId });
       return;
     }
 
@@ -483,7 +497,7 @@ async function runOne(
     task.result.state = task.state;
 
     if (timedOut) {
-      emitEvent({
+      emit({
         type: "worker.timedOut",
         batchId,
         taskId: task.taskId,
@@ -499,7 +513,7 @@ async function runOne(
         .map((file) => file.path);
     }
 
-    emitEvent({
+    emit({
       type: "worker.completed",
       batchId,
       taskId: task.taskId,
@@ -509,13 +523,15 @@ async function runOne(
       threadId: result.workerThreadId,
       model: result.model,
       effort: result.effort,
+      changedFiles: result.filesChanged.filter((file) => file.observed).length,
+      failureReason: activityFailureReason(result),
       usage: result.usage,
     });
   } catch (error) {
     task.state = "failed";
     task.result.state = "failed";
     task.result.error = (error as Error).message;
-    emitEvent({
+    emit({
       type: "worker.failed",
       batchId,
       taskId: task.taskId,
@@ -524,11 +540,11 @@ async function runOne(
   }
 }
 
-function markCancelled(batchId: string, task: RunningTask): void {
+function markCancelled(batchId: string, task: RunningTask, emit: EventEmitter): void {
   task.state = "cancelled";
   task.result.state = "cancelled";
   task.result.error = "Cancelled before this task started.";
-  emitEvent({ type: "worker.cancelled", batchId, taskId: task.taskId });
+  emit({ type: "worker.cancelled", batchId, taskId: task.taskId });
 }
 
 const MAX_DIFF_CHARS = 20_000;
@@ -548,6 +564,7 @@ async function integrateWorktrees(
   batchId: string,
   tasks: RunningTask[],
   workspace: string,
+  emit: EventEmitter,
 ): Promise<{ fileCount: number; warnings: string[] }> {
   const warnings: string[] = [];
   let fileCount = 0;
@@ -581,7 +598,7 @@ async function integrateWorktrees(
     }
 
     fileCount += applied;
-    emitEvent({
+    emit({
       type: "integration.applied",
       batchId,
       taskId: task.taskId,

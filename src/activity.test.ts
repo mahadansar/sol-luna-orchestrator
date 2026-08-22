@@ -5,6 +5,9 @@ import {
   parseEventLine,
   TimestampedEvent,
 } from "./cli/activity-reducer.js";
+import { renderHumanLines } from "./cli/activity.js";
+import { symbols } from "./cli/ui.js";
+import { activityFailureReason, renderEvent } from "./events.js";
 
 // ========================================================================
 // parseEventLine
@@ -47,6 +50,70 @@ test("parseEventLine: partial/incomplete JSON line", () => {
   assert.equal(parseEventLine('{"timestamp":"2024-01-01T00:00:00Z","type":"bat'), null);
 });
 
+test("event rendering omits prompt objectives while sanitizing other strings", () => {
+  const rendered = renderEvent({
+    type: "task.queued",
+    batchId: "b1\nforged",
+    taskId: "t1",
+    effort: "high",
+    activityLabel: "Update\nauth retries",
+    objective: "PROMPT_EVENT_LEAK_SENTINEL",
+  });
+
+  assert.doesNotMatch(rendered, /PROMPT_EVENT_LEAK_SENTINEL|objective/);
+  assert.doesNotMatch(rendered, /\n/);
+  assert.match(rendered, /b1 forged/);
+  assert.match(rendered, /Update auth retries/);
+});
+
+test("labeled activity is reduced and exposed in JSON while legacy records stay readable", () => {
+  const snapshot = reduceEvents([
+    {
+      timestamp: "2024-01-01T00:00:00Z",
+      type: "batch.started",
+      batchId: "b-label",
+      mode: "single",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T00:00:01Z",
+      type: "task.queued",
+      batchId: "b-label",
+      taskId: "opaque-id",
+      effort: "high",
+      activityLabel: "Update auth retries",
+    },
+  ]);
+
+  assert.equal(snapshot.workers[0]?.activityLabel, "Update auth retries");
+  const json = JSON.parse(JSON.stringify(snapshot)) as {
+    workers: Array<{ activityLabel?: string | null }>;
+  };
+  assert.equal(json.workers[0]?.activityLabel, "Update auth retries");
+
+  const legacy = reduceEvents([
+    {
+      timestamp: "2024-01-01T00:00:00Z",
+      type: "batch.started",
+      batchId: "b-legacy",
+      mode: "single",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T00:00:01Z",
+      type: "task.queued",
+      batchId: "b-legacy",
+      taskId: "legacy-id",
+      effort: "high",
+      objective: "old prompt text must not render",
+    },
+  ]);
+  assert.equal(legacy.workers[0]?.activityLabel, null);
+  assert.equal(legacy.workers[0]?.taskId, "legacy-id");
+});
+
 // ========================================================================
 // reduceEvents: empty / no-batch
 // ========================================================================
@@ -80,6 +147,7 @@ test("single worker lifecycle", () => {
       batchId: "b1",
       taskId: "t1",
       effort: "high",
+      category: "implementation",
     },
     {
       timestamp: "2024-01-01T10:00:02Z",
@@ -123,7 +191,12 @@ test("single worker lifecycle", () => {
       threadId: "th1",
       model: "gpt-5.6-luna",
       effort: "high",
-      usage: null,
+      usage: {
+        inputTokens: 100,
+        cachedInputTokens: 25,
+        outputTokens: 20,
+        reasoningOutputTokens: 5,
+      },
     },
     {
       timestamp: "2024-01-01T10:00:13Z",
@@ -147,9 +220,15 @@ test("single worker lifecycle", () => {
   assert.equal(snap.workers.length, 1);
   const w = snap.workers[0]!;
   assert.equal(w.taskId, "t1");
+  assert.equal(w.objective, null);
+  assert.equal(w.category, "implementation");
   assert.equal(w.state, "completed");
   assert.equal(w.verdict, "PASS");
   assert.equal(w.model, "gpt-5.6-luna");
+  assert.equal(w.workingDirectory, "w1");
+  assert.equal(w.claimed, "Did it");
+  assert.equal(w.threadId, "th1");
+  assert.equal(w.usage?.inputTokens, 100);
   assert.equal(w.durationSeconds, 10);
   assert.equal(w.integration?.appliedFiles, 3);
   assert.equal(w.verification?.passed, 2);
@@ -811,6 +890,34 @@ test("missing optional fields do not crash reducer", () => {
   assert.equal(snap.workers[0]!.state, "running");
 });
 
+test("legacy completion records keep unavailable fields null", () => {
+  const snap = reduceEvents([
+    {
+      timestamp: "1",
+      type: "batch.started",
+      batchId: "b1",
+      mode: "sequential",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2",
+      type: "worker.completed",
+      batchId: "b1",
+      taskId: "t1",
+      verdict: "FAILED",
+    } as any,
+  ]);
+
+  const worker = snap.workers[0]!;
+  assert.equal(worker.claimed, null);
+  assert.equal(worker.threadId, null);
+  assert.equal(worker.model, null);
+  assert.equal(worker.effort, "unknown");
+  assert.equal(worker.durationSeconds, null);
+  assert.equal(worker.usage, null);
+});
+
 // ========================================================================
 // Mixed efforts
 // ========================================================================
@@ -1111,4 +1218,433 @@ test("a stale batch appended after the latest run cannot replace it", () => {
   );
   assert.equal(snap.concurrency.current, 1);
   assert.equal(snap.concurrency.peak, 1);
+});
+
+// ========================================================================
+// Human rendering
+// ========================================================================
+
+const human = (events: TimestampedEvent[], now = Date.parse("2024-01-01T10:01:42Z")) =>
+  renderHumanLines(reduceEvents(events), now, 100).join("\n");
+const details = (...parts: string[]): string => parts.join(` ${symbols.divider} `);
+
+test("human rendering: running parallel work answers the at-a-glance questions", () => {
+  const output = human([
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "batch-internal-uuid",
+      mode: "parallel",
+      taskCount: 3,
+      maxParallel: 3,
+    },
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "task.queued",
+      batchId: "batch-internal-uuid",
+      taskId: "internal-task-1",
+      objective: "Implement persistent Codex discovery hint",
+      effort: "high",
+      model: "gpt-5.6-luna",
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "worker.started",
+      batchId: "batch-internal-uuid",
+      taskId: "internal-task-1",
+      effort: "high",
+      model: "gpt-5.6-luna",
+      workingDirectory: "w1",
+    },
+    {
+      timestamp: "2024-01-01T10:00:02Z",
+      type: "task.queued",
+      batchId: "batch-internal-uuid",
+      taskId: "internal-task-2",
+      objective: "Update model-agnostic guidance",
+      effort: "medium",
+      model: "gpt-5.6-luna",
+    },
+    {
+      timestamp: "2024-01-01T10:00:03Z",
+      type: "worker.started",
+      batchId: "batch-internal-uuid",
+      taskId: "internal-task-2",
+      effort: "medium",
+      model: "gpt-5.6-luna",
+      workingDirectory: "w2",
+    },
+  ]);
+
+  assert.match(
+    output,
+    /RUNNING  \|  parallel  \|  2 active \/ 3 total  \|  elapsed 1m 42s  \|  peak 2/,
+  );
+  assert.match(output, /1  Delegated task 1/);
+  assert.ok(output.includes(details("Luna", "high", "RUNNING", "1m 41s")));
+  assert.match(output, /2  Delegated task 2/);
+  assert.ok(output.includes(details("Luna", "medium", "RUNNING", "1m 39s")));
+  assert.equal((output.match(/Verification: pending/g) ?? []).length, 2);
+  assert.doesNotMatch(
+    output,
+    /batch-internal-uuid|internal-task-[12]|Implement persistent|Update model-agnostic|SUPERVISOR|Usage/,
+  );
+});
+
+test("human rendering: verifying state is explicit", () => {
+  const output = human([
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "b1",
+      mode: "single",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "task.queued",
+      batchId: "b1",
+      taskId: "t1",
+      objective: "Verify the focused activity renderer",
+      effort: "high",
+      model: "gpt-5.6-luna",
+    },
+    {
+      timestamp: "2024-01-01T10:00:02Z",
+      type: "worker.started",
+      batchId: "b1",
+      taskId: "t1",
+      effort: "high",
+      model: "gpt-5.6-luna",
+      workingDirectory: "w",
+    },
+    {
+      timestamp: "2024-01-01T10:01:00Z",
+      type: "verification.started",
+      batchId: "b1",
+      taskId: "t1",
+      commandCount: 2,
+    },
+  ]);
+
+  assert.ok(output.includes(details("Luna", "high", "VERIFYING", "1m 40s")));
+  assert.match(output, /Verification: running/);
+});
+
+test("human rendering: successful parallel completion prioritizes outcomes", () => {
+  const output = human([
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "b1",
+      mode: "parallel",
+      taskCount: 2,
+      maxParallel: 2,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "task.queued",
+      batchId: "b1",
+      taskId: "t1",
+      objective: "Implement persistent Codex discovery hint",
+      effort: "high",
+      model: "gpt-5.6-luna",
+    },
+    {
+      timestamp: "2024-01-01T10:00:02Z",
+      type: "worker.started",
+      batchId: "b1",
+      taskId: "t1",
+      effort: "high",
+      model: "gpt-5.6-luna",
+      workingDirectory: "w1",
+    },
+    {
+      timestamp: "2024-01-01T10:01:50Z",
+      type: "verification.completed",
+      batchId: "b1",
+      taskId: "t1",
+      passed: 3,
+      failed: 0,
+      refused: 0,
+    },
+    {
+      timestamp: "2024-01-01T10:01:55Z",
+      type: "worker.completed",
+      batchId: "b1",
+      taskId: "t1",
+      verdict: "PASS",
+      claimed: "PASS",
+      durationSeconds: 114,
+      threadId: "thread-private",
+      model: "gpt-5.6-luna",
+      effort: "high",
+      changedFiles: 4,
+      usage: null,
+    },
+    {
+      timestamp: "2024-01-01T10:00:03Z",
+      type: "worker.started",
+      batchId: "b1",
+      taskId: "t2",
+      effort: "medium",
+      model: "gpt-5.6-luna",
+      workingDirectory: "w2",
+    },
+    {
+      timestamp: "2024-01-01T10:02:00Z",
+      type: "worker.completed",
+      batchId: "b1",
+      taskId: "t2",
+      verdict: "PASS",
+      claimed: "PASS",
+      durationSeconds: 117,
+      threadId: null,
+      model: "gpt-5.6-luna",
+      effort: "medium",
+      changedFiles: 1,
+      usage: null,
+    },
+    {
+      timestamp: "2024-01-01T10:02:31Z",
+      type: "batch.completed",
+      batchId: "b1",
+      durationSeconds: 151,
+      passed: 2,
+      failed: 0,
+    },
+  ]);
+
+  assert.match(
+    output,
+    /COMPLETED  \|  parallel  \|  2\/2 passed  \|  2m 31s  \|  peak 2/,
+  );
+  assert.match(output, /PASS  Delegated task 1/);
+  assert.ok(output.includes(details("Luna", "high", "1m 54s")));
+  assert.ok(output.includes(details("4 files changed", "3 checks passed")));
+  assert.doesNotMatch(output, /thread-private/);
+});
+
+test("human rendering: failed sequential completion shows verification and reason", () => {
+  const output = human([
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "b1",
+      mode: "sequential",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "task.queued",
+      batchId: "b1",
+      taskId: "t1",
+      objective: "Update model-agnostic guidance",
+      effort: "high",
+      model: "gpt-5.6-luna",
+    },
+    {
+      timestamp: "2024-01-01T10:00:02Z",
+      type: "worker.started",
+      batchId: "b1",
+      taskId: "t1",
+      effort: "high",
+      model: "gpt-5.6-luna",
+      workingDirectory: "w",
+    },
+    {
+      timestamp: "2024-01-01T10:01:10Z",
+      type: "verification.completed",
+      batchId: "b1",
+      taskId: "t1",
+      passed: 0,
+      failed: 1,
+      refused: 0,
+    },
+    {
+      timestamp: "2024-01-01T10:01:14Z",
+      type: "worker.completed",
+      batchId: "b1",
+      taskId: "t1",
+      verdict: "FAILED",
+      claimed: "PASS",
+      durationSeconds: 72,
+      threadId: null,
+      model: "gpt-5.6-luna",
+      effort: "high",
+      changedFiles: 2,
+      failureReason: "npm test failed in guidance.test.ts",
+      usage: null,
+    },
+    {
+      timestamp: "2024-01-01T10:01:15Z",
+      type: "batch.completed",
+      batchId: "b1",
+      durationSeconds: 75,
+      passed: 0,
+      failed: 1,
+    },
+  ]);
+
+  assert.match(output, /COMPLETED  \|  sequential  \|  0\/1 passed  \|  1m 15s/);
+  assert.match(output, /FAIL  Delegated task 1/);
+  assert.ok(output.includes(details("Luna", "high", "FAILED", "1m 12s")));
+  assert.match(output, /Verification: 1 failed/);
+  assert.match(output, /2 files changed/);
+  assert.match(output, /Reason: npm test failed in guidance\.test\.ts/);
+});
+
+test("human rendering: blocked verdict is a visible terminal status", () => {
+  const output = human([
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "b1",
+      mode: "single",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "worker.completed",
+      batchId: "b1",
+      taskId: "t1",
+      verdict: "BLOCKED",
+      claimed: "BLOCKED",
+      durationSeconds: 1,
+      threadId: null,
+      model: "gpt-5.6-luna",
+      effort: "high",
+      usage: null,
+    },
+  ]);
+
+  assert.match(output, /BLOCKED  Delegated task 1/);
+  assert.doesNotMatch(output, /(?:BLOCKED|1)  t1/);
+});
+
+test("failure context prefers an authoritative failed check without command output", () => {
+  const reason = activityFailureReason({
+    verdict: "FAILED",
+    errors: [],
+    verification: [
+      {
+        command: "npm test -- guidance.test.ts",
+        source: "orchestrator",
+        execution: "argv",
+        exitCode: 1,
+        passed: false,
+        output: "sensitive command output is deliberately not copied",
+      },
+    ],
+    scopeViolations: [],
+    discrepancies: [],
+  });
+
+  assert.equal(reason, "npm test -- guidance.test.ts failed (exit 1)");
+  assert.doesNotMatch(reason ?? "", /sensitive command output/);
+});
+
+test("human rendering: sequential work uses compact non-prompt fallbacks", () => {
+  const output = human([
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "b1",
+      mode: "sequential",
+      taskCount: 2,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "task.queued",
+      batchId: "b1",
+      taskId: "t1",
+      objective: "Complete the first dependent change",
+      effort: "medium",
+      model: "gpt-5.6-luna",
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "task.queued",
+      batchId: "b1",
+      taskId: "t2",
+      objective: "Apply the dependent follow-up change",
+      effort: "high",
+      model: "gpt-5.6-luna",
+    },
+    {
+      timestamp: "2024-01-01T10:00:02Z",
+      type: "worker.started",
+      batchId: "b1",
+      taskId: "t1",
+      effort: "medium",
+      model: "gpt-5.6-luna",
+      workingDirectory: "w",
+    },
+  ]);
+
+  assert.match(output, /RUNNING  \|  sequential  \|  1 active \/ 2 total/);
+  assert.match(output, /1  Delegated task 1/);
+  assert.match(output, /2  Delegated task 2/);
+  assert.doesNotMatch(
+    output,
+    /t1|t2|Complete the first dependent change|Apply the dependent follow-up change/,
+  );
+  assert.ok(output.includes(details("Luna", "high", "QUEUED")));
+});
+
+test("human rendering: missing optional metadata stays compact and truthful", () => {
+  const output = human([
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "b-old",
+      mode: "single",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:02Z",
+      type: "worker.started",
+      batchId: "b-old",
+      taskId: "legacy-task-id",
+      effort: "high",
+      workingDirectory: "w",
+    },
+  ]);
+
+  assert.match(output, /1  Delegated task 1/);
+  assert.doesNotMatch(output, /legacy-task-id/);
+  assert.ok(output.includes(details("high", "RUNNING", "1m 40s")));
+  assert.doesNotMatch(
+    output,
+    /unknown|undefined|files changed|checks passed|SUPERVISOR|Usage/,
+  );
+});
+
+test("human rendering prefers the concise activity label", () => {
+  const output = human([
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "b-label",
+      mode: "single",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "task.queued",
+      batchId: "b-label",
+      taskId: "opaque-task-id",
+      effort: "high",
+      activityLabel: "Update auth retries",
+    },
+  ]);
+
+  assert.match(output, /Update auth retries/);
+  assert.doesNotMatch(output, /opaque-task-id/);
 });

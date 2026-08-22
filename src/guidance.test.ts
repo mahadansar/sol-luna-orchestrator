@@ -18,6 +18,7 @@ import {
   delegateTaskInputSchema,
   delegateTaskInputShape,
   delegateTaskOutputShape,
+  delegateTasksInputSchema,
   delegateTasksInputShape,
 } from "./contract.js";
 import { buildWorkerPrompt } from "./prompt.js";
@@ -36,6 +37,29 @@ test("backwards-compatible guidance fields retain their API defaults", () => {
   const parsed = delegateTaskInputSchema.parse(BASE_INPUT);
   assert.equal(parsed.resultDetail, "full");
   assert.equal(parsed.contextCapsule, undefined);
+  assert.equal(parsed.activityLabel, undefined);
+});
+
+test("activityLabel is optional, concise, and bounded", () => {
+  const parsed = delegateTaskInputSchema.parse({
+    ...BASE_INPUT,
+    activityLabel: "Update auth retries",
+  });
+  assert.equal(parsed.activityLabel, "Update auth retries");
+  assert.throws(() =>
+    delegateTaskInputSchema.parse({
+      ...BASE_INPUT,
+      activityLabel: "x".repeat(81),
+    }),
+  );
+  assert.match(
+    delegateTaskInputShape.activityLabel.description ?? "",
+    /optional concise label/i,
+  );
+  assert.match(
+    delegateTaskInputShape.activityLabel.description ?? "",
+    /persisted locally/i,
+  );
 });
 
 test("server instructions keep roles, evidence authority, and proportional review", () => {
@@ -58,6 +82,7 @@ test("one substantial bounded task may be delegated without another seam", () =>
   assert.match(TOOL_DESCRIPTION, /does not need a second independent seam/i);
   assert.match(TOOL_DESCRIPTION, /small,[\s\S]*simple,[\s\S]*tightly coupled/i);
   assert.match(TOOL_DESCRIPTION, /overhead/i);
+  assert.match(TOOL_DESCRIPTION, /optionally provide a useful concise activityLabel/i);
 });
 
 test("single-task guidance is cost-aware without treating pricing as permanent", () => {
@@ -221,6 +246,12 @@ test("batch input descriptions qualify overlap and integration", () => {
     /same-file edits[\s\S]*prevent automatic integration/i,
   );
   assert.match(delegateTasksInputShape.integrate.description ?? "", /Set false/i);
+  const task = delegateTasksInputSchema.shape.tasks.element;
+  assert.ok("activityLabel" in task.shape);
+  assert.match(
+    BATCH_TOOL_DESCRIPTION,
+    /optionally give each task a useful concise activityLabel/i,
+  );
 });
 
 test("SOL_RULES carries the runtime's operational distinctions without benchmark narration", async () => {

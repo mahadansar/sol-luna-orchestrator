@@ -31,6 +31,17 @@ export const delegateTaskInputShape = {
         "self-contained because the worker cannot see the conversation.",
     ),
 
+  activityLabel: z
+    .string()
+    .min(1)
+    .max(80)
+    .optional()
+    .describe(
+      "Optional concise label for local activity views; keep it short and useful " +
+        "(for example, 'Update auth retries'). It is persisted locally and may " +
+        "reveal this brief work description; omit it when that is not appropriate.",
+    ),
+
   effort: z
     .enum(EFFORTS)
     .default(DEFAULT_EFFORT)
@@ -378,6 +389,7 @@ export type TaskState = (typeof TASK_STATES)[number];
 /** One task's contract inside a batch. Same fields as a single delegation. */
 const batchTaskShape = z.object({
   objective: delegateTaskInputShape.objective,
+  activityLabel: delegateTaskInputShape.activityLabel,
   effort: delegateTaskInputShape.effort,
   effortReason: delegateTaskInputShape.effortReason,
   taskCategory: delegateTaskInputShape.taskCategory,

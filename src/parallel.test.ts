@@ -15,7 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { BatchRejectedError, runBatch } from "./batch.js";
+import { BatchRejectedError, runBatch as runProductionBatch } from "./batch.js";
 import {
   MAX_PARALLEL,
   MAX_PARALLEL_LIMIT,
@@ -44,6 +44,13 @@ import {
   worktreeMetadataQueue,
   WorktreeUnavailableError,
 } from "./worktree.js";
+
+/**
+ * Deterministic scheduling cases must not inherit the production event sink.
+ * Event-emission cases below use a child process and their own temporary file.
+ */
+const runBatch: typeof runProductionBatch = (tasks, options) =>
+  runProductionBatch(tasks, { ...options, eventEmitter: () => undefined });
 
 // --- Scope overlap ----------------------------------------------------------
 
@@ -671,7 +678,7 @@ test("a worktree that cannot be created fails only its own task", async () => {
     // A *locked* worktree whose directory is missing is the one case git refuses
     // to overwrite with a single `--force`, which gives a deterministic
     // per-task creation failure rather than a contrived one.
-    const secondTaskId = "t2-implement-the-duo-module";
+    const secondTaskId = "t2";
     const blocked = path.join(repo, ...WORKTREE_DIR.split("/"), secondTaskId);
     await fs.mkdir(path.dirname(blocked), { recursive: true });
     await runGit(["worktree", "add", "--detach", blocked, "HEAD"], repo);
@@ -1400,12 +1407,19 @@ async function captureBatchEvents(
 ): Promise<Record<string, unknown>[]> {
   const eventRoot = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-events-"));
   const eventsPath = path.join(eventRoot, "events.jsonl");
+  const configuredPath = path.join(eventRoot, "configured-events.jsonl");
+  const configuredSentinel = '{"type":"real-history-sentinel"}\n';
+  await fs.writeFile(configuredPath, configuredSentinel, "utf8");
   const batchModule = pathToFileURL(
     path.join(path.dirname(fileURLToPath(import.meta.url)), "batch.js"),
+  ).href;
+  const eventsModule = pathToFileURL(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "events.js"),
   ).href;
   const tasks = [
     makeTask({
       objective: "Complete the first event task.",
+      activityLabel: "First event task",
       allowedFiles: ["src/one/**"],
     }),
     makeTask({
@@ -1419,6 +1433,7 @@ async function captureBatchEvents(
   ];
   const runner = `
 const { runBatch } = await import(${JSON.stringify(batchModule)});
+const { createEventEmitter } = await import(${JSON.stringify(eventsModule)});
 const tasks = ${JSON.stringify(tasks)};
 const controller = new AbortController();
 if (${JSON.stringify(abortBeforeStart)}) controller.abort();
@@ -1426,6 +1441,7 @@ await runBatch(tasks, {
   mode: ${JSON.stringify(mode)},
   workingDirectory: ${JSON.stringify(workingDirectory)},
   signal: controller.signal,
+  eventEmitter: createEventEmitter(${JSON.stringify(eventsPath)}),
   executor: async (input) => {
     if (input.objective.includes("Throw")) throw new Error("fixture failure");
     if (input.objective.includes("no output")) return undefined;
@@ -1459,7 +1475,7 @@ await runBatch(tasks, {
   try {
     await new Promise<void>((resolve, reject) => {
       const child = spawn(process.execPath, ["-e", runner], {
-        env: { ...process.env, SOL_LUNA_EVENTS: eventsPath },
+        env: { ...process.env, SOL_LUNA_EVENTS: configuredPath },
         stdio: ["ignore", "ignore", "pipe"],
         windowsHide: true,
       });
@@ -1473,12 +1489,28 @@ await runBatch(tasks, {
         else reject(new Error(`event fixture exited ${code}: ${stderr}`));
       });
     });
+    assert.equal(
+      await fs.readFile(configuredPath, "utf8"),
+      configuredSentinel,
+      "an inherited production activity path must remain append-only and untouched by fixtures",
+    );
     const lines = (await fs.readFile(eventsPath, "utf8")).trim().split("\n");
     return lines.map((line) => JSON.parse(line) as Record<string, unknown>);
   } finally {
     await fs.rm(eventRoot, { recursive: true, force: true });
   }
 }
+
+test("event-emitting batch fixtures cannot append to an inherited activity path", async () => {
+  const work = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-event-seam-"));
+  try {
+    const events = await captureBatchEvents("sequential", work);
+    assert.ok(events.some((event) => event.type === "batch.started"));
+    assert.ok(events.some((event) => event.type === "batch.completed"));
+  } finally {
+    await cleanupRepo(work);
+  }
+});
 
 for (const mode of ["parallel", "sequential"] as const) {
   test(`${mode} batches record one completion per returned result`, async () => {
@@ -1488,8 +1520,24 @@ for (const mode of ["parallel", "sequential"] as const) {
         : await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-events-work-"));
     try {
       const events = await captureBatchEvents(mode, repo);
+      const queued = events.filter((event) => event.type === "task.queued");
+      assert.equal(queued.length, 3);
+      assert.ok(queued.every((event) => !("objective" in event)));
+      assert.deepEqual(
+        queued.map((event) => event.taskId),
+        ["t1", "t2", "t3"],
+        "task ids remain opaque and are not derived from objective text",
+      );
+      assert.equal(queued[0]?.activityLabel, "First event task");
+      assert.ok(queued.every((event) => event.model === "gpt-5.6-luna"));
+      assert.ok(
+        events
+          .filter((event) => event.type === "worker.started")
+          .every((event) => event.model === "gpt-5.6-luna"),
+      );
       const completed = events.filter((event) => event.type === "worker.completed");
       assert.equal(completed.length, 1);
+      assert.equal(completed[0]?.changedFiles, 0);
       assert.equal(events.filter((event) => event.type === "worker.failed").length, 2);
       assert.equal(new Set(completed.map((event) => event.taskId)).size, 1);
     } finally {

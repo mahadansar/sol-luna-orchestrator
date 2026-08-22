@@ -72,11 +72,13 @@ Normal `init` also adds one exact, managed discovery hint to the active global
 Codex instruction file: a non-empty `$CODEX_HOME/AGENTS.override.md` when one
 exists, otherwise `$CODEX_HOME/AGENTS.md` (normally `~/.codex/AGENTS.md`). It is
 intentionally tiny and helps fresh chats distinguish this MCP from built-in
-delegation while Codex's MCP catalog is deferred. It asks the parent to consider
-the MCP only when delegated work may be useful; delegation remains optional and
-zero workers is valid. The file is user-owned, so init preserves its existing bytes,
-repeated init is idempotent, and uninstall removes only exact managed blocks from
-either global instruction file. Use
+delegation while Codex's MCP catalog is deferred. For non-trivial work where
+delegation could plausibly help, it requires the parent to discover this MCP
+first and use its guidance to choose solo work, `delegate_task`, or
+`delegate_tasks`; it does not require delegation, and zero workers remains
+valid. The file is user-owned, so init preserves its existing bytes, migrates
+the prior exact managed hint, repeated init is idempotent, and uninstall removes
+only recognized exact managed blocks from either global instruction file. Use
 `sol-luna-orchestrator init --no-discovery-hint` to opt out. Both
 `init --dry-run` and `uninstall --dry-run` write nothing.
 
@@ -137,9 +139,14 @@ concurrency. That separation is the core of the security model.
 ## Activity and diagnostics logs
 
 `init` configures this for you. Every run appends structured records to the
-event log: batch start and finish, each worker's start, completion, effort and
-model, worktree creation and removal, verification outcomes, scope and
-integration conflicts. That file is what `sol-luna-orchestrator activity` reads.
+event log: batch start and finish, each worker's non-sensitive id, start,
+completion, effort and model, worktree creation and removal, verification outcomes,
+changed-file counts, concise failure reasons, and scope and integration
+conflicts. That file is what `sol-luna-orchestrator activity` reads.
+Worker prompts, objectives, task context, source code, and command output are
+intentionally not written to this stream. An optional bounded `activityLabel`
+is deliberately persisted locally to make the human view useful; it can reveal
+a short description of the work, so omit it when that is sensitive.
 
 The effective path is resolved in this order, highest first:
 

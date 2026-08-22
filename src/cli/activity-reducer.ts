@@ -13,18 +13,33 @@ export type WorkerState =
 
 export interface WorkerActivity {
   taskId: string;
+  activityLabel: string | null;
+  objective: string | null;
+  category: string | null;
   effort: string;
   model: string | null;
+  workingDirectory: string | null;
   state: WorkerState;
   startTime: string | null;
   endTime: string | null;
   durationSeconds: number | null;
   verdict: string | null;
+  claimed: string | null;
+  threadId: string | null;
+  usage: {
+    inputTokens: number;
+    cachedInputTokens: number;
+    outputTokens: number;
+    reasoningOutputTokens: number;
+  } | null;
   failReason: string | null;
+  changedFiles: number | null;
+  timeoutSeconds: number | null;
   worktreePath: string | null;
   worktreeKept: boolean | null;
   verification: {
     started: boolean;
+    total: number | null;
     passed: number;
     failed: number;
     refused: number;
@@ -41,7 +56,11 @@ export interface ActivitySnapshot {
   state: "running" | "completed" | "cancelled" | "rejected" | "unknown";
   taskCount: number;
   maxParallel: number | null;
+  startTime: string | null;
   durationSeconds: number | null;
+  passed: number | null;
+  failed: number | null;
+  reason: string | null;
   workers: WorkerActivity[];
   supervisor: {
     /** What can truthfully be inferred about the parent from the event stream. */
@@ -69,7 +88,11 @@ export function createEmptySnapshot(
     state: "unknown",
     taskCount: 0,
     maxParallel: null,
+    startTime: null,
     durationSeconds: null,
+    passed: null,
+    failed: null,
+    reason: null,
     workers: [],
     supervisor: {
       state: "not observable",
@@ -173,21 +196,26 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
       snapshot.state = "running";
       snapshot.taskCount = event.taskCount;
       snapshot.maxParallel = event.maxParallel;
+      snapshot.startTime = event.timestamp;
       snapshot.supervisor = { state: "awaiting delegation", usage: null };
     } else if (event.type === "batch.completed") {
       if (snapshot.batchId === event.batchId) {
         snapshot.state = "completed";
-        snapshot.durationSeconds = event.durationSeconds;
+        snapshot.durationSeconds = event.durationSeconds ?? null;
+        snapshot.passed = event.passed ?? null;
+        snapshot.failed = event.failed ?? null;
         snapshot.supervisor = { state: "not observable", usage: null };
       }
     } else if (event.type === "batch.cancelled") {
       if (snapshot.batchId === event.batchId) {
         snapshot.state = "cancelled";
+        snapshot.reason = event.reason;
         snapshot.supervisor = { state: "not observable", usage: null };
       }
     } else if (event.type === "batch.rejected") {
       if (snapshot.batchId === event.batchId) {
         snapshot.state = "rejected";
+        snapshot.reason = event.reason;
         snapshot.supervisor = { state: "not observable", usage: null };
       }
     } else if (event.type === "scope.conflict") {
@@ -219,14 +247,23 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
     if (!worker) {
       worker = {
         taskId: event.taskId,
+        activityLabel: null,
+        objective: null,
+        category: null,
         effort: "unknown",
         model: null,
+        workingDirectory: null,
         state: "queued",
         startTime: null,
         endTime: null,
         durationSeconds: null,
         verdict: null,
+        claimed: null,
+        threadId: null,
+        usage: null,
         failReason: null,
+        changedFiles: null,
+        timeoutSeconds: null,
         worktreePath: null,
         worktreeKept: null,
         verification: null,
@@ -237,12 +274,17 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
 
     switch (event.type) {
       case "task.queued":
-        worker.effort = event.effort;
+        worker.effort = event.effort ?? worker.effort;
+        worker.category = event.category ?? worker.category;
+        worker.activityLabel = event.activityLabel ?? worker.activityLabel;
+        worker.model = event.model ?? worker.model;
         break;
       case "worker.started":
         worker.state = "running";
         worker.startTime = event.timestamp;
-        worker.effort = event.effort;
+        worker.effort = event.effort ?? worker.effort;
+        worker.model = event.model ?? worker.model;
+        worker.workingDirectory = event.workingDirectory ?? worker.workingDirectory;
         activeWorkerIds.add(event.taskId);
         break;
       case "worker.completed":
@@ -251,15 +293,21 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
         // as a successful-looking completion.
         if (worker.state !== "timedOut") worker.state = "completed";
         worker.endTime = event.timestamp;
-        worker.verdict = event.verdict;
-        worker.model = event.model;
-        worker.durationSeconds = event.durationSeconds;
+        worker.verdict = event.verdict ?? null;
+        worker.claimed = event.claimed ?? null;
+        worker.threadId = event.threadId ?? null;
+        worker.usage = event.usage ?? null;
+        worker.model = event.model ?? worker.model;
+        worker.effort = event.effort ?? worker.effort;
+        worker.durationSeconds = event.durationSeconds ?? null;
+        worker.changedFiles = event.changedFiles ?? worker.changedFiles;
+        worker.failReason = event.failureReason ?? worker.failReason;
         activeWorkerIds.delete(event.taskId);
         break;
       case "worker.failed":
         worker.state = "failed";
         worker.endTime = event.timestamp;
-        worker.failReason = event.reason;
+        worker.failReason = event.reason ?? null;
         activeWorkerIds.delete(event.taskId);
         break;
       case "worker.cancelled":
@@ -270,6 +318,7 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
       case "worker.timedOut":
         worker.state = "timedOut";
         worker.endTime = event.timestamp;
+        worker.timeoutSeconds = event.timeoutSeconds;
         activeWorkerIds.delete(event.taskId);
         break;
       case "worktree.created":
@@ -282,17 +331,23 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
         worker.state = "verifying";
         worker.verification = {
           started: true,
+          total: event.commandCount,
           passed: 0,
           failed: 0,
           refused: 0,
         };
         break;
       case "verification.completed":
-        if (worker.verification) {
-          worker.verification.passed = event.passed;
-          worker.verification.failed = event.failed;
-          worker.verification.refused = event.refused;
-        }
+        worker.verification ??= {
+          started: true,
+          total: event.passed + event.failed + event.refused,
+          passed: 0,
+          failed: 0,
+          refused: 0,
+        };
+        worker.verification.passed = event.passed;
+        worker.verification.failed = event.failed;
+        worker.verification.refused = event.refused;
         break;
       case "integration.applied":
         worker.integration = {

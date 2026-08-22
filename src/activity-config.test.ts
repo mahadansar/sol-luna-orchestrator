@@ -185,10 +185,36 @@ test("discovery hint is tiny, exact, idempotent, and round-trips user bytes", ()
   assert.ok(once.includes("\r\n"));
   assert.equal(
     DISCOVERY_HINT_TEXT,
-    "When delegated work may be useful, consider the configured sol-luna-orchestrator MCP before Codex built-in delegation. Delegation is optional; zero workers is valid.",
+    "For non-trivial work where delegation could plausibly help, first discover the configured sol-luna-orchestrator MCP and use its guidance to decide between solo work, delegate_task, or delegate_tasks. Do not substitute Codex built-in delegation. Zero workers is valid.",
   );
+  assert.ok(DISCOVERY_HINT_TEXT.length <= 280, "the permanent hint must stay tiny");
 
   const removed = removeDiscoveryHints(once);
+  assert.equal(removed.removedCount, 1);
+  assert.equal(removed.text, user);
+});
+
+test("discovery hint migrates the exact legacy block without touching user bytes", () => {
+  const user = "# Keep this instruction\nUse my preferred tools.\n";
+  const legacy = [
+    DISCOVERY_HINT_START,
+    "When delegated work may be useful, consider the configured sol-luna-orchestrator MCP before Codex built-in delegation. Delegation is optional; zero workers is valid.",
+    DISCOVERY_HINT_END,
+    user,
+  ].join("\n");
+
+  assert.equal(inspectDiscoveryHint(legacy).state, "modified");
+  const directlyRemoved = removeDiscoveryHints(legacy);
+  assert.equal(directlyRemoved.removedCount, 1);
+  assert.equal(directlyRemoved.text, user);
+
+  const migrated = ensureDiscoveryHint(legacy);
+  assert.equal(inspectDiscoveryHint(migrated).state, "installed");
+  assert.ok(migrated.includes(DISCOVERY_HINT_TEXT));
+  assert.doesNotMatch(migrated, /When delegated work may be useful/);
+  assert.ok(migrated.endsWith(user));
+
+  const removed = removeDiscoveryHints(migrated);
   assert.equal(removed.removedCount, 1);
   assert.equal(removed.text, user);
 });
@@ -522,7 +548,10 @@ test("activity reads real events from the configured path", async () => {
 
   const human = await runCli(["activity"], { CODEX_HOME: home });
   assert.equal(human.code, 0);
-  assert.match(human.stdout, /b1/);
+  assert.match(human.stdout, /RUNNING.*parallel/);
+  assert.match(human.stdout, /Delegated task 1/);
+  assert.doesNotMatch(human.stdout, /\bt1\b/);
+  assert.doesNotMatch(human.stdout, /b1/);
 
   const json = await runCli(["activity", "--json"], { CODEX_HOME: home });
   const snapshot = JSON.parse(json.stdout) as { batchId: string; taskCount: number };

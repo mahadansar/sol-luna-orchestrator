@@ -62,6 +62,10 @@ so the retry does not repeat failed approaches.
 
 - Make `objective` self-contained and give observable
   `acceptanceCriteria`.
+- Optionally provide a concise `activityLabel` (for example, `Update auth
+retries`) for the local activity view. It is not required, is bounded, and is
+  deliberately persisted locally, so do not copy the full objective or include
+  sensitive details.
 - Declare workspace-relative `allowedFiles` and `forbiddenFiles`.
   File scope is detective: violations are reported after execution, not
   prevented. Workspace confinement still applies, and forbidden patterns take

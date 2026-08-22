@@ -36,6 +36,9 @@ export const bold = (text: string): string => paint(1, text);
  * better than the replacement character it was meant to avoid.
  */
 export const symbols = {
+  get divider(): string {
+    return useUnicode() ? "·" : "|";
+  },
   get ok(): string {
     return green(useUnicode() ? "✓" : "[ ok ]");
   },

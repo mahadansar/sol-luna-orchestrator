@@ -244,11 +244,9 @@ test("prompt context capsule - an unrecognised field is stripped, not rendered",
 // --- Privacy -----------------------------------------------------------------
 
 test("context capsule content never reaches the activity event stream", async () => {
-  // The event union in `events.ts` has no free-form payload field, so a leak is
-  // impossible by construction today. That is exactly the sort of property that
-  // quietly stops holding after a refactor, so prove it against a real batch
-  // run instead of reading the types: the capsule goes in, the normal lifecycle
-  // events come out, and the sentinel appears in neither.
+  // Neither the objective nor the richer context capsule is activity telemetry.
+  // Prove that boundary against a real batch run: the capsule goes in, normal
+  // lifecycle events come out, and both sentinels appear in neither.
   const SENTINEL = "CAPSULE_EVENT_LEAK_SENTINEL_8F31";
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-capsule-"));
 

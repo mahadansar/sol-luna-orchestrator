@@ -5,6 +5,7 @@
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -36,10 +37,25 @@ const check = (label: string, fn: () => void): void => {
 async function main(): Promise<void> {
   console.log(`Launching MCP server: node ${serverEntry}\n`);
 
+  const telemetryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-protocol-"));
+  const eventsPath = path.join(telemetryRoot, "events.jsonl");
+  const logPath = path.join(telemetryRoot, "orchestrator.log");
+  const cleanupTelemetry = (): void =>
+    fs.rmSync(telemetryRoot, { recursive: true, force: true });
+  process.once("exit", cleanupTelemetry);
+  const childEnv = Object.fromEntries(
+    Object.entries(process.env).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
+  childEnv.SOL_LUNA_EVENTS = eventsPath;
+  childEnv.SOL_LUNA_LOG = logPath;
+
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [serverEntry],
     stderr: "pipe",
+    env: childEnv,
   });
   const client = new Client({ name: "smoke-test", version: "1.0.0" });
 
@@ -180,7 +196,12 @@ async function main(): Promise<void> {
   });
 
   await client.close();
+  check("diagnostic logging uses the smoke's isolated path", () => {
+    assert.match(fs.readFileSync(logPath, "utf8"), /client connected|ready in/);
+  });
   console.log("\nAll protocol checks passed.");
+  cleanupTelemetry();
+  process.off("exit", cleanupTelemetry);
 }
 
 main().catch((error: unknown) => {

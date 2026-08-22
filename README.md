@@ -156,6 +156,16 @@ sol-luna-orchestrator activity --watch
 ```
 
 It refreshes as each worker starts, verifies and completes, and stops on Ctrl+C.
+The default view leads with the batch state, mode, active/total workers, elapsed
+time and peak concurrency, then gives each worker a compact block with its
+optional activity label (or `Delegated task N` fallback), model, effort, state,
+duration, verification outcome, changed-file count and any known failure reason.
+Internal task, batch, and thread identifiers and the fuller telemetry projection remain available through
+`activity --json` instead of crowding the terminal view. Worker prompts,
+objectives, task context, source code, and command output are intentionally
+absent from the activity stream. Delegations may optionally provide a concise
+`activityLabel` for the human view; that label is deliberately persisted locally
+and can reveal a short work description.
 At startup it folds existing history silently and renders only the latest run;
 records appended during that catch-up are picked up without needing another
 append. Before anything has been delegated it shows

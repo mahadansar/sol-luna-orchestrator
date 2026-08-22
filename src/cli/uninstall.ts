@@ -2,7 +2,6 @@ import { codexVersion, getRegisteredServer, readConfig, writeConfig } from "./co
 import {
   discoveryHintPath,
   discoveryHintPaths,
-  inspectDiscoveryHint,
   readDiscoveryInstructions,
   removeDiscoveryHints,
   writeDiscoveryInstructions,
@@ -49,10 +48,13 @@ export async function uninstallCommand(argv: string[]): Promise<number> {
   }
 
   const before = readConfig(configPath);
-  const discoveriesBefore = instructionsPaths.map((instructionsPath) => ({
-    instructionsPath,
-    inspection: inspectDiscoveryHint(readDiscoveryInstructions(instructionsPath)),
-  }));
+  const discoveriesBefore = instructionsPaths.map((instructionsPath) => {
+    const instructions = readDiscoveryInstructions(instructionsPath);
+    return {
+      instructionsPath,
+      managedCount: removeDiscoveryHints(instructions).removedCount,
+    };
+  });
   const othersBefore = listSubTables(before, ["mcp_servers"]).filter(
     (name) => name !== SERVER_NAME,
   );
@@ -64,7 +66,7 @@ export async function uninstallCommand(argv: string[]): Promise<number> {
   const inConfig = findTable(before, serverTable()) !== null;
 
   const managedHintsBefore = discoveriesBefore.reduce(
-    (count, discovery) => count + discovery.inspection.exactCount,
+    (count, discovery) => count + discovery.managedCount,
     0,
   );
 
@@ -80,7 +82,7 @@ export async function uninstallCommand(argv: string[]): Promise<number> {
     out(`Will remove MCP server "${SERVER_NAME}" from ${configPath}`);
   }
   for (const discovery of discoveriesBefore) {
-    if (discovery.inspection.exactCount > 0) {
+    if (discovery.managedCount > 0) {
       out(
         `Will remove the managed Codex discovery hint from ${discovery.instructionsPath}`,
       );
@@ -130,7 +132,7 @@ export async function uninstallCommand(argv: string[]): Promise<number> {
 
   const hintStillThere = instructionsPaths.some(
     (instructionsPath) =>
-      inspectDiscoveryHint(readDiscoveryInstructions(instructionsPath)).exactCount > 0,
+      removeDiscoveryHints(readDiscoveryInstructions(instructionsPath)).removedCount > 0,
   );
   if (hintStillThere) {
     out();

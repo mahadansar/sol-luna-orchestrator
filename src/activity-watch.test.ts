@@ -7,7 +7,6 @@ import path from "node:path";
 test("watch mode partial line and UTF-8 split handling", async () => {
   const workRoot = await fs.mkdtemp(path.join(os.tmpdir(), "luna-watch-test-"));
   const eventsPath = path.join(workRoot, "events.jsonl");
-  process.env.SOL_LUNA_EVENTS = eventsPath;
   await fs.writeFile(eventsPath, "", "utf-8");
 
   const originalStdoutWrite = process.stdout.write;
@@ -31,7 +30,7 @@ test("watch mode partial line and UTF-8 split handling", async () => {
 
   try {
     const { activityCommand } = await import("./cli/activity.js");
-    const watchPromise = activityCommand(["--watch"]);
+    const watchPromise = activityCommand(["--watch"], { eventsFile: eventsPath });
 
     // wait for initial render
     await new Promise((r) => setTimeout(r, 200));
@@ -48,16 +47,16 @@ test("watch mode partial line and UTF-8 split handling", async () => {
     await fs.appendFile(eventsPath, event1_part2, "utf-8");
     await new Promise((r) => setTimeout(r, 200));
     assert.equal(renderCount, 2, "Should render after complete line");
-    assert.match(output, /Batch\s+b1/);
+    assert.match(output, /RUNNING.*parallel/);
 
     // 2. Incremental UTF-8 split
     // 🦇 is 4 bytes: F0 9F A6 87
     const batChar = Buffer.from([0xf0, 0x9f, 0xa6, 0x87]);
 
     const event2_prefix = Buffer.from(
-      `{"timestamp":"2024-01-01T00:00:01Z","type":"worker.started","batchId":"b1","taskId":"t1_`,
+      `{"timestamp":"2024-01-01T00:00:01Z","type":"worker.started","batchId":"b1","taskId":"t1","effort":"high","workingDirectory":"w","model":"t1_`,
     );
-    const event2_suffix = Buffer.from(`","effort":"high","workingDirectory":"w"}\n`);
+    const event2_suffix = Buffer.from(`"}\n`);
 
     // Write prefix + first two bytes of bat
     const chunk1 = Buffer.concat([event2_prefix, batChar.subarray(0, 2)]);
@@ -86,7 +85,6 @@ test("watch mode partial line and UTF-8 split handling", async () => {
 test("watch mode catches events written before a missing file is attached", async () => {
   const workRoot = await fs.mkdtemp(path.join(os.tmpdir(), "luna-watch-missing-"));
   const eventsPath = path.join(workRoot, "events.jsonl");
-  process.env.SOL_LUNA_EVENTS = eventsPath;
 
   const originalStdoutWrite = process.stdout.write;
   let output = "";
@@ -120,7 +118,7 @@ test("watch mode catches events written before a missing file is attached", asyn
 
   try {
     const { activityCommand } = await import("./cli/activity.js");
-    watchPromise = activityCommand(["--watch"]);
+    watchPromise = activityCommand(["--watch"], { eventsFile: eventsPath });
     await waitFor(() => renderCount === 1);
 
     // The polling branch attaches after the file exists. All of these records
@@ -141,6 +139,7 @@ test("watch mode catches events written before a missing file is attached", asyn
         batchId: "b-delayed",
         taskId: "t-delayed",
         effort: "high",
+        activityLabel: "Delayed task",
       },
       {
         timestamp: "2024-02-01T00:00:02Z",
@@ -178,10 +177,8 @@ test("watch mode catches events written before a missing file is attached", asyn
       "utf8",
     );
 
-    await waitFor(
-      () => output.includes("Batch       b-delayed") && output.includes("t-delayed"),
-    );
-    assert.match(output, /State\s+completed/);
+    await waitFor(() => output.includes("COMPLETED") && output.includes("Delayed task"));
+    assert.match(output, /COMPLETED.*1\/1 passed/);
     assert.ok(renderCount >= 2, "the delayed initial read should render activity");
   } finally {
     if (watchPromise) {
@@ -196,7 +193,6 @@ test("watch mode catches events written before a missing file is attached", asyn
 test("watch startup silently folds historical runs into one current render", async () => {
   const workRoot = await fs.mkdtemp(path.join(os.tmpdir(), "luna-watch-history-"));
   const eventsPath = path.join(workRoot, "events.jsonl");
-  process.env.SOL_LUNA_EVENTS = eventsPath;
 
   const events = [
     {
@@ -270,7 +266,7 @@ test("watch startup silently folds historical runs into one current render", asy
   let watchPromise: Promise<number> | undefined;
   try {
     const { activityCommand } = await import("./cli/activity.js");
-    watchPromise = activityCommand(["--watch"]);
+    watchPromise = activityCommand(["--watch"], { eventsFile: eventsPath });
 
     const deadline = Date.now() + 5_000;
     while (renderCount === 0 && Date.now() < deadline) {
@@ -278,9 +274,10 @@ test("watch startup silently folds historical runs into one current render", asy
     }
 
     assert.equal(renderCount, 1);
-    assert.match(output, /Batch\s+b-latest/);
-    assert.match(output, /State\s+completed/);
-    assert.doesNotMatch(output, /Batch\s+b-old/);
+    assert.match(output, /COMPLETED.*1\/1 passed/);
+    assert.match(output, /test-model/);
+    assert.doesNotMatch(output, /t-latest/);
+    assert.doesNotMatch(output, /b-old|b-latest/);
   } finally {
     if (watchPromise) {
       process.emit("SIGINT", "SIGINT");
@@ -294,7 +291,6 @@ test("watch startup silently folds historical runs into one current render", asy
 test("startup folds history once and catches an append during attachment", async () => {
   const workRoot = await fs.mkdtemp(path.join(os.tmpdir(), "luna-watch-catchup-"));
   const eventsPath = path.join(workRoot, "events.jsonl");
-  process.env.SOL_LUNA_EVENTS = eventsPath;
 
   const oldBatch = {
     timestamp: "2024-03-01T00:00:00Z",
@@ -337,7 +333,7 @@ test("startup folds history once and catches an append during attachment", async
   let watchPromise: Promise<number> | undefined;
   try {
     const { activityCommand } = await import("./cli/activity.js");
-    watchPromise = activityCommand(["--watch"]);
+    watchPromise = activityCommand(["--watch"], { eventsFile: eventsPath });
 
     // The command has attached its watcher synchronously before its first
     // awaited stat. This append therefore needs startup catch-up to observe it;
@@ -350,19 +346,97 @@ test("startup folds history once and catches an append during attachment", async
         batchId: "b-current",
         taskId: "t-current",
         effort: "high",
+        model: "current",
         workingDirectory: "w",
       })}\n`,
       "utf8",
     );
 
     const deadline = Date.now() + 5_000;
-    while (!output.includes("t-current") && Date.now() < deadline) {
+    while (!output.includes("current") && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
-    assert.match(output, /Batch\s+b-current/);
-    assert.match(output, /t-current/);
-    assert.doesNotMatch(output, /Batch\s+b-old/);
+    assert.match(output, /RUNNING.*parallel/);
+    assert.match(output, /current/);
+    assert.doesNotMatch(output, /t-current/);
+    assert.doesNotMatch(output, /b-old|b-current/);
     assert.ok(renderCount >= 1 && renderCount <= 2);
+  } finally {
+    if (watchPromise) {
+      process.emit("SIGINT", "SIGINT");
+      await watchPromise.catch(() => undefined);
+    }
+    process.stdout.write = originalStdoutWrite;
+    await fs.rm(workRoot, { recursive: true, force: true }).catch(() => {});
+  }
+});
+
+test("watch mode detects a same-size file replacement", async () => {
+  const workRoot = await fs.mkdtemp(path.join(os.tmpdir(), "luna-watch-replace-"));
+  const eventsPath = path.join(workRoot, "events.jsonl");
+  const oldEvents = [
+    {
+      timestamp: "2024-04-01T00:00:00Z",
+      type: "batch.started",
+      batchId: "old",
+      mode: "parallel",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-04-01T00:00:01Z",
+      type: "worker.started",
+      batchId: "old",
+      taskId: "old",
+      effort: "high",
+      model: "old",
+      workingDirectory: "w",
+    },
+  ];
+  const newEvents = oldEvents.map((event) => ({
+    ...event,
+    batchId: "new",
+    ...(event.type === "worker.started" ? { taskId: "new", model: "new" } : {}),
+  }));
+  const encode = (events: object[]): string =>
+    `${events.map((event) => JSON.stringify(event)).join("\n")}\n`;
+  const oldText = encode(oldEvents);
+  const newText = encode(newEvents);
+  assert.equal(Buffer.byteLength(oldText), Buffer.byteLength(newText));
+  await fs.writeFile(eventsPath, oldText, "utf8");
+
+  const originalStdoutWrite = process.stdout.write;
+  let output = "";
+  let renderCount = 0;
+  process.stdout.write = ((
+    chunk: string | Uint8Array,
+    encoding?: unknown,
+    cb?: unknown,
+  ) => {
+    const text = chunk.toString();
+    output += text;
+    if (text.includes("Sol-Luna Activity")) renderCount++;
+    if (typeof encoding === "function") encoding();
+    else if (typeof cb === "function") cb();
+    return true;
+  }) as any;
+
+  let watchPromise: Promise<number> | undefined;
+  try {
+    const { activityCommand } = await import("./cli/activity.js");
+    watchPromise = activityCommand(["--watch"], { eventsFile: eventsPath });
+    const deadline = Date.now() + 5_000;
+    while (!output.includes("old") && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.match(output, /old/);
+
+    await fs.writeFile(eventsPath, newText, "utf8");
+    while (!output.includes("new") && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.match(output, /new/);
+    assert.ok(renderCount >= 2);
   } finally {
     if (watchPromise) {
       process.emit("SIGINT", "SIGINT");

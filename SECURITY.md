@@ -114,12 +114,13 @@ They hold different things, which matters when deciding what is safe to share:
   truncated but not sanitised, so if a test suite prints a secret, the log will
   contain it. Treat it as sensitive.
 - **`SOL_LUNA_EVENTS`** is the structured stream `activity` reads. Its schema
-  carries task ids, effort, category, verdicts, model, durations, token counts,
-  worktree and working-directory paths, failure reasons and conflicting file
-  paths. It does **not** contain prompts, source code or command output. Note
-  that a task id is a slug of the first few words of that task's objective, so
-  it leaks a fragment of the request, and the paths it records may themselves be
-  revealing.
+  carries non-sensitive task ids, effort, category, verdicts, model, durations,
+  token counts, changed-file counts, worktree and working-directory paths,
+  failure reasons and conflicting file paths. A caller-provided, bounded
+  `activityLabel` is deliberately persisted locally and can reveal a short work
+  description. It does **not** contain worker prompts or objectives, task
+  context, source code or command output. Paths, labels and failure reasons may
+  themselves be revealing.
 
 Only control characters are stripped, from both — enough to stop a crafted
 string forging a log line, not a secret filter. Keep both outside the
