@@ -50,8 +50,8 @@ config that launches the server.
   They are inert without a shell, and rejecting them would break legitimate test
   filters like `pytest -k "not slow"`.
 - Credential-shaped environment variables (matching `KEY`, `TOKEN`, `SECRET`,
-  `PASSWORD`, `CREDENTIAL`, `SESSION`, `COOKIE`, `AUTH`) are withheld from the
-  child process, because its output is fed back into a model transcript.
+  `PASSWORD`, `PASSWD`, `CREDENTIAL`, `SESSION`, `COOKIE`, `AUTH`) are withheld
+  from the child process, because its output is fed back into a model transcript.
 
 `SOL_LUNA_VERIFY_MODE=shell` disables all of the above and hands the raw string
 to a system shell. It exists for people who need it and is logged loudly at
@@ -71,13 +71,19 @@ startup. **Do not enable it against a repository you do not trust.**
 
 ### Worker isolation
 
-Workers cannot delegate. Two independent guards, both covered by tests:
+Workers cannot delegate. Two independent guards:
 
 1. The worker's Codex process is launched with
    `mcp_servers.<name>.enabled=false`, so Codex never starts this server for it.
 2. The worker's environment carries `SOL_LUNA_WORKER=1`. A server that starts
    with that marker registers **no tools at all**, so isolation survives the
    server being registered under a different name.
+
+Both are exercised by `npm run smoke:isolation`, not by the deterministic CI
+suite: guard 2 by starting a marked server and listing its tools, guard 1 by
+running a real worker turn and checking the log for a server it should never have
+started. Reach for that suite whenever a worker claims it can delegate — a
+model's own answer is not evidence.
 
 `--config mcp_servers={}` does **not** work for this: Codex merges that override
 into the existing table and every server still starts. This was verified against
@@ -91,7 +97,10 @@ edits **real files** in its own worktree — the isolation is between workers, n
 between a worker and your disk. Integration copies files back into your working
 tree, and only when no two workers touched the same file. A batch is refused up
 front if two tasks declare overlapping scopes, or if the repository has
-uncommitted changes inside a declared scope.
+uncommitted changes inside a declared scope. `SOL_LUNA_ALLOW_DIRTY=1` is an
+explicit escape hatch with consequences: workers still branch from `HEAD`, so
+they neither see nor preserve uncommitted work inside their scopes, and
+integration can overwrite it.
 
 `SOL_LUNA_WORKTREE_LINK` (default `node_modules`) links directories from your
 repository into each worktree — a junction on Windows, a directory symlink
@@ -113,14 +122,16 @@ They hold different things, which matters when deciding what is safe to share:
   objectives, file paths and **verification command output**. That output is
   truncated but not sanitised, so if a test suite prints a secret, the log will
   contain it. Treat it as sensitive.
-- **`SOL_LUNA_EVENTS`** is the structured stream `activity` reads. Its schema
-  carries non-sensitive task ids, effort, category, verdicts, model, durations,
-  token counts, changed-file counts, worktree and working-directory paths,
-  failure reasons and conflicting file paths. A caller-provided, bounded
-  `activityLabel` is deliberately persisted locally and can reveal a short work
-  description. It does **not** contain worker prompts or objectives, task
-  context, source code or command output. Paths, labels and failure reasons may
-  themselves be revealing.
+- **`SOL_LUNA_EVENTS`** is the structured stream `activity` reads, and the
+  deliberately less sensitive of the two. Its schema carries opaque task and
+  batch ids, effort, category, verdicts, model, durations, token counts,
+  changed-file counts, worktree and working-directory paths, failure reasons and
+  conflicting file paths. A caller-provided, bounded `activityLabel` is
+  deliberately persisted locally and can reveal a short work description. It does
+  **not** contain worker prompts or objectives, task context, source code or
+  command output; only a short failure reason may surface from a failed check.
+  Paths, labels and failure reasons may themselves be revealing.
+  [Observability](docs/OBSERVABILITY.md) documents the full shapes.
 
 Only control characters are stripped, from both — enough to stop a crafted
 string forging a log line, not a secret filter. Keep both outside the

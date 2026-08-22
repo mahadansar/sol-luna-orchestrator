@@ -8,26 +8,72 @@ All notable changes to this project are documented here. Format follows
 
 ### Added
 
-- Normal `init` now installs an idempotent, surgical discovery hint in the
-  user's Codex `AGENTS.md`; `status`, `doctor`, dry-run, opt-out, and uninstall
-  lifecycle behavior report or manage only that exact block.
+- Normal `init` now installs an idempotent, surgical discovery hint in the active
+  global Codex instruction file (`AGENTS.override.md` when it is the file Codex
+  loads, otherwise `AGENTS.md`), so a fresh chat is directed to discover this MCP
+  before deciding how to route work. `status`, `doctor`, dry-run, opt-out and
+  uninstall report or manage only that exact block, and never other content in
+  those user-owned files.
 - Fresh-chat guidance documents the canonical MCP prompt and an explicit
   `delegate_tasks` batch prompt while keeping delegation optional.
+- Optional `activityLabel` on single and batch task contracts: a short,
+  bounded label for the local activity view. It is deliberately persisted
+  locally, so it can reveal a brief description of the delegated work.
+- A single `delegate_task` now emits typed lifecycle events as a synthetic
+  single-mode batch, so `activity` shows queued, started, verifying, timed-out,
+  cancelled and completed states for one delegation as it does for a batch. The
+  human view was reworked around batch state, per-worker blocks and known failure
+  reasons.
+- `delegate_tasks` publishes its task-count cap in the tool schema as `maxItems`
+  and still rejects an oversized batch at runtime.
+- New documentation: [Delegation Discovery](docs/DELEGATION_DISCOVERY.md),
+  [Observability](docs/OBSERVABILITY.md) and a manual
+  [Live Acceptance](docs/ACCEPTANCE.md) procedure for changes that only a real
+  session can verify.
 
 ### Changed
 
-- Parent-orchestrator guidance is model-agnostic while preserving the
-  Sol-Luna product identity and GPT-5.6 Luna worker default.
+- Parent-orchestrator guidance is model-agnostic while preserving the Sol-Luna
+  product identity and the GPT-5.6 Luna worker default. Any compatible Codex
+  parent may supervise; parent model and effort examples are documented as
+  creator experience rather than requirements.
+- Cost guidance is parent-conditional. The runtime guidance no longer states a
+  fixed worker/parent price ratio: cheaper-worker economics apply only when the
+  selected parent is actually priced above the worker on the current schedule,
+  and no realised saving has been measured.
 - Parent guidance now explicitly requires silence while an active delegation has
-  no meaningful new state, while preserving result, error, cancellation,
-  timeout, and actionable-state reporting. This remains guidance to the parent
+  no meaningful new state, while preserving result, error, cancellation, timeout
+  and actionable-state reporting. This remains guidance to the parent
   model/client rather than server-enforced output behavior.
+- `verificationCommands` guidance asks for targeted deterministic checks that
+  prove the bounded task, leaving broader final validation with the parent unless
+  the delegated task genuinely needs it.
+- Task ids are opaque (`t1`, `t2`, …) rather than derived from objective text, so
+  an id cannot leak the brief through telemetry or a worktree directory name.
+- Telemetry privacy: objectives, worker prompts, task context, source code and
+  verification command output are excluded from the activity event stream. Only a
+  short failure reason may surface from a failed check. Paths, labels and failure
+  reasons remain locally revealing.
+- Deterministic tests supply their own event sink instead of inheriting the
+  configured production telemetry paths, so running the suite cannot pollute a
+  machine's activity history or diagnostic log.
 
 ### Fixed
 
 - Activity parsing now validates known event shapes and sanitizes strings read
-  from existing JSONL, so malformed legacy or hand-edited fields cannot crash
-  the human view or inject terminal control sequences.
+  from existing JSONL, so malformed legacy or hand-edited fields cannot crash the
+  human view or inject terminal control sequences.
+- The activity reducer selects the newest batch by event timestamp, tolerates
+  out-of-order and non-ISO timestamps in older files, and no longer overwrites a
+  timed-out worker state with `completed` when a compatibility completion record
+  follows it.
+- `status` and `doctor` report the registered server's configuration — worker
+  model, maximum workers, verification mode, allowed roots and the recursion
+  disable target — instead of whatever the CLI's own shell environment happens to
+  hold. The two are separate processes, and the registered values are the ones
+  the running server uses.
+- A batch worker timeout event records the effective default timeout instead of
+  `0` when the task contract did not set one.
 
 ## [0.7.1] - 2026-08-22
 

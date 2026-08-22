@@ -308,6 +308,17 @@ delegation was slower on the corresponding fixtures. None of these workloads
 provided evidence that declining delegation was the wrong choice; the runs do
 not establish why Sol made each decision.
 
+**Historical product-state context.** Every arm's prompt in these runs named the
+orchestration tools explicitly, and the mandated arms exercised those tools on
+the same fixtures, so the orchestrator was reachable and callable in exactly this
+configuration. These zero-worker outcomes are therefore routing decisions taken
+with delegation available, not discovery failures — and because the harness
+recorded the decision rather than the reasoning, no motive can be read into them,
+fixture size included. Discovery behaviour in fresh, unprompted sessions is a
+separate matter that has since changed; it is covered in
+[Delegation Discovery](../docs/DELEGATION_DISCOVERY.md) and is not projected back
+onto these runs.
+
 ### Reliability
 
 Across the 17 runs in the parallel and scale suites that actually delegated,

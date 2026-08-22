@@ -10,9 +10,14 @@ fixtures and harness code live in `src/bench/` and follow that directory's instr
   files. Use `npm run bench:report -- <results.json>` to regenerate a summary rather than
   hand-adjusting measured values.
 - `RESULTS.md` is the curated, human-written methodology and interpretation. Keep
-  measured results, interpretation, counterfactuals, and limitations explicitly
-  separated. Every numerical or performance claim must be supported by committed raw
-  records.
+  measured results, interpretation, counterfactuals, historical product-state context,
+  and limitations explicitly separated. Every numerical or performance claim must be
+  supported by committed raw records.
+- Label historical product-state context explicitly wherever a past run's conclusions
+  depend on discovery or guidance that has since changed. Never conflate a free-choice
+  benchmark outcome, where the prompt named the tools, with a fresh-session discovery
+  failure, and never manufacture causality for a routing decision the raw records do
+  not explain.
 - Do not claim statistical significance, universal superiority, currency cost, or a
   latency/token crossover that the data does not establish. Negative and inconclusive
   findings are results, not defects to hide.
