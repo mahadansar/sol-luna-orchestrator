@@ -100,3 +100,26 @@ One entry per acceptance run:
 
 Record what happened, including a run that went badly. An acceptance log that
 only contains successes is not evidence.
+
+### 2026-08-22 — v0.8.0 natural-discovery run
+
+- **Date**: 2026-08-22
+- **Client and version**: Codex; version not recorded
+- **Parent model**: GPT-5.6 Sol
+- **Parent effort**: medium
+- **Orchestrator version / commit**: v0.8.0; commit not recorded
+- **Worker model and effort**: GPT-5.6 Luna, high
+- **Discovery**: found unprompted before the parent researched the public Sol-Luna
+  repository
+- **Routing**: one bounded read-only investigation for the initial broad audit;
+  later, zero workers for a tightly coupled README refinement. Both decisions fit
+  the work.
+- **Silence while pending**: not recorded
+- **Parent review**: independent; the parent retained synthesis, editing and final
+  verification, and checked package, release, CI and link evidence itself
+- **Outcome and anything surprising**: completed successfully. The read-only task
+  returned `PASS` with no changed files, but the orchestrator still emitted the
+  generic no-file-changes discrepancy. This run had no solo control and was not a
+  performance benchmark, so it supports no speed, cost or quality comparison.
+- **Retained evidence**: the task ran in another repository; its transcript and
+  diagnostic evidence are not retained here
