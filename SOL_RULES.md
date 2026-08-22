@@ -147,9 +147,9 @@ Sequential tasks share the requested workspace and run in order, so later tasks
 see earlier edits. Parallel tasks start from `HEAD` in isolated git worktrees.
 Parallel mode requires a git repository with at least one commit and normally
 refuses uncommitted changes inside declared scopes. Declared parallel scopes
-must be disjoint. The call-level `allowOverlappingScopes: true` escape hatch may
-accept declared overlap for that batch, but actual same-file edits still prevent
-automatic integration.
+should be disjoint by default. The call-level `allowOverlappingScopes: true`
+escape hatch may accept declared overlap for that batch, but actual same-file
+edits still prevent automatic integration.
 
 Integration is a file copy, not a merge. Actual same-file edits prevent
 automatic integration and retain worktrees for manual resolution. Completed

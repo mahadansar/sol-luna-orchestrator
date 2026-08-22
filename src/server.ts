@@ -487,7 +487,7 @@ compatibility; prefer delegate_task for a single task.
 
 Choose sequential mode when tasks depend on earlier changes, share workspace
 state, or may touch the same files; they run one at a time in the shared
-workspace. Choose parallel mode only for genuinely independent tasks with
+workspace. Parallel mode is normally for genuinely independent tasks with
 disjoint declared scopes. Parallel tasks run in separate git worktrees from
 HEAD, require a repository with a commit and no uncommitted in-scope changes,
 and are integrated only when their observed changed-file sets do not collide.

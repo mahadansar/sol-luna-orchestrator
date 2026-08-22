@@ -447,8 +447,8 @@ test("SOL_RULES carries the runtime's operational distinctions without benchmark
     /empty `allowedFiles` means no in-workspace allowlist/i,
     /does not[\s\S]*declare read-only intent/i,
     /batch-level choice applied uniformly/i,
-    /call-level `allowOverlappingScopes: true` escape hatch/i,
-    /actual same-file edits still prevent[\s\S]*integration/i,
+    /call-level `allowOverlappingScopes: true`[\s\S]*escape hatch/i,
+    /actual same-file[\s\S]*edits still prevent[\s\S]*integration/i,
     /2026-08-23[\s\S]*API[\s\S]*25:1[\s\S]*purchased credits[\s\S]*20:1[\s\S]*16\.7:1/i,
   ]) {
     assert.match(rules, invariant);
