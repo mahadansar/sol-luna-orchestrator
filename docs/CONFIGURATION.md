@@ -132,27 +132,30 @@ concurrency. That separation is the core of the security model.
 | `SOL_LUNA_VERIFY_ENV_PASSTHROUGH` | off                     | `1` stops withholding credential-shaped env vars                  |
 | `SOL_LUNA_ALLOWED_ROOTS`          | —                       | Confine delegation to these directory trees                       |
 | `SOL_LUNA_SERVER_NAME`            | `sol-luna-orchestrator` | **Must match** the name registered in Codex                       |
-| `SOL_LUNA_LOG`                    | set by `init`           | Human-readable diagnostics log. Unset in the server env = no log  |
-| `SOL_LUNA_EVENTS`                 | set by `init`           | Structured JSONL activity log, read by `activity`. Unset = no log |
 | `SOL_LUNA_WORKER`                 | set per worker          | Internal marker; a server seeing it registers zero tools          |
+| `SOL_LUNA_EVENTS`                 | set by `init`           | Structured JSONL activity log, read by `activity`. Unset = no log |
+| `SOL_LUNA_LOG`                    | set by `init`           | Human-readable diagnostics log. Unset in the server env = no log  |
+
+Every variable above configures this orchestrator and its workers. None of them
+reaches the parent — the parent model and effort are set in your Codex session,
+as described under [Parent model and effort](#parent-model-and-effort).
+
+**Batch size is not worker concurrency.** `MAX_BATCH_SIZE` is an implementation
+constant, currently `12`: the most tasks one `delegate_tasks` contract accepts,
+however they are scheduled. It is published as `maxItems` on the tool's schema
+and rejected again at runtime. `SOL_LUNA_MAX_PARALLEL` is a different thing:
+sequential mode runs one task at a time whatever the batch size, and parallel
+mode runs at most `SOL_LUNA_MAX_PARALLEL` at once — default 3, hard ceiling 8 —
+and queues the rest. A 12-task batch never means 12 simultaneous workers.
 
 ## Activity and diagnostics logs
 
-`init` configures this for you. Every run appends structured records to the
-event log: batch start and finish, each worker's non-sensitive id, start,
-completion, effort and model, worktree creation and removal, verification outcomes,
-changed-file counts, concise failure reasons, and scope and integration
-conflicts. That file is what `sol-luna-orchestrator activity` reads.
-Worker prompts, objectives, task context, source code, and command output are
-intentionally not written to this stream. An optional bounded `activityLabel`
-is deliberately persisted locally to make the human view useful; it can reveal
-a short description of the work, so omit it when that is sensitive.
+Detailed information about the diagnostic log (`SOL_LUNA_LOG`), the structured event stream (`SOL_LUNA_EVENTS`), privacy implications, and telemetry representations can be found in [Observability](OBSERVABILITY.md).
 
-The effective path is resolved in this order, highest first:
+The effective log paths are resolved in this order, highest first:
 
-1. `SOL_LUNA_EVENTS` in the current process — a deliberate one-off override.
-2. `SOL_LUNA_EVENTS` in the registered server's `env` table, which is what
-   `init` writes and the running server uses.
+1. `SOL_LUNA_EVENTS` / `SOL_LUNA_LOG` in the current process — a deliberate one-off override.
+2. `SOL_LUNA_EVENTS` / `SOL_LUNA_LOG` in the registered server's `env` table, which is what `init` writes and the running server uses.
 3. Nothing, in which case `activity` tells you to run `init`.
 
 The default is `sol-luna-orchestrator.events.jsonl` inside your Codex home, so
@@ -160,29 +163,14 @@ the log accumulates across projects rather than landing in whichever repository
 you happened to run `init` from. Choose another with
 `sol-luna-orchestrator init --events /path/to/events.jsonl`, which replaces an
 existing value because you asked it to; a plain `init` never overwrites a path
-you set. `--log` behaves the same way for the diagnostic log. `sol-luna-orchestrator status` shows the
-effective path and where it came from.
+you set. `--log` behaves the same way for the diagnostic log.
 
-Per worker, the following are recorded exactly as the Codex SDK reports them on
-`turn.completed`:
-
-| Field                   | Meaning                                   |
-| ----------------------- | ----------------------------------------- |
-| `inputTokens`           | Prompt tokens for that worker's turn      |
-| `cachedInputTokens`     | Portion of the input served from cache    |
-| `outputTokens`          | Tokens the worker generated               |
-| `reasoningOutputTokens` | Reasoning portion of the output           |
-| `model`, `effort`       | Which model and effort that worker ran at |
-| `durationSeconds`       | Wall-clock for that worker                |
-
-The supervisor's own usage is not visible to this server — Codex does not report
-the parent turn to an MCP server it launched. The benchmark harness records it
-separately because it drives the supervisor itself. Anything unavailable is
-written as `null` rather than zero, so absent data is never mistaken for free.
-
-Both files are local and nothing is transmitted anywhere. They hold different
-things, and the event log is the less sensitive of the two — see
-[Logs and telemetry](../SECURITY.md#logs-and-telemetry) before sharing either.
+`sol-luna-orchestrator status` shows the effective path and where it came from.
+The CLI and the server are separate processes: exporting `SOL_LUNA_EVENTS` in
+the shell you run the CLI from changes what the CLI reads, not what the
+already-running server writes. When the two disagree, the running server and
+the file it is actually appending to are the evidence — which is why `status`
+reports the registered server's value rather than only this shell's.
 
 ### Cost
 
@@ -195,6 +183,23 @@ things, and the event log is the less sensitive of the two — see
 - If you want an estimate, export the JSONL and apply your own pricing — the raw
   per-worker numbers are all there.
 - Nothing in this project claims a cost saving, because none has been measured.
+
+#### One recorded pricing observation
+
+Kept because the reasoning above should be checkable, not because it
+generalises. It is a documented historical observation, not a price exposed by
+the integration — that remains true, and this is the only such figure recorded
+anywhere in the project. In the creator's own setup — `gpt-5.6-sol` as parent and
+`gpt-5.6-luna` as worker — on the pricing schedule current when this was
+recorded, equivalent input, cached-input and output tokens were roughly **25x
+cheaper for the worker than for that parent**. That is one parent/worker pair
+on one schedule at one point in time. It is not a property of the architecture,
+it does not transfer to a different parent, pricing changes without this
+document changing, and it is not a measured realised saving — the
+benchmarks record token counts and explicitly decline to derive a cost figure
+from them, so no run has ever been costed. Treat it as the origin of the
+cheaper-worker argument, and re-derive the ratio for your own parent and
+current prices before relying on it.
 
 ## Parent model and effort
 

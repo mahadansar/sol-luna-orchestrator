@@ -1,0 +1,160 @@
+# Observability
+
+How the orchestrator records what it did, which file holds what, and what the
+telemetry does and does not reveal. Trust boundaries and sharing advice live in
+[Logs and telemetry](../SECURITY.md#logs-and-telemetry); this document describes
+the shapes.
+
+## Diagnostic log vs activity event stream
+
+Two separate local files, holding deliberately different things.
+
+1. **Diagnostic log (`SOL_LUNA_LOG`)** — line-oriented human-readable
+   diagnostics for the server itself: client connections, each delegation as it
+   starts and finishes, thread ids, durations, and verification activity. It
+   records **objectives, file paths and verification command output**. That
+   output is truncated but is not filtered for secrets, so if a test suite
+   prints one, this file contains it. Treat it as the sensitive one.
+2. **Activity event stream (`SOL_LUNA_EVENTS`)** — an append-only JSONL file of
+   structured orchestration records. This is what `sol-luna-orchestrator activity`
+   reads, and it is the less sensitive of the two.
+
+Both are local files. Nothing is transmitted anywhere. Only control characters
+are stripped, from both — enough to stop a crafted string forging a log line,
+not a secret filter.
+
+## What the event stream contains
+
+Records are appended as the run progresses: batch started, completed, cancelled
+or rejected; task queued; worker started, completed, failed, cancelled or timed
+out; worktree created and removed; verification started and completed; scope
+conflicts; integration conflicts and applied file counts.
+
+Carried on those records:
+
+- Opaque task ids, and a batch id
+- Worker model and effort, and the configured worker model before a worker starts
+- Worker thread id, start and end times, duration
+- Verdict, claimed status, changed-file count, concise failure reason
+- Verification counts (passed, failed, refused) and the command count
+- Token usage per worker, or `null`
+- Working-directory and worktree paths, and whether a worktree was kept
+- Optional `activityLabel`
+- Batch mode, task count and configured concurrency
+
+Deliberately **not** written to this stream:
+
+- Worker objectives and prompts
+- Task context (`context`, `contextCapsule`)
+- Source code
+- Verification command output — only a short failure reason may surface
+
+Task ids are opaque (`t1`, `t2`, …) and batch ids are generated: neither is
+derived from the objective text, so an id can never leak the brief. Paths,
+labels, conflicting file names and failure reasons can still be revealing.
+
+Legacy and hand-edited JSONL are treated as untrusted input. Every line is
+validated against the known event shapes; unknown properties and malformed
+optional legacy fields are dropped rather than trusted, and strings are stripped
+of control characters again on read, so a crafted event cannot rewrite the
+terminal it is rendered into.
+
+### activityLabel
+
+`activityLabel` is optional, concise, and supplied explicitly by the parent in
+the task contract (for example, `Update auth retries`). Unlike the objective it
+**is** persisted locally, deliberately, because the human view is close to
+useless without it — and because it is persisted it can reveal a short
+description of the delegated work. Keep it short, and omit it when the subject
+itself is sensitive.
+
+When it is absent the human view falls back to `Delegated task N`, where `N` is
+the worker's position in the run. The fallback is positional on purpose: it is
+neither derived from the objective nor from the opaque task id.
+
+## The two representations of a single delegation
+
+Current behaviour, and the thing most likely to trip up anyone parsing the JSONL
+directly.
+
+A single `delegate_task` call is written **twice**:
+
+- as typed lifecycle events — a synthetic single-mode batch (`mode: "single"`,
+  `taskCount: 1`, task id `t1`) plus the worker records, and
+- as one legacy typeless record: a flat line with no `type` field carrying model,
+  effort, attempt, verdict, trustworthiness, thread id, duration, and counts of
+  changed files, scope violations and discrepancies.
+
+A `delegate_tasks` batch writes typed events only.
+
+`activity` is unaffected — the typeless line fails event validation and is
+dropped, so the CLI counts each delegation once. A consumer reading the raw file
+must reconcile the pair itself or it will double-count every single delegation.
+Thread identity is the field that links the two, and both representations have
+always carried it.
+
+## Human view vs `--json`
+
+- **`sol-luna-orchestrator activity`** renders the latest run for a person: batch
+  state, mode, active/total workers, elapsed time and peak concurrency, then one
+  compact block per worker with its label or fallback, model, effort, state,
+  duration, verification outcome, changed-file and check summary, and any known
+  failure reason, followed by scope and integration conflicts. It never prints
+  opaque task, batch or thread ids, worktree paths or token counts — not even on
+  failure. Those exist for machines, and crowding them into the terminal made the
+  view harder to read without making it more truthful.
+- **`sol-luna-orchestrator activity --json`** prints one reduced snapshot of the
+  same latest run as machine-readable JSON — not the raw event lines. It is the
+  fuller projection: it does include the task, batch and thread ids, worktree
+  paths, per-worker token usage and the verification and integration breakdowns.
+
+`--watch` and `--json` cannot be combined; the CLI rejects the pair rather than
+guessing which was meant.
+
+### Snapshot semantics
+
+Both views reduce the whole event history to the **latest batch**, not a
+cumulative total across every run. Reduction is deterministic and tolerates
+out-of-order and non-ISO timestamps in old files.
+
+`--watch` folds the existing history silently at startup and renders only that
+latest run, so an old log does not scroll past. It attaches its watcher before
+reading history, and records appended during that catch-up are replayed as a
+normal incremental read rather than falling into the gap. Before anything has
+ever been delegated it prints `No orchestration activity found.` and keeps
+waiting, so it is safe to start the watcher first.
+
+The snapshot also carries a legacy `objective` field. It is always `null`:
+objectives are not persisted, and the field survives only so that older readers
+do not break.
+
+## Usage data
+
+Per-worker usage is recorded exactly as the Codex SDK reports it on
+`turn.completed`:
+
+| Field                   | Meaning                                   |
+| ----------------------- | ----------------------------------------- |
+| `inputTokens`           | Prompt tokens for that worker's turn      |
+| `cachedInputTokens`     | Portion of the input served from cache    |
+| `outputTokens`          | Tokens the worker generated               |
+| `reasoningOutputTokens` | Reasoning portion of the output           |
+| `model`, `effort`       | Which model and effort that worker ran at |
+| `durationSeconds`       | Wall-clock for that worker                |
+
+**Anything unavailable is written as `null`, never as `0`.** A cancelled or
+crashed worker produces no usage at all, and `null` means exactly that: not
+measured. Reading it as zero turns missing data into free work.
+
+The parent's own usage is not among these fields and cannot be: Codex does not
+report the parent turn to an MCP server it launched, so the snapshot's
+`supervisor.usage` is permanently `null` and `supervisor.state` reports only what
+the stream can honestly support. The benchmark harness records parent usage
+separately because it drives the parent itself.
+
+## Test isolation
+
+Deterministic tests never write synthetic telemetry into the configured
+production paths. Each test supplies its own events file, so running the suite
+cannot pollute the activity history or the diagnostic log of the machine it runs
+on.

@@ -160,18 +160,12 @@ The default view leads with the batch state, mode, active/total workers, elapsed
 time and peak concurrency, then gives each worker a compact block with its
 optional activity label (or `Delegated task N` fallback), model, effort, state,
 duration, verification outcome, changed-file count and any known failure reason.
-Internal task, batch, and thread identifiers and the fuller telemetry projection remain available through
-`activity --json` instead of crowding the terminal view. Worker prompts,
-objectives, task context, source code, and command output are intentionally
-absent from the activity stream. Delegations may optionally provide a concise
-`activityLabel` for the human view; that label is deliberately persisted locally
-and can reveal a short work description.
-At startup it folds existing history silently and renders only the latest run;
-records appended during that catch-up are picked up without needing another
-append. Before anything has been delegated it shows
-`No orchestration activity found.` and keeps waiting, so you can start it first.
-`activity --json` prints one machine-readable snapshot of the latest run instead;
-`--watch` and `--json` cannot be combined.
+Worker prompts, objectives, task context, source code and command output are
+intentionally absent from the activity stream; an optional `activityLabel` is
+deliberately persisted locally and can reveal a short work description.
+`activity --json` prints one machine-readable snapshot instead and cannot be
+combined with `--watch`. Internal identifiers, telemetry shapes and the fuller
+privacy picture are in [Observability](docs/OBSERVABILITY.md).
 
 `init` configures the event log this reads, so no environment variable needs to
 be exported.
@@ -354,16 +348,19 @@ constraints on each item, including what is deliberately **not** a goal.
 
 ## Documentation
 
-| Document                                   | Why you would open it                                          |
-| ------------------------------------------ | -------------------------------------------------------------- |
-| [Configuration](docs/CONFIGURATION.md)     | Environment variables, init flags, Codex settings, log paths   |
-| [Troubleshooting](docs/TROUBLESHOOTING.md) | Symptoms and what they mean, recovering a broken configuration |
-| [`SOL_RULES.md`](SOL_RULES.md)             | Supervisor policy: when to delegate, effort choice, reviewing  |
-| [`SECURITY.md`](SECURITY.md)               | Trust boundaries, what the logs contain, reporting an issue    |
-| [`bench/RESULTS.md`](bench/RESULTS.md)     | Benchmark methodology, raw numbers, limitations                |
-| [ROADMAP.md](ROADMAP.md)                   | Prioritised future work and design constraints                 |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md)       | Development setup, project layout, release process             |
-| [`CHANGELOG.md`](CHANGELOG.md)             | What actually shipped, per version                             |
+| Document                                             | Why you would open it                                          |
+| ---------------------------------------------------- | -------------------------------------------------------------- |
+| [Configuration](docs/CONFIGURATION.md)               | Environment variables, init flags, Codex settings, log paths   |
+| [Troubleshooting](docs/TROUBLESHOOTING.md)           | Symptoms and what they mean, recovering a broken configuration |
+| [Observability](docs/OBSERVABILITY.md)               | Event stream details, telemetry formats, privacy, activity log |
+| [Live Acceptance](docs/ACCEPTANCE.md)                | Manual live-acceptance procedure for fresh Codex sessions      |
+| [Delegation Discovery](docs/DELEGATION_DISCOVERY.md) | History of adaptive routing and discovery behavior             |
+| [`SOL_RULES.md`](SOL_RULES.md)                       | Supervisor policy: when to delegate, effort choice, reviewing  |
+| [`SECURITY.md`](SECURITY.md)                         | Trust boundaries, what the logs contain, reporting an issue    |
+| [`bench/RESULTS.md`](bench/RESULTS.md)               | Benchmark methodology, raw numbers, limitations                |
+| [ROADMAP.md](ROADMAP.md)                             | Prioritised future work and design constraints                 |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md)                 | Development setup, project layout, release process             |
+| [`CHANGELOG.md`](CHANGELOG.md)                       | What actually shipped, per version                             |
 
 ## Contributing
 
