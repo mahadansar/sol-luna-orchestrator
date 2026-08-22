@@ -91,8 +91,7 @@ test("one substantial bounded task may be delegated without another seam", () =>
 
 test("single-task guidance is cost-aware without treating pricing as permanent", () => {
   assert.match(TOOL_DESCRIPTION, /current pricing schedule/i);
-  assert.match(TOOL_DESCRIPTION, /roughly 25x cheaper/i);
-  assert.match(TOOL_DESCRIPTION, /more aggregate raw tokens[\s\S]*fewer total credits/i);
+  assert.match(TOOL_DESCRIPTION, /raw tokens[\s\S]*credits/i);
   assert.match(TOOL_DESCRIPTION, /not an architectural guarantee/i);
   assert.match(TOOL_DESCRIPTION, /More workers is not automatically cheaper/i);
   for (const factor of [
@@ -263,7 +262,7 @@ test("SOL_RULES carries the runtime's operational distinctions without benchmark
   for (const invariant of [
     /Zero workers is valid/i,
     /No second seam is required/i,
-    /roughly\s+25x\s+cheaper/i,
+    /raw tokens[\s\S]*credit cost/i,
     /not an immutable architectural guarantee/i,
     /more workers are not[\s\S]*automatically[\s\S]*cheaper/i,
     /schema default remains[\s\S]*full/i,

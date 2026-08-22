@@ -32,7 +32,7 @@ import {
   resolveEventsPath,
 } from "./cli/events-path.js";
 import { serverEnvTable } from "./cli/settings.js";
-import { fromTomlValue, readKey, toTomlValue } from "./cli/toml-edit.js";
+import { fromTomlValue, readKey, toTomlValue, upsertKey } from "./cli/toml-edit.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.join(HERE, "cli.js");
@@ -140,6 +140,10 @@ test("each source is described for humans", () => {
 test("a fresh init configures the event path", () => {
   const after = applyInitConfig("", INPUT);
   assert.equal(eventsOf(after), INPUT.eventsPath);
+  assert.equal(
+    fromTomlValue(readKey(after, serverEnvTable(), "SOL_LUNA_SERVER_NAME")),
+    "sol-luna-orchestrator",
+  );
 });
 
 test("a v0.6.0 installation is migrated rather than left alone", () => {
@@ -619,6 +623,30 @@ test("status marks an override as an override", async () => {
   assert.match(result.stdout, /override/i);
 });
 
+test("status reports registered server policy instead of differing CLI-shell values", async () => {
+  const { home } = configuredHome();
+  const configPath = path.join(home, "config.toml");
+  let config = fs.readFileSync(configPath, "utf8");
+  config = upsertKey(config, serverEnvTable(), "LUNA_MODEL", "registered-model");
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_MAX_PARALLEL", "6");
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_VERIFY_MODE", "off");
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_ALLOWED_ROOTS", "/registered");
+  fs.writeFileSync(configPath, config, "utf8");
+
+  const result = await runCli(["status"], {
+    CODEX_HOME: home,
+    LUNA_MODEL: "shell-model",
+    SOL_LUNA_MAX_PARALLEL: "2",
+    SOL_LUNA_VERIFY_MODE: "shell",
+    SOL_LUNA_ALLOWED_ROOTS: "/shell",
+  });
+  assert.match(result.stdout, /registered-model/);
+  assert.match(result.stdout, /Max workers:\s+6/);
+  assert.match(result.stdout, /Verification:\s+off/);
+  assert.match(result.stdout, /Workspace roots:\s+\/registered/);
+  assert.doesNotMatch(result.stdout, /shell-model|\/shell/);
+});
+
 test("status says how to fix an unconfigured install", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-activity-"));
   const result = await runCli(["status"], { CODEX_HOME: home });
@@ -636,6 +664,43 @@ test("doctor reports activity configuration, and agrees with init", async () => 
   assert.ok(check, "doctor must check the key init writes");
   assert.equal(check.status, "ok");
   assert.ok(check.detail?.includes(events));
+});
+
+test("doctor reports registered policy and verifies the recursion disable target", async () => {
+  const { home } = configuredHome();
+  const configPath = path.join(home, "config.toml");
+  let config = fs.readFileSync(configPath, "utf8");
+  config = upsertKey(config, serverEnvTable(), "LUNA_MODEL", "registered-model");
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_VERIFY_MODE", "off");
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_ALLOWED_ROOTS", "/registered");
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_SERVER_NAME", "wrong-name");
+  fs.writeFileSync(configPath, config, "utf8");
+
+  const result = await runCli(["doctor", "--json"], {
+    CODEX_HOME: home,
+    LUNA_MODEL: "shell-model",
+    SOL_LUNA_VERIFY_MODE: "shell",
+    SOL_LUNA_ALLOWED_ROOTS: "/shell",
+  });
+  const report = JSON.parse(result.stdout) as {
+    checks: Array<{ name: string; status: string; detail?: string }>;
+  };
+  assert.equal(
+    report.checks.find((c) => c.name === "Worker model")?.detail,
+    "registered-model",
+  );
+  assert.equal(report.checks.find((c) => c.name === "Verification mode")?.detail, "off");
+  assert.equal(
+    report.checks.find((c) => c.name === "Workspace confinement")?.detail,
+    "/registered",
+  );
+  const recursion = report.checks.find((c) => c.name === "Worker MCP disable target");
+  assert.equal(recursion?.status, "fail");
+  assert.equal(recursion?.detail, "wrong-name");
+  assert.equal(
+    report.checks.some((c) => c.name === "Worker recursion blocked"),
+    false,
+  );
 });
 
 test("doctor warns, rather than fails, when activity is unconfigured", async () => {

@@ -20,6 +20,7 @@ import {
 } from "./discovery-hint.js";
 import { SERVER_NAME, inspectSettings, serverTable } from "./settings.js";
 import { fromTomlValue, readKey } from "./toml-edit.js";
+import { resolveRegisteredServerConfig } from "./server-config.js";
 import { bold, dim, out, symbols } from "./ui.js";
 
 /**
@@ -144,6 +145,7 @@ export async function collectChecks(): Promise<Check[]> {
 
   // --- Required settings ---------------------------------------------------
   const configText = readConfig();
+  const serverConfig = resolveRegisteredServerConfig(configText);
   const discovery = inspectDiscoveryHint(readDiscoveryInstructions());
   for (const setting of inspectSettings(configText)) {
     const label =
@@ -166,21 +168,37 @@ export async function collectChecks(): Promise<Check[]> {
   }
 
   // --- Runtime policy ------------------------------------------------------
-  const verifyMode = (process.env.SOL_LUNA_VERIFY_MODE ?? "allowlist").toLowerCase();
   checks.push({
     name: "Verification mode",
-    status: verifyMode === "shell" ? "warn" : "ok",
-    detail: verifyMode,
+    status: serverConfig.verificationMode === "shell" ? "warn" : "ok",
+    detail: serverConfig.verificationMode,
     remedy:
-      verifyMode === "shell"
+      serverConfig.verificationMode === "shell"
         ? "shell mode runs model-chosen commands unsandboxed; prefer allowlist"
         : undefined,
   });
 
   checks.push({
-    name: "Worker recursion blocked",
+    name: "Worker model",
     status: "ok",
-    detail: "workers run with the orchestrator disabled and SOL_LUNA_WORKER=1",
+    detail: serverConfig.workerModel,
+  });
+
+  checks.push({
+    name: "Maximum workers",
+    status: "ok",
+    detail: String(serverConfig.maxParallel),
+  });
+
+  const disableTargetMatches = serverConfig.recursionDisableTarget === SERVER_NAME;
+  checks.push({
+    name: "Worker MCP disable target",
+    status: disableTargetMatches ? "ok" : "fail",
+    detail: serverConfig.recursionDisableTarget,
+    expected: SERVER_NAME,
+    remedy: disableTargetMatches
+      ? undefined
+      : "Registered name and SOL_LUNA_SERVER_NAME differ. Run: sol-luna-orchestrator init",
   });
 
   const logPath = fromTomlValue(
@@ -224,11 +242,12 @@ export async function collectChecks(): Promise<Check[]> {
         : "Run: sol-luna-orchestrator init (or init --no-discovery-hint to opt out)",
   });
 
-  const roots = process.env.SOL_LUNA_ALLOWED_ROOTS;
   checks.push({
     name: "Workspace confinement",
     status: "ok",
-    detail: roots ? roots : "any existing directory (SOL_LUNA_ALLOWED_ROOTS unset)",
+    detail:
+      serverConfig.allowedRoots ??
+      "any existing directory (SOL_LUNA_ALLOWED_ROOTS unset)",
   });
 
   return checks;

@@ -3,9 +3,9 @@ import { appendFileSync } from "node:fs";
 /**
  * Collapse control characters so model-supplied text cannot forge log lines.
  *
- * The task objective reaches the log verbatim. A newline inside it would
- * otherwise let a delegated task fabricate a convincing "done: verdict=PASS"
- * entry in the file an operator uses to audit what happened.
+ * Objective-derived previews and other model-supplied text can reach the log.
+ * A newline inside them would otherwise let a delegated task fabricate a
+ * convincing "done: verdict=PASS" entry in the operator's diagnostic file.
  */
 export const sanitizeForLog = (value: string): string =>
   value.replace(/[\u0000-\u001f\u007f]/g, " ");

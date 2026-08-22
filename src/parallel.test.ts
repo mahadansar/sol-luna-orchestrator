@@ -1404,6 +1404,7 @@ async function captureBatchEvents(
   mode: "parallel" | "sequential",
   workingDirectory: string,
   abortBeforeStart = false,
+  timeoutFirst = false,
 ): Promise<Record<string, unknown>[]> {
   const eventRoot = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-events-"));
   const eventsPath = path.join(eventRoot, "events.jsonl");
@@ -1445,10 +1446,11 @@ await runBatch(tasks, {
   executor: async (input) => {
     if (input.objective.includes("Throw")) throw new Error("fixture failure");
     if (input.objective.includes("no output")) return undefined;
+    const timedOut = ${JSON.stringify(timeoutFirst)} && input.objective.includes("first");
     return {
-      verdict: "PASS",
-      workerClaimedStatus: "PASS",
-      trustworthy: true,
+      verdict: timedOut ? "FAILED" : "PASS",
+      workerClaimedStatus: timedOut ? "FAILED" : "PASS",
+      trustworthy: !timedOut,
       workerThreadId: "fixture-thread",
       model: "fixture-model",
       effort: input.effort,
@@ -1466,7 +1468,7 @@ await runBatch(tasks, {
       escalationAdvice: null,
       durationSeconds: 0,
       usage: null,
-      errors: [],
+      errors: timedOut ? ["Worker exceeded its 1800s budget."] : [],
     };
   },
 });
@@ -1475,7 +1477,12 @@ await runBatch(tasks, {
   try {
     await new Promise<void>((resolve, reject) => {
       const child = spawn(process.execPath, ["-e", runner], {
-        env: { ...process.env, SOL_LUNA_EVENTS: configuredPath },
+        env: {
+          ...process.env,
+          LUNA_MODEL: "gpt-5.6-luna",
+          LUNA_TIMEOUT_SECONDS: "1800",
+          SOL_LUNA_EVENTS: configuredPath,
+        },
         stdio: ["ignore", "ignore", "pipe"],
         windowsHide: true,
       });
@@ -1500,6 +1507,17 @@ await runBatch(tasks, {
     await fs.rm(eventRoot, { recursive: true, force: true });
   }
 }
+
+test("batch timeout events use the real default when the task omits a timeout", async () => {
+  const work = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-timeout-event-"));
+  try {
+    const events = await captureBatchEvents("sequential", work, false, true);
+    const timedOut = events.find((event) => event.type === "worker.timedOut");
+    assert.equal(timedOut?.timeoutSeconds, 1800);
+  } finally {
+    await cleanupRepo(work);
+  }
+});
 
 test("event-emitting batch fixtures cannot append to an inherited activity path", async () => {
   const work = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-event-seam-"));

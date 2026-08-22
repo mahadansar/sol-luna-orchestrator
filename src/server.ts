@@ -26,7 +26,7 @@ import {
   type DelegateTasksInput,
 } from "./contract.js";
 import { BatchRejectedError, runBatch } from "./batch.js";
-import { WorkerBusyError, delegateToLuna } from "./worker.js";
+import { delegateToLuna } from "./worker.js";
 import { WorkspaceError } from "./workspace.js";
 import { activityFailureReason, emitEvent } from "./events.js";
 
@@ -421,7 +421,7 @@ function registerDelegateTask(): void {
         };
       } catch (error) {
         const message =
-          error instanceof WorkerBusyError || error instanceof WorkspaceError
+          error instanceof WorkspaceError
             ? error.message
             : `Delegation failed: ${(error as Error).message}`;
 
@@ -533,9 +533,7 @@ function registerDelegateTasks(): void {
         };
       } catch (error) {
         const message =
-          error instanceof BatchRejectedError ||
-          error instanceof WorkerBusyError ||
-          error instanceof WorkspaceError
+          error instanceof BatchRejectedError || error instanceof WorkspaceError
             ? error.message
             : `Batch delegation failed: ${(error as Error).message}`;
         log(`batch error: ${message}`);

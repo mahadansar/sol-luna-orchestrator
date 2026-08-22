@@ -139,6 +139,7 @@ export type WorkerState =
 export interface WorkerActivity {
   taskId: string;
   activityLabel: string | null;
+  /** Privacy-preserving legacy shape: objectives are never persisted and this stays null. */
   objective: string | null;
   category: string | null;
   effort: string;

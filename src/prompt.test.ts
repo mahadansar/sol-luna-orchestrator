@@ -319,7 +319,11 @@ await runBatch([task], {
 
     await new Promise<void>((resolve, reject) => {
       const child = spawn(process.execPath, [runner], {
-        env: { ...process.env, SOL_LUNA_EVENTS: eventsFile },
+        env: {
+          ...process.env,
+          LUNA_MODEL: "gpt-5.6-luna",
+          SOL_LUNA_EVENTS: eventsFile,
+        },
         stdio: ["ignore", "ignore", "pipe"],
         windowsHide: true,
       });

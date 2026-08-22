@@ -1,4 +1,5 @@
 import { readKey } from "./toml-edit.js";
+import { DEFAULT_ORCHESTRATOR_SERVER_NAME } from "../config.js";
 
 /**
  * The settings this project needs in Codex's config, and why.
@@ -7,7 +8,8 @@ import { readKey } from "./toml-edit.js";
  * between those two is the classic way a setup tool starts lying to people.
  */
 
-export const SERVER_NAME = process.env.SOL_LUNA_SERVER_NAME ?? "sol-luna-orchestrator";
+export const SERVER_NAME =
+  process.env.SOL_LUNA_SERVER_NAME ?? DEFAULT_ORCHESTRATOR_SERVER_NAME;
 
 export const serverTable = (name = SERVER_NAME): string[] => ["mcp_servers", name];
 export const serverEnvTable = (name = SERVER_NAME): string[] => [

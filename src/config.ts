@@ -8,7 +8,8 @@
 import path from "node:path";
 
 /** Worker model. Verified present in the local Codex model cache. */
-export const LUNA_MODEL = process.env.LUNA_MODEL ?? "gpt-5.6-luna";
+export const DEFAULT_LUNA_MODEL = "gpt-5.6-luna";
+export const LUNA_MODEL = process.env.LUNA_MODEL ?? DEFAULT_LUNA_MODEL;
 
 /**
  * The name this server is registered under in Codex's config.toml.
@@ -22,8 +23,9 @@ export const LUNA_MODEL = process.env.LUNA_MODEL ?? "gpt-5.6-luna";
  * into the existing table rather than replacing it, and every server still
  * starts. Verified against codex-cli 0.147.0.
  */
+export const DEFAULT_ORCHESTRATOR_SERVER_NAME = "sol-luna-orchestrator";
 export const ORCHESTRATOR_SERVER_NAME =
-  process.env.SOL_LUNA_SERVER_NAME ?? "sol-luna-orchestrator";
+  process.env.SOL_LUNA_SERVER_NAME ?? DEFAULT_ORCHESTRATOR_SERVER_NAME;
 
 /**
  * Env marker set on worker processes. A server instance that sees it refuses to
@@ -89,8 +91,11 @@ export const WORKER_NETWORK_ACCESS = process.env.LUNA_NETWORK_ACCESS === "1";
  */
 export const VERIFY_MODES = ["allowlist", "off", "shell"] as const;
 export type VerifyMode = (typeof VERIFY_MODES)[number];
+export const DEFAULT_VERIFY_MODE: VerifyMode = "allowlist";
 
-const rawVerifyMode = (process.env.SOL_LUNA_VERIFY_MODE ?? "allowlist").toLowerCase();
+const rawVerifyMode = (
+  process.env.SOL_LUNA_VERIFY_MODE ?? DEFAULT_VERIFY_MODE
+).toLowerCase();
 export const VERIFY_MODE: VerifyMode = (VERIFY_MODES as readonly string[]).includes(
   rawVerifyMode,
 )
@@ -138,14 +143,9 @@ export const ALLOWED_WORKSPACE_ROOTS = (process.env.SOL_LUNA_ALLOWED_ROOTS ?? ""
  */
 export const EVENTS_FILE = process.env.SOL_LUNA_EVENTS;
 
-/**
- * How many workers may run at once in a parallel batch.
- *
- * Three is a deliberate default: enough to overlap real work, small enough that
- * a mistaken batch cannot saturate the machine or the account's rate limits.
- */
 /** Hard ceiling, independent of configuration, against runaway spawning. */
 export const MAX_PARALLEL_LIMIT = 8;
+export const DEFAULT_MAX_PARALLEL = 3;
 
 /** Most tasks accepted in one batch, however they are scheduled. */
 export const MAX_BATCH_SIZE = 12;
@@ -155,7 +155,15 @@ export function clampParallel(value: number): number {
   return Math.min(Math.floor(value), MAX_PARALLEL_LIMIT);
 }
 
-export const MAX_PARALLEL = clampParallel(Number(process.env.SOL_LUNA_MAX_PARALLEL ?? 3));
+/**
+ * How many workers may run at once in a parallel batch.
+ *
+ * Three is a deliberate default: enough to overlap real work, small enough that
+ * a mistaken batch cannot saturate the machine or the account's rate limits.
+ */
+export const MAX_PARALLEL = clampParallel(
+  Number(process.env.SOL_LUNA_MAX_PARALLEL ?? DEFAULT_MAX_PARALLEL),
+);
 
 /** Whether SOL_LUNA_MAX_PARALLEL held a value we could not use as given. */
 export const MAX_PARALLEL_CLAMPED =

@@ -155,6 +155,27 @@ export interface DelegationRecord {
 }
 
 /**
+ * One half of a possible modern single-delegation pair, with the correlation
+ * evidence needed to reconcile it — kept beside the record rather than inside
+ * it, because `DelegationRecord` is serialized into committed results files.
+ */
+interface ReconcilableRow {
+  record: DelegationRecord;
+  /**
+   * Worker thread id. Both representations have carried it since single-call
+   * telemetry existed: the legacy row as `workerThreadId`, the lifecycle event
+   * as `threadId`. It is the only field that identifies the same delegation
+   * rather than merely describing an identical-looking one.
+   */
+  threadId: string | null;
+  stamp: number | null;
+}
+
+/** Treat an absent, non-string, or empty thread id as "no identity available". */
+const threadIdOf = (value: unknown): string | null =>
+  typeof value === "string" && value.trim() ? value : null;
+
+/**
  * Where a run's wall-clock went.
  *
  * Derived from event timestamps rather than new instrumentation, so measuring
@@ -316,7 +337,7 @@ export function peakOverlap(spans: Array<{ start: number; end: number }>): numbe
   return peak;
 }
 
-/** Delegation and batch telemetry appended while this run was executing. */
+/** Lifecycle and legacy delegation telemetry appended during this run. */
 export function readTelemetry(
   eventsFile: string,
   offset: number,
@@ -326,6 +347,12 @@ export function readTelemetry(
   const delegations: DelegationRecord[] = [];
   const batches: RunRecord["batches"] = [];
   const efforts: string[] = [];
+  const legacyRows: ReconcilableRow[] = [];
+  const singleCompletions: ReconcilableRow[] = [];
+  const singleBatchIds = new Set<string>();
+  /** Effort each single-mode batch queued, so it is never counted twice. */
+  const singleQueuedEfforts = new Map<string, string>();
+  const singleCompletedBatchIds = new Set<string>();
   const workerFailures: string[] = [];
   let integrationConflicts = 0;
   let verificationFailed = 0;
@@ -353,17 +380,21 @@ export function readTelemetry(
     const at = Date.parse(String(parsed.timestamp ?? ""));
     const stamp = Number.isNaN(at) ? null : at;
 
-    // A single `delegate_task` call is recorded without a `type` field and
-    // carries full usage; batch workers are recorded as typed events instead.
+    // Older single `delegate_task` telemetry has no `type`. Modern single calls
+    // also emit lifecycle events, so defer these rows until they can be
+    // reconciled instead of counting both representations.
     if (parsed.type === undefined && typeof parsed.effort === "string") {
-      delegations.push({
-        effort: parsed.effort,
-        verdict: String(parsed.verdict ?? ""),
-        attempt: Number(parsed.attempt ?? 1),
-        durationSeconds: Number(parsed.durationSeconds ?? 0),
-        usage: (parsed.usage as DelegationRecord["usage"]) ?? null,
+      legacyRows.push({
+        record: {
+          effort: parsed.effort,
+          verdict: String(parsed.verdict ?? ""),
+          attempt: Number(parsed.attempt ?? 1),
+          durationSeconds: Number(parsed.durationSeconds ?? 0),
+          usage: (parsed.usage as DelegationRecord["usage"]) ?? null,
+        },
+        threadId: threadIdOf(parsed.workerThreadId),
+        stamp,
       });
-      efforts.push(parsed.effort);
       continue;
     }
 
@@ -375,6 +406,7 @@ export function readTelemetry(
           maxParallel: Number(parsed.maxParallel ?? 1),
         });
         if (stamp !== null && batchStarted === null) batchStarted = stamp;
+        if (parsed.mode === "single") singleBatchIds.add(String(parsed.batchId));
         break;
 
       case "batch.completed":
@@ -400,17 +432,22 @@ export function readTelemetry(
         verificationRefused += Number(parsed.refused ?? 0);
         break;
 
-      case "task.queued":
+      case "task.queued": {
         // Effort is chosen per task and is only stated when it is queued.
-        efforts.push(String(parsed.effort ?? ""));
+        const queuedEffort = String(parsed.effort ?? "");
+        efforts.push(queuedEffort);
+        if (singleBatchIds.has(String(parsed.batchId))) {
+          singleQueuedEfforts.set(String(parsed.batchId), queuedEffort);
+        }
         break;
+      }
 
       case "worker.completed": {
         const started = workerStarts.get(String(parsed.taskId));
         if (stamp !== null && started !== undefined) {
           spans.push({ start: started, end: stamp });
         }
-        delegations.push({
+        const record: DelegationRecord = {
           effort: String(parsed.effort ?? ""),
           verdict: String(parsed.verdict ?? ""),
           attempt: 1,
@@ -427,7 +464,16 @@ export function readTelemetry(
                   reasoningOutputTokens: 0,
                 }
               : null),
-        });
+        };
+        delegations.push(record);
+        if (singleBatchIds.has(String(parsed.batchId))) {
+          singleCompletions.push({
+            record,
+            threadId: threadIdOf(parsed.threadId),
+            stamp,
+          });
+          singleCompletedBatchIds.add(String(parsed.batchId));
+        }
         break;
       }
 
@@ -438,6 +484,75 @@ export function readTelemetry(
       default:
         break;
     }
+  }
+
+  const sameUsage = (
+    left: DelegationRecord["usage"],
+    right: DelegationRecord["usage"],
+  ): boolean => JSON.stringify(left) === JSON.stringify(right);
+
+  /**
+   * Decide whether a legacy row is the second half of a modern pair.
+   *
+   * A modern `delegate_task` writes one delegation twice: as lifecycle events
+   * and as the legacy typeless record. Thread identity links those two exactly,
+   * and both representations have always carried it, so it is preferred over
+   * comparing attributes that two distinct delegations can legitimately share.
+   *
+   * The attribute comparison survives only as a fallback for a pair where
+   * neither side recorded a thread — a worker that died before its thread
+   * started. It additionally requires the legacy row not to predate the
+   * completion, because the writer always appends it afterwards; without that,
+   * a genuinely separate historical delegation that happened to share effort,
+   * verdict, duration and usage could be silently dropped.
+   *
+   * Only single-mode completions are ever candidates, so typed batch telemetry
+   * is never mistaken for a duplicate of a legacy single.
+   */
+  const claimsSingleCompletion = (legacy: ReconcilableRow): boolean => {
+    if (legacy.threadId !== null) {
+      const byThread = singleCompletions.findIndex(
+        (candidate) => candidate.threadId === legacy.threadId,
+      );
+      if (byThread < 0) return false;
+      singleCompletions.splice(byThread, 1);
+      return true;
+    }
+
+    const byAttributes = singleCompletions.findIndex(
+      (candidate) =>
+        candidate.threadId === null &&
+        candidate.record.effort === legacy.record.effort &&
+        candidate.record.verdict === legacy.record.verdict &&
+        candidate.record.durationSeconds === legacy.record.durationSeconds &&
+        sameUsage(candidate.record.usage, legacy.record.usage) &&
+        (candidate.stamp === null ||
+          legacy.stamp === null ||
+          legacy.stamp >= candidate.stamp),
+    );
+    if (byAttributes < 0) return false;
+    singleCompletions.splice(byAttributes, 1);
+    return true;
+  };
+
+  // Single-mode batches whose worker never reported a completion — cancelled
+  // before it finished, for instance. That delegation survives only as its
+  // legacy row, but `task.queued` already counted the effort, so counting it
+  // again from the row would double-count one modern delegation.
+  const effortsAlreadyCounted = [...singleQueuedEfforts.entries()]
+    .filter(([batchId]) => !singleCompletedBatchIds.has(batchId))
+    .map(([, effort]) => effort);
+
+  for (const legacy of legacyRows) {
+    if (claimsSingleCompletion(legacy)) continue;
+
+    delegations.push(legacy.record);
+    const counted = effortsAlreadyCounted.indexOf(legacy.record.effort);
+    if (counted >= 0) {
+      effortsAlreadyCounted.splice(counted, 1);
+      continue;
+    }
+    efforts.push(legacy.record.effort);
   }
 
   const seconds = (from: number | null, to: number | null): number | null =>

@@ -88,6 +88,239 @@ function writeEvents(lines: object[]): string {
   return file;
 }
 
+const USAGE = {
+  inputTokens: 20,
+  cachedInputTokens: 2,
+  outputTokens: 4,
+  reasoningOutputTokens: 1,
+};
+
+/**
+ * The two rows a modern `delegate_task` writes for one delegation, in the order
+ * the server writes them and carrying the thread id both representations have
+ * always recorded. `thread: null` reproduces a worker that died before its
+ * Codex thread started, which is the only case with no identity to match on.
+ */
+function modernSingle(options: {
+  batchId: string;
+  second: number;
+  effort: string;
+  thread: string | null;
+  verdict?: string;
+  durationSeconds?: number;
+  attempt?: number;
+  completed?: boolean;
+}): object[] {
+  const { batchId, second, effort, thread } = options;
+  const verdict = options.verdict ?? "PASS";
+  const durationSeconds = options.durationSeconds ?? 12;
+  const lifecycle: object[] = [
+    {
+      timestamp: at(second),
+      type: "batch.started",
+      batchId,
+      mode: "single",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    { timestamp: at(second), type: "task.queued", batchId, taskId: "t1", effort },
+    {
+      timestamp: at(second + 1),
+      type: "worker.started",
+      batchId,
+      taskId: "t1",
+      effort,
+    },
+  ];
+
+  if (options.completed === false) {
+    lifecycle.push(
+      { timestamp: at(second + 2), type: "worker.cancelled", batchId, taskId: "t1" },
+      {
+        timestamp: at(second + 2),
+        type: "batch.cancelled",
+        batchId,
+        reason: "worker cancelled",
+      },
+    );
+  } else {
+    lifecycle.push({
+      timestamp: at(second + 2),
+      type: "worker.completed",
+      batchId,
+      taskId: "t1",
+      model: "gpt-5.6-luna",
+      effort,
+      verdict,
+      durationSeconds,
+      threadId: thread,
+      usage: USAGE,
+    });
+  }
+
+  lifecycle.push({
+    timestamp: at(second + 3),
+    model: "gpt-5.6-luna",
+    effort,
+    attempt: options.attempt ?? 1,
+    verdict,
+    workerThreadId: thread,
+    durationSeconds,
+    usage: USAGE,
+  });
+  return lifecycle;
+}
+
+test("modern single lifecycle telemetry supersedes its legacy completion row", () => {
+  const file = writeEvents(
+    modernSingle({ batchId: "single-1", second: 1, effort: "high", thread: "thread_1" }),
+  );
+
+  const telemetry = readTelemetry(file, 0, 1_000_000, 1_100_000);
+  assert.equal(telemetry.delegations.length, 1);
+  assert.deepEqual(telemetry.efforts, ["high"]);
+  assert.equal(telemetry.delegations[0]?.usage?.outputTokens, 4);
+});
+
+test("a separate historical delegation is kept even when its fields collide", () => {
+  // Same effort, verdict, duration and usage as the modern pair below, from a
+  // different worker thread. Attribute equality is not identity.
+  const file = writeEvents([
+    {
+      timestamp: at(1),
+      model: "gpt-5.6-luna",
+      effort: "high",
+      attempt: 3,
+      verdict: "PASS",
+      workerThreadId: "thread_historical",
+      durationSeconds: 12,
+      usage: USAGE,
+    },
+    ...modernSingle({
+      batchId: "single-2",
+      second: 10,
+      effort: "high",
+      thread: "thread_modern",
+    }),
+  ]);
+
+  const telemetry = readTelemetry(file, 0, 1_000_000, 1_100_000);
+  assert.equal(telemetry.delegations.length, 2);
+  assert.deepEqual(telemetry.efforts, ["high", "high"]);
+  assert.ok(
+    telemetry.delegations.some((record) => record.attempt === 3),
+    "the historical row itself must survive, not merely its count",
+  );
+});
+
+test("a modern single with no completion is counted once, effort included", () => {
+  const file = writeEvents(
+    modernSingle({
+      batchId: "single-3",
+      second: 1,
+      effort: "xhigh",
+      thread: "thread_cancelled",
+      verdict: "FAILED",
+      completed: false,
+    }),
+  );
+
+  const telemetry = readTelemetry(file, 0, 1_000_000, 1_100_000);
+  assert.equal(telemetry.delegations.length, 1);
+  assert.deepEqual(telemetry.efforts, ["xhigh"]);
+});
+
+test("a pair with no thread id on either side still reconciles", () => {
+  const file = writeEvents(
+    modernSingle({ batchId: "single-4", second: 1, effort: "medium", thread: null }),
+  );
+
+  const telemetry = readTelemetry(file, 0, 1_000_000, 1_100_000);
+  assert.equal(telemetry.delegations.length, 1);
+  assert.deepEqual(telemetry.efforts, ["medium"]);
+});
+
+test("an identity-less legacy row before a completion is not folded into it", () => {
+  const file = writeEvents([
+    {
+      timestamp: at(1),
+      model: "gpt-5.6-luna",
+      effort: "medium",
+      attempt: 1,
+      verdict: "PASS",
+      durationSeconds: 12,
+      usage: USAGE,
+    },
+    ...modernSingle({ batchId: "single-5", second: 10, effort: "medium", thread: null }),
+  ]);
+
+  const telemetry = readTelemetry(file, 0, 1_000_000, 1_100_000);
+  assert.equal(telemetry.delegations.length, 2);
+  assert.deepEqual(telemetry.efforts, ["medium", "medium"]);
+});
+
+test("legacy typeless-only single telemetry remains readable", () => {
+  const file = writeEvents([
+    {
+      timestamp: at(1),
+      model: "gpt-5.6-luna",
+      effort: "medium",
+      attempt: 2,
+      verdict: "FAILED",
+      durationSeconds: 9,
+      usage: USAGE,
+    },
+  ]);
+
+  const telemetry = readTelemetry(file, 0, 1_000_000, 1_100_000);
+  assert.equal(telemetry.delegations.length, 1);
+  assert.deepEqual(telemetry.efforts, ["medium"]);
+  assert.equal(telemetry.delegations[0]?.attempt, 2);
+  assert.equal(telemetry.delegations[0]?.usage?.outputTokens, 4);
+});
+
+test("typed batch telemetry is not reconciled with a legacy single row", () => {
+  const file = writeEvents([
+    {
+      timestamp: at(1),
+      type: "batch.started",
+      batchId: "batch-1",
+      mode: "parallel",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: at(2),
+      type: "task.queued",
+      batchId: "batch-1",
+      taskId: "t1",
+      effort: "high",
+    },
+    {
+      timestamp: at(3),
+      type: "worker.completed",
+      batchId: "batch-1",
+      taskId: "t1",
+      effort: "high",
+      verdict: "PASS",
+      durationSeconds: 12,
+      usage: USAGE,
+    },
+    {
+      timestamp: at(4),
+      effort: "high",
+      attempt: 1,
+      verdict: "PASS",
+      durationSeconds: 12,
+      usage: USAGE,
+    },
+  ]);
+
+  const telemetry = readTelemetry(file, 0, 1_000_000, 1_100_000);
+  assert.equal(telemetry.delegations.length, 2);
+  assert.deepEqual(telemetry.efforts, ["high", "high"]);
+});
+
 test("the breakdown splits a run into supervisor, setup, workers and integration", () => {
   const file = writeEvents([
     {

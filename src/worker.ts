@@ -64,13 +64,6 @@ class Semaphore {
 
 export const workerSlots = new Semaphore(MAX_PARALLEL);
 
-export class WorkerBusyError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "WorkerBusyError";
-  }
-}
-
 export interface ObservedRun {
   threadId: string | null;
   finalResponse: string;

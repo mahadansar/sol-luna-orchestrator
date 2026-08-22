@@ -15,6 +15,7 @@ import {
 } from "./discovery-hint.js";
 import { defaultEventsPath } from "./events-path.js";
 import { codexConfigPath, installLocation } from "./paths.js";
+import { resolveRegisteredServerConfig } from "./server-config.js";
 import {
   REQUIRED_SETTINGS,
   SERVER_NAME,
@@ -171,6 +172,10 @@ export function applyInitConfig(before: string, input: InitConfigInput): string 
     });
   }
 
+  // The worker disables this exact MCP table. Persist the name in the server's
+  // own environment so a custom CLI registration name cannot drift at runtime.
+  text = upsertKey(text, serverEnvTable(), "SOL_LUNA_SERVER_NAME", SERVER_NAME);
+
   return text;
 }
 
@@ -249,6 +254,9 @@ export async function initCommand(argv: string[]): Promise<number> {
   // earlier version reports Already configured forever and `activity` never
   // works, which is exactly the bug this check exists to prevent.
   const eventsConfigured = readKey(before, serverEnvTable(), "SOL_LUNA_EVENTS") !== null;
+  const serverNameConfigured =
+    fromTomlValue(readKey(before, serverEnvTable(), "SOL_LUNA_SERVER_NAME")) ===
+    SERVER_NAME;
 
   const registrationOk = isRegistered && pathMatches && commandMatches;
   const discoveryHintConfigured =
@@ -257,6 +265,7 @@ export async function initCommand(argv: string[]): Promise<number> {
     registrationOk &&
     settingsSatisfied(settingsBefore) &&
     eventsConfigured &&
+    serverNameConfigured &&
     discoveryHintConfigured;
 
   // `--log` and `--events` each name a specific path, so either is a request to
@@ -299,6 +308,9 @@ export async function initCommand(argv: string[]): Promise<number> {
     planned.push(`replace SOL_LUNA_EVENTS with ${eventsPath}`);
   } else if (!eventsConfigured) {
     planned.push(`set SOL_LUNA_EVENTS so \`activity\` works (${eventsPath})`);
+  }
+  if (!serverNameConfigured) {
+    planned.push(`set SOL_LUNA_SERVER_NAME to ${SERVER_NAME} for worker isolation`);
   }
   if (options.noDiscoveryHint) {
     if (discoveryBefore.exactCount === 0) {
@@ -401,6 +413,7 @@ function printSummary(serverEntry: string, configText: string): void {
   const settings = inspectSettings(configText);
   const value = (key: string): string =>
     settings.find((setting) => setting.key === key)?.actual ?? "unset";
+  const serverConfig = resolveRegisteredServerConfig(configText);
 
   out();
   table([
@@ -408,8 +421,10 @@ function printSummary(serverEntry: string, configText: string): void {
     ["Server", serverEntry],
     ["Timeout", `${value("tool_timeout_sec")}s`],
     ["Approval", fromTomlValue(value("default_tools_approval_mode")) ?? "unset"],
-    ["Workers", `max ${process.env.SOL_LUNA_MAX_PARALLEL ?? "3"}`],
-    ["Verify", process.env.SOL_LUNA_VERIFY_MODE ?? "allowlist"],
+    ["Worker", serverConfig.workerModel],
+    ["Workers", `max ${serverConfig.maxParallel}`],
+    ["Verify", serverConfig.verificationMode],
+    ["Roots", serverConfig.allowedRoots ?? "any existing directory"],
     [
       "Activity",
       fromTomlValue(readKey(configText, serverEnvTable(), "SOL_LUNA_EVENTS")) ??

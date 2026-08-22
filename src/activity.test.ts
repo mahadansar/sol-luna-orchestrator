@@ -722,6 +722,9 @@ test("worker timeout is captured", () => {
   const snap = reduceEvents(events);
   assert.equal(snap.workers[0]!.state, "timedOut");
   assert.equal(snap.concurrency.current, 0);
+  const rendered = renderHumanLines(snap, Date.now(), 100).join("\n");
+  assert.match(rendered, /Exceeded the 10m 0s timeout/);
+  assert.doesNotMatch(rendered, /Exceeded the 0s timeout/);
 });
 
 test("a completion record after timeout does not erase the timeout", () => {

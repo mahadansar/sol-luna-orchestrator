@@ -1,6 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { LUNA_MODEL, MAX_BATCH_SIZE, MAX_PARALLEL } from "./config.js";
+import {
+  DEFAULT_TIMEOUT_SECONDS,
+  LUNA_MODEL,
+  MAX_BATCH_SIZE,
+  MAX_PARALLEL,
+} from "./config.js";
 import type {
   BatchOutput,
   BatchTaskResult,
@@ -501,7 +506,7 @@ async function runOne(
         type: "worker.timedOut",
         batchId,
         taskId: task.taskId,
-        timeoutSeconds: task.input.timeoutSeconds ?? 0,
+        timeoutSeconds: task.input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS,
       });
     }
 

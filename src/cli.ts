@@ -18,6 +18,7 @@ import {
 import { describeEventsSource, resolveEventsPath } from "./cli/events-path.js";
 import { initCommand } from "./cli/init.js";
 import { codexConfigPath, installLocation, packageVersion } from "./cli/paths.js";
+import { resolveRegisteredServerConfig } from "./cli/server-config.js";
 import { SERVER_NAME, inspectSettings } from "./cli/settings.js";
 import { findTable, fromTomlValue } from "./cli/toml-edit.js";
 import { bold, dim, errOut, out, symbols, table } from "./cli/ui.js";
@@ -59,6 +60,7 @@ function statusCommand(): number {
   const configured = findTable(configText, ["mcp_servers", SERVER_NAME]) !== null;
   const settings = inspectSettings(configText);
   const events = resolveEventsPath(configText);
+  const serverConfig = resolveRegisteredServerConfig(configText);
   const discovery = inspectDiscoveryHint(readDiscoveryInstructions());
   const value = (key: string): string =>
     settings.find((setting) => setting.key === key)?.actual ?? "unset";
@@ -75,8 +77,10 @@ function statusCommand(): number {
       "Approval",
       configured ? (fromTomlValue(value("default_tools_approval_mode")) ?? "-") : "-",
     ],
-    ["Max workers", process.env.SOL_LUNA_MAX_PARALLEL ?? "3"],
-    ["Verification", process.env.SOL_LUNA_VERIFY_MODE ?? "allowlist"],
+    ["Worker model", serverConfig.workerModel],
+    ["Max workers", String(serverConfig.maxParallel)],
+    ["Verification", serverConfig.verificationMode],
+    ["Workspace roots", serverConfig.allowedRoots ?? "any existing directory"],
     [
       "Activity log",
       // Same resolver `activity` uses. Reporting only this shell's environment
