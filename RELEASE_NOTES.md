@@ -1,24 +1,24 @@
-# Release notes — working draft
+# Release notes — v0.8.0
 
-This file stages the body of the **next** GitHub Release. It is not a record of
-past releases:
+This file stages the reviewed body of the **v0.8.0** GitHub Release, dated
+2026-08-22. It is not a record of past releases:
 
 - Shipped releases are recorded in [`CHANGELOG.md`](CHANGELOG.md), which is
   authoritative.
 - Published release bodies live on the
   [Releases page](https://github.com/mahadansar/sol-luna-orchestrator/releases).
 
-Drafting the narrative version here rather than in the changelog means a release
-body can be written and reviewed before the tag exists. Once a release has
-shipped, clear this file back to the outline below: a copy of an entry that is
-already published only drifts from it.
+Staging the narrative here rather than in the changelog means the release body
+can be reviewed before the tag exists. Once the release has shipped, clear this
+file back to an outline: a copy of an entry that is already published only drifts
+from it.
 
-**Currently in preparation: the next release.** No version number and no date
-have been assigned. Everything below is unshipped work sitting in `main`.
+**Currently in preparation: v0.8.0, dated 2026-08-22.** Everything below is the
+accepted release body for the unshipped work sitting in `main`.
 
 ---
 
-## sol-luna-orchestrator [Unreleased]
+## sol-luna-orchestrator v0.8.0 — 2026-08-22
 
 ### What this release is for
 

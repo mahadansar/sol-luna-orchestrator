@@ -365,17 +365,21 @@ test("parent model and effort guidance stays example-only across surfaces", asyn
   assert.doesNotMatch(example, /\bRECOMMENDED\b/i);
 
   for (const [document, start, end] of [
-    [readme, "Raw token counts are not credit cost.", "**Worth using when**"],
+    [readme, "Raw token counts are not credit cost.", "## Quick start"],
     [rules, "## Cost and parallelism", "## Worker effort"],
   ] as const) {
     const cost = document.slice(document.indexOf(start), document.indexOf(end));
-    assert.match(cost, /selected parent(?: model)?[\s\S]*priced above[\s\S]*worker/i);
-    assert.match(cost, /no (?:cost )?saving has been measured/i);
+    assert.match(cost, /raw token[s\s\S]*not credit cost/i);
+    assert.match(
+      cost,
+      /only when[\s\S]*(?:selected parent(?: model)?|parent you picked)[\s\S]*priced above[\s\S]*worker[\s\S]*(?:current|applicable)[\s\S]*(?:pricing )?schedule/i,
+    );
+    assert.match(cost, /no (?:cost )?saving has been\s+measured/i);
     assert.doesNotMatch(cost, /\b\d+(?:\.\d+)?x\b/i);
   }
   const readmeCost = readme.slice(
     readme.indexOf("Raw token counts are not credit cost."),
-    readme.indexOf("**Worth using when**"),
+    readme.indexOf("## Quick start"),
   );
   assert.match(readmeCost, /docs\/CONFIGURATION\.md#cost/i);
 });
@@ -401,7 +405,7 @@ test("SOL_RULES carries the runtime's operational distinctions without benchmark
   assert.doesNotMatch(rules, /2\.3x|3\.5x|V6|around 70 seconds|four and six/i);
 });
 
-test("README does not require unconditional integration verification", async () => {
+test("README preserves conditional integration and silent-waiting guidance", async () => {
   const readme = await readDoc("README.md");
   assert.doesNotMatch(
     readme,
@@ -411,10 +415,28 @@ test("README does not require unconditional integration verification", async () 
     readme,
     /Use the sol-luna-orchestrator MCP for this task\. Decide whether delegate_task or[\s\S]*delegate_tasks is appropriate based on the work\./,
   );
-  assert.match(
-    readme,
-    /Silent waiting is parent guidance, not a server-enforced behavior/i,
+  const silentWaiting = readme.slice(
+    readme.indexOf("While a call is in flight"),
+    readme.indexOf("Supervisor policy reaches the parent"),
   );
-  assert.match(readme, /cannot control commentary[\s\S]*while the request is pending/i);
-  assert.match(readme, /confirmed with a fresh live acceptance run/i);
+  assert.match(silentWaiting, /(?:in flight|pending)[\s\S]*no meaningful new state/i);
+  assert.match(silentWaiting, /parent[\s\S]*(?:stay quiet|remain silent)/i);
+  assert.match(
+    silentWaiting,
+    /(?:rather than|avoid|do not)[\s\S]*narrat[\s\S]*(?:polling|waiting|elapsed time)/i,
+  );
+  for (const reportable of [
+    "results?",
+    "errors?",
+    "cancellations?",
+    "timeouts?",
+    "actionable state changes?",
+  ]) {
+    assert.match(silentWaiting, new RegExp(reportable, "i"));
+  }
+  assert.match(silentWaiting, /guidance to the parent[\s\S]*client/i);
+  assert.match(
+    silentWaiting,
+    /not (?:a )?behavior[\s\S]*server[\s\S]*(?:can|does) enforce/i,
+  );
 });

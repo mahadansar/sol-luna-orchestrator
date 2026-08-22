@@ -641,9 +641,13 @@ test("the changelog documents the version being shipped", () => {
 test("the README states the same minimum Node version", () => {
   const readme = fs.readFileSync(path.join(REPO_ROOT, "README.md"), "utf8");
   const { major, minor } = minimumNode();
-  assert.ok(
-    readme.includes(`Node.js ≥ ${major}.${minor}`),
-    `README should state "Node.js ≥ ${major}.${minor}"`,
+  assert.match(
+    readme,
+    new RegExp(
+      `Node\\.js\\s+(?:(?:≥|>=)\\s*${major}\\.${minor}|${major}\\.${minor}\\s+or newer)`,
+      "i",
+    ),
+    `README should require Node.js ${major}.${minor} or newer`,
   );
 });
 

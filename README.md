@@ -188,8 +188,9 @@ worktree per task, each task carrying its own contract, scope and effort.
 
 While a call is in flight and there is no meaningful new state, the parent is
 asked to stay quiet rather than narrate polling or elapsed time, and to report
-results, errors, cancellations and timeouts as soon as they happen. That is
-guidance to the parent and its client, not behavior the server can enforce.
+results, errors, cancellations, timeouts and actionable state changes as soon as
+they happen. That is guidance to the parent and its client, not behavior the
+server can enforce.
 
 Supervisor policy reaches the parent through the MCP instructions, tool
 descriptions and schemas. [`SOL_RULES.md`](SOL_RULES.md) is the optional fuller

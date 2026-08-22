@@ -6,6 +6,8 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-22
+
 ### Added
 
 - Normal `init` now installs an idempotent, surgical discovery hint in the active
@@ -509,7 +511,8 @@ Initial working version, verified end to end.
 development milestones and were never tagged or published, so they have no
 release links.
 
-[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.6.0...v0.6.1
