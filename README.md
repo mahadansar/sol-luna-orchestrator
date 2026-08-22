@@ -6,144 +6,121 @@
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.12-brightgreen)](docs/CONFIGURATION.md#requirements)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-An MCP server that lets a supervising OpenAI Codex agent delegate bounded
-executable work as one task, dependent tasks in sequence, or independent tasks
-in parallel. Delegated tasks carry a declared file scope, scope-violation
-detection, and results the orchestrator verifies instead of taking on trust.
+An MCP server that lets a supervising OpenAI Codex agent hand bounded executable
+work to separate worker agents: one task on its own, dependent tasks in
+sequence, or independent tasks in parallel. Every delegated task carries a
+declared file scope, and what comes back is evidence the orchestrator produced
+rather than a claim the worker made.
 
-The parent supervisor is model-agnostic: it decides what should happen, whether
-delegating is worth it at all, and reviews what comes back. Workers
-(`gpt-5.6-luna`, at an effort chosen per task) carry out bounded
-implementation, testing, investigation and other executable work in their own
-Codex threads.
+The parent supervisor is model-agnostic. It holds the requirements, decides
+whether delegating is worth it at all, and reviews the result. Workers run
+`gpt-5.6-luna` in their own Codex threads, at a reasoning effort chosen per
+task.
 
 Two ideas do most of the work here: **a worker's `PASS` is a claim, not a
 conclusion**, and **not every task should be delegated**.
 
-## The core idea
+## Why this exists
 
-The parent orchestrator first decides whether delegation is worthwhile. More agents are not
-automatically better, and the optimal worker count can be zero. Good
-orchestration is not about maximising agent count; it includes knowing when one
-strong supervisor should do the work itself.
-
-The split is the one most teams already use with people. The supervisor holds
+The split is the one most teams already use with people. The supervisor keeps
 requirements, architecture, decomposition and review, because it has the
-context. Workers do bounded executable work—implementation, test writing,
-mechanical refactors, focused investigation and chores—because they need a clear
-brief rather than the whole picture.
+context. Workers take bounded executable work such as implementation, test
+writing, mechanical refactors and focused investigation, because they need a
+clear brief rather than the whole picture.
 
-There is a second adaptive layer once the parent does delegate: each worker gets
-`medium`, `high`, `xhigh` or `max` reasoning effort based on that task's
-difficulty. Running everything at maximum wastes time on work that was
-mechanical to begin with. Worker count and worker effort are separate decisions.
+Delegation here is adaptive, not automatic. The parent decides first whether
+handing work off is worth the coordination cost, and the right answer is often
+zero workers. Once it does delegate, each task gets its own reasoning effort
+(`medium`, `high`, `xhigh` or `max`) based on that task's difficulty. Worker
+count and worker effort are separate decisions.
 
-Raw token counts are not credit cost. Cheaper-worker economics apply only when
-the selected parent is actually priced above the worker under the current
-schedule; then a delegated approach can use more raw tokens and still cost fewer
-total credits. No cost saving has been measured or is claimed. See the detailed
-[cost guidance](docs/CONFIGURATION.md#cost). More workers are not automatically
-cheaper.
+**Worth using when** one substantial bounded task is worth moving out of the
+parent's context, dependent tasks benefit from running in sequence, independent
+tasks can run in parallel, or declared scopes and independently re-run
+verification are worth the fixed overhead.
 
-**Worth using when** one substantial bounded task is worth moving out of the parent orchestrator's
-context, dependent tasks benefit from sequential execution, independent tasks
-can run in parallel, or declared scopes and independently re-run verification
-justify the fixed coordination cost.
+**Not worth it when** the work is small, tightly coupled, already obvious, or
+would take longer to specify and review than to do.
 
-**Not worth it when** work is small, simple, tightly coupled, already obvious,
-or would take longer to specify and review than to do.
+Raw token counts are not credit cost. A delegated approach can use more raw
+tokens and still cost fewer credits, but only when the parent you picked is
+priced above the worker on the current schedule. No cost saving has been
+measured or is claimed. See the [cost guidance](docs/CONFIGURATION.md#cost).
 
 ## Quick start
 
-Prerequisite: [OpenAI Codex](https://developers.openai.com/codex) installed and
-authenticated (`codex login`), and Node.js ≥ 22.12.
+You need [OpenAI Codex](https://developers.openai.com/codex) installed and
+logged in (`codex login`), and Node.js 22.12 or newer.
 
 ```bash
 npm install -g sol-luna-orchestrator
 sol-luna-orchestrator init
 ```
 
-Then open Codex with any compatible parent model and work normally. Creator
-example only, not a requirement: **GPT-5.6 Sol at Medium effort** is commonly
-sufficient for substantial repository work.
+`init` registers the MCP server with Codex, applies the two Codex settings that
+delegation needs to work at all, and adds a small managed hint to your global
+Codex instructions so a fresh session can find the server. It changes only the
+keys and marker block it owns and preserves the rest of the file. Run it twice
+and it says `Already configured`; `init --no-discovery-hint` opts out of the
+hint.
+
+Now open Codex with any compatible parent model and work normally:
 
 ```
 Fix the failing tests in src/auth/, src/payments/, and src/search/.
 Review the changes and run the full test suite.
 ```
 
-You do not need to identify a particular parent model, call any tool by hand, or
-decide worker counts and efforts. The parent orchestrator decides whether
-delegation is worthwhile:
+You do not need to name a model, call a tool by hand, or decide worker counts
+and efforts. Creator example rather than a requirement: **GPT-5.6 Sol at Medium
+effort** is commonly enough for substantial repository work.
 
-- If the work is small, tightly coupled, or better done directly, it handles it
-  itself. Zero workers is a valid outcome.
-- If one substantial task is worth moving out of the parent's context, it delegates one
-  bounded task with `delegate_task`.
-- If two or more tasks depend on earlier changes, share workspace state, or may
-  touch the same files, it runs them sequentially in the shared workspace.
-- If two or more tasks are genuinely independent and have disjoint declared
-  scopes, it runs them in parallel, one isolated worktree per task.
-
-`init` registers the MCP server with Codex, applies the two settings Codex needs
-for delegation to work at all, and adds a tiny managed discovery hint to the
-active global Codex instructions (`AGENTS.override.md` when active, otherwise
-`AGENTS.md`). It changes only the keys and exact marker block it owns and
-preserves the rest of the user-owned file. Run it twice and it says `Already
-configured`; use `init --no-discovery-hint` to opt out.
+The other commands:
 
 ```bash
-sol-luna-orchestrator activity    # print a snapshot of the latest batch, then exit
+sol-luna-orchestrator activity    # snapshot of the latest batch, then exit
 sol-luna-orchestrator doctor      # diagnose, with the fix for anything broken
 sol-luna-orchestrator status      # short summary
 sol-luna-orchestrator uninstall   # remove this project's entry, nothing else
 ```
 
-Uninstall removes only this project's MCP table and the exact managed discovery
-hint. It leaves your other `AGENTS.md` instructions, logs, and activity history
-alone. Both `init --dry-run` and `uninstall --dry-run` write nothing.
+`uninstall` removes only this project's MCP table and its exact managed hint,
+and leaves your other instructions, logs and activity history alone. Both `init`
+and `uninstall` take `--dry-run` and write nothing. Install options, environment
+variables and Codex settings are in [Configuration](docs/CONFIGURATION.md).
 
-Full install options, environment variables and Codex settings are in
-[Configuration](docs/CONFIGURATION.md).
+## What the parent decides
 
-### Fresh-chat discovery and explicit delegation
+For each piece of work the parent picks one of four outcomes:
 
-Codex may defer MCP tools in a fresh chat, and a generic delegation request may
-surface built-in multi-agent tools instead. The managed hint does not force a
-delegation or start workers: the parent may choose `delegate_task`,
-`delegate_tasks`, or zero workers. When you want to name this MCP explicitly,
-use this canonical fresh-chat prompt:
+- **Solo, zero workers.** Small, tightly coupled or obvious work is done
+  directly. This is a valid and often correct outcome, not a failure to
+  delegate.
+- **One task.** A single substantial bounded task is worth moving out of the
+  parent's context on its own. No second seam is required to justify it.
+- **Sequential.** Two or more tasks depend on earlier changes, share workspace
+  state, or may touch the same files, so they run in order in the shared
+  workspace.
+- **Parallel.** Two or more tasks are genuinely independent and have disjoint
+  declared scopes, so each runs in its own isolated git worktree.
+
+### If a fresh session does not find the server
+
+Codex can defer MCP tools in a brand new chat, and a generic "delegate this"
+request may reach Codex's own built-in delegation instead. The managed hint
+`init` writes exists to make this server discoverable first; it does not force a
+delegation or start workers. When you want to be explicit, name it:
 
 ```
 Use the sol-luna-orchestrator MCP for this task. Decide whether delegate_task or
 delegate_tasks is appropriate based on the work.
 ```
 
-For an explicit batch request, use:
+You can also name worker counts, scopes and efforts when you have a reason to,
+and leave them unspecified otherwise. The mechanics, and the evidence behind
+them, are in [Delegation Discovery](docs/DELEGATION_DISCOVERY.md).
 
-```
-Use sol-luna-orchestrator's delegate_tasks tool for this task. Split the work
-only where the tasks are genuinely independent, otherwise use sequential mode.
-```
-
-These are stable user-facing names; no generated MCP function name is needed.
-You can also name worker counts, scopes and efforts when you have a reason to.
-Leave them unspecified otherwise.
-
-Parallel delegation needs more from the repository than sequential does:
-
-- it must be a **git repository with at least one commit**, since each worker
-  gets a detached worktree branched from `HEAD`;
-- the declared scopes must have **no uncommitted changes** inside them, or the
-  batch is refused (override with `SOL_LUNA_ALLOW_DIRTY=1`);
-- scopes should be **disjoint**; overlapping `allowedFiles` are refused before
-  any worker starts;
-- if two workers do change the same file, that collision is **detected, not
-  prevented**: nothing is integrated and the worktrees are kept for you.
-
-`delegate_task`, a single task, has none of these requirements.
-
-### Watching a run
+## Watching a run
 
 `activity` prints one snapshot and exits. To follow a run live, leave a watcher
 open in a second terminal:
@@ -152,20 +129,22 @@ open in a second terminal:
 # terminal 1
 sol-luna-orchestrator activity --watch
 
-# terminal 2: Codex, working normally or delegating explicitly
+# terminal 2: Codex, working normally
 ```
 
 It refreshes as each worker starts, verifies and completes, and stops on Ctrl+C.
-The default view leads with the batch state, mode, active/total workers, elapsed
-time and peak concurrency, then gives each worker a compact block with its
-optional activity label (or `Delegated task N` fallback), model, effort, state,
+The view leads with batch state, mode, active and total workers, elapsed time
+and peak concurrency, then gives each worker a compact block: its optional
+activity label (or a `Delegated task N` fallback), model, effort, state,
 duration, verification outcome, changed-file count and any known failure reason.
-Worker prompts, objectives, task context, source code and command output are
-intentionally absent from the activity stream; an optional `activityLabel` is
-deliberately persisted locally and can reveal a short work description.
 `activity --json` prints one machine-readable snapshot instead and cannot be
-combined with `--watch`. Internal identifiers, telemetry shapes and the fuller
-privacy picture are in [Observability](docs/OBSERVABILITY.md).
+combined with `--watch`.
+
+Worker prompts, objectives, task context, source code and command output are
+deliberately absent from the activity stream. The optional `activityLabel` is
+the exception: it is persisted locally on purpose, and it can reveal a short
+description of the work. [Observability](docs/OBSERVABILITY.md) has the event
+shapes and the fuller privacy picture.
 
 `init` configures the event log this reads, so no environment variable needs to
 be exported.
@@ -176,201 +155,153 @@ be exported.
 You
  |
  v
-Parent supervisor  ......  decides whether delegating is worth it
+Parent supervisor .......... decides whether delegating is worth it
  |
- |-- handles it directly  ......................  zero workers, a valid outcome
+ |-- does the work itself ... zero workers, a valid outcome
  |
- '-- delegates bounded tasks
+ +-- delegates bounded tasks
         |
         v
-     orchestrator (MCP, stdio)
-        |  validates contracts and scopes
-        |-- one task ............... shared workspace
-        |-- sequential batch ...... shared workspace; later tasks see earlier changes
-        '-- parallel batch ........ one git worktree per task
-                                      independent, disjoint scopes
+     orchestrator (MCP over stdio)
+        |  validates contracts and declared scopes
+        |-- one task ....... shared workspace
+        |-- sequential ..... shared workspace, later tasks see earlier changes
+        +-- parallel ....... one git worktree per task, disjoint scopes
+        |
         v
-     Luna workers, siblings, no delegation tools
+     Luna workers, siblings with no delegation tools of their own
         |  each with its own declared scope and effort
         v
-     evidence, produced by the orchestrator, not the worker
+     evidence produced by the orchestrator, not by the worker
         |  verification commands re-run
         |  claimed edits compared against observed ones
-        |  scope violations detected
-         |  parallel integration conflicts detected
-         v
-     integrate parallel changes only when file sets are disjoint
-        |
+        |  scope violations and integration conflicts detected
         v
-Parent reviews the evidence proportionally and decides
+Parent reviews the evidence and decides
 ```
 
 Workers are siblings, never a hierarchy: a Luna worker has no delegation tools,
-so it cannot spawn further workers. A single task and sequential batches run in
-the shared workspace. Parallel batches deliberately use separate worktrees, so
-their tasks must be independent and their declared scopes disjoint.
+so it cannot spawn workers of its own. `delegate_task` runs one bounded task
+directly in the workspace and has no git requirement. `delegate_tasks` runs
+several, either `sequential` in the shared workspace or `parallel` with one
+worktree per task, each task carrying its own contract, scope and effort.
 
-### Tools
+While a call is in flight and there is no meaningful new state, the parent is
+asked to stay quiet rather than narrate polling or elapsed time, and to report
+results, errors, cancellations and timeouts as soon as they happen. That is
+guidance to the parent and its client, not behavior the server can enforce.
 
-`delegate_task` runs one substantial bounded task directly in the workspace,
-with no git requirement. `delegate_tasks` runs several with `mode: "parallel"`
-or `mode: "sequential"`, each carrying its own contract and effort.
+Supervisor policy reaches the parent through the MCP instructions, tool
+descriptions and schemas. [`SOL_RULES.md`](SOL_RULES.md) is the optional fuller
+reference for humans and AGENTS files.
 
-While either tool is active and has no meaningful new state, remain silent: do
-not narrate polling, waiting, elapsed time, or that it is still running. Report
-only a result, error, cancellation, timeout, or actionable state change.
-Delegated `verificationCommands` should normally be targeted deterministic
-checks for the bounded task; leave broader final validation to the parent unless
-the delegated task genuinely requires a full suite. The orchestrator still
-independently processes the supplied checks.
+## Verification and trust
 
-Silent waiting is parent guidance, not a server-enforced behavior. The MCP
-server awaits worker or batch completion and cannot control commentary that a
-parent model or client generates while the request is pending. Compliance must
-therefore be confirmed with a fresh live acceptance run for the relevant parent
-and client/runtime combination.
+A worker reports its own status, summary, changed files and verification result.
+Those are claims. The evidence the parent reviews is produced by the
+orchestrator: it re-runs the verification commands itself, compares claimed
+edits against observed ones, and reports scope violations and integration
+conflicts. A worker `PASS` is where review starts, not where it ends.
 
-The runtime schema is the field-level contract. Legacy plain `context` and
-structured `contextCapsule` may be used together without duplication; neither
-replaces objective, scope, acceptance, verification, or security constraints.
-For routine calls prefer `resultDetail: "compact"`, which removes only successful
-verification output. Failed, refused, and skipped output and all verdict, scope,
-discrepancy, and file evidence remain; the schema default stays `"full"` for
-compatibility.
+**Enforced**
 
-Concise supervisor policy reaches the parent through the MCP instructions, tool
-descriptions, and schemas. [`SOL_RULES.md`](SOL_RULES.md) is the optional fuller
-human/AGENTS reference.
-
-## Guardrails and trust
-
-Read [`SECURITY.md`](SECURITY.md) before pointing this at anything you care
-about. The short version:
-
-**Prevented**
-
-- Verification commands are parsed into argv with **no shell**. `;`, `&&`, `|`,
-  backticks and `$(...)` are rejected, not executed. Only allowlisted
-  executables may launch, and never via a path.
-- Credential-shaped environment variables are withheld from verification
-  commands, whose output flows back into a model transcript.
+- Verification commands are parsed into argv with **no shell**, so `;`, `&&`,
+  `|`, backticks and `$(...)` are rejected rather than executed. Only
+  allowlisted executables may launch, and never via a path.
+- Credential-shaped environment variables are withheld from those commands,
+  because their output flows back into a model transcript.
 - Workspace escapes are caught after resolving symlinks. `allowedFiles: ["**"]`
-  still cannot authorize writing outside the workspace.
-- Workers cannot delegate, by config and by an environment marker that makes a
-  worker-side server register zero tools.
-- Parallel batches are refused when scopes overlap, and worker changes are never
-  merged when two workers touched the same file.
+  still cannot authorize a write outside the workspace.
+- Workers cannot delegate, both by child configuration and by an environment
+  marker that makes a worker-side server register zero tools.
+- Parallel batches are refused when declared scopes overlap, and changes are
+  never merged when two workers touched the same file.
 
 **Detected, not prevented**
 
-- **File-scope validation is detective.** Workers really write files; a declared
-  scope does not stop a write, it makes the violation visible afterwards.
+- **File scopes are detective, not a write sandbox.** Workers write real files.
+  A declared scope does not block a write, it makes the violation visible
+  afterwards.
 - **Verification runs outside the Codex sandbox**, with your user's permissions.
-  `npm test` runs your project's test code, which can do anything you can.
+  `npm test` runs your project's own test code, which can do anything you can.
 - **Parallel batches write inside your repository**, under
-  `.sol-luna/worktrees/`, adding that path to `.git/info/exclude`. Integration
-  copies files into your working tree.
-- `SOL_LUNA_VERIFY_MODE=shell` disables all command protections. Opt-in, logged
-  loudly.
-- **The supervisor's own token usage is not observable** to this server. Codex
-  does not report the parent turn to an MCP server it launched, so it is
-  recorded as `null`, never as zero.
+  `.sol-luna/worktrees/`, and integration copies files back into your working
+  tree. That mode needs a git repository with at least one commit and no
+  uncommitted changes inside the declared scopes.
 
-This is a set of guardrails, **not a sandbox**.
+This is a set of guardrails, not a sandbox. Read [`SECURITY.md`](SECURITY.md)
+before pointing it at anything you care about.
 
 ## What the benchmarks show
 
-Three suites, all reproducible, all graded by the harness after the agent stops,
-never by the agent. Full methodology, per-task numbers and everything that could
-not be measured are in [`bench/RESULTS.md`](bench/RESULTS.md). The benchmark
-tables report raw token measurements, not billed credit cost.
+Three reproducible suites, all graded by the harness after the agent stops,
+never by the agent itself.
 
-- **On small tasks, delegating is worse.** About 2.3x slower and 3.5x the
+- **On small tasks, delegating is worse.** Roughly 2.3x slower and 3.5x the
   tokens, with no measurable quality difference.
-- **Parallel delegation beats sequential delegation** once you are delegating at
-  all: median 155s against 248s, and far more consistent.
+- **Once you are delegating, parallel beats sequential.** Median 155s against
+  248s on three-module projects, and far more consistent run to run.
 - **Delegation has not beaten the supervisor working alone in these fixtures.**
-  A dedicated crossover investigation at four and six independent workstreams
-  found no latency crossover and no token crossover. Going from four streams to
-  six moved forced parallel further behind, +46% to +108%. The runs also showed
-  a wide slow-worker tail, but the sample is too small to establish a single
-  cause.
-- **Left to decide for itself, Sol never delegated** in the six free-choice runs,
-  passed every time, and was the fastest arm on two of three fixtures.
-- **No raw-token saving has been demonstrated.** Forced parallel execution used
-  roughly 5.1x the known tokens on the four-stream fixture and 4.8x on the
-  six-stream one. Those raw-token ratios do not equal credit cost; pricing is
-  schedule-dependent and this integration does not expose billed cost.
+  A crossover investigation at four and six independent workstreams found no
+  latency crossover and no token crossover, and six streams sat further behind
+  than four. Left to choose for itself, the supervisor declined to delegate in
+  all six free-choice scale runs, passed every time, and was the fastest arm on
+  two of the three fixtures. Those were routing decisions taken with the tools
+  in front of it, not failures to find the server.
 
-These results describe specific fixtures, models, prompts and versions. They do
-not establish that single-agent execution is universally better.
+The token figures are raw measurements, not billed cost, and no raw-token or
+cost saving has been demonstrated. These results describe specific fixtures,
+models, prompts and versions; they do not establish that single-agent execution
+is universally better. Methodology, per-task numbers and everything that could
+not be measured are in [`bench/RESULTS.md`](bench/RESULTS.md).
 
-## Limitations
+## Requirements and limits
 
-- **Delegation is not free**, and for small tasks it is measurably worse.
-- **Parallel mode requires git** with at least one commit and a clean in-scope
-  working tree.
-- **Integration is a file copy, not a merge.** It is only attempted when worker
-  file sets are disjoint; anything else is handed back to you.
+- **Node.js 22.12 or newer, and a logged-in Codex CLI.** `doctor` checks both
+  and tells you how to fix whatever is missing.
+- **git with at least one commit** is needed for parallel batches only. A single
+  task and sequential batches have no git requirement.
+- **Integration is a file copy, not a merge.** It is attempted only when worker
+  file sets are disjoint; anything else is handed back to you, with the
+  worktrees kept.
 - **Workers are verified in isolation.** Passing separately is not passing
-  together, so the supervisor is told to run an integration check whenever the
-  integrated changes can interact. It is not told to rerun everything by reflex
-  after every parallel batch.
-- **Verification is not sandboxed.**
-- **File-scope validation is detective, not preventive.**
-- **Built against experimental surfaces.** Several behaviours this depends on
-  are undocumented and were established by testing. Upstream changes may break
+  together, so the parent is told to run an integration check whenever
+  integrated changes can interact.
+- **Windows is the only platform with live model runs.** Linux and macOS are
+  verified in CI, with the platform-specific code paths exercised, but have not
+  been driven end to end with a real model.
+- **Built against experimental surfaces.** Several behaviors this depends on are
+  undocumented and were established by testing, so upstream changes may break
   it.
-- **Linux and macOS are CI-verified only.** No live model runs there yet.
-- **Benchmarks are small.** Directional, not statistically significant.
+- **The benchmarks are small.** Directional, not statistically significant.
 
-## Roadmap
-
-**Now**
-
-- Worker Continuation, resuming a worker for bounded follow-up work
-- Bounded Repair Loop, one automatic repair turn on routine local defects
-
-**Next**
-
-- Reasoned retry and effort escalation driven by the kind of failure
-- Adaptive worker routing inside a user-controlled compute policy
-
-**Later**
-
-- An optional read-only Explorer for reconnaissance
-- Lightweight cross-session handoff
-- Research and platform work: sandboxed verification, live Linux and macOS
-  end-to-end runs, larger fixtures, slow-worker-tail characterisation
-
-See [ROADMAP.md](ROADMAP.md) for priorities, dependencies and the design
-constraints on each item, including what is deliberately **not** a goal.
+Planned work, and what is deliberately not a goal, is in
+[ROADMAP.md](ROADMAP.md).
 
 ## Documentation
 
-| Document                                             | Why you would open it                                          |
-| ---------------------------------------------------- | -------------------------------------------------------------- |
-| [Configuration](docs/CONFIGURATION.md)               | Environment variables, init flags, Codex settings, log paths   |
-| [Troubleshooting](docs/TROUBLESHOOTING.md)           | Symptoms and what they mean, recovering a broken configuration |
-| [Observability](docs/OBSERVABILITY.md)               | Event stream details, telemetry formats, privacy, activity log |
-| [Live Acceptance](docs/ACCEPTANCE.md)                | Manual live-acceptance procedure for fresh Codex sessions      |
-| [Delegation Discovery](docs/DELEGATION_DISCOVERY.md) | History of adaptive routing and discovery behavior             |
-| [`SOL_RULES.md`](SOL_RULES.md)                       | Supervisor policy: when to delegate, effort choice, reviewing  |
-| [`SECURITY.md`](SECURITY.md)                         | Trust boundaries, what the logs contain, reporting an issue    |
-| [`bench/RESULTS.md`](bench/RESULTS.md)               | Benchmark methodology, raw numbers, limitations                |
-| [ROADMAP.md](ROADMAP.md)                             | Prioritised future work and design constraints                 |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md)                 | Development setup, project layout, release process             |
-| [`CHANGELOG.md`](CHANGELOG.md)                       | What actually shipped, per version                             |
+| Document                                             | Why you would open it                                         |
+| ---------------------------------------------------- | ------------------------------------------------------------- |
+| [Configuration](docs/CONFIGURATION.md)               | Environment variables, init flags, Codex settings, cost notes |
+| [Troubleshooting](docs/TROUBLESHOOTING.md)           | Symptoms, and recovering a broken configuration               |
+| [Observability](docs/OBSERVABILITY.md)               | Event stream shapes, activity log, privacy                    |
+| [Live Acceptance](docs/ACCEPTANCE.md)                | Manual procedure for testing a fresh Codex session            |
+| [Delegation Discovery](docs/DELEGATION_DISCOVERY.md) | Fresh-session discovery, and how routing differs from it      |
+| [`SOL_RULES.md`](SOL_RULES.md)                       | Supervisor policy: delegating, effort, reviewing evidence     |
+| [`SECURITY.md`](SECURITY.md)                         | Trust boundaries, what the logs hold, reporting an issue      |
+| [`bench/RESULTS.md`](bench/RESULTS.md)               | Benchmark methodology, raw numbers, limitations               |
+| [ROADMAP.md](ROADMAP.md)                             | Prioritised future work and design constraints                |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md)                 | Development setup, project layout, release process            |
+| [`CHANGELOG.md`](CHANGELOG.md)                       | What actually shipped, per version                            |
 
 ## Contributing
 
 Bug reports and pull requests are welcome. [`CONTRIBUTING.md`](CONTRIBUTING.md)
 covers the development setup, the project layout and the ground rules, the main
-one being that behaviour is verified against the real thing rather than against
-the documentation.
-
-If you are looking for something to work on, [ROADMAP.md](ROADMAP.md) is ordered
-by priority and states what has to exist first.
+one being that behavior is verified against the real thing rather than against
+the documentation. If you are looking for something to work on,
+[ROADMAP.md](ROADMAP.md) is ordered by priority and states what has to exist
+first.
 
 ## License
 
