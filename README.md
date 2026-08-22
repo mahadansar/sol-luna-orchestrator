@@ -38,10 +38,12 @@ There is a second adaptive layer once the parent does delegate: each worker gets
 difficulty. Running everything at maximum wastes time on work that was
 mechanical to begin with. Worker count and worker effort are separate decisions.
 
-Raw token counts are not credit cost. Under the current pricing schedule,
-equivalent Luna input, cached-input and output tokens are roughly 25x cheaper
-than Sol tokens; that ratio is schedule-dependent, not an architectural
-guarantee.
+Raw token counts are not credit cost. Cheaper-worker economics apply only when
+the selected parent is actually priced above the worker under the current
+schedule; then a delegated approach can use more raw tokens and still cost fewer
+total credits. No cost saving has been measured or is claimed. See the detailed
+[cost guidance](docs/CONFIGURATION.md#cost). More workers are not automatically
+cheaper.
 
 **Worth using when** one substantial bounded task is worth moving out of the parent orchestrator's
 context, dependent tasks benefit from sequential execution, independent tasks
@@ -62,10 +64,8 @@ sol-luna-orchestrator init
 ```
 
 Then open Codex with any compatible parent model and work normally. Creator
-examples (not requirements): **GPT-5.6 Sol at Medium effort** is commonly
-sufficient for substantial repository work; **GPT-5.6 Luna at High effort** has
-successfully handled simpler docs and maintenance work and can delegate bounded
-Luna work.
+example only, not a requirement: **GPT-5.6 Sol at Medium effort** is commonly
+sufficient for substantial repository work.
 
 ```
 Fix the failing tests in src/auth/, src/payments/, and src/search/.

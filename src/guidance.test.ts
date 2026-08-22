@@ -14,6 +14,7 @@ import {
   SERVER_INSTRUCTIONS,
   TOOL_DESCRIPTION,
 } from "./server.js";
+import { LUNA_MODEL, MAX_BATCH_SIZE, MAX_PARALLEL } from "./config.js";
 import {
   delegateTaskInputSchema,
   delegateTaskInputShape,
@@ -31,6 +32,24 @@ const BASE_INPUT = {
   objective: "Complete one bounded executable task safely.",
   effortReason: "The task needs routine judgement in one area.",
   acceptanceCriteria: ["The requested behavior is present."],
+};
+
+const escapeRegExp = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const assertSilentWaitGuidance = (guidance: string): void => {
+  assert.match(guidance, /remain silent/i);
+  assert.match(guidance, /no meaningful new state/i);
+  assert.match(guidance, /do not\s+narrate/i);
+  for (const reportable of [
+    "results?",
+    "errors?",
+    "cancellations?",
+    "timeouts?",
+    "actionable state changes?",
+  ]) {
+    assert.match(guidance, new RegExp(reportable, "i"));
+  }
 };
 
 test("backwards-compatible guidance fields retain their API defaults", () => {
@@ -70,7 +89,7 @@ test("server instructions keep roles, evidence authority, and proportional revie
   assert.match(SERVER_INSTRUCTIONS, /workers execute bounded tasks/i);
   assert.match(SERVER_INSTRUCTIONS, /claims are not orchestrator evidence/i);
   assert.match(SERVER_INSTRUCTIONS, /proportion/i);
-  assert.match(SERVER_INSTRUCTIONS, /has no meaningful new state, remain silent/i);
+  assertSilentWaitGuidance(SERVER_INSTRUCTIONS);
   assert.match(
     SERVER_INSTRUCTIONS,
     /do not narrate polling, waiting, elapsed time, or that it is still running/i,
@@ -90,10 +109,23 @@ test("one substantial bounded task may be delegated without another seam", () =>
 });
 
 test("single-task guidance is cost-aware without treating pricing as permanent", () => {
-  assert.match(TOOL_DESCRIPTION, /current pricing schedule/i);
-  assert.match(TOOL_DESCRIPTION, /raw tokens[\s\S]*credits/i);
+  assert.doesNotMatch(TOOL_DESCRIPTION, /\b\d+(?:\.\d+)?x\s+cheaper\b/i);
+  assert.doesNotMatch(TOOL_DESCRIPTION, /gpt-5\.6-sol/i);
+  assert.doesNotMatch(TOOL_DESCRIPTION, /Sol tokens/i);
+  assert.match(TOOL_DESCRIPTION, /raw token count is not credit cost/i);
+  assert.match(
+    TOOL_DESCRIPTION,
+    new RegExp(
+      `selected parent model is priced above\\s+${escapeRegExp(LUNA_MODEL)}` +
+        `[\\s\\S]*current pricing\\s+schedule`,
+      "i",
+    ),
+  );
+  assert.match(TOOL_DESCRIPTION, /fewer total credits/i);
+  assert.match(TOOL_DESCRIPTION, /depends on which parent model is in use/i);
   assert.match(TOOL_DESCRIPTION, /not an architectural guarantee/i);
-  assert.match(TOOL_DESCRIPTION, /More workers is not automatically cheaper/i);
+  assert.match(TOOL_DESCRIPTION, /not a measured saving/i);
+  assert.match(TOOL_DESCRIPTION, /More workers is not\s+automatically\s+cheaper/i);
   for (const factor of [
     "credit cost",
     "latency",
@@ -106,6 +138,11 @@ test("single-task guidance is cost-aware without treating pricing as permanent",
   ]) {
     assert.match(TOOL_DESCRIPTION, new RegExp(factor, "i"));
   }
+});
+
+test("single and batch tool guidance require silent waiting", () => {
+  assertSilentWaitGuidance(TOOL_DESCRIPTION);
+  assertSilentWaitGuidance(BATCH_TOOL_DESCRIPTION);
 });
 
 test("delegation remains broader than implementation", () => {
@@ -171,6 +208,27 @@ test("batch guidance distinguishes sequential and parallel semantics", () => {
   assert.match(BATCH_TOOL_DESCRIPTION, /disjoint declared scopes/i);
   assert.match(BATCH_TOOL_DESCRIPTION, /does not guarantee/i);
   assert.match(BATCH_TOOL_DESCRIPTION, /Do not create artificial seams/i);
+  assert.match(
+    BATCH_TOOL_DESCRIPTION,
+    new RegExp(`at most ${MAX_BATCH_SIZE} tasks`, "i"),
+  );
+  assert.match(
+    BATCH_TOOL_DESCRIPTION,
+    new RegExp(`at most ${MAX_PARALLEL} at once`, "i"),
+  );
+  assert.match(
+    BATCH_TOOL_DESCRIPTION,
+    /batch size is not the number of[\s\S]*simultaneous workers/i,
+  );
+  assert.match(BATCH_TOOL_DESCRIPTION, /queues the rest/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /remainder as a second batch/i);
+  assert.doesNotMatch(
+    BATCH_TOOL_DESCRIPTION,
+    new RegExp(
+      `${MAX_BATCH_SIZE}[^.]{0,40}(?:simultaneous|concurrent|workers at once)`,
+      "i",
+    ),
+  );
 });
 
 test("batch guidance states integration and partial-outcome behavior", () => {
@@ -252,9 +310,74 @@ test("batch input descriptions qualify overlap and integration", () => {
   const task = delegateTasksInputSchema.shape.tasks.element;
   assert.ok("activityLabel" in task.shape);
   assert.match(
+    delegateTasksInputShape.tasks.description ?? "",
+    new RegExp(`at most ${MAX_BATCH_SIZE} tasks`, "i"),
+  );
+  assert.match(
+    delegateTasksInputShape.tasks.description ?? "",
+    new RegExp(`at most ${MAX_PARALLEL} workers`, "i"),
+  );
+  assert.match(
+    delegateTasksInputShape.tasks.description ?? "",
+    /batch size is not concurrency/i,
+  );
+  assert.match(delegateTasksInputShape.tasks.description ?? "", /queues the rest/i);
+  const maximumTasks = Array.from({ length: MAX_BATCH_SIZE }, () => BASE_INPUT);
+  const tooManyTasks = Array.from({ length: MAX_BATCH_SIZE + 1 }, () => BASE_INPUT);
+  assert.doesNotThrow(() =>
+    delegateTasksInputSchema.parse({ mode: "sequential", tasks: maximumTasks }),
+  );
+  assert.throws(() =>
+    delegateTasksInputSchema.parse({ mode: "sequential", tasks: tooManyTasks }),
+  );
+  assert.match(
     BATCH_TOOL_DESCRIPTION,
     /optionally give each task a useful concise activityLabel/i,
   );
+});
+
+test("parent model and effort guidance stays example-only across surfaces", async () => {
+  const [readme, rules, configuration, example] = await Promise.all([
+    readDoc("README.md"),
+    readDoc("SOL_RULES.md"),
+    readDoc("docs/CONFIGURATION.md"),
+    readDoc("examples/codex-config.toml"),
+  ]);
+  assert.match(readme, /any compatible parent model/i);
+  assert.match(readme, /creator\s+examples?/i);
+  const parentSection = configuration.slice(
+    configuration.indexOf("## Parent model and effort"),
+    configuration.indexOf("## Platform support"),
+  );
+  assert.doesNotMatch(parentSection, /\brecommended\b/i);
+  assert.match(parentSection, /creator's usual setting/i);
+  assert.match(parentSection, /high[\s\S]*heavier work/i);
+  for (const document of [readme, rules, configuration, example]) {
+    assert.doesNotMatch(document, /high[^\n]{0,80}recommended/i);
+    assert.doesNotMatch(document, /recommended[^\n]{0,80}high/i);
+  }
+  for (const category of ["REQUIRED", "DEFAULT", "OPTIONAL", "EXAMPLE"]) {
+    assert.match(example, new RegExp(`\\b${category}:`, "i"));
+  }
+  assert.match(example, /model_reasoning_effort\s*=\s*"medium"/i);
+  assert.match(example, /creator session choices, not requirements or recommendations/i);
+  assert.match(example, /any compatible parent model and reasoning effort may be used/i);
+  assert.doesNotMatch(example, /\bRECOMMENDED\b/i);
+
+  for (const [document, start, end] of [
+    [readme, "Raw token counts are not credit cost.", "**Worth using when**"],
+    [rules, "## Cost and parallelism", "## Worker effort"],
+  ] as const) {
+    const cost = document.slice(document.indexOf(start), document.indexOf(end));
+    assert.match(cost, /selected parent(?: model)?[\s\S]*priced above[\s\S]*worker/i);
+    assert.match(cost, /no (?:cost )?saving has been measured/i);
+    assert.doesNotMatch(cost, /\b\d+(?:\.\d+)?x\b/i);
+  }
+  const readmeCost = readme.slice(
+    readme.indexOf("Raw token counts are not credit cost."),
+    readme.indexOf("**Worth using when**"),
+  );
+  assert.match(readmeCost, /docs\/CONFIGURATION\.md#cost/i);
 });
 
 test("SOL_RULES carries the runtime's operational distinctions without benchmark narration", async () => {
@@ -263,7 +386,7 @@ test("SOL_RULES carries the runtime's operational distinctions without benchmark
     /Zero workers is valid/i,
     /No second seam is required/i,
     /raw tokens[\s\S]*credit cost/i,
-    /not an immutable architectural guarantee/i,
+    /not an\s+immutable architectural\s+guarantee/i,
     /more workers are not[\s\S]*automatically[\s\S]*cheaper/i,
     /schema default remains[\s\S]*full/i,
     /trustworthy: false/i,

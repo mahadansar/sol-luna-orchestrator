@@ -345,6 +345,12 @@ test("--help lists the commands and exits 0", async () => {
   for (const command of ["init", "doctor", "status", "uninstall"]) {
     assert.match(result.stdout, new RegExp(`\\b${command}\\b`));
   }
+  assert.match(
+    result.stdout,
+    /Open Codex with any compatible parent model and work normally\./,
+  );
+  assert.match(result.stdout, /No parent model or reasoning effort is required\./);
+  assert.match(result.stdout, /Creator example: GPT-5\.6 Sol at Medium\./);
 });
 
 test("no arguments prints help and exits non-zero", async () => {

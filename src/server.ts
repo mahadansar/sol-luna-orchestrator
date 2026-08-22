@@ -11,6 +11,8 @@ import {
   EVENTS_FILE,
   IS_WORKER_PROCESS,
   LUNA_MODEL,
+  MAX_BATCH_SIZE,
+  MAX_PARALLEL,
   VERIFY_MODE,
   VERIFY_MODE_INVALID,
   WORKER_MARKER_ENV,
@@ -168,12 +170,19 @@ When delegating, optionally provide a useful concise activityLabel (for example,
 "Update auth retries") for the local activity view. It is not required, and it
 should not copy the full objective or include sensitive details.
 
-Be cost-aware, not raw-token-minimal: under the current pricing schedule,
-equivalent Luna tokens are roughly 25x cheaper than Sol tokens, so substantially
-more aggregate raw tokens can still cost fewer total credits. This ratio is
-current pricing, not an architectural guarantee. Balance expected credit cost,
-latency, context use, fixed overhead, verification or isolation benefits,
-coordination risk, and quality. More workers is not automatically cheaper.
+While this call is pending and has no meaningful new state, remain silent: do not
+narrate waiting, polling, or elapsed time. Report the result, an error, a
+cancellation, a timeout, or an actionable state change.
+
+Be cost-aware, not raw-token-minimal: raw token count is not credit cost. When
+the selected parent model is priced above ${LUNA_MODEL} on the current pricing
+schedule, a delegated approach can use substantially more aggregate raw tokens
+and still cost fewer total credits, which is a legitimate input to the decision.
+Whether that applies depends on which parent model is in use and on current
+pricing; it is not an architectural guarantee and not a measured saving. Balance
+expected credit cost, latency, context use, fixed overhead, verification or
+isolation benefits, coordination risk, and quality. More workers is not
+automatically cheaper.
 
 The parent orchestrator retains architecture, decomposition, unresolved design
 and sequencing decisions, and final judgement. The worker cannot see the
@@ -483,6 +492,15 @@ decisions.
 Optionally give each task a useful concise activityLabel for the local activity
 view; labels are not required and should not copy the full objective or include
 sensitive details.
+
+While this batch is pending and has no meaningful new state, remain silent: do not
+narrate waiting, polling, elapsed time, or which task is still running. Report
+results, errors, cancellations, timeouts, or actionable state changes.
+
+A batch accepts at most ${MAX_BATCH_SIZE} tasks. Batch size is not the number of
+simultaneous workers: sequential mode runs one at a time, and parallel mode runs
+at most ${MAX_PARALLEL} at once and queues the rest. Split larger work, or run the
+remainder as a second batch.
 
 Partial outcomes remain visible for the parent orchestrator to judge. A completed worker's edits may
 be integrated even when its verdict is FAILED or BLOCKED. Declared scope

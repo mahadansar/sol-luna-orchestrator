@@ -3,37 +3,34 @@
 # Merge this into ~/.codex/config.toml (or %USERPROFILE%\.codex\config.toml).
 # Replace /absolute/path/to with wherever you cloned this repository.
 
-# The supervisor. Select high effort for Sol as the recommended setting: it
-# decides what to delegate and reviews what comes back. The orchestrator does not
-# control the parent session's effort.
-#
-# This project's supervisor guidance covers medium, high, xhigh, and max.
-#   medium  simple but non-trivial work with obvious decomposition
-#   high    RECOMMENDED - architecture, decomposition, delegation, review
-#   xhigh   difficult architecture, subtle bugs, hard decomposition
-#   max     exceptional supervisor-level problems only
+# EXAMPLE: creator session choices, not requirements or recommendations.
+# Any compatible parent model and reasoning effort may be used. The creator
+# usually uses GPT-5.6 Sol at Medium and chooses stronger effort when warranted.
 # `ultra` is a separate Codex multi-agent execution mode, not a reasoning-effort
 # value. Luna worker effort choices are medium, high, xhigh, and max.
 model = "gpt-5.6-sol"
-model_reasoning_effort = "high"
+model_reasoning_effort = "medium"
 
+# REQUIRED: integration does not work without this registration and these two
+# MCP settings.
 [mcp_servers.sol-luna-orchestrator]
 command = "node"
 args = ["/absolute/path/to/sol-luna-orchestrator/dist/server.js"]
 
-# REQUIRED. Codex defaults to a 60 second tool timeout; a delegated task runs for
-# minutes, so without this every delegation is aborted mid-flight.
+# Codex defaults to a 60 second tool timeout; a delegated task runs for minutes,
+# so without this every delegation is aborted mid-flight.
 tool_timeout_sec = 3600
 
-# REQUIRED. Must be "approve", which permits the tool without prompting.
-# "auto" does NOT work here: non-interactive runs cancel the call outright.
+# Must be "approve", which permits the tool without prompting. "auto" does NOT
+# work here: non-interactive runs cancel the call outright.
 default_tools_approval_mode = "approve"
 
-# Optional. The server starts in well under a second; this is just headroom.
+# OPTIONAL: user-selectable Codex startup headroom.
 startup_timeout_sec = 30
 
 [mcp_servers.sol-luna-orchestrator.env]
-# Optional but strongly recommended: the single best troubleshooting signal.
+# OPTIONAL: user-selectable diagnostics and activity paths.
+# This is the best troubleshooting signal.
 # No file at all  => Codex never started the server (config or path problem).
 # "client connected" but no "delegate_task" line => the model never called it.
 SOL_LUNA_LOG = "/home/you/.codex/sol-luna-orchestrator.log"
@@ -45,20 +42,22 @@ SOL_LUNA_LOG = "/home/you/.codex/sol-luna-orchestrator.log"
 # overwrites a path you chose.
 SOL_LUNA_EVENTS = "/home/you/.codex/sol-luna-orchestrator.events.jsonl"
 
-# --- Optional hardening ----------------------------------------------------
+# OPTIONAL: user-selectable workspace confinement.
 # Confine delegation to specific directory trees (OS path separator delimited).
 # SOL_LUNA_ALLOWED_ROOTS = "/home/you/projects"
 
-# Verification execution policy. Default "allowlist" parses commands into argv
-# with no shell and only launches known build/test tools.
+# DEFAULT: implementation defaults shown explicitly and safe to omit.
+# The default verification policy parses commands into argv with no shell and
+# only launches known build/test tools.
 #   off   - never execute model-chosen commands
 #   shell - hand the raw string to a system shell (unsafe; see SECURITY.md)
 # SOL_LUNA_VERIFY_MODE = "allowlist"
 
+# OPTIONAL: user-selectable verification allowlist extensions.
 # Extra executables the allowlist should permit, comma separated.
 # SOL_LUNA_VERIFY_ALLOW = "./gradlew,rspec"
 
-# --- Optional worker tuning ------------------------------------------------
+# DEFAULT: more implementation defaults shown explicitly and safe to omit.
 # LUNA_MODEL = "gpt-5.6-luna"
 # LUNA_TIMEOUT_SECONDS = "1800"
 # Per-command wall-clock budget for independently rerun verification commands.
@@ -66,15 +65,14 @@ SOL_LUNA_EVENTS = "/home/you/.codex/sol-luna-orchestrator.events.jsonl"
 # LUNA_SANDBOX = "workspace-write"
 # LUNA_NETWORK_ACCESS = "0"
 
-# --- Optional parallel orchestration ---------------------------------------
-# Workers running at once in a parallel batch. Default 3, hard ceiling 8.
+# Workers running at once in a parallel batch.
 # SOL_LUNA_MAX_PARALLEL = "3"
 
 # Directories linked from the workspace into each worktree. Without
 # node_modules a worktree cannot run any verification command.
 # SOL_LUNA_WORKTREE_LINK = "node_modules"
 
-# When to keep a worktree after a batch: onFailure (default), always, never.
+# When to keep a worktree after a batch: onFailure, always, or never.
 # SOL_LUNA_KEEP_WORKTREES = "onFailure"
 
 # Allow parallel batches even when the declared task scopes contain

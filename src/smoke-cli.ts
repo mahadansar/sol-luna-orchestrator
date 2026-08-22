@@ -172,9 +172,12 @@ async function scenarioFreshInstall(): Promise<void> {
       assert.match(instructions, /BEGIN SOL-LUNA-ORCHESTRATOR DISCOVERY HINT/);
       assert.ok(instructions.endsWith(userInstructions));
     });
-    check("init printed next steps", () =>
-      assert.match(result.stdout, /Select GPT-5\.6 Sol/),
-    );
+    check("init printed next steps", () => {
+      assert.match(result.stdout, /1\. Open Codex with any compatible parent model/);
+      assert.match(result.stdout, /2\. Choose the effort the work warrants/);
+      assert.match(result.stdout, /creator example: GPT-5\.6 Sol at Medium/);
+      assert.match(result.stdout, /3\. Work normally/);
+    });
   } finally {
     cleanup(home);
   }

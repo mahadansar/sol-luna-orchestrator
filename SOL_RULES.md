@@ -32,11 +32,12 @@ Delegation has fixed contract, startup, coordination, and review overhead. Small
 work may be better solo, and parallel execution is not guaranteed to reduce
 latency.
 
-Do not optimize for aggregate raw tokens alone. Under the current pricing
-schedule, equivalent Luna input, cached-input, and output tokens are roughly 25x
-cheaper than Sol tokens. A delegated approach can therefore use substantially
-more raw tokens and still cost fewer total credits. That ratio reflects current
-pricing, not an immutable architectural guarantee.
+Do not optimize for aggregate raw tokens alone. Raw tokens are not credit cost.
+Only when the selected parent model is priced above the worker under the current
+pricing schedule can a delegated approach use substantially more raw tokens and
+still cost fewer total credits. That relationship is parent-conditional, not an
+immutable architectural guarantee, and no saving has been measured. More
+workers are not automatically cheaper.
 
 Balance expected total credit cost, latency, fixed overhead, context use,
 verification and isolation benefits, coordination risk, and quality. Decide

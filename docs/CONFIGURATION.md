@@ -205,14 +205,15 @@ repository work, while `gpt-5.6-luna` at `high` has successfully handled simpler
 docs and maintenance work and can delegate bounded Luna work. The effort is
 yours to set, not the model's to change mid-session.
 
-| Effort     | Use for                                                                                                         |
-| ---------- | --------------------------------------------------------------------------------------------------------------- |
-| `medium`   | Simple but non-trivial work whose decomposition is already obvious                                              |
-| **`high`** | **Recommended.** Architecture, decomposition, delegation, review, normal multi-file engineering                 |
-| `xhigh`    | Difficult architecture, subtle production bugs, cross-service reasoning, tricky concurrency, hard decomposition |
-| `max`      | Exceptional supervisor-level problems only — not a routine setting                                              |
+| Effort   | Use for                                                                                                         |
+| -------- | --------------------------------------------------------------------------------------------------------------- |
+| `medium` | The creator's usual setting; simple through substantial work with clear decomposition                           |
+| `high`   | Heavier work requiring more architecture, decomposition, delegation, or review                                  |
+| `xhigh`  | Difficult architecture, subtle production bugs, cross-service reasoning, tricky concurrency, hard decomposition |
+| `max`    | Exceptional supervisor-level problems only — not a routine setting                                              |
 
-The orchestrator does not set the parent effort; select it in the Codex session.
+The orchestrator does not set the parent effort. Choose the effort the work
+warrants; the creator usually uses `medium` and selects `high` for heavier work.
 `ultra` is a separate Codex multi-agent execution mode, not another
 reasoning-effort value.
 

@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { DEFAULT_EFFORT, EFFORTS, type Effort } from "./config.js";
+import {
+  DEFAULT_EFFORT,
+  EFFORTS,
+  MAX_BATCH_SIZE,
+  MAX_PARALLEL,
+  type Effort,
+} from "./config.js";
 
 /** Coarse shape of the delegated work. Helps the parent reason about effort. */
 export const TASK_CATEGORIES = [
@@ -417,8 +423,11 @@ export const delegateTasksInputShape = {
   tasks: z
     .array(batchTaskShape)
     .min(1)
+    .max(MAX_BATCH_SIZE)
     .describe(
-      "Task contracts; batch delegation is normally for two or more meaningful tasks. " +
+      `Task contracts; a batch accepts at most ${MAX_BATCH_SIZE} tasks. Batch size ` +
+        `is not concurrency: sequential mode runs one at a time, while parallel ` +
+        `mode runs at most ${MAX_PARALLEL} workers at once and queues the rest. ` +
         "Parallel tasks need disjoint scopes unless overlap is explicitly allowed.",
     ),
 

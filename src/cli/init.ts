@@ -398,9 +398,9 @@ export async function initCommand(argv: string[]): Promise<number> {
 
   out();
   out("Next:");
-  out("  1. Open Codex");
+  out("  1. Open Codex with any compatible parent model");
   out(
-    "  2. Select GPT-5.6 Sol at Medium effort (creator example only; compatible parent models are supported)",
+    "  2. Choose the effort the work warrants (creator example: GPT-5.6 Sol at Medium)",
   );
   out("  3. Work normally");
   out();

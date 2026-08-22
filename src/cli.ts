@@ -50,7 +50,8 @@ ${bold("Options")}
   uninstall --dry-run      Show what would be removed, write nothing
 
 ${bold("After init")}
-  Open Codex with a compatible parent model; creator example: Select GPT-5.6 Sol at Medium effort.
+  Open Codex with any compatible parent model and work normally.
+  No parent model or reasoning effort is required. Creator example: GPT-5.6 Sol at Medium.
 
 ${dim("The MCP server itself runs as `sol-luna-orchestrator-mcp` and is launched by Codex.")}`;
 
