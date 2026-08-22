@@ -23,11 +23,13 @@
     "!dist/smoke-*.js.map",
     "!dist/bench/**",
     "README.md",
+    "CONTRIBUTING.md",
     "SECURITY.md",
     "SOL_RULES.md",
     "ROADMAP.md",
     "docs/*.md",
     "CHANGELOG.md",
+    "bench/RESULTS.md",
     "LICENSE",
     "examples/codex-config.toml"
   ],
