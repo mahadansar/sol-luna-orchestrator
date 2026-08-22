@@ -6,6 +6,21 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-08-23
+
+A focused delegation-guidance and cost-semantics patch.
+
+### Changed
+
+- Clarified adaptive zero-worker guidance, single-task versus batch use, batch
+  cost trade-offs, and declared-overlap behavior.
+- Documented batch-level `resultDetail`, the meaning of an empty `allowedFiles`,
+  the read-only classification roadmap note, and dated human pricing examples.
+- Added regression coverage for these guidance and schema-description
+  distinctions.
+
+No delegation input/output schema shape or execution algorithm changed.
+
 ## [0.8.0] - 2026-08-22
 
 ### Added
@@ -511,7 +526,8 @@ Initial working version, verified end to end.
 development milestones and were never tagged or published, so they have no
 release links.
 
-[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.6.1...v0.7.0
