@@ -175,31 +175,43 @@ reports the registered server's value rather than only this shell's.
 ### Cost
 
 - **Token counts are measured.** They come from the API, per turn, per worker.
-- **No currency figure is produced, by design.** Prices are not exposed through
-  this integration.
-- **Your Codex subscription is not a function of token counts.** Multiplying
-  tokens by a public price list would produce an API-equivalent number that has
-  no relationship to what you are actually billed.
-- If you want an estimate, export the JSONL and apply your own pricing — the raw
-  per-worker numbers are all there.
+- **No price or credit total is produced, by design.** Prices are not exposed
+  through this integration. Exported JSONL contains the raw per-worker counts,
+  but applying the right current schedule is the operator's responsibility.
+- **API prices and Codex credit rates are not interchangeable.** Current Codex
+  rate cards map covered usage to input, cached-input and output tokens, while
+  included subscription usage, promotional pricing and legacy-plan accounting
+  can differ. Use the rate card that actually applies to your account.
 - Nothing in this project claims a cost saving, because none has been measured.
 
-#### One recorded pricing observation
+#### Dated Sol-Luna unit-rate example
 
-Kept because the reasoning above should be checkable, not because it
-generalises. It is a documented historical observation, not a price exposed by
-the integration — that remains true, and this is the only such figure recorded
-anywhere in the project. In the creator's own setup — `gpt-5.6-sol` as parent and
-`gpt-5.6-luna` as worker — on the pricing schedule current when this was
-recorded, equivalent input, cached-input and output tokens were roughly **25x
-cheaper for the worker than for that parent**. That is one parent/worker pair
-on one schedule at one point in time. It is not a property of the architecture,
-it does not transfer to a different parent, pricing changes without this
-document changing, and it is not a measured realised saving — the
-benchmarks record token counts and explicitly decline to derive a cost figure
-from them, so no run has ever been costed. Treat it as the origin of the
-cheaper-worker argument, and re-derive the ratio for your own parent and
-current prices before relying on it.
+As of **2026-08-23**, OpenAI's official
+[ChatGPT Work and Codex rate card](https://help.openai.com/en/articles/11481834-chatgpt-rate-card-business-enterprise-edu)
+listed purchased credit rates per 1M tokens of 100/10/500 for GPT-5.6 Sol and
+5/0.5/30 for GPT-5.6 Luna (input/cached input/output). For eligible usage paid
+with purchased credits, that is a **20:1** Sol:Luna unit-rate ratio for input and
+cached input and about **16.7:1** for output. The different ratios reflect
+promotional Sol purchased-credit pricing available at least through 2026-11-21.
+The rate card says the promotion does not change included plan usage, 5-hour or
+weekly limits, or legacy credit rates.
+
+The official API model pages separately listed Sol at $5/$0.50/$30 and Luna at
+$0.20/$0.02/$1.20 per 1M tokens, a **25:1** Sol:Luna unit-price ratio for input,
+cached input, and output:
+[Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol) and
+[Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna).
+
+This dated example explains why a Luna worker can use materially more raw tokens
+than a Sol parent and still potentially have lower token cost. It does not make
+Sol the required parent, and it does not convert a per-token ratio into a task
+saving. Aggregate task token usage and its input/cache/output mix, the selected
+parent, worker count, applicable Codex or API schedule, fixed orchestration cost,
+coordination and review overhead, latency and quality determine realised task
+cost. Purchased-credit rates do not describe every included Plus or Pro task;
+promotional, included-plan, and legacy schedules may differ. No realised saving
+has been measured by this project. Re-check the official sources before relying
+on the example.
 
 ## Parent model and effort
 

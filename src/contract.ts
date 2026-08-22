@@ -72,7 +72,8 @@ export const delegateTaskInputShape = {
     .default([])
     .describe(
       "Declared workspace-relative glob scope, checked against observed edits after " +
-        "the run. Empty declares no in-workspace allowlist; workspace confinement remains.",
+        "the run. Empty declares no in-workspace allowlist and does not declare read-only " +
+        "intent; workspace confinement remains.",
     ),
 
   forbiddenFiles: z
@@ -418,17 +419,25 @@ export const delegateTasksInputShape = {
         "when integration is enabled and observed changed files do not collide.",
     ),
 
-  resultDetail: delegateTaskInputShape.resultDetail,
+  resultDetail: delegateTaskInputShape.resultDetail.describe(
+    "Batch-level result detail applied uniformly to every returned task result; " +
+      "it is not a per-task field. Compact removes only successful verification " +
+      "output, while the schema default remains full for backwards compatibility.",
+  ),
 
   tasks: z
     .array(batchTaskShape)
     .min(1)
     .max(MAX_BATCH_SIZE)
     .describe(
-      `Task contracts; a batch accepts at most ${MAX_BATCH_SIZE} tasks. Batch size ` +
+      `Task contracts; this API is intended for multiple meaningful tasks but accepts ` +
+        `one or more and at most ${MAX_BATCH_SIZE} tasks. A one-task batch remains ` +
+        "accepted for compatibility; prefer delegate_task for a single task. Batch size " +
         `is not concurrency: sequential mode runs one at a time, while parallel ` +
         `mode runs at most ${MAX_PARALLEL} workers at once and queues the rest. ` +
-        "Parallel tasks need disjoint scopes unless overlap is explicitly allowed.",
+        "Parallel tasks need disjoint scopes unless this call sets " +
+        "allowOverlappingScopes:true; actual same-file edits still prevent " +
+        "automatic integration.",
     ),
 
   workingDirectory: z
@@ -440,8 +449,8 @@ export const delegateTasksInputShape = {
     .boolean()
     .default(false)
     .describe(
-      "Parallel only: permit potentially overlapping declared scopes. Actual " +
-        "same-file edits still prevent automatic integration.",
+      "Parallel only: this call-level escape hatch permits potentially overlapping " +
+        "declared scopes. Actual same-file edits still prevent automatic integration.",
     ),
 
   integrate: z
@@ -467,7 +476,8 @@ export const batchTaskResultSchema = z.object({
   result: delegateTaskOutputObject
     .nullable()
     .describe(
-      "Single-task result at the requested resultDetail, or null if the task never ran.",
+      "Single-task result at the batch's requested resultDetail, or null if the task " +
+        "never ran.",
     ),
   changedFiles: z
     .array(z.string())

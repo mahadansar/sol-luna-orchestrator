@@ -476,6 +476,15 @@ test("a batch carries resultDetail once, not per task", () => {
   assert.ok(!("resultDetail" in (mixed.tasks[0] ?? {})));
 });
 
+test("a one-task batch remains accepted for compatibility", () => {
+  const single = delegateTasksInputSchema.parse({
+    mode: "sequential",
+    tasks: [BASE_TASK],
+  });
+  assert.equal(single.tasks.length, 1);
+  assert.throws(() => delegateTasksInputSchema.parse({ mode: "sequential", tasks: [] }));
+});
+
 // --- Compact against the awkward cases ---------------------------------------
 
 test("compact clears every passing command, not just the first", () => {

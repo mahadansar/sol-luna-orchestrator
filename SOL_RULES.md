@@ -12,7 +12,11 @@ from self-contained contracts, cannot see the parent's conversation, and cannot
 delegate further.
 
 Delegation is adaptive. Zero workers is valid, and more workers are not
-automatically better or cheaper.
+automatically better or cheaper. Raw tokens are not credit cost: cheaper-worker
+economics apply only when the selected parent model is priced above the worker on
+the current pricing schedule, and no saving is guaranteed or measured. Balance
+expected credit cost, latency, context, fixed overhead, verification, coordination
+risk, and quality.
 
 | Choice           | Use when                                                                                                                                                                                           |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -25,6 +29,9 @@ Delegable executable work includes implementation, tests, bug fixing,
 refactoring, investigation, and chores. Keep strategy and work that cannot yet
 be specified or judged with observable acceptance criteria with the parent. Do
 not create artificial seams merely to use cheap workers.
+
+The batch contract accepts one task for compatibility; use `delegate_task` when
+no batch-level scheduling is needed.
 
 ## Cost and parallelism
 
@@ -42,6 +49,14 @@ workers are not automatically cheaper.
 Balance expected total credit cost, latency, fixed overhead, context use,
 verification and isolation benefits, coordination risk, and quality. Decide
 whether to delegate separately from whether to run tasks in parallel.
+
+As a dated, non-normative example, on 2026-08-23 OpenAI's API unit-price ratio
+for GPT-5.6 Sol:GPT-5.6 Luna was 25:1 for input, cached input, and output. For
+eligible Codex usage paid with purchased credits, promotional Sol rates instead
+made the unit-rate ratios 20:1 for input and cached input and about 16.7:1 for
+output. Those are per-token rate ratios, not aggregate task-token or
+realised-cost ratios; they do not show that delegation saved money. See the
+[current-source detail](docs/CONFIGURATION.md#dated-sol-luna-unit-rate-example).
 
 ## Worker effort
 
@@ -69,8 +84,9 @@ retries`) for the local activity view. It is not required, is bounded, and is
   sensitive details.
 - Declare workspace-relative `allowedFiles` and `forbiddenFiles`.
   File scope is detective: violations are reported after execution, not
-  prevented. Workspace confinement still applies, and forbidden patterns take
-  precedence.
+  prevented. An empty `allowedFiles` means no in-workspace allowlist; it does not
+  declare read-only intent, and workspace confinement still applies. Forbidden
+  patterns take precedence.
 - Supply targeted deterministic `verificationCommands` that prove the bounded
   task. The orchestrator independently re-runs them under the configured policy;
   normally leave broader final validation to the parent. Use a full suite when
@@ -87,7 +103,9 @@ retries`) for the local activity view. It is not required, is bounded, and is
   only successful verification output; failed, refused, and skipped output and
   all verdict, discrepancy, scope, and file evidence remain. Use `"full"`
   when successful command output is needed. The schema default remains
-  `"full"` for backwards compatibility.
+  `"full"` for backwards compatibility. In a batch, `resultDetail` is one
+  batch-level choice applied uniformly to every returned task result; it is not
+  a task field.
 - Set effort deliberately, explain it in `effortReason`, and use
   `timeoutSeconds` only when the configured default is unsuitable.
 
@@ -129,7 +147,9 @@ Sequential tasks share the requested workspace and run in order, so later tasks
 see earlier edits. Parallel tasks start from `HEAD` in isolated git worktrees.
 Parallel mode requires a git repository with at least one commit and normally
 refuses uncommitted changes inside declared scopes. Declared parallel scopes
-must be disjoint unless the operator explicitly accepts overlap risk.
+must be disjoint. The call-level `allowOverlappingScopes: true` escape hatch may
+accept declared overlap for that batch, but actual same-file edits still prevent
+automatic integration.
 
 Integration is a file copy, not a merge. Actual same-file edits prevent
 automatic integration and retain worktrees for manual resolution. Completed

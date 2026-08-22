@@ -337,6 +337,12 @@ export const SERVER_INSTRUCTIONS =
   `Any compatible parent Codex model may use the Sol-Luna Orchestrator. The parent ` +
   `supervisor owns architecture, delegation, and final judgement; ${LUNA_MODEL} ` +
   `workers execute bounded tasks. ` +
+  `Delegation is adaptive: zero workers is valid. Raw tokens are not credit cost; ` +
+  `cheaper-worker economics apply only when the selected parent model is priced ` +
+  `above ${LUNA_MODEL} on the current pricing schedule, and no saving is guaranteed ` +
+  `or measured. Balance expected credit cost, latency, context, fixed overhead, ` +
+  `verification, coordination risk, and quality; more workers are not automatically ` +
+  `better or cheaper. ` +
   `Worker claims are not orchestrator evidence. Judge returned verdicts and checks, ` +
   `reviewing in proportion to their risk and evidence. While an active Sol-Luna ` +
   `tool call has no meaningful new state, remain silent: do not narrate polling, ` +
@@ -475,7 +481,9 @@ function registerDelegateTask(): void {
   );
 }
 
-export const BATCH_TOOL_DESCRIPTION = `Delegate two or more meaningful bounded tasks to ${LUNA_MODEL} workers.
+export const BATCH_TOOL_DESCRIPTION = `Delegate a batch of meaningful bounded tasks to ${LUNA_MODEL} workers. This API is
+intended for two or more tasks, but a one-task batch remains accepted for
+compatibility; prefer delegate_task for a single task.
 
 Choose sequential mode when tasks depend on earlier changes, share workspace
 state, or may touch the same files; they run one at a time in the shared
@@ -489,6 +497,17 @@ Do not create artificial seams or split work so finely that coordination
 dominates. Whether to delegate and whether to run in parallel are separate
 decisions.
 
+Be cost-aware, not raw-token-minimal: raw tokens are not credit cost. When the
+selected parent model is priced above ${LUNA_MODEL} on the current pricing
+schedule, a delegated batch can use more aggregate raw tokens and still cost
+fewer total credits. That is parent-conditional, not guaranteed or measured.
+Batch size and task mix affect the economics, and coordination and review
+overhead increase with additional workers. Balance expected credit cost,
+latency, context use, fixed batch overhead, verification or isolation benefits,
+coordination risk, and quality. Parallel execution may reduce latency, but it is
+not automatically cheaper than sequential execution. More workers are not
+automatically cheaper.
+
 Optionally give each task a useful concise activityLabel for the local activity
 view; labels are not required and should not copy the full objective or include
 sensitive details.
@@ -501,6 +520,11 @@ A batch accepts at most ${MAX_BATCH_SIZE} tasks. Batch size is not the number of
 simultaneous workers: sequential mode runs one at a time, and parallel mode runs
 at most ${MAX_PARALLEL} at once and queues the rest. Split larger work, or run the
 remainder as a second batch.
+
+Parallel declared scopes should be disjoint. \`allowOverlappingScopes:true\` is a
+call-level escape hatch that permits starting despite declared scope conflicts;
+it does not turn scopes into a write sandbox, and actual same-file edits still
+prevent automatic integration.
 
 Partial outcomes remain visible for the parent orchestrator to judge. A completed worker's edits may
 be integrated even when its verdict is FAILED or BLOCKED. Declared scope

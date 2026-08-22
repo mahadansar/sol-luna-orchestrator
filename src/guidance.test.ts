@@ -87,6 +87,15 @@ test("server instructions keep roles, evidence authority, and proportional revie
   assert.match(SERVER_INSTRUCTIONS, /compatible parent Codex model/i);
   assert.match(SERVER_INSTRUCTIONS, /parent supervisor owns/i);
   assert.match(SERVER_INSTRUCTIONS, /workers execute bounded tasks/i);
+  assert.match(SERVER_INSTRUCTIONS, /delegation is adaptive/i);
+  assert.match(SERVER_INSTRUCTIONS, /zero workers is valid/i);
+  assert.match(SERVER_INSTRUCTIONS, /raw tokens are not credit cost/i);
+  assert.match(SERVER_INSTRUCTIONS, /selected parent model is priced above/i);
+  assert.match(SERVER_INSTRUCTIONS, /current[\s\S]*pricing schedule/i);
+  assert.match(
+    SERVER_INSTRUCTIONS,
+    /more workers are not automatically better or cheaper/i,
+  );
   assert.match(SERVER_INSTRUCTIONS, /claims are not orchestrator evidence/i);
   assert.match(SERVER_INSTRUCTIONS, /proportion/i);
   assertSilentWaitGuidance(SERVER_INSTRUCTIONS);
@@ -201,7 +210,12 @@ test("single-task results drive risk-based review", () => {
 });
 
 test("batch guidance distinguishes sequential and parallel semantics", () => {
-  assert.match(BATCH_TOOL_DESCRIPTION, /two or more meaningful bounded tasks/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /intended for two or more tasks/i);
+  assert.match(
+    BATCH_TOOL_DESCRIPTION,
+    /one-task batch remains accepted for[\s\S]*compatibility/i,
+  );
+  assert.match(BATCH_TOOL_DESCRIPTION, /prefer delegate_task for a single task/i);
   assert.match(BATCH_TOOL_DESCRIPTION, /sequential[\s\S]*depend/i);
   assert.match(BATCH_TOOL_DESCRIPTION, /share\s+workspace\s+state/i);
   assert.match(BATCH_TOOL_DESCRIPTION, /parallel[\s\S]*genuinely independent/i);
@@ -222,6 +236,30 @@ test("batch guidance distinguishes sequential and parallel semantics", () => {
   );
   assert.match(BATCH_TOOL_DESCRIPTION, /queues the rest/i);
   assert.match(BATCH_TOOL_DESCRIPTION, /remainder as a second batch/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /raw tokens are not credit cost/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /selected parent model is priced above/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /current[\s\S]*pricing[\s\S]*schedule/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /fewer total credits/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /parent-conditional/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /not guaranteed or measured/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /batch size and task mix affect the economics/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /coordination and review[\s\S]*increase/i);
+  assert.match(
+    BATCH_TOOL_DESCRIPTION,
+    /parallel execution may reduce latency[\s\S]*not automatically cheaper than sequential/i,
+  );
+  assert.match(
+    BATCH_TOOL_DESCRIPTION,
+    /more workers[\s\S]*not[\s\S]*automatically cheaper/i,
+  );
+  assert.match(
+    BATCH_TOOL_DESCRIPTION,
+    /allowOverlappingScopes:true[\s\S]*call-level escape hatch/i,
+  );
+  assert.match(
+    BATCH_TOOL_DESCRIPTION,
+    /does not turn scopes into a write sandbox[\s\S]*same-file edits still[\s\S]*prevent automatic integration/i,
+  );
   assert.doesNotMatch(
     BATCH_TOOL_DESCRIPTION,
     new RegExp(
@@ -304,7 +342,15 @@ test("batch input descriptions qualify overlap and integration", () => {
   );
   assert.match(
     delegateTasksInputShape.allowOverlappingScopes.description ?? "",
-    /same-file edits[\s\S]*prevent automatic integration/i,
+    /call-level escape hatch[\s\S]*same-file edits[\s\S]*prevent automatic integration/i,
+  );
+  assert.match(
+    delegateTasksInputShape.resultDetail.description ?? "",
+    /batch-level[\s\S]*uniformly[\s\S]*not a per-task field/i,
+  );
+  assert.match(
+    delegateTasksInputShape.tasks.description ?? "",
+    /one-task batch remains accepted for compatibility/i,
   );
   assert.match(delegateTasksInputShape.integrate.description ?? "", /Set false/i);
   const task = delegateTasksInputSchema.shape.tasks.element;
@@ -375,7 +421,6 @@ test("parent model and effort guidance stays example-only across surfaces", asyn
       /only when[\s\S]*(?:selected parent(?: model)?|parent you picked)[\s\S]*priced above[\s\S]*worker[\s\S]*(?:current|applicable)[\s\S]*(?:pricing )?schedule/i,
     );
     assert.match(cost, /no (?:cost )?saving has been\s+measured/i);
-    assert.doesNotMatch(cost, /\b\d+(?:\.\d+)?x\b/i);
   }
   const readmeCost = readme.slice(
     readme.indexOf("Raw token counts are not credit cost."),
@@ -399,6 +444,12 @@ test("SOL_RULES carries the runtime's operational distinctions without benchmark
     /do not narrate polling,[\s\S]*waiting,[\s\S]*elapsed time/i,
     /normally leave broader final validation to the parent/i,
     /do not pre-commit to rereading[\s\S]*every changed file/i,
+    /empty `allowedFiles` means no in-workspace allowlist/i,
+    /does not[\s\S]*declare read-only intent/i,
+    /batch-level choice applied uniformly/i,
+    /call-level `allowOverlappingScopes: true` escape hatch/i,
+    /actual same-file edits still prevent[\s\S]*integration/i,
+    /2026-08-23[\s\S]*API[\s\S]*25:1[\s\S]*purchased credits[\s\S]*20:1[\s\S]*16\.7:1/i,
   ]) {
     assert.match(rules, invariant);
   }
@@ -415,6 +466,11 @@ test("README preserves conditional integration and silent-waiting guidance", asy
     readme,
     /Use the sol-luna-orchestrator MCP for this task\. Decide whether delegate_task or[\s\S]*delegate_tasks is appropriate based on the work\./,
   );
+  assert.match(
+    readme,
+    /`?delegate_tasks`?[\s\S]*intended for multiple meaningful tasks[\s\S]*accepts one task for compatibility/i,
+  );
+  assert.match(readme, /allowOverlappingScopes: true[\s\S]*actual same-file edits/i);
   const silentWaiting = readme.slice(
     readme.indexOf("While a call is in flight"),
     readme.indexOf("Supervisor policy reaches the parent"),
@@ -438,5 +494,43 @@ test("README preserves conditional integration and silent-waiting guidance", asy
   assert.match(
     silentWaiting,
     /not (?:a )?behavior[\s\S]*server[\s\S]*(?:can|does) enforce/i,
+  );
+});
+
+test("human pricing example is dated and distinct from durable runtime policy", async () => {
+  const configuration = await readDoc("docs/CONFIGURATION.md");
+  const roadmap = await readDoc("ROADMAP.md");
+  assert.match(
+    configuration,
+    /2026-08-23[\s\S]*Codex[\s\S]*100\/10\/500[\s\S]*5\/0\.5\/30[\s\S]*20:1[\s\S]*16\.7:1[\s\S]*promotional[\s\S]*2026-11-21[\s\S]*API[\s\S]*25:1/i,
+  );
+  assert.match(
+    configuration,
+    /Sol at \$5\/\$0\.50\/\$30[\s\S]*Luna at[\s\S]*\$0\.20\/\$0\.02\/\$1\.20/i,
+  );
+  assert.match(
+    configuration,
+    /promotion does not change included plan usage,[\s\S]*5-hour[\s\S]*weekly limits,[\s\S]*legacy credit rates/i,
+  );
+  assert.match(
+    configuration,
+    /API prices[\s\S]*Codex credit rates[\s\S]*not interchangeable/i,
+  );
+  assert.match(
+    configuration,
+    /aggregate task token usage[\s\S]*selected[\s\S]*parent[\s\S]*worker count[\s\S]*coordination and[\s\S]*review overhead[\s\S]*latency[\s\S]*quality[\s\S]*realised task[\s\S]*cost/i,
+  );
+  assert.match(configuration, /legacy[\s\S]*rate card/i);
+  assert.match(
+    configuration,
+    /Purchased-credit rates do not describe every included Plus or Pro task/i,
+  );
+  assert.match(
+    roadmap,
+    /explicit change intent[\s\S]*expected, optional, or required[\s\S]*Do not infer[\s\S]*`allowedFiles: \[\]`[\s\S]*task category/i,
+  );
+  assert.doesNotMatch(
+    [SERVER_INSTRUCTIONS, TOOL_DESCRIPTION, BATCH_TOOL_DESCRIPTION].join("\n"),
+    /\$\s*\d|\b\d+(?:\.\d+)?\s*(?:x|:1)\b/i,
   );
 });

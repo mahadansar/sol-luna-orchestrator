@@ -332,7 +332,10 @@ Visible, lower priority, not actively being implemented.
   no modifications, such as an investigation, audit, review or other read-only
   delegation. Preserve the existing scrutiny for implementation and editing tasks
   whose contracts expected file changes; classify from explicit contract intent,
-  not from the result alone.
+  not from the result alone. A future contract may need explicit change intent such
+  as changes expected, optional, or required. Do not infer that intent from
+  `allowedFiles: []` (which means no in-workspace allowlist) or from task category
+  alone.
 
 ## Not current goals
 

@@ -183,8 +183,9 @@ Parent reviews the evidence and decides
 
 Workers are siblings, never a hierarchy: a Luna worker has no delegation tools,
 so it cannot spawn workers of its own. `delegate_task` runs one bounded task
-directly in the workspace and has no git requirement. `delegate_tasks` runs
-several, either `sequential` in the shared workspace or `parallel` with one
+directly in the workspace and has no git requirement. `delegate_tasks` is
+intended for multiple meaningful tasks but accepts one task for compatibility.
+It runs either `sequential` in the shared workspace or `parallel` with one
 worktree per task, each task carrying its own contract, scope and effort.
 
 While a call is in flight and there is no meaningful new state, the parent is
@@ -213,11 +214,14 @@ conflicts. A worker `PASS` is where review starts, not where it ends.
 - Credential-shaped environment variables are withheld from those commands,
   because their output flows back into a model transcript.
 - Workspace escapes are caught after resolving symlinks. `allowedFiles: ["**"]`
-  still cannot authorize a write outside the workspace.
+  still cannot authorize a write outside the workspace. An empty `allowedFiles`
+  array means no in-workspace allowlist; it does not declare read-only intent.
 - Workers cannot delegate, both by child configuration and by an environment
   marker that makes a worker-side server register zero tools.
-- Parallel batches are refused when declared scopes overlap, and changes are
-  never merged when two workers touched the same file.
+- By default, parallel batches are refused when declared scopes overlap, and
+  changes are never merged when two workers touched the same file. A call may set
+  `allowOverlappingScopes: true` to accept declared overlap for that batch, but
+  actual same-file edits still prevent automatic integration.
 
 **Detected, not prevented**
 
