@@ -136,14 +136,15 @@ machine it runs on.
 ### Unchanged
 
 Worker scheduling, concurrency limits and defaults, the worker model, isolation,
-declared-scope handling, verification policy, integration rules and the public
-schema shapes and defaults all behave as before. Nothing here was measured to be
-faster or cheaper, and `bench/RESULTS.md` is unchanged in its measurements: on
-small tasks delegating is still worse, and no latency or token crossover has been
-found. Declared file scope is still detective rather than preventive,
-verification still runs outside the Codex sandbox with your permissions, and
-worktree isolation is still between workers rather than between a worker and your
-disk.
+declared-scope handling, verification policy and integration rules all behave as
+before. Existing public schema fields and defaults also behave as before; the only
+schema additions are `activityLabel` and the published batch `maxItems` described
+above. Nothing here was measured to be faster or cheaper, and `bench/RESULTS.md`
+is unchanged in its measurements: on small tasks delegating is still worse, and
+no latency or token crossover has been found. Declared file scope is still
+detective rather than preventive, verification still runs outside the Codex
+sandbox with your permissions, and worktree isolation is still between workers
+rather than between a worker and your disk.
 
 ### Links
 
