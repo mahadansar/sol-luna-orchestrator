@@ -240,7 +240,12 @@ test("single-task results drive risk-based review", () => {
   assert.match(TOOL_DESCRIPTION, /clean\s+verified PASS/i);
   assert.match(TOOL_DESCRIPTION, /proportionate\s+review/i);
   assert.match(TOOL_DESCRIPTION, /Choose review depth after seeing that evidence/i);
-  assert.match(TOOL_DESCRIPTION, /do not pre-commit to rereading every file/i);
+  assert.match(TOOL_DESCRIPTION, /do not pre-commit to rereading[\s\S]*every file/i);
+  assert.match(TOOL_DESCRIPTION, /Worker claims are not authoritative/i);
+  assert.match(
+    TOOL_DESCRIPTION,
+    /verification-only[\s\S]*worker FAILED can become PASS only[\s\S]*matches a distinct passing authoritative/i,
+  );
   for (const suspicious of [
     "FAILED",
     "BLOCKED",
@@ -301,7 +306,11 @@ test("batch guidance distinguishes sequential and parallel semantics", () => {
   );
   assert.match(
     BATCH_TOOL_DESCRIPTION,
-    /does not turn scopes into a write sandbox[\s\S]*same-file edits still[\s\S]*prevent automatic integration/i,
+    /does not turn scopes into a write sandbox[\s\S]*same-file edits still[\s\S]*prevent automatic parallel integration/i,
+  );
+  assert.match(
+    BATCH_TOOL_DESCRIPTION,
+    /integrationConflicts is a parallel-only[\s\S]*sequential tasks share the workspace[\s\S]*intentionally edit files/i,
   );
   assert.doesNotMatch(
     BATCH_TOOL_DESCRIPTION,
@@ -315,8 +324,9 @@ test("batch guidance distinguishes sequential and parallel semantics", () => {
 test("batch guidance states integration and partial-outcome behavior", () => {
   assert.match(
     BATCH_TOOL_DESCRIPTION,
-    /same-file edits prevent automatic[\s\S]*integration/i,
+    /same-file edits by parallel workers prevent[\s\S]*automatic integration/i,
   );
+  assert.match(BATCH_TOOL_DESCRIPTION, /Partial outcomes remain visible/i);
   assert.match(BATCH_TOOL_DESCRIPTION, /FAILED or BLOCKED/i);
   assert.match(BATCH_TOOL_DESCRIPTION, /verified in isolation/i);
   assert.match(BATCH_TOOL_DESCRIPTION, /when changes can meaningfully interact/i);
