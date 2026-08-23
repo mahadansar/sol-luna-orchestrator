@@ -26,22 +26,30 @@ or for taking Git actions on the user's behalf.
 
 ## Priorities at a glance
 
-| Priority | Item                                     | Status / Depends on |
-| -------- | ---------------------------------------- | ------------------- |
-| P0.1     | Context Capsule v2                       | Shipped in v0.7.0   |
-| P0.2     | Compact Evidence Packets                 | Shipped in v0.7.0   |
-| P0.3     | Worker Continuation                      | P0.2                |
-| P0.4     | Bounded Repair Loop                      | P0.3                |
-| P1.1     | Reasoned Retry and Effort Escalation     | P0.4                |
-| P1.2     | Adaptive Worker Routing + Compute Policy | P1.1                |
-| P2.1     | Optional Explorer                        | mostly independent  |
-| P2.2     | Cross-Session Handoff                    | mostly independent  |
+| Priority | Item                                     | Status / Depends on    |
+| -------- | ---------------------------------------- | ---------------------- |
+| P0.1     | Context Capsule v2                       | Shipped in v0.7.0      |
+| P0.2     | Compact Evidence Packets                 | Shipped in v0.7.0      |
+| P0.2a    | Explicit Change Intent Contracts         | P0.2                   |
+| P0.3     | Worker Continuation                      | P0.2a                  |
+| P0.4     | Bounded Repair Loop                      | P0.3, P0.2a            |
+| P1.0     | Parent Model and Pricing Discovery       | Discovery before P1.2  |
+| P1.1     | Reasoned Retry and Effort Escalation     | P0.4                   |
+| P1.2     | Adaptive Worker Routing + Compute Policy | P1.0, P1.1             |
+| P1.3     | Automatic Context Lifecycle Management   | P0.1, P0.2, P0.3       |
+| P2.1     | Optional Explorer                        | P1.2                   |
+| P2.2     | Cross-Session Handoff                    | P1.3                   |
+| P2.3     | End-to-End Automated Workflow            | P1.2, P1.3, P2.1, P2.2 |
+| P2.4     | Mature Benchmark and Acceptance Pass     | P2.3                   |
 
 ```
 Context Capsule v2 (shipped in v0.7.0)
         |
         v
 Compact Evidence Packets (shipped in v0.7.0)
+        |
+        v
+Explicit Change Intent Contracts
         |
         v
 Worker Continuation
@@ -52,16 +60,29 @@ Bounded Repair Loop
         v
 Reasoned Retry / Effort Escalation
         |
-        v
-Adaptive Worker Routing + Compute Policy
+        +------------------------------+
+                                       |
+Parent Model / Pricing Discovery ------+
+                                       |
+                                       v
+                 Adaptive Worker Routing + Compute Policy
 
-Explorer ................ later, mostly independent
-Cross-session handoff ... later, mostly independent
+Context Capsule v2 + Compact Evidence Packets + Worker Continuation
+                                       |
+                                       v
+                 Automatic Context Lifecycle Management
+
+Explorer ................ later, optional
+Cross-session handoff ... later, optional
+End-to-end workflow ..... later capstone
+Mature acceptance ....... latest, after the capstone
 ```
 
-The chain matters. Routing work to a more expensive worker before continuation
-and repair exist would be a blunt "spend more on failure" mechanism, which is
-the opposite of the intent. Start at the top.
+The chain matters. Routing work to a stronger or more expensive executor before
+continuation, repair, failure classification, and policy discovery exist would
+be a blunt "spend more on failure" mechanism, which is the opposite of the
+intent. Start at the top; the explorer, handoff, capstone, and acceptance work
+build on the resulting primitives.
 
 ---
 
@@ -95,13 +116,34 @@ from `structuredContent`, preserving verdicts, changed files, scope violations,
 discrepancies, failing command outputs, and the unchanged readable text result.
 The default remains `"full"` for compatibility.
 
+## P0.2a Explicit Change Intent Contracts
+
+**Problem.** A zero-change result can be correct for a read-only investigation,
+but the current contract vocabulary does not make the expectation explicit.
+That ambiguity makes zero-change classification and repair decisions less safe.
+
+**Direction.** Add explicit change intent to bounded contracts, distinguishing
+changes that are **forbidden/read-only**, **optional**, or **required**. The
+intent should be carried into the worker brief and the review evidence so a
+zero-change result is judged against the contract rather than inferred from the
+result, task category, or the allowlist.
+
+**Constraints.** `allowedFiles: []` means that there is no in-workspace
+allowlist; it does not mean the task is read-only. A read-only contract must
+say that changes are forbidden, while optional and required changes must remain
+distinct. The explicit intent should be available before classifying a
+zero-change result or deciding whether a repair turn is appropriate.
+
+**Depends on** P0.2.
+
 ## P0.3 Worker Continuation
 
 **Problem.** Every delegation starts a fresh worker with an empty context
 window. A small follow-up on work that just finished pays full setup cost and
 discards everything the worker learned.
 
-**Direction.** Allow a bounded follow-up turn to resume the same Luna thread.
+**Direction.** When useful, allow a bounded follow-up turn for the same
+bounded Luna task to resume the same Luna thread.
 
 **Constraints.**
 
@@ -114,6 +156,8 @@ discards everything the worker learned.
 
 **Not decided.** How a thread reference is surfaced, and how long it stays
 resumable.
+
+**Depends on** P0.2a and P0.2.
 
 ## P0.4 Bounded Repair Loop
 
@@ -134,8 +178,46 @@ again.
   violations, ambiguous requirements, environment and tooling failures, and
   anything touching the security boundary.
 - A repair turn is visible in the event stream like any other work.
+- The change-intent contract is checked first: a repair cannot turn a
+  forbidden/read-only task into an editing task, and optional versus required
+  changes remain distinguishable.
 
-**Depends on** P0.3.
+**Depends on** P0.3 and P0.2a.
+
+---
+
+## P1.0 Parent Model and Pricing Discovery
+
+**Problem.** Quantitative cost-aware routing would be unsafe if the
+orchestrator cannot reliably identify the selected parent model or cannot tell
+which usage schedule applies. API pricing, Codex credits, included usage,
+promotions, and legacy schedules are different concepts and may not be
+interchangeable.
+
+**Direction.** First investigate and design, without assuming an
+implementation, whether Codex or MCP exposes the selected parent model to the
+orchestrator and which signal could be relied on. In parallel, map how API
+pricing, Codex credits, included usage, promotions, and legacy schedules could
+affect a task's quantitative cost, including their scope, time bounds,
+entitlements, and uncertainty. Define how a future policy could use those
+facts without presenting an estimate as a bill or confusing credits and
+included usage with API charges.
+
+**Constraints.** Cost comparisons and cost measurements must only be treated
+as quantitative when the applicable pricing or entitlement schedule is
+knowable for the work being compared. If the parent-model signal or schedule
+is unavailable, stale, ambiguous, promotional, or legacy in a way that cannot
+be resolved, future routing should fall back to qualitative policy or leave
+cost out rather than inventing precision. This item is discovery and design;
+it does not claim that model visibility, pricing lookup, or cost accounting
+exists today.
+
+**Not decided.** Whether the selected parent model is exposed, which source is
+authoritative for each usage category, how schedule freshness is established,
+and the eventual representation of uncertainty.
+
+**Dependency.** This discovery does not depend on implementing repair. It must
+finish before P1.2 treats cost as a quantitative routing input.
 
 ---
 
@@ -145,14 +227,27 @@ again.
 retried at higher effort. That is right as far as it goes, but "it failed, so
 think harder" is the wrong response to most failures.
 
-**Direction.** Classify the failure, then choose the response.
+**Direction.** Classify the failure before deciding whether to repair, retry,
+raise effort, select a stronger executor, or take the work back. The initial
+classification should cover at least these classes and use the concrete
+failure evidence rather than a retry counter:
 
-| Failure looks like                    | Response                     |
-| ------------------------------------- | ---------------------------- |
-| Routine implementation defect         | Same worker, same effort     |
-| Genuine reasoning deficiency          | Consider higher Luna effort  |
-| Bad decomposition, scope or ambiguity | Return to the supervisor     |
-| Environment or tooling failure        | Do not spend reasoning on it |
+| Failure class                   | Bounded response                                                          |
+| ------------------------------- | ------------------------------------------------------------------------- |
+| Contract or requirement failure | Return to the supervisor for a clearer contract                           |
+| Implementation failure          | Consider a local repair with the same worker                              |
+| Verification failure            | Inspect the failing evidence; repair or retry only if local and justified |
+| Timeout failure                 | Assess remaining bounds and retry only if useful                          |
+| Environment failure             | Treat tooling or host conditions separately                               |
+| Scope or conflict failure       | Stop and return for safe integration or takeover                          |
+| Effort failure                  | Consider higher authorized effort                                         |
+| Capability failure              | Consider an authorized stronger executor or takeover                      |
+
+The classifier should also distinguish failures that are transient from those
+that show the task, contract, or environment is unsuitable for another turn.
+It should feed the bounded repair loop, reasoned retry and effort escalation,
+generalized stronger-executor fallback, or parent takeover. A failure must not
+be retried merely because a counter permits it.
 
 `previousAttempts` and the failure evidence should drive this rather than a
 counter.
@@ -160,8 +255,8 @@ counter.
 **Constraints.** Classification has to be conservative. Misreading a
 specification problem as a difficulty problem burns tokens and still fails.
 
-**Not decided.** The classification rules, and whether escalation is automatic
-or a recommendation the supervisor acts on.
+**Not decided.** The classification rules, the evidence schema, and which
+responses are automatic versus recommendations the supervisor acts on.
 
 **Depends on** P0.4.
 
@@ -186,11 +281,15 @@ between the two.
 The routing half. The supervisor may eventually choose, per bounded task, no
 worker at all, Luna, Terra, a Sol worker, or another supported model, and
 independently choose a reasoning effort, selecting only from what the user has
-authorised. A stronger worker after repeated failure then becomes one routing
+authorised. A stronger executor after a failure then becomes one routing
 decision among several rather than a separate mechanism with its own permanent
-role in the architecture. Which model suits which kind of work is deliberately
-not settled here. Those preferences should come from measured results rather
-than from assumptions about what each model is presumed to be good at.
+role in the architecture. Automatic fallback should be driven by the failure
+classification and concrete evidence, and should select from the user-authorized
+model pool; it must never hardcode a Luna-to-Sol progression. If no permitted
+executor is justified or available, the parent takes over or the task ends.
+Which model suits which kind of work is deliberately not settled here. Those
+preferences should come from measured results rather than from assumptions
+about what each model is presumed to be good at.
 
 The policy half. A user-owned compute policy covering which worker models are
 allowed, a maximum reasoning effort per model, a maximum number of concurrent
@@ -212,8 +311,12 @@ anyone who prefers them.
 
 The supervisor should also be told the effective policy before it routes
 anything, so that it reasons inside the real envelope instead of proposing
-workers the runtime will reject. An illustrative envelope, not a default and not
-a configuration that exists today:
+workers the runtime will reject. A later policy may weigh model, effort,
+context pressure, cost, latency, coordination overhead, verification needs,
+and risk. Cost is a quantitative input only when P1.0 establishes that the
+applicable schedule is knowable; otherwise the policy must keep cost
+qualitative or unknown. An illustrative envelope, not a default and not a
+configuration that exists today:
 
 ```text
 Allowed:
@@ -231,10 +334,14 @@ A likely build order, though not a commitment:
 - **P1.2a, the policy foundation.** Allowed models, effort ceilings,
   concurrency ceilings, inspection, and enforcement in the runtime.
 - **P1.2b, adaptive routing.** The supervisor sees the policy and chooses a
-  model and an effort per task. Choosing no worker stays valid.
+  model and an effort per task, considering solo, single-worker, sequential,
+  parallel, explorer, continuation, repair, retry, stronger-executor, and
+  parent-takeover paths. Choosing no worker stays valid.
 - **P1.2c, cross-model escalation.** Failure classification first, bounded
   repair and effort changes next, a different permitted model only where the
-  evidence justifies it.
+  evidence justifies it and the user-authorized model pool permits it. The
+  fallback remains model-agnostic rather than assuming any particular model
+  ordering.
 
 The guardrails come before the routing freedom, not after it.
 
@@ -252,19 +359,61 @@ The guardrails come before the routing freedom, not after it.
   isolation, independent verification, evidence handling, bounded retries,
   conservative concurrency and the activity stream behave exactly as they do for
   a single-model batch.
+- A route may remain solo, may use one worker, or may use sequential or
+  parallel workers; adaptive selection is allowed to choose zero workers. An
+  explorer, continuation, repair, retry, stronger executor, or parent takeover
+  is a bounded option, not a mandatory stage.
 - No promises about any specific model. What is routable is whatever the runtime
   can actually reach and the user has actually allowed.
 
 **Not decided.** The policy schema and where it lives, the final CLI syntax, how
-the effective policy reaches the supervisor, and the routing rules themselves.
+the effective policy reaches the supervisor, the routing rules themselves, and
+how context pressure and uncertain cost should be represented. Supporting
+worker models outside the currently supported runtime may require a
+provider/executor abstraction; the design must not assume that swapping a model
+identifier is sufficient.
 
-**Depends on** P1.1, and through it on the rest of the P0 chain. Before choosing
-a different model is a sensible move, the supervisor needs to know whether the
-same worker could simply continue, whether the defect is locally repairable,
-whether the failure was reasoning-related at all, whether more effort would
-help, and whether the work should go back to the supervisor instead. Without
-that, routing degenerates into spending more on every failure, which is the
-outcome the compute policy exists to prevent.
+**Depends on** P1.0 and P1.1, and through them on the rest of the P0 chain.
+Before choosing a different model is a sensible move, the supervisor needs to
+know whether the same worker could simply continue, whether the defect is
+locally repairable, whether the failure was reasoning-related at all, whether
+more effort would help, whether a cost comparison is valid, and whether the
+work should go back to the supervisor instead. Without that, routing
+degenerates into spending more on every failure, which is the outcome the
+compute policy exists to prevent.
+
+---
+
+## P1.3 Automatic Context Lifecycle Management
+
+**Problem.** Context Capsules and Compact Evidence Packets reduce redundant
+input and review output at individual boundaries, but a long adaptive run can
+still accumulate repeated tool output, logs, worker turns, and stale context.
+That pressure can obscure important requirements, decisions, and evidence.
+
+**Direction.** Build automatic, bounded context lifecycle management on P0.1
+Context Capsules and P0.2 Compact Evidence Packets. At appropriate handoff,
+continuation, repair, retry, and review boundaries, preserve important
+requirements, settled decisions, scope and safety constraints, and verification
+evidence while compacting or removing redundant tool, log, and context noise.
+The resulting context should remain sufficient for the supervisor and any
+resumed worker to make the next bounded decision.
+
+**Constraints.** Compaction must not silently discard acceptance criteria,
+upstream decisions, failure evidence, scope or conflict information, or the
+distinction between verified and claimed results. It should be automatic where
+safe, bounded in work and output, and observable enough to explain what was
+retained or omitted. This is lifecycle management, not permission to widen a
+contract or to turn an evidence packet into an unchecked summary.
+
+**Not decided.** Trigger thresholds, retention rules, whether compacted
+material is represented as an updated capsule, packet, or another internal
+form, and what reliable context-pressure signal Codex or the host actually
+exposes. If exact context usage is unavailable, the design should use bounded,
+observable proxies rather than pretend to have precise context-window
+awareness.
+
+**Depends on** P0.1, P0.2, and P0.3.
 
 ---
 
@@ -274,8 +423,11 @@ outcome the compute policy exists to prevent.
 unfamiliar dependency, an external API, a subsystem nobody has read recently.
 Specifying that work well is the hard part, and it is the supervisor doing it.
 
-**Direction.** A bounded, read-only investigation worker returning a compact
-research packet.
+**Direction.** A bounded, read-only Explorer / Investigation Companion for
+repository, research, dependency, or documentation investigation, returning a
+compact research packet. It should be available as an adaptive option when
+reconnaissance is useful, not a permanent role or a mandatory stage in every
+workflow.
 
 **Constraints.**
 
@@ -284,23 +436,78 @@ research packet.
 - No recursive delegation.
 - Returns findings, not a plan to be followed blindly.
 
+**Depends on** P1.2, while remaining optional at task time.
+
 ## P2.2 Lightweight Cross-Session Handoff
 
 **Problem.** Work spanning sessions starts over. The supervisor's understanding
 does not survive the session that produced it.
 
-**Direction.** Optional persistent state capturing only the essentials: current
-objective, completed work, key decisions, remaining work, blockers, verification
-state, and useful continuation references.
+**Direction.** Optional persistent compact handoff for a fresh Codex session,
+capturing only the essentials: current objective, completed work, key
+decisions, settled invariants, remaining work, blockers, verification state,
+useful failure and attempt evidence, and useful continuation references. It
+should let a new supervisor session resume with the important context without
+retaining the entire prior transcript.
 
 **Constraints.**
 
 - Keep persistent state small and optional. Do not require multiple managed
   state documents by default.
 - No automatic Git commits or pushes.
-- Opt-in.
+- Opt-in. Once enabled, checkpoint creation and update, and consumption by a
+  fresh session, should happen automatically at appropriate safe boundaries.
 
-**Not decided.** Storage format and location.
+**Not decided.** The exact persistence format, storage location, retention
+policy, and how continuation references expire.
+
+**Depends on** P1.3, while remaining optional at task time.
+
+## P2.3 End-to-End Automated Workflow
+
+**Problem.** A complete automated workflow is attractive, but implementing it
+as one monolithic feature would couple routing, investigation, continuation,
+repair, verification, integration, and handoff before those primitives are
+well understood.
+
+**Direction.** Later, build an end-to-end capstone from the bounded primitives:
+adaptive routing, optional exploration, worker continuation, evidence-driven
+repair, classified retry and effort escalation, authorized stronger-executor
+fallback, parent takeover, context lifecycle management, safe integration, and
+optional cross-session handoff. The capstone should compose those capabilities
+and retain supervisor control without imposing a fixed worker-model hierarchy
+or replacing it with a fixed workflow.
+
+**Constraints.** This remains future work after the constituent primitives and
+their guardrails have been validated. A zero-worker solo route, bounded
+contracts, independent verification and evidence, isolated worktrees, and safe
+integration remain valid within the capstone. No monolithic first
+implementation is implied.
+
+**Depends on** P1.2, P1.3, P2.1, and P2.2.
+
+## P2.4 Mature Benchmark and Acceptance Pass
+
+**Problem.** Individual features can pass focused checks while the adaptive
+system still makes poor decisions across task shapes and failure paths.
+
+**Direction.** After the capstone's primitives have stabilized, run a mature
+benchmark and acceptance pass that retests solo, delegated, repair, stronger
+executor fallback, explorer, continuation, and free-choice adaptive modes.
+Measure quality, latency, context and token use, routing decisions, retries,
+and cost where the applicable pricing or entitlement schedule is knowable and
+calculable correctly. Report unknown or incomparable cost rather than filling
+the gap with an estimate.
+
+**Constraints.** The pass should test zero-worker outcomes as valid, cover
+bounded failure handling and parent takeover, and preserve evidence for its
+claims. Cost results must identify whether they concern API pricing, Codex
+credits, included usage, promotions, or legacy schedules; they must not mix
+those categories or imply a quantitative comparison when the schedule is
+uncertain.
+
+**Depends on** P2.3 and the completed routing, context, and handoff
+primitives.
 
 ---
 
@@ -332,10 +539,10 @@ Visible, lower priority, not actively being implemented.
   no modifications, such as an investigation, audit, review or other read-only
   delegation. Preserve the existing scrutiny for implementation and editing tasks
   whose contracts expected file changes; classify from explicit contract intent,
-  not from the result alone. A future contract may need explicit change intent such
-  as changes expected, optional, or required. Do not infer that intent from
-  `allowedFiles: []` (which means no in-workspace allowlist) or from task category
-  alone.
+  not from the result alone. This classification is part of P0.2a Explicit Change
+  Intent Contracts, which distinguishes changes forbidden/read-only, optional,
+  or required. Do not infer that intent from `allowedFiles: []` (which means no
+  in-workspace allowlist) or from task category alone.
 
 ## Not current goals
 
