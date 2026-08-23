@@ -28,6 +28,7 @@ function mockResult(): DelegateTaskOutput {
     workerClaimedStatus: "PASS",
     trustworthy: true,
     workerThreadId: "thread_123",
+    continuationReference: "ctr_fixture_reference_12345678901234567890",
     model: "gpt-5.6-luna",
     effort: "high",
     effortReason: "simple",

@@ -203,6 +203,28 @@ export const delegateTaskInputShape = {
 export const delegateTaskInputSchema = z.object(delegateTaskInputShape);
 export type DelegateTaskInput = z.infer<typeof delegateTaskInputSchema>;
 
+/** Input for an explicit, bounded follow-up on an eligible worker result. */
+export const continueTaskInputShape = {
+  continuationReference: z
+    .string()
+    .min(1)
+    .describe(
+      "Opaque server-lifetime reference returned on an eligible delegated result. " +
+        "Do not send a raw Codex thread id.",
+    ),
+  instruction: z
+    .string()
+    .min(1)
+    .describe(
+      "One concise follow-up instruction for the same bounded task. The original " +
+        "objective, allowedFiles, forbiddenFiles, changeIntent, acceptance criteria, " +
+        "and verification commands remain fixed and are not accepted here.",
+    ),
+};
+
+export const continueTaskInputSchema = z.object(continueTaskInputShape);
+export type ContinueTaskInput = z.infer<typeof continueTaskInputSchema>;
+
 /**
  * JSON Schema handed to Codex via `--output-schema`, forcing the worker's final
  * message to be machine-readable rather than prose.
@@ -306,7 +328,16 @@ export const delegateTaskOutputShape = {
   workerThreadId: z
     .string()
     .nullable()
-    .describe("Codex thread id of the worker, for inspecting or resuming it."),
+    .describe(
+      "Codex thread id of the worker, for inspection; continuation uses an opaque reference.",
+    ),
+  continuationReference: z
+    .string()
+    .nullable()
+    .describe(
+      "Opaque, single-use, server-lifetime reference for one explicit continuation; " +
+        "null when this result cannot be continued or the bound was consumed.",
+    ),
   model: z.string(),
   effort: z.string(),
   effortReason: z.string(),

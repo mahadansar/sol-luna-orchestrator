@@ -188,6 +188,16 @@ intended for multiple meaningful tasks but accepts one task for compatibility.
 It runs either `sequential` in the shared workspace or `parallel` with one
 worktree per task, each task carrying its own contract, scope and effort.
 
+An eligible result also carries an opaque `continuationReference`. The parent
+may explicitly call `continue_task` once with that reference and a concise
+follow-up instruction to resume the exact Luna thread. The original objective,
+`allowedFiles`, `forbiddenFiles`, `changeIntent`, acceptance criteria and
+verification commands remain fixed; the continuation runs independent
+verification and evidence reconciliation again. References live only in server
+memory, expire after 15 minutes, and cannot be replayed. Parallel batch results
+use the integrated workspace after safe integration, or a retained worktree when
+integration is disabled or conflicted, so they do not point at deleted paths.
+
 While a call is in flight and there is no meaningful new state, the parent is
 asked to stay quiet rather than narrate polling or elapsed time, and to report
 results, errors, cancellations, timeouts and actionable state changes as soon as

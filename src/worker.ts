@@ -1,4 +1,10 @@
-import { Codex, type ThreadEvent } from "@openai/codex-sdk";
+import {
+  Codex,
+  type Input,
+  type ThreadEvent,
+  type ThreadOptions,
+  type TurnOptions,
+} from "@openai/codex-sdk";
 import {
   DEFAULT_TIMEOUT_SECONDS,
   LUNA_MODEL,
@@ -74,6 +80,20 @@ export interface ObservedRun {
   cancelled: boolean;
 }
 
+interface WorkerThread {
+  readonly id: string | null;
+  runStreamed(
+    input: Input,
+    options?: TurnOptions,
+  ): Promise<{ events: AsyncGenerator<ThreadEvent> }>;
+}
+
+/** Small seam for deterministic lifecycle tests; production uses the SDK Codex client. */
+export interface WorkerCodex {
+  startThread(options: ThreadOptions): WorkerThread;
+  resumeThread(id: string, options: ThreadOptions): WorkerThread;
+}
+
 /**
  * Drive one Luna thread to completion, recording what the Codex runtime
  * actually observed rather than only what the model says it did.
@@ -83,6 +103,11 @@ async function runWorkerThread(
   workingDirectory: string,
   timeoutSeconds: number,
   externalSignal?: AbortSignal,
+  options: {
+    resumeThreadId?: string;
+    continuationInstruction?: string;
+    codex?: WorkerCodex;
+  } = {},
 ): Promise<ObservedRun> {
   // Two independent guards stop a worker from delegating recursively:
   //
@@ -100,14 +125,16 @@ async function runWorkerThread(
   }
   workerEnv[WORKER_MARKER_ENV] = "1";
 
-  const codex = new Codex({
-    env: workerEnv,
-    config: {
-      mcp_servers: { [ORCHESTRATOR_SERVER_NAME]: { enabled: false } },
-    },
-  });
+  const codex: WorkerCodex =
+    options.codex ??
+    new Codex({
+      env: workerEnv,
+      config: {
+        mcp_servers: { [ORCHESTRATOR_SERVER_NAME]: { enabled: false } },
+      },
+    });
 
-  const thread = codex.startThread({
+  const threadOptions: ThreadOptions = {
     model: LUNA_MODEL,
     modelReasoningEffort: asSdkEffort(input.effort),
     sandboxMode: WORKER_SANDBOX,
@@ -116,7 +143,10 @@ async function runWorkerThread(
     networkAccessEnabled: WORKER_NETWORK_ACCESS,
     // The worker runs unattended: there is no human to answer a prompt.
     approvalPolicy: "never",
-  });
+  };
+  const thread = options.resumeThreadId
+    ? codex.resumeThread(options.resumeThreadId, threadOptions)
+    : codex.startThread(threadOptions);
 
   const observed: ObservedRun = {
     threadId: null,
@@ -148,7 +178,7 @@ async function runWorkerThread(
 
   try {
     const { events } = await thread.runStreamed(
-      buildWorkerPrompt(input, workingDirectory),
+      buildWorkerPrompt(input, workingDirectory, options.continuationInstruction),
       { outputSchema: workerOutputJsonSchema, signal: controller.signal },
     );
 
@@ -467,6 +497,7 @@ export function buildDelegationResult({
     workerClaimedStatus,
     trustworthy: discrepancies.length === 0 && errors.length === 0,
     workerThreadId: observed.threadId,
+    continuationReference: null,
     model: LUNA_MODEL,
     effort: input.effort,
     effortReason: input.effortReason,
@@ -496,6 +527,12 @@ export interface ExecuteOptions {
   workingDirectory: string;
   signal?: AbortSignal;
   onVerificationStart?: (commandCount: number) => void;
+  /** Existing Codex thread to resume; omitted for a fresh delegation. */
+  resumeThreadId?: string;
+  /** Explicit follow-up instruction for a resumed thread. */
+  continuationInstruction?: string;
+  /** Test seam for the worker lifecycle; production creates the SDK client. */
+  codex?: WorkerCodex;
 }
 
 /** Optional lifecycle hooks used by the single-task MCP surface. */
@@ -518,7 +555,17 @@ export async function executeTask(
   const timeoutSeconds = input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS;
   const { workingDirectory, signal } = options;
 
-  const observed = await runWorkerThread(input, workingDirectory, timeoutSeconds, signal);
+  const observed = await runWorkerThread(
+    input,
+    workingDirectory,
+    timeoutSeconds,
+    signal,
+    {
+      resumeThreadId: options.resumeThreadId,
+      continuationInstruction: options.continuationInstruction,
+      codex: options.codex,
+    },
+  );
 
   // Re-run the checks ourselves, after the worker has exited, so a PASS is
   // falsifiable rather than self-certified. Skipped when the run was cancelled:
@@ -561,6 +608,35 @@ export async function delegateToLuna(
       workingDirectory,
       signal,
       onVerificationStart: hooks?.onVerificationStart,
+    });
+  } finally {
+    release();
+  }
+}
+
+/** Resume one eligible worker thread for exactly one explicit follow-up turn. */
+export async function continueToLuna(
+  input: DelegateTaskInput,
+  options: {
+    workingDirectory: string;
+    threadId: string;
+    instruction: string;
+    signal?: AbortSignal;
+    hooks?: DelegateHooks;
+    codex?: WorkerCodex;
+  },
+): Promise<DelegateTaskOutput> {
+  const workingDirectory = resolveWorkspace(options.workingDirectory);
+  const release = await workerSlots.acquire();
+  try {
+    options.hooks?.onStarted?.(workingDirectory);
+    return await executeTask(input, {
+      workingDirectory,
+      signal: options.signal,
+      onVerificationStart: options.hooks?.onVerificationStart,
+      resumeThreadId: options.threadId,
+      continuationInstruction: options.instruction,
+      codex: options.codex,
     });
   } finally {
     release();

@@ -89,6 +89,19 @@ async function main(): Promise<void> {
   const batchTool = tools.find((t) => t.name === "delegate_tasks");
   check("delegate_tasks is advertised", () => assert.ok(batchTool));
 
+  const continueTool = tools.find((t) => t.name === "continue_task");
+  check("continue_task is advertised", () => assert.ok(continueTool));
+  check("continue_task accepts only an opaque reference and instruction", () => {
+    const properties = (continueTool?.inputSchema?.properties ?? {}) as Record<
+      string,
+      unknown
+    >;
+    assert.deepEqual(Object.keys(properties).sort(), [
+      "continuationReference",
+      "instruction",
+    ]);
+  });
+
   check("delegate_tasks accepts a mode and a task list", () => {
     const properties = (batchTool?.inputSchema?.properties ?? {}) as Record<
       string,
@@ -175,6 +188,7 @@ async function main(): Promise<void> {
       "verdict",
       "workerClaimedStatus",
       "workerThreadId",
+      "continuationReference",
       "filesChanged",
       "verification",
       "verificationMode",

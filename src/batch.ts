@@ -10,6 +10,7 @@ import type {
   BatchOutput,
   BatchTaskResult,
   DelegateTaskInput,
+  DelegateTaskOutput,
   TaskState,
 } from "./contract.js";
 import { activityFailureReason, emitEvent, type EventEmitter } from "./events.js";
@@ -86,6 +87,15 @@ export async function runBatch(
      * deterministic callers inject an isolated sink without mutating process env.
      */
     eventEmitter?: EventEmitter;
+    /**
+     * Register an eligible result after integration and cleanup have chosen the
+     * directory in which its resumed thread can safely continue.
+     */
+    continuationRegistrar?: (
+      input: DelegateTaskInput,
+      result: DelegateTaskOutput,
+      workingDirectory: string,
+    ) => string | null;
   },
 ): Promise<BatchOutput> {
   const batchId = makeBatchId();
@@ -212,6 +222,7 @@ export async function runBatch(
   }
 
   let integrated = false;
+  let integrationIncomplete = false;
   let integrationSummary: string;
 
   if (mode === "sequential") {
@@ -231,18 +242,32 @@ export async function runBatch(
     integrationSummary = "No worker produced changes, so there was nothing to integrate.";
   } else {
     const applied = await integrateWorktrees(batchId, completed, workspace, emit);
-    integrated = true;
+    integrationIncomplete = applied.warnings.length > 0;
+    integrated = !integrationIncomplete;
     warnings.push(...applied.warnings);
-    integrationSummary =
-      `Copied ${applied.fileCount} file(s) from ${completed.length} worker(s) into ` +
-      `the workspace. No two workers touched the same file.`;
+    integrationSummary = integrationIncomplete
+      ? `Integration was incomplete after copying ${applied.fileCount} file(s). ` +
+        `Worker worktrees were kept for inspection and continuation.`
+      : `Copied ${applied.fileCount} file(s) from ${completed.length} worker(s) into ` +
+        `the workspace. No two workers touched the same file.`;
   }
 
   // --- Cleanup -------------------------------------------------------------
   for (const task of running) {
-    if (!task.worktree) continue;
+    if (!task.worktree) {
+      if (task.result.result && options.continuationRegistrar) {
+        task.result.result.continuationReference = options.continuationRegistrar(
+          task.input,
+          task.result.result,
+          workspace,
+        );
+      }
+      continue;
+    }
     const keepForConflict =
-      integrationConflicts.length > 0 || options.integrate === false;
+      integrationConflicts.length > 0 ||
+      options.integrate === false ||
+      integrationIncomplete;
     const reason =
       task.state === "cancelled"
         ? "cancelled"
@@ -260,6 +285,27 @@ export async function runBatch(
     task.result.worktreePath = cleanup.removed ? null : (cleanup.keptAt ?? null);
     if (cleanup.error) {
       task.result.warnings.push(`Worktree cleanup incomplete: ${cleanup.error}`);
+    }
+
+    if (task.result.result && options.continuationRegistrar) {
+      // Integrated parallel work can safely continue in the requested
+      // workspace after its temporary worktree is removed. When integration
+      // was disabled or conflicted, the kept worktree is the only honest
+      // continuation directory and must remain available until expiry.
+      const continuationInWorkspace =
+        mode === "sequential" || (task.state === "completed" && !keepForConflict);
+      const continuationDirectory = continuationInWorkspace
+        ? workspace
+        : cleanup.removed
+          ? null
+          : (cleanup.keptAt ?? null);
+      if (continuationDirectory) {
+        task.result.result.continuationReference = options.continuationRegistrar(
+          task.input,
+          task.result.result,
+          continuationDirectory,
+        );
+      }
     }
   }
 

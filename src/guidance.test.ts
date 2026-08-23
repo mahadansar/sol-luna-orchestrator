@@ -11,6 +11,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   BATCH_TOOL_DESCRIPTION,
+  CONTINUE_TOOL_DESCRIPTION,
   SERVER_INSTRUCTIONS,
   TOOL_DESCRIPTION,
 } from "./server.js";
@@ -152,6 +153,22 @@ test("single-task guidance is cost-aware without treating pricing as permanent",
 test("single and batch tool guidance require silent waiting", () => {
   assertSilentWaitGuidance(TOOL_DESCRIPTION);
   assertSilentWaitGuidance(BATCH_TOOL_DESCRIPTION);
+  assertSilentWaitGuidance(CONTINUE_TOOL_DESCRIPTION);
+});
+
+test("continuation guidance keeps the contract fixed and bounded", () => {
+  assert.match(CONTINUE_TOOL_DESCRIPTION, /same Luna Codex thread/i);
+  assert.match(CONTINUE_TOOL_DESCRIPTION, /opaque/i);
+  assert.match(CONTINUE_TOOL_DESCRIPTION, /single-use/i);
+  assert.match(
+    CONTINUE_TOOL_DESCRIPTION,
+    /original objective, allowedFiles, forbiddenFiles, changeIntent/i,
+  );
+  assert.match(CONTINUE_TOOL_DESCRIPTION, /no[\s\S]*widening fields/i);
+  assert.match(
+    CONTINUE_TOOL_DESCRIPTION,
+    /verification[\s\S]*scope checks[\s\S]*evidence reconciliation/i,
+  );
 });
 
 test("delegation remains broader than implementation", () => {
