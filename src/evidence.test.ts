@@ -23,6 +23,7 @@ import { truncate } from "./verify.js";
 
 function mockResult(): DelegateTaskOutput {
   return {
+    changeIntent: "optional",
     verdict: "PASS",
     workerClaimedStatus: "PASS",
     trustworthy: true,
@@ -77,6 +78,20 @@ test("evidence packet - normal PASS", () => {
   const result = mockResult();
   const text = renderResult(result);
   assert.ok(text.includes("VERDICT: PASS"));
+  assert.ok(text.includes("CHANGE INTENT: optional"));
+});
+
+test("evidence packet - forbidden intent and contract violation are rendered", () => {
+  const result = mockResult();
+  result.changeIntent = "forbidden";
+  result.verdict = "FAILED";
+  result.trustworthy = false;
+  result.discrepancies.push(
+    "Change intent contract violated: intent is forbidden, but the runtime observed edits in src/file.ts.",
+  );
+  const text = renderResult(result);
+  assert.ok(text.includes("CHANGE INTENT: forbidden"));
+  assert.ok(text.includes("Change intent contract violated"));
 });
 
 test("evidence packet - worker FAIL", () => {
@@ -177,6 +192,7 @@ test("evidence packet - parallel/batch per-task result", () => {
   };
   const text = renderBatch(batch);
   assert.ok(text.includes("worker summary (claim)"));
+  assert.ok(text.includes("change intent: optional"));
 });
 
 test("evidence packet - integration conflict", () => {

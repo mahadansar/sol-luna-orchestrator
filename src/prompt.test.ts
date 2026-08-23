@@ -8,6 +8,34 @@ import * as assert from "node:assert/strict";
 import { buildWorkerPrompt } from "./prompt.js";
 import { delegateTaskInputSchema } from "./contract.js";
 
+test("prompt states explicit change intent independently of scope and category", () => {
+  const input = delegateTaskInputSchema.parse({
+    objective: "Review the upload client for a retry regression.",
+    effortReason: "The bounded investigation needs careful evidence.",
+    acceptanceCriteria: ["The retry behavior is assessed."],
+    taskCategory: "implementation",
+    allowedFiles: [],
+    changeIntent: "forbidden",
+  });
+  const prompt = buildWorkerPrompt(input, "/fake/dir");
+  assert.match(prompt, /## Change intent[\s\S]*Selected intent: \*\*forbidden\*\*/i);
+  assert.match(prompt, /read-only: do not create, modify, or delete files/i);
+  assert.match(prompt, /separate from file scope and task category/i);
+  assert.match(prompt, /Task type: implementation/i);
+});
+
+test("prompt defaults omitted change intent to required", () => {
+  const input = delegateTaskInputSchema.parse({
+    objective: "Implement the upload client retry correction now.",
+    effortReason: "The localized fix needs straightforward judgment.",
+    acceptanceCriteria: ["The retry behavior is corrected."],
+  });
+  assert.match(
+    buildWorkerPrompt(input, "/fake/dir"),
+    /Selected intent: \*\*required\*\*/i,
+  );
+});
+
 test("prompt context capsule - absent", () => {
   const input = delegateTaskInputSchema.parse({
     objective: "Just an objective 1234567890",
@@ -290,6 +318,7 @@ await runBatch([task], {
   mode: "sequential",
   workingDirectory: ${JSON.stringify(work)},
   executor: async (input) => ({
+    changeIntent: input.changeIntent,
     verdict: "PASS",
     workerClaimedStatus: "PASS",
     trustworthy: true,

@@ -18,6 +18,10 @@ export const TASK_CATEGORIES = [
 ] as const;
 export type TaskCategory = (typeof TASK_CATEGORIES)[number];
 
+/** Explicit expectation for whether a delegated task may modify files. */
+export const CHANGE_INTENTS = ["forbidden", "optional", "required"] as const;
+export type ChangeIntent = (typeof CHANGE_INTENTS)[number];
+
 /** Terminal states a worker may report, and that the orchestrator may assign. */
 export const STATUSES = ["PASS", "BLOCKED", "FAILED"] as const;
 export type Status = (typeof STATUSES)[number];
@@ -66,6 +70,17 @@ export const delegateTaskInputShape = {
     .enum(TASK_CATEGORIES)
     .optional()
     .describe("Kind of executable work; it does not determine effort."),
+
+  changeIntent: z
+    .enum(CHANGE_INTENTS)
+    .default("required")
+    .describe(
+      "Explicit file-change expectation: forbidden means read-only and any " +
+        "runtime-observed edit violates the contract; optional means edits may " +
+        "be useful but are not required; required means the task is expected to " +
+        "produce an edit. Omitted defaults to required for compatibility. This " +
+        "is independent of allowedFiles and taskCategory.",
+    ),
 
   allowedFiles: z
     .array(z.string())
@@ -270,6 +285,9 @@ export interface WorkerReport {
 
 /** Shape of what `delegate_task` returns to the parent orchestrator. */
 export const delegateTaskOutputShape = {
+  changeIntent: z
+    .enum(CHANGE_INTENTS)
+    .describe("Selected change intent carried into the review evidence."),
   verdict: z
     .enum(STATUSES)
     .describe(
@@ -400,6 +418,7 @@ const batchTaskShape = z.object({
   effort: delegateTaskInputShape.effort,
   effortReason: delegateTaskInputShape.effortReason,
   taskCategory: delegateTaskInputShape.taskCategory,
+  changeIntent: delegateTaskInputShape.changeIntent,
   allowedFiles: delegateTaskInputShape.allowedFiles,
   forbiddenFiles: delegateTaskInputShape.forbiddenFiles,
   acceptanceCriteria: delegateTaskInputShape.acceptanceCriteria,

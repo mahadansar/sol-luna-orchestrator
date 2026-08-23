@@ -32,6 +32,17 @@ Working directory: ${workingDirectory}`,
     sections.push(`Task type: ${input.taskCategory}`);
   }
 
+  const changeIntent = input.changeIntent ?? "required";
+  sections.push(
+    `## Change intent\n\nSelected intent: **${changeIntent}**. ` +
+      (changeIntent === "forbidden"
+        ? "This is read-only: do not create, modify, or delete files."
+        : changeIntent === "optional"
+          ? "File changes are allowed when useful, but the task may pass without edits."
+          : "The task is expected to produce a file change; report BLOCKED or FAILED if that cannot be done.") +
+      " This expectation is separate from file scope and task category.",
+  );
+
   if (input.context) {
     sections.push(`## Context from the supervisor\n\n${input.context}`);
   }

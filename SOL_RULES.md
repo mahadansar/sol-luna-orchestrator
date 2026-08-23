@@ -87,6 +87,13 @@ retries`) for the local activity view. It is not required, is bounded, and is
   prevented. An empty `allowedFiles` means no in-workspace allowlist; it does not
   declare read-only intent, and workspace confinement still applies. Forbidden
   patterns take precedence.
+- Declare each task's `changeIntent` as `forbidden`, `optional`, or `required`.
+  Omitted intent defaults to `required` for compatibility. It is a separate
+  expectation from `allowedFiles` and `taskCategory`: zero observed or claimed
+  changes are clean for forbidden and optional tasks, while required tasks retain
+  the existing zero-change discrepancy. A runtime-observed edit under forbidden
+  intent is a contract violation and fails the orchestrator verdict; a claimed-only
+  edit remains governed by claimed-versus-observed reconciliation.
 - Supply targeted deterministic `verificationCommands` that prove the bounded
   task. The orchestrator independently re-runs them under the configured policy;
   normally leave broader final validation to the parent. Use a full suite when

@@ -4,6 +4,7 @@ import test from "node:test";
 import { DEFAULT_EFFORT, EFFORTS } from "./config.js";
 import {
   delegateTaskInputSchema,
+  delegateTasksInputSchema,
   workerOutputJsonSchema,
   type DelegateTaskInput,
   type WorkerReport,
@@ -28,6 +29,7 @@ test("task contract defaults effort to high and requires a justification", () =>
   assert.equal(parsed.effort, "high");
   assert.deepEqual(parsed.allowedFiles, []);
   assert.deepEqual(parsed.verificationCommands, []);
+  assert.equal(parsed.changeIntent, "required");
 
   assert.throws(() =>
     delegateTaskInputSchema.parse({
@@ -46,6 +48,50 @@ test("task contract rejects efforts outside the ladder", () => {
       effortReason: "Trivial work.",
       acceptanceCriteria: ["It retries."],
     }),
+  );
+});
+
+test("change intent is explicit on single and batch task contracts", () => {
+  for (const changeIntent of ["forbidden", "optional", "required"] as const) {
+    const single = delegateTaskInputSchema.parse({
+      objective: "Inspect the upload client for a retry regression.",
+      effortReason: "The bounded investigation needs careful evidence.",
+      acceptanceCriteria: ["The retry behavior is assessed."],
+      changeIntent,
+      allowedFiles: [],
+      taskCategory: "implementation",
+    });
+    assert.equal(single.changeIntent, changeIntent);
+  }
+
+  const batch = delegateTasksInputSchema.parse({
+    mode: "sequential",
+    tasks: [
+      {
+        objective: "Inspect the upload client for a retry regression.",
+        effortReason: "The bounded investigation needs careful evidence.",
+        acceptanceCriteria: ["The retry behavior is assessed."],
+        changeIntent: "forbidden",
+      },
+      {
+        objective: "Implement the upload client retry correction now.",
+        effortReason: "The localized fix needs straightforward judgment.",
+        acceptanceCriteria: ["The retry behavior is corrected."],
+        changeIntent: "required",
+      },
+    ],
+  });
+  assert.equal(batch.tasks[0]?.changeIntent, "forbidden");
+  assert.equal(batch.tasks[1]?.changeIntent, "required");
+  assert.equal(
+    delegateTaskInputSchema.parse({
+      objective: "Inspect the upload client for a retry regression.",
+      effortReason: "The bounded investigation needs careful evidence.",
+      acceptanceCriteria: ["The retry behavior is assessed."],
+      allowedFiles: [],
+      taskCategory: "investigation",
+    }).changeIntent,
+    "required",
   );
 });
 
@@ -326,6 +372,71 @@ test("a PASS with no recorded edits is treated as suspicious", () => {
   );
   assert.ok(result.discrepancies.some((d) => /no file changes were recorded/.test(d)));
   assert.equal(result.trustworthy, false);
+});
+
+test("read-only investigation with an empty allowlist accepts a zero-change PASS", () => {
+  const result = analyze(
+    makeReport({ filesChanged: [] }),
+    [passingRun],
+    { changeIntent: "forbidden", allowedFiles: [], taskCategory: "investigation" },
+    { filesChanged: [] },
+  );
+  assert.equal(result.changeIntent, "forbidden");
+  assert.equal(result.verdict, "PASS");
+  assert.equal(result.trustworthy, true);
+  assert.deepEqual(result.discrepancies, []);
+});
+
+test("optional intent permits a zero-change PASS", () => {
+  const result = analyze(
+    makeReport({ filesChanged: [] }),
+    [passingRun],
+    { changeIntent: "optional" },
+    { filesChanged: [] },
+  );
+  assert.equal(result.changeIntent, "optional");
+  assert.equal(result.verdict, "PASS");
+  assert.equal(result.trustworthy, true);
+  assert.deepEqual(result.discrepancies, []);
+});
+
+test("optional intent also permits an observed and claimed edit", () => {
+  const result = analyze(makeReport(), [passingRun], { changeIntent: "optional" });
+  assert.equal(result.changeIntent, "optional");
+  assert.equal(result.verdict, "PASS");
+  assert.equal(result.trustworthy, true);
+  assert.deepEqual(result.discrepancies, []);
+});
+
+test("forbidden intent fails on observed edits but preserves claim reconciliation", () => {
+  const observedEdit = analyze(
+    makeReport({ filesChanged: [] }),
+    [passingRun],
+    { changeIntent: "forbidden" },
+    { filesChanged: [{ path: "src/pagination.ts", kind: "update" }] },
+  );
+  assert.equal(observedEdit.verdict, "FAILED");
+  assert.ok(
+    observedEdit.discrepancies.some((d) => /change intent contract violated/i.test(d)),
+  );
+  assert.ok(
+    observedEdit.reviewChecklist.some((item) =>
+      /forbidden change intent was violated/i.test(item),
+    ),
+  );
+
+  const claimedOnly = analyze(
+    makeReport(),
+    [passingRun],
+    { changeIntent: "forbidden" },
+    { filesChanged: [] },
+  );
+  assert.equal(claimedOnly.verdict, "PASS");
+  assert.equal(claimedOnly.trustworthy, false);
+  assert.ok(claimedOnly.discrepancies.some((d) => /never recorded/i.test(d)));
+  assert.ok(
+    !claimedOnly.discrepancies.some((d) => /change intent contract violated/i.test(d)),
+  );
 });
 
 test("an honest BLOCKED is preserved rather than escalated", () => {

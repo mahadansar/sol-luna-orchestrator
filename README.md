@@ -216,6 +216,11 @@ conflicts. A worker `PASS` is where review starts, not where it ends.
 - Workspace escapes are caught after resolving symlinks. `allowedFiles: ["**"]`
   still cannot authorize a write outside the workspace. An empty `allowedFiles`
   array means no in-workspace allowlist; it does not declare read-only intent.
+- Each task declares `changeIntent` as `forbidden` (read-only), `optional`, or
+  `required`; omission defaults to `required` for compatibility. Intent is
+  independent of `allowedFiles` and `taskCategory`. Forbidden runtime-observed
+  edits are contract violations, while claimed-only edits retain the normal
+  claimed-versus-observed discrepancy handling.
 - Workers cannot delegate, both by child configuration and by an environment
   marker that makes a worker-side server register zero tools.
 - By default, parallel batches are refused when declared scopes overlap, and
