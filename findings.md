@@ -1,0 +1,616 @@
+# v0.9.0 Confidence Hardening Findings
+
+## Baseline metadata
+
+- Tag: `v0.9.0`
+- Baseline commit: `b38acae33ca8d52740af6e9a0fdc2cf376f08075`
+- Campaign start time: `2026-08-23T21:06:10.3729002Z` (`2026-08-24` Asia/Karachi)
+- OS/platform: Windows `10.0.26200`, `win32 x64`
+- Node version: `v26.7.0`
+- npm version: `11.19.0`
+- Codex version: `codex-cli 0.149.0`
+- Published MCP version/path: globally installed published `0.9.0`; active MCP server resolves to `C:\Users\mahad\AppData\Local\nvm\v26.7.0\node_modules\sol-luna-orchestrator\dist\server.js`, distinct from this checkout's `dist/server.js`
+- Supervisor model: GPT-5 family (the exact deployment identifier is not exposed to this session)
+- Package version: `0.9.0` in both `package.json` and the lockfile root
+- Initial Git state: clean; branch `validation/v0.9.0-hardening`; `HEAD` exactly equals the `v0.9.0` tag commit
+
+## Campaign goals
+
+- Refresh deterministic coverage and acceptance evidence for every material v0.9.0 feature.
+- Run published-runtime live/model-backed and end-to-end acceptance where meaningful and safe.
+- Deepen failure-path, integration, adversarial, lifecycle, privacy, CLI, package, and protocol evidence without changing production runtime source.
+- Promote ledger states only where the existing definitions and fresh evidence support them, while recording exact blockers and unresolved gaps.
+
+## [2026-08-23T21:21:40.0629267Z] Test-addition batch used self-conflicting file scopes
+
+Capability: Parallel batches; Explicit Change Intent; scope reconciliation
+Attempted maturity transition: Wave 1 deterministic coverage expansion
+Severity: low
+Type: fixture problem
+Status: resolved by supervisor review and independent rerun pending
+
+### Observation
+
+The supervisor gave each of three parallel test-addition tasks one exact allowed test file but also supplied `src/**/*.ts` in `forbiddenFiles`. The broad forbidden glob matched each allowed file and correctly won precedence. All workers therefore received final `FAILED` verdicts for scope violations even though the three disjoint test edits were integrated under the batch's documented partial-outcome behavior.
+
+### Expected
+
+The contracts should have forbidden only production paths without overlapping the exact allowed test files. Given the submitted contracts, fail-closed scope verdicts were expected.
+
+### Evidence
+
+- Published MCP batch: `bmt6b4fdea08f`, parallel, `maxParallel: 3`, integration enabled.
+- Tasks: `t1` (`src/selftest.ts`, Luna medium), `t2` (`src/parallel.test.ts`, Luna high), `t3` (`src/cli.test.ts`, Luna medium).
+- Orchestrator verdicts: 0/3 PASS; every task `FAILED` because its observed allowed test file also matched `forbiddenFiles`.
+- Authoritative verification: two commands executed and passed for each task (`npm run build` and its targeted compiled test suite).
+- Integration: three disjoint files copied, no integration conflicts.
+- Worker claims: t1 and t3 claimed `PASS`; t2 claimed `FAILED` with `workerClaimedFailureCauses: ["environment-tooling"]` after its PowerShell-side exact `npm run build` attempt was blocked, despite authoritative verification succeeding.
+- Git state after integration: only `src/selftest.ts`, `src/parallel.test.ts`, `src/cli.test.ts`, and the campaign's `findings.md` are changed/untracked; protected runtime files remain identical to `v0.9.0`.
+
+### Impact
+
+The batch cannot count as successful live change-intent or scope acceptance. The integrated test edits may still be retained if independent diff review and integrated validation pass.
+
+### Confidence impact
+
+Informational for product behavior; the fail-closed result supports scope precedence, while the malformed supervisor contract blocks treating this batch as a successful delegated-edit scenario.
+
+### Classification
+
+fixture-problem
+
+### Reproduction
+
+Submit a task whose exact `allowedFiles` entry also matches a broader `forbiddenFiles` glob, require an edit, and enable batch integration. Observe the scope-violation verdict and partial-outcome integration evidence.
+
+### Recommended follow-up
+
+Use non-overlapping contract globs for later delegated edits. Independently inspect and rerun the integrated test-only changes before retention.
+
+### Resolution update — 2026-08-23T21:26:48.4923072Z
+
+The supervisor inspected all three diffs. They contain meaningful assertions and no production or manifest edits. After formatting and a real rebuild, the affected compiled suites passed **196/196** and Prettier reported all three files clean. The test-only changes are retained; the malformed live batch remains recorded as failed and is not counted as a successful delegated-edit acceptance.
+
+## [2026-08-23T21:26:48.4923072Z] Remaining coverage is concentrated in orchestration wiring and environment-specific paths
+
+Capability: Whole-system deterministic coverage
+Attempted maturity transition: Coverage established/refreshed across all v0.9.0 features
+Severity: low
+Type: test gap
+Status: open; classified for later waves
+
+### Observation
+
+Native Node coverage improved from **90.56% lines / 84.24% branches / 87.93% functions** to **90.70% / 84.70% / 88.24%** after five focused test blocks. Important pure and lifecycle modules are broadly covered, but `server.js` callback wiring remains at 50.39% lines, the live benchmark runner at 59.35%, CLI init/uninstall presentation branches at 62.96%/77.78%, and several error/platform branches remain uncovered.
+
+### Expected
+
+Every important uncovered path should either receive meaningful execution or an explicit classification. Literal 100% is not required and should not be pursued through artificial assertions.
+
+### Evidence
+
+- Initial command: `node --experimental-test-coverage --test` with all 11 compiled package suites; 453 tests, 452 pass, 0 fail, 1 skipped.
+- Final Wave 1 command: same full-suite coverage command; 458 tests, 457 pass, 0 fail, 1 skipped.
+- Retained additions: cost missing-input/rate-basis/charge-unit/non-finite cases; Codex subprocess ENOENT and timeout; legacy path-only lease protection and expiry.
+- The single skip is the real on-disk symlink escape case because this Windows host does not permit symlink creation. Synthetic and other realpath/symlink boundary cases passed.
+- High-value later-wave targets: MCP handler/protocol callbacks, CLI packaged lifecycle, activity during live failure/concurrency, integration copy-error paths, and published-runtime continuation/repair/contradiction flows.
+- Platform-specific remainder: POSIX process-group termination and POSIX directory-symlink behavior cannot execute on this Windows host.
+- Live benchmark-runner branches require model quota and are not suitable for artificial deterministic line coverage.
+
+### Impact
+
+Coverage is broad enough for fresh deterministic PASS across the feature matrix, but uncovered handler, environment, and platform seams prevent a blanket Battle-tested claim.
+
+### Confidence impact
+
+Blocks Battle-tested promotion where the remaining seam is material; informational for already broad pure-function and deterministic state-machine evidence.
+
+### Classification
+
+test-gap
+
+### Reproduction
+
+Run the full compiled suite under Node's native `--experimental-test-coverage` flag and inspect the per-module uncovered-line report.
+
+### Recommended follow-up
+
+Use protocol/package smokes and safe disposable live fixtures for handler wiring; retain deterministic fault-injection tests only where they exercise a real boundary. Cover POSIX-only branches in Linux CI rather than emulating them on Windows.
+
+## [2026-08-23T21:26:48.4923072Z] Wave 1 checkpoint
+
+- Completed wave: Wave 1 — whole-codebase coverage and deterministic maturity.
+- Elapsed time: approximately 21 minutes.
+- Features advanced: Sequential batches, Parallel batches, Worktree isolation/integration, Bounded concurrency, and Activity/observability/privacy moved from PARTIAL or NOT TESTED deterministic evidence to fresh PASS. Every other material feature received a fresh full-suite deterministic execution at released v0.9.0.
+- Features blocked: no deterministic PASS is blocked. The real-symlink test is skipped by Windows privilege; POSIX-only branches remain platform-specific. Higher live/confidence levels remain blocked pending Waves 2–5 evidence.
+- Defects found: no confirmed product defect in Wave 1.
+- Test-only additions: `src/selftest.ts`, `src/parallel.test.ts`, and `src/cli.test.ts`; all pass after integrated rebuild.
+- Production immutability: protected runtime, manifests, release configuration, and defaults match `v0.9.0`; only allowed tests, `docs/FEATURE_ACCEPTANCE.md`, and `findings.md` differ.
+- Git state: three modified test files, modified acceptance ledger, and untracked `findings.md`; no unrelated tracked changes.
+- Next planned wave: fresh published-runtime model/E2E baseline in disposable repositories, prioritizing change intent, context/compact evidence, continuation, repair, contradiction handling, concurrency, routing/effort, and isolated CLI lifecycle.
+
+## [2026-08-23T21:39:00Z] Controlled repair attempt used a marker outside the worker workspace
+
+Capability: Bounded Repair; failure-cause classification
+Attempted maturity transition: live NOT TESTED to live PASS
+Severity: low
+Type: fixture problem
+Status: first attempt failed; materially different in-workspace fixture planned
+
+### Observation
+
+The first controlled verifier stored its one-shot counter in a sibling campaign state directory. The Luna worker could read the verifier but could not write outside its workspace, so it reported `FAILED` with `workerClaimedFailureCauses` `verification` and `environment-tooling`. The authoritative verifier, running with operator permissions, then passed its first invocation. Automatic repair was correctly not admitted.
+
+### Expected
+
+The controlled verifier must be writable in both the worker sandbox and authoritative environment while remaining inside the disposable fixture. A repair candidate must present only a clear local authoritative verification failure, without environment/tooling evidence.
+
+### Evidence
+
+- Worker model/effort: `gpt-5.6-luna`, medium.
+- Worker thread: `01a0308f-7114-7203-8b99-17e53ce68411`.
+- Worker claim: `FAILED`; causes `["verification", "environment-tooling"]`.
+- Worker verification: exit 1, `EPERM` opening the sibling `repair-count` marker.
+- Authoritative verification: exit 0.
+- Runtime repair result: not attempted; classification `contract-or-requirement`; reason states the worker did not claim completion.
+- Git state: only the intended `repair.txt` was created in the disposable repository.
+
+### Impact
+
+This attempt does not provide live bounded-repair PASS evidence. It does provide useful fail-closed evidence that environment/tooling plus verification claims are not treated as a local repair candidate or promoted contradiction.
+
+### Confidence impact
+
+Blocks live PASS for Bounded Repair until a valid controlled fixture succeeds.
+
+### Classification
+
+fixture-problem
+
+### Reproduction
+
+Configure an automatic-repair task whose verification script attempts to write a state marker outside the worker workspace. Observe worker EPERM, mixed failure causes, authoritative/worker disagreement, and repair non-admission.
+
+### Recommended follow-up
+
+Move the state marker into the disposable repository, explicitly include it in allowed scope, establish a clean tracked baseline, and retry once.
+
+### Attempt 2 update — 2026-08-23T21:40Z
+
+The in-workspace counter produced the intended authoritative exit 1, but the worker claimed the verifier-mutated tracked counter while Codex runtime observation did not record command side effects. That claimed-only edit discrepancy correctly caused `contract-or-requirement` non-admission. This attempt remains failed evidence.
+
+### Resolution update — 2026-08-23T21:42:51Z
+
+The third materially different fixture ignored its internal counter so only the product artifact participated in Git evidence. Initial authoritative verification failed with `controlled second-invocation failure`; repair classification was `local-verification`; exactly one same-thread repair ran; final authoritative verification passed; activity recorded repair turn 1; and Git showed only `repair.txt`. Bounded Repair advanced to live DEEP PASS / Strong, while both conservative non-admissions remain part of the evidence.
+
+## [2026-08-23T21:37:00Z] Windows checkout conversion invalidated one retained peer verifier
+
+Capability: Worktree isolation; parallel partial outcomes; fixture portability
+Attempted maturity transition: retained-worktree continuation live refresh
+Severity: low
+Type: fixture problem
+Status: isolated; successful continuation task unaffected
+
+### Observation
+
+In an integration-disabled two-task parallel batch, the staged continuation task passed, while the read-only peer failed its verifier because a committed LF blob was checked out as CRLF in the isolated Windows worktree. The verifier compared exact LF bytes.
+
+### Expected
+
+The peer verifier should either assert semantic content or the fixture repository should pin LF checkout behavior with attributes. The runtime correctly preserved the failed worker and worktree instead of hiding the failure.
+
+### Evidence
+
+- Batch: `bmt6btzm69ef8`, parallel, integration disabled, 1/2 passed.
+- Passing task: required staged continuation, authoritative verifier PASS, retained worktree `bmt6btzm69ef8-t1`.
+- Failed task: forbidden/read-only, worker and authoritative verifier exit 1, sole worker cause `verification`; reported CRLF versus LF mismatch.
+- The passing task continued on the same thread, added phase 2, passed authoritative verification, reconciled both files, rejected replay, and released its lease.
+
+### Impact
+
+The failed peer is not product evidence against worktree isolation. It demonstrates truthful partial outcomes and identifies a cross-platform fixture design pitfall.
+
+### Confidence impact
+
+Informational for runtime; blocks counting the peer as a successful read-only retained-worktree task.
+
+### Classification
+
+fixture-problem
+
+### Reproduction
+
+Commit an LF-only text fixture in a repository subject to Windows checkout conversion, then run an exact-LF verifier inside a new Git worktree.
+
+### Recommended follow-up
+
+Use `.gitattributes` or semantic verification in future cross-platform disposable fixtures.
+
+## [2026-08-23T21:57:31.6713935Z] Fresh-parent routing did not naturally produce a batch or two worker effort levels
+
+Capability: Natural discovery; adaptive routing; adaptive effort
+Attempted maturity transition: live PASS/Strong and adaptive-effort closure
+Severity: low
+Type: evidence gap
+Status: three-attempt limit reached
+
+### Observation
+
+Three genuinely fresh ephemeral Codex parents loaded the configured discovery hint without being told to use Sol-Luna. Two consulted guidance and deliberately chose zero workers for small tasks. The third discovered the MCP, selected one high-effort Luna worker for a broad lifecycle audit, and independently reviewed it. None naturally selected sequential or parallel batching, and only one naturally selected worker effort level was observed.
+
+### Expected
+
+Natural discovery should distinguish informed solo routing from non-discovery, and adaptive effort requires materially different tasks producing more than one natural worker-effort choice. A batch should not be forced when the parent judges it inappropriate.
+
+### Evidence
+
+- Fresh parent `01a03096-bdf1-7563-a0f1-8629c2afe3fa`: consulted configured guidance, explicit solo choice, read-only LF audit, no edits.
+- Fresh parent `01a03098-53aa-7722-a96f-a9a2220cea6a`: consulted guidance, explicit solo choice because coordination dominated three trivial outputs, exact verifier PASS.
+- Fresh parent `01a03099-6fd6-7980-bd48-5741c6453335`: unprompted `delegate_task`, Luna high, worker thread `01a03099-cffc-7e61-8c06-4b205461b62d`, read-only PASS/trustworthy, parent independently narrowed findings and rechecked Git.
+- Direct published-runtime medium tasks do not count as natural effort selection because the supervisor explicitly configured them.
+
+### Impact
+
+Zero-worker routing and Natural Discovery now have current representative live PASS. Adaptive effort remains PARTIAL/Basic, and natural batch routing remains an evidence gap.
+
+### Confidence impact
+
+Blocks adaptive-effort live PASS/Strong and prevents claiming a complete natural zero/single/sequential/parallel routing ladder.
+
+### Classification
+
+evidence-gap
+
+### Reproduction
+
+Run the three fresh-parent prompts recorded in the campaign transcript with `codex exec --approve-for-me --ephemeral --json` and no explicit Sol-Luna instruction.
+
+### Recommended follow-up
+
+On a future campaign, use a genuinely substantial multi-stream implementation fixture where batching is valuable, and a second delegated task shape whose natural effort plausibly differs from high. Do not force either choice.
+
+## [2026-08-23T21:57:31.6713935Z] Current telemetry is private, but one legacy event contains an objective field
+
+Capability: Activity, observability, and privacy; legacy compatibility
+Attempted maturity transition: privacy/adversarial refresh
+Severity: informational
+Type: privacy-security
+Status: current v0.9.0 telemetry passed; historical limitation retained
+
+### Observation
+
+All 176 activity events appended since campaign start contained zero `objective` keys, zero `context` keys, and zero private-sentinel matches. The existing activity file contains one older `task.queued` event from 2026-08-22 with an objective field; it predates this campaign and does not contain the sentinel.
+
+### Expected
+
+Current v0.9.0 activity telemetry excludes objectives and contexts. Legacy records remain readable and may reflect older schemas; diagnostic logs are explicitly more sensitive and are not claimed sanitized.
+
+### Evidence
+
+- Sentinel: `V090_PRIVATE_SENTINEL_6F3A91`; campaign activity matches: 0.
+- Campaign events since `2026-08-23T21:06:10.372Z`: 176; objective keys: 0; context keys: 0.
+- Historical record: line 2, `task.queued`, timestamp `2026-08-22T09:13:10.118Z`, objective string length 614, sentinel absent.
+
+### Impact
+
+Current privacy behavior is supported. Operators retaining old event files should understand that pre-hardening records can contain fields no longer emitted.
+
+### Confidence impact
+
+Informational only for current v0.9.0; compatibility/privacy limitation for historical telemetry retention.
+
+### Classification
+
+privacy-security
+
+### Reproduction
+
+Parse the configured activity JSONL without printing values, count objective/context keys before and after campaign start, and search for the unique sentinel.
+
+### Recommended follow-up
+
+Document or provide optional migration guidance for operators who want to rotate historical pre-hardening activity files; do not imply diagnostic logs are sanitized.
+
+## [2026-08-23T21:57:31.6713935Z] Wave 2 checkpoint
+
+- Completed wave: Wave 2 — fresh published-runtime live/model/E2E baseline.
+- Elapsed time: approximately 51 minutes total.
+- Features advanced: Zero-worker routing, Bounded concurrency, Context Capsule v2, Compact Evidence Packets, CLI lifecycle, Natural Discovery, Explicit Change Intent, Bounded Repair, and failure-cause contradiction handling advanced to current live PASS/DEEP PASS and/or Strong as recorded in the ledger. Independent verification gained live failure/contradiction depth.
+- Features blocked: Adaptive effort remains PARTIAL/Basic after three natural-routing attempts; no fresh parent naturally selected a batch. P1.0 live is N/A because the shipped surface is pure post-hoc primitives with no production pricing consumer. Live cancellation and timeout injection remain unavailable without unsafe/artificial control.
+- Defects found: no confirmed product defect in Wave 2.
+- Integration/E2E evidence: successful single, sequential dependency, peak-3 parallel integration, retained continuation/replay refusal, one-turn repair, exact contradiction promotion, same-file conflict retention, and isolated CLI lifecycle.
+- Production immutability: protected runtime, manifests, release configuration, and defaults still match `v0.9.0`; versions remain `0.9.0`.
+- Git state: only allowed test files, `docs/FEATURE_ACCEPTANCE.md`, `findings.md`, and disposable untracked fixtures differ.
+- User/global safety: real Codex config and AGENTS SHA-256 hashes remained `DA64CF6F...9E4D2` and `28868FEF...9DA8`; no global configuration write occurred.
+- Next planned wave: deterministic/package/protocol/CLI smokes, cross-feature adversarial review, remaining high-value safe failure paths, then final validation and cleanup.
+
+## [2026-08-23T22:01:38.9338965Z] Three cross-module failure handoffs remain without end-to-end fault injection
+
+Capability: Parallel integration, cancellation/timeout cleanup, retained continuation finalization
+Attempted maturity transition: Strong to Battle-tested
+Severity: medium
+Type: test gap
+Status: open; Battle-tested promotion withheld
+
+### Observation
+
+Independent fresh-parent plus high-effort Luna audit found that component tests are broad, but three important cross-module failure handoffs lack one end-to-end deterministic case: partial main-workspace mutation after one integration copy/delete fails; an already-running parallel worker cancellation/timeout flowing through evidence scan and cleanup alongside a sibling; and a consumed retained continuation failing/cancelling after lease refresh.
+
+### Expected
+
+Battle-tested confidence should include the actual handoff across worker, batch, worktree, continuation/server finalization, events, and cleanup—not only separately tested components or pre-start cancellation.
+
+### Evidence
+
+- Fresh parent: `01a03099-6fd6-7980-bd48-5741c6453335`.
+- Natural delegated audit: `gpt-5.6-luna` high, thread `01a03099-cffc-7e61-8c06-4b205461b62d`, PASS/trustworthy/read-only.
+- Partial integration seam: `integrateWorktrees` per-file error handling in `src/batch.ts`; tests cover clean integration, pre-copy conflict, failed-result successful copy, and evidence-scan failure, but not a copy failure after another file already applied.
+- In-flight cancellation seam: worker abort classification plus `runParallel` evidence/cleanup; tests cover pre-abort parallel and injected sequential cancellation, not an already-running parallel worker with a completing sibling.
+- Continuation seam: `ContinuationStore.consume`, persistent lease refresh, `continueToLuna`, and server `finally`; tests cover these components and successful live continuation, not failed/cancelled consumed continuation cleanup together.
+- Current production source remained clean before and after the audit.
+
+### Impact
+
+No defect is confirmed, but these are exactly the abnormal lifecycle paths where leaked worktrees/leases or partially mutated integration state would matter. They block Battle-tested claims for parallel integration, worktree lifecycle, cancellation/timeout, and continuation.
+
+### Confidence impact
+
+Blocks Battle-tested.
+
+### Classification
+
+test-gap
+
+### Reproduction
+
+Trace the cited lifecycle functions and compare against current `src/parallel.test.ts`, `src/selftest.ts`, and `src/evidence.test.ts` cases; the missing combined transitions are not invoked.
+
+### Recommended follow-up
+
+Add narrow deterministic dependency-injection seams or existing-seam fixtures for per-file integration copy failure, actual in-flight parallel abort, and continuation-handler failure finalization. Do not alter v0.9.0 runtime in this campaign.
+
+## [2026-08-23T22:01:38.9338965Z] Waves 3–4 checkpoint
+
+- Completed waves: Wave 3 deep failure/integration evidence and Wave 4 Battle-tested assessment.
+- Elapsed time: approximately 55 minutes total.
+- Features deepened: Independent verification, Compact Evidence Packets, Explicit Change Intent, Bounded Repair, Worktree isolation/integration, Worker Continuation, reconciliation, activity/privacy, and parallel conflict behavior gained varied live failure or adversarial evidence.
+- Battle-tested promotions: none. Existing broad Strong features remain Strong because the three cross-module abnormal handoffs above and platform limits remain material.
+- Features blocked: Adaptive effort remains Basic/PARTIAL; natural batch routing absent; POSIX-only paths and real symlink creation unavailable on this host; live cancellation/timeout lacks safe control; partial-copy and consumed-continuation failure need deterministic seams.
+- Defects found: no confirmed product defect through Waves 3–4.
+- Production immutability: protected runtime and release files remain identical to `v0.9.0`.
+- Next planned wave: package/protocol/CLI smoke, fixture validation, whole-system reconciliation, cleanup, and final release-style validation.
+
+## [2026-08-23T22:01:38.9338965Z] Wave 5 checkpoint
+
+- Completed wave: Wave 5 — cross-feature and whole-system adversarial/E2E acceptance.
+- Elapsed time: approximately 55 minutes total.
+- Cross-feature evidence: change intent + authoritative verification + Git reconciliation; sequential dependency; peak-3 parallel + leases + integration; retained continuation + replay; repair + verification; contradiction + Git state; compact packets + conflict/failure; Context Capsule + privacy; activity during concurrency/repair/contradiction; isolated repeated CLI lifecycle; fresh parent discovery -> routing -> Luna -> parent review.
+- Published MCP protocol: all handshake, identity/version, instructions, three tools, schema, result-contract, invalid-input, and isolated-log checks passed against the exact global v0.9.0 server path.
+- Packaged/local CLI smoke: all 11 lifecycle groups passed against isolated Codex homes with no model calls.
+- Benchmark fixture validation: all nine fixtures failed initially and passed reference solutions; mutation detection passed.
+- Features blocked: packaged artifact dry-run/content inspection and final release-style commands remain for final validation; live local `smoke:parallel`/`smoke:isolation` were not used as released-runtime evidence because they execute this checkout's local build and spend model quota.
+- Defects found: no confirmed product defect in Wave 5.
+- Production immutability and Git state: protected source remains identical to `v0.9.0`; only legitimate campaign docs/tests plus disposable fixtures are present.
+- Next planned step: safely remove exact campaign fixtures/worktrees, rerun full final validation and coverage, reconcile summary, and commit if green.
+
+## [2026-08-23T22:03:54.9530234Z] Manual Git worktree removal damaged shared dependency junction contents
+
+Capability: Campaign lifecycle cleanup; Windows worktree dependency linking
+Attempted maturity transition: final cleanup and validation
+Severity: medium
+Type: lifecycle-cleanup
+Status: dependency restoration in progress; tracked source unaffected
+
+### Observation
+
+After exact retained worktrees were removed with `git worktree remove --force`, final `npm run build` failed because `node_modules/.bin/tsc` was no longer available even though the `node_modules` directory still existed. The retained worktrees can contain dependency junctions to the source checkout; manual Git removal bypassed the runtime's unlink-before-recursive-cleanup protection and likely damaged the shared dependency target.
+
+### Expected
+
+Orchestrator-managed cleanup unlinks junctions before recursive worktree removal. Campaign cleanup should use that lifecycle rather than raw Git removal whenever retained worktrees contain shared dependencies.
+
+### Evidence
+
+- Command: final `npm run build`.
+- Exit: 1; `'tsc' is not recognized as an internal or external command`.
+- `node_modules` directory still exists, but required installed binaries are missing.
+- Protected runtime/manifests/release files remain byte-identical to `v0.9.0`; Git status contains only expected campaign docs/tests/findings.
+- The exact disposable fixture root and campaign lease directories were removed successfully; no global/user config path was targeted.
+
+### Impact
+
+Final validation was interrupted and dependencies must be restored with `npm ci`. No tracked product file or user/global configuration was changed.
+
+### Confidence impact
+
+Informational for released orchestrator cleanup (whose unlink-first behavior is tested); blocks final green validation until dependencies are restored.
+
+### Classification
+
+lifecycle-cleanup
+
+### Reproduction
+
+On Windows, retain an orchestrator worktree with linked `node_modules`, then remove it directly with `git worktree remove --force` instead of `cleanupWorktree`; inspect the shared dependency target.
+
+### Recommended follow-up
+
+Campaign tooling should expose/use an orchestrator-owned retained-worktree cleanup command or explicitly unlink shared dependency junctions before raw Git worktree removal. Avoid manual Git removal for such worktrees.
+
+### Resolution update — 2026-08-23T22:14:13.7748357Z
+
+`npm ci` restored the checkout dependencies without changing either manifest.
+The final coverage run, `npm run verify`, format check, benchmark validation,
+build, protocol smoke, and package dry run all passed. The incident did not
+affect tracked runtime source, the released package baseline, or user/global
+configuration.
+
+# Campaign Summary
+
+- Baseline: tag `v0.9.0` and campaign-start commit
+  `b38acae33ca8d52740af6e9a0fdc2cf376f08075`.
+- Campaign start: `2026-08-23T21:06:10.3729002Z`.
+- Campaign end: `2026-08-23T22:14:13.7748357Z`.
+- Elapsed duration: approximately 1 hour 8 minutes.
+- Supervisor: GPT-5 family; the exact deployment identifier was not exposed.
+- Workers: real `gpt-5.6-luna` at medium and high effort. No xhigh or max worker
+  was needed. Published-runtime live tasks, batches, continuation, repair, and
+  contradiction evidence used the globally installed v0.9.0 MCP.
+
+## Initial and final acceptance matrix
+
+Coverage was **PASS** for every row at both endpoints. The table shows
+deterministic / live / confidence transitions; dated ledger entries use the
+campaign's 2026-08-24 local date.
+
+| Capability                                 | Initial                      | Final                     |
+| ------------------------------------------ | ---------------------------- | ------------------------- |
+| Zero-worker/adaptive delegation            | PASS / STALE / Stale         | PASS / PASS / Strong      |
+| Single delegation                          | PASS / PASS / Strong         | PASS / PASS / Strong      |
+| Sequential batches                         | PARTIAL / PASS / Strong      | PASS / PASS / Strong      |
+| Parallel batches                           | PARTIAL / DEEP PASS / Strong | PASS / DEEP PASS / Strong |
+| Worktree isolation/integration             | PARTIAL / DEEP PASS / Strong | PASS / DEEP PASS / Strong |
+| Bounded concurrency                        | NOT TESTED / PARTIAL / Basic | PASS / PASS / Strong      |
+| Adaptive effort                            | PASS / STALE / Stale         | PASS / PARTIAL / Basic    |
+| Independent verification                   | PASS / PASS / Strong         | PASS / DEEP PASS / Strong |
+| Claimed-vs-observed reconciliation         | PASS / DEEP PASS / Strong    | PASS / DEEP PASS / Strong |
+| Context Capsule v2                         | PASS / PARTIAL / Basic       | PASS / PASS / Strong      |
+| Compact Evidence Packets                   | PASS / PARTIAL / Basic       | PASS / DEEP PASS / Strong |
+| CLI init/doctor/status/uninstall           | PASS / NOT TESTED / Strong   | PASS / PASS / Strong      |
+| Activity/observability/privacy             | PARTIAL / DEEP PASS / Strong | PASS / DEEP PASS / Strong |
+| Natural discovery                          | PASS / PARTIAL / Basic       | PASS / PASS / Strong      |
+| Explicit Change Intent                     | PASS / PARTIAL / Basic       | PASS / DEEP PASS / Strong |
+| Worker Continuation                        | PASS / DEEP PASS / Strong    | PASS / DEEP PASS / Strong |
+| Bounded Repair                             | PASS / NOT TESTED / Basic    | PASS / DEEP PASS / Strong |
+| P1.0 parent/pricing foundation             | PASS / NOT TESTED / Basic    | PASS / N/A / Strong       |
+| `failureCauses` and contradiction handling | PASS / NOT TESTED / Basic    | PASS / PASS / Strong      |
+
+No feature was promoted to **Battle-tested**. The existing definition requires
+varied failure evidence across the remaining cross-module abnormal lifecycle
+handoffs; raw test count and repeated happy paths were not treated as sufficient.
+
+## Coverage and deterministic validation
+
+- Initial native coverage: 453 tests, 452 pass, 0 fail, 1 skipped; 90.56% lines,
+  84.24% branches, and 87.93% functions.
+- Final native coverage: 458 tests, 457 pass, 0 fail, 1 skipped; 90.70% lines,
+  84.70% branches, and 88.24% functions.
+- The retained additions are five focused test blocks in `src/selftest.ts`,
+  `src/parallel.test.ts`, and `src/cli.test.ts`, covering cost-calculation
+  boundaries, legacy path-only lease lifecycle, and Codex subprocess ENOENT and
+  timeout behavior.
+- The only skip is real on-disk symlink creation, unavailable under this Windows
+  host's permissions. Synthetic/canonical path cases passed. POSIX process-group
+  and directory-symlink paths remain platform-specific.
+- Final `npm run verify`: typecheck PASS; 458 tests with 457 pass, 0 fail, 1
+  skip; deterministic MCP protocol smoke PASS.
+
+## Live, integration, E2E, and adversarial evidence
+
+- Published MCP identity was established as global v0.9.0 at
+  `C:\Users\mahad\AppData\Local\nvm\v26.7.0\node_modules\sol-luna-orchestrator\dist\server.js`,
+  not this checkout's local server.
+- Live flows covered required single delegation, a four-task true sequential
+  dependency plus optional/forbidden zero-change behavior, peak-3 parallel
+  integration, retained continuation and replay refusal, one-turn bounded
+  repair, exact verification contradiction promotion, same-file integration
+  conflict, Context Capsule-dependent output, compact evidence, activity during
+  concurrency/repair/contradiction, and privacy-sentinel exclusion.
+- Fresh-parent runs: three materially different ephemeral parents without an
+  explicit Sol-Luna instruction. Two consulted guidance and deliberately chose
+  zero workers; one naturally selected a high-effort Luna worker and then
+  independently reviewed it.
+- Isolated CLI lifecycle covered dry-run, repeated init/uninstall, doctor,
+  status, activity human/JSON, owned-setting reconciliation, backup, hint
+  ownership, and unrelated-byte preservation. Packaged CLI smoke passed all 11
+  lifecycle groups.
+- Published MCP protocol smoke passed handshake, identity/version,
+  instructions, all three tools, schemas/result contracts, invalid input, and
+  isolated diagnostic logging.
+- Benchmark validation passed all nine discriminating fixtures and mutation
+  detection. `npm pack --dry-run` produced the expected v0.9.0 package manifest:
+  76 files, tests/selftests/smokes excluded from the tarball.
+
+## Promotions and blockers
+
+- Promoted to Strong: Zero-worker/adaptive delegation, Bounded concurrency,
+  Context Capsule v2, Compact Evidence Packets, Natural discovery, Explicit
+  Change Intent, Bounded Repair, P1.0 parent/pricing foundation, and
+  `failureCauses` contradiction handling. CLI lifecycle also gained fresh live
+  PASS while retaining Strong; other existing Strong rows were refreshed or
+  deepened.
+- Promoted to live DEEP PASS: Parallel batches, Worktree
+  isolation/integration, Independent verification, Claimed-vs-observed
+  reconciliation, Compact Evidence Packets, Activity/observability/privacy,
+  Explicit Change Intent, Worker Continuation, and Bounded Repair.
+- Battle-tested promotions: none.
+- Adaptive effort failed to advance beyond PARTIAL/Basic after three materially
+  different fresh-parent attempts: only one naturally selected worker effort
+  (high) was observed. Caller-selected medium runs do not prove adaptation.
+- A complete natural zero/single/sequential/parallel routing ladder was not
+  established after the same three fresh-parent attempts because no parent
+  naturally selected a batch.
+- Battle-tested confidence remains blocked by one audit of three unexercised
+  cross-module handoffs: partial integration after an earlier file applies,
+  actual in-flight parallel cancellation/timeout with a sibling, and failure or
+  cancellation after consuming a retained continuation and refreshing its
+  lease. No unsafe or artificial live injection was attempted.
+- POSIX-only branches and the real-symlink case received one platform-capability
+  assessment and remain blocked by the Windows environment.
+- P1.0 live evidence is N/A, not blocked: the shipped surface is pure post-hoc
+  identity/cost primitives without a production rate-card, account, routing, or
+  billing consumer.
+
+## Findings and recommendations
+
+No confirmed product defects were discovered during this campaign.
+
+- Test gaps: the three abnormal cross-module handoffs above, POSIX-only paths,
+  and the unavailable Windows real-symlink case.
+- Evidence gaps: natural batching and a second naturally selected effort level.
+- Model behavior: fresh parents made defensible zero/single choices but did not
+  naturally choose a batch within the attempt limit.
+- Fixture problems: one self-conflicting delegated test contract, two controlled
+  repair-marker designs, and one CRLF-sensitive verifier. Each remains recorded
+  even though later evidence resolved or bypassed it.
+- Flaky tests: none confirmed.
+- Environment/tooling: Windows prevented real symlink creation and POSIX branch
+  execution. Raw Git removal of retained worktrees damaged shared dependency
+  junction contents; `npm ci` restored them and all final validation passed.
+- Privacy/security: all 176 campaign-appended events excluded objective/context
+  fields and the private sentinel. One pre-campaign legacy event contains an
+  objective field; diagnostic logs are not claimed sanitized.
+- Host-safety limitations: no real/global lifecycle mutation, account billing
+  access, remote mutation, destructive host operation, or unsafe live
+  cancellation injection was attempted.
+- Compatibility: no live POSIX lifecycle matrix was available; Windows CRLF
+  conversion must be considered when designing exact-byte fixtures.
+- Recommended next-day work: add narrow deterministic seams/tests for the three
+  abnormal lifecycle handoffs; run the suite on Linux for POSIX and real-symlink
+  evidence; design a substantial fresh-parent batch fixture and a second natural
+  effort shape; and provide an orchestrator-owned retained-worktree cleanup
+  command or documented unlink-first procedure.
+
+Nothing found should block P1.1. A v0.9.1 patch release is not indicated by the
+current evidence; revisit that judgment if the missing abnormal-lifecycle tests
+expose a product defect.
+
+## Final validation and safety result
+
+- `npm run verify`: PASS.
+- `npm run format:check`: PASS.
+- `npm run bench:validate`: PASS.
+- `git diff --check`: PASS.
+- `npm run build`: PASS.
+- `npm pack --dry-run`: PASS; version 0.9.0 and expected package contents.
+- Package and lockfile root versions remain 0.9.0.
+- Protected production/runtime source, manifests, release configuration, and
+  defaults remain identical to `v0.9.0`.
+- The fixture root is absent; Git lists only the primary worktree; no campaign
+  lease content remains; no fixture file is tracked.
+- Real Codex config and AGENTS hashes remain unchanged at
+  `DA64CF6FB0F8AF5E61871F6AA3024159341A3F33E65C3F3026122A546BB9E4D2` and
+  `28868FEFAE7EB76F97F06A6A5D3BB9D00C68DD3E11EDABDC09778C1E84DF9DA8`.
+- No push, tag, publish, global configuration write, or remote mutation occurred.
+
+Final recommendation: **PROCEED TO P1.1**. This campaign does not begin P1.1.

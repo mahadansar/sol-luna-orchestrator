@@ -1,7 +1,9 @@
 # Feature acceptance ledger
 
-Living verification ledger for the material behavior at runtime baseline
-`6d610b37c277f7c6875627572306585b8f219a45` (2026-08-23). `CHANGELOG.md` is the
+Living verification ledger for the material behavior released as `v0.9.0` at
+`b38acae33ca8d52740af6e9a0fdc2cf376f08075` (2026-08-23). The executable
+runtime is unchanged from `6d610b37c277f7c6875627572306585b8f219a45`; the
+intervening commits are documentation and release preparation. `CHANGELOG.md` is the
 source of truth for released behavior; `ROADMAP.md` is used here only to label
 unreleased implementation and future work. This ledger does not promote roadmap
 items to shipped features. The live/model-backed acceptance procedure and run
@@ -43,14 +45,77 @@ freshness is **STALE**. Dates are UTC dates from committed records or git
 history; an execution date is **unknown** when the repository does not establish
 it.
 
-Targeted deterministic evidence executed for this ledger on 2026-08-24: the
-build passed, and the schema, evidence, prompt, guidance, CLI, and CLI-activity
-configuration suites reported **247 pass, 0 fail, 0 skipped**. Coverage outside
-those suites was not rerun for this documentation change. Exact command rows and
-totals from the preceding broader deterministic cycle are not committed, so the
-matrix relies only on execution detail established here or in repository records.
+Fresh deterministic evidence executed against the released v0.9.0 tree on
+2026-08-24. `npm ci` and `npm run build` passed. An initial native Node coverage
+run across every package test suite reported **453 tests: 452 pass, 0 fail, 1
+skipped**; the skip was the real on-disk symlink case because symlink creation was
+not permitted on this Windows host. It measured **90.56% lines, 84.24% branches,
+and 87.93% functions**. Five focused test blocks were then retained for cost
+foundation boundaries, Codex subprocess failure handling, and legacy path-only
+worktree leases. After rebuild, the affected suites reported **196 pass, 0
+fail**, and the final Wave 1 coverage run reported **458 tests: 457 pass, 0 fail,
+1 skipped**, measuring **90.70% lines, 84.70% branches, and 88.24% functions**.
+The full run covered schemas, prompts, guidance, evidence, CLI/config lifecycle,
+activity/reducer/watch compatibility, benchmark invariants, command and
+filesystem security, worker verdicts and repair, sequential/parallel scheduling,
+worktrees, leases, cancellation, integration, continuation, reconciliation,
+pricing primitives, and verification.
 
-### Final live acceptance campaign
+### v0.9.0 confidence-hardening campaign
+
+Wave 1 completed on 2026-08-24. Every material matrix row now has a fresh
+deterministic execution at the released baseline. The scheduler/worktree suite
+included configured concurrency peaks, queue progress, disjoint integration,
+same-file conflicts, partial failure, setup failure, cancellation, retained
+worktrees, lease acquisition/refresh/loss/release, continuation binding, and
+cleanup. The worker/evidence suites included strict report parsing, explicit
+change intent, claimed-versus-observed reconciliation, authoritative verification,
+verification-only contradiction promotion and negative controls, one-turn repair
+admission/exhaustion, compact/full projection, and P1.0 cost/identity boundaries.
+This deterministic refresh does not by itself refresh stale live routing or
+effort evidence, and it does not convert a repeated happy path into DEEP PASS.
+
+Wave 2 completed on 2026-08-24 against the globally installed published v0.9.0
+server at
+`C:\Users\mahad\AppData\Local\nvm\v26.7.0\node_modules\sol-luna-orchestrator\dist\server.js`.
+All mutation scenarios used committed disposable Git repositories under the
+campaign fixture root, not product source. Fresh live evidence included:
+
+- a compact single required edit with authoritative verification and matching
+  Git state;
+- a Context Capsule task whose exact JSON output depended on structured service,
+  numeric-port, and header invariants, with a private sentinel absent from human,
+  JSON, and campaign-appended activity telemetry;
+- a 4/4 sequential dependency batch: Task 2 consumed Task 1's file, followed by
+  legitimate optional and forbidden zero-change tasks;
+- a 3/3 parallel batch with distinct worktrees, observed activity peak 3 (the
+  configured ceiling), 3 attempted/3 applied integrations, and complete cleanup;
+- retained-worktree continuation on the same Luna thread, cumulative two-file
+  reconciliation, repeated authoritative verification, single-use replay
+  refusal, and lease release;
+- bounded repair after one controlled authoritative failure, classified
+  `local-verification`, with exactly one same-thread repair and final PASS;
+- the exact verification-contradiction promotion: worker `FAILED`, sole
+  `verification` cause and matching failed row, authoritative PASS, preserved
+  discrepancy/claim provenance, final PASS, and untrustworthy review semantics;
+- an isolated published-CLI lifecycle covering init, repeat init, dry runs,
+  doctor, status, activity/human/JSON, owned-setting reconciliation, backup,
+  uninstall, repeated uninstall, discovery-hint ownership, and unrelated byte
+  preservation; hashes proved the real Codex config/instructions were unchanged;
+- three genuinely fresh Codex parents without explicit Sol-Luna instructions:
+  two consulted guidance and deliberately chose zero workers for small tasks;
+  one discovered the server and naturally selected one high-effort Luna worker
+  for a broad read-only lifecycle audit, then independently reviewed its claims;
+- a controlled same-file parallel conflict where both isolated tasks passed,
+  nothing integrated, both worktrees were retained, and activity/integration
+  evidence named the conflict.
+
+The campaign did not naturally elicit a sequential or parallel batch from a
+fresh parent after three materially different discovery attempts. Adaptive
+effort has one natural high-effort selection but no second naturally selected
+worker effort level, so it remains PARTIAL rather than PASS.
+
+### Earlier pre-release live acceptance campaign
 
 The final real-model campaign ran on 2026-08-24 against runtime baseline
 `6d610b37c277f7c6875627572306585b8f219a45`. Its results are session-local but
@@ -109,25 +174,25 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
 
 | Capability                                              | State at runtime baseline            | Coverage | Deterministic (last run) | Live (last run)        | Confidence |
 | ------------------------------------------------------- | ------------------------------------ | -------- | ------------------------ | ---------------------- | ---------- |
-| Zero-worker/adaptive delegation                         | shipped; guidance refined 2026-08-23 | PASS     | PASS (2026-08-24)        | STALE (2026-08-14)     | Stale      |
+| Zero-worker/adaptive delegation                         | shipped; guidance refined 2026-08-23 | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong     |
 | Single delegation                                       | shipped                              | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong     |
-| Sequential batches                                      | shipped                              | PASS     | PARTIAL (2026-08-24)     | PASS (2026-08-24)      | Strong     |
-| Parallel batches                                        | shipped                              | PASS     | PARTIAL (2026-08-24)     | DEEP PASS (2026-08-24) | Strong     |
-| Worktree isolation/integration                          | shipped                              | PASS     | PARTIAL (2026-08-24)     | DEEP PASS (2026-08-24) | Strong     |
-| Bounded concurrency                                     | shipped                              | PASS     | NOT TESTED               | PARTIAL (2026-08-24)   | Basic      |
-| Adaptive effort                                         | shipped                              | PASS     | PASS (2026-08-24)        | STALE (2026-08-14)     | Stale      |
-| Independent verification                                | shipped                              | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong     |
+| Sequential batches                                      | shipped                              | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong     |
+| Parallel batches                                        | shipped                              | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong     |
+| Worktree isolation/integration                          | shipped                              | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong     |
+| Bounded concurrency                                     | shipped                              | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong     |
+| Adaptive effort                                         | shipped                              | PASS     | PASS (2026-08-24)        | PARTIAL (2026-08-24)   | Basic      |
+| Independent verification                                | shipped                              | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong     |
 | Claimed-vs-observed reconciliation                      | shipped                              | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong     |
-| Context Capsule v2                                      | shipped v0.7.0                       | PASS     | PASS (2026-08-24)        | PARTIAL (2026-08-24)   | Basic      |
-| Compact Evidence Packets                                | shipped v0.7.0                       | PASS     | PASS (2026-08-24)        | PARTIAL (2026-08-24)   | Basic      |
-| CLI init/doctor/status/uninstall                        | shipped                              | PASS     | PASS (2026-08-24)        | NOT TESTED             | Strong     |
-| Activity, observability, privacy                        | shipped                              | PASS     | PARTIAL (2026-08-24)     | DEEP PASS (2026-08-24) | Strong     |
-| Natural discovery                                       | shipped v0.8.0                       | PASS     | PASS (2026-08-24)        | PARTIAL (2026-08-22)   | Basic      |
-| Explicit Change Intent                                  | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | PARTIAL (2026-08-24)   | Basic      |
+| Context Capsule v2                                      | shipped v0.7.0                       | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong     |
+| Compact Evidence Packets                                | shipped v0.7.0                       | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong     |
+| CLI init/doctor/status/uninstall                        | shipped                              | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong     |
+| Activity, observability, privacy                        | shipped                              | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong     |
+| Natural discovery                                       | shipped v0.8.0                       | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong     |
+| Explicit Change Intent                                  | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong     |
 | Worker Continuation                                     | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong     |
-| Bounded Repair                                          | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | NOT TESTED             | Basic      |
-| P1.0 parent/pricing foundation                          | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | NOT TESTED             | Basic      |
-| `failureCauses` and verification contradiction handling | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | NOT TESTED             | Basic      |
+| Bounded Repair                                          | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong     |
+| P1.0 parent/pricing foundation                          | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | N/A                    | Strong     |
+| `failureCauses` and verification contradiction handling | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong     |
 
 ## System-wide invariants
 
@@ -173,12 +238,15 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   2026-08-14 scale records show 0/6 free-choice runs delegated and all 6
   passed, but later guidance, batch, evidence, repair, continuation, and
   pricing changes mean this is historical routing evidence, not a current
-  closure result. Fresh unprompted discovery is a separate acceptance surface.
+  closure result. Fresh live **PASS** now records two genuinely fresh parents
+  consulting guidance and deliberately choosing zero workers, plus a third
+  fresh parent choosing one worker for a broader task; this distinguishes
+  informed solo routing from MCP non-discovery.
 - **Dependencies/retest triggers:** parent guidance, tool descriptions, cost
   semantics, batch semantics, or routing changes; rerun a fresh-session
-  acceptance and the scale/adaptive benchmark. **Gap:** no current model-backed
-  zero-worker run is documented at this runtime baseline.
-- **Confidence:** **Stale**.
+  acceptance and the scale/adaptive benchmark. **Gap:** no natural batch choice
+  was observed within three materially different fresh-parent attempts.
+- **Confidence:** **Strong**.
 
 ### Single delegation
 
@@ -205,13 +273,15 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   `src/parallel.test.ts`, `src/activity.test.ts`, `src/guidance.test.ts`.
 - **Authority/history:** `README.md`, `SOL_RULES.md`, `CHANGELOG.md` v0.5.0;
   `a03a325` (2026-08-14), `908c977` and `da496df` (2026-08-23).
-- **Evidence:** Coverage **PASS**; targeted guidance/schema execution is
-  **PARTIAL** because the batch runtime suite was not rerun for this ledger.
-  Final live acceptance **PASS**: 2/2 tasks passed in the shared workspace; Task
-  2 consumed and modified Task 1's file, authoritative verification and Git
-  state matched, `integrationConflicts` was empty, `integrated` was true, and
-  `worktreePath` was null. Historical benchmark records remain **STALE** where
-  they predate lifecycle and reconciliation hardening.
+- **Evidence:** Coverage and deterministic execution **PASS** on 2026-08-24. The
+  full batch suite refreshed shared-workspace dependency, cancellation,
+  terminal-state, evidence, and event behavior.
+  Current live acceptance **PASS**: 4/4 tasks passed in the shared workspace;
+  Task 2 consumed Task 1's file, then optional and forbidden tasks legitimately
+  made no change. Authoritative verification and Git state matched,
+  `integrationConflicts` was empty, `integrated` was true, and `worktreePath`
+  was null. Historical benchmark records remain **STALE** where they predate
+  lifecycle and reconciliation hardening.
 - **Dependencies/retest triggers:** shared-workspace semantics, cancellation,
   worktree/batch lifecycle, evidence reconciliation, or integration rendering.
   **Gap:** raw final-campaign artifacts are not committed; cancellation and
@@ -224,17 +294,22 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   `src/parallel.test.ts`, `src/activity.test.ts`, `src/bench.test.ts`.
 - **Authority/history:** `README.md`, `SOL_RULES.md`, `CHANGELOG.md` v0.5.0;
   `a03a325`, `5e388c3` (2026-08-14), `da496df` (2026-08-23).
-- **Evidence:** Coverage **PASS**; targeted guidance/schema execution is
-  **PARTIAL** because the parallel scheduler suite was not rerun for this ledger.
-  Final live acceptance **DEEP PASS**: 2/2 isolated tasks passed at peak
-  concurrency 2 in distinct `.sol-luna` worktrees; two disjoint edits integrated
-  with 2 attempted, 2 applied, and 0 conflicts. Completed worktrees and leases
-  were cleaned according to policy. Older committed benchmark evidence remains
-  **STALE** where it predates lifecycle fixes.
+- **Evidence:** Coverage and deterministic execution **PASS** on 2026-08-24. The
+  full parallel suite refreshed setup serialization, bounded scheduling,
+  cancellation, worker/setup failures, overlap rejection/override, same-file
+  conflicts, partial integration, cleanup, and risk-review behavior.
+  Current live acceptance **DEEP PASS**: 3/3 isolated tasks passed at peak
+  concurrency 3 in distinct `.sol-luna` worktrees; three disjoint edits
+  integrated with 3 attempted, 3 applied, and 0 conflicts. A materially
+  different same-file batch then produced two isolated PASS results, correctly
+  withheld all integration, retained both worktrees, and exposed the conflict.
+  Completed non-retained worktrees and leases were cleaned according to policy.
+  Older committed benchmark evidence remains **STALE** where it predates
+  lifecycle fixes.
 - **Dependencies/retest triggers:** scheduler, worktree metadata, cancellation,
   overlap, integration, continuation, or verification changes. **Gap:** raw
-  final-campaign artifacts are not committed; conflict and cancellation paths
-  were not forced in this live run.
+  final-campaign artifacts are not committed; an actual in-flight cancellation
+  with a completing sibling was not forced in this live run.
 - **Confidence:** **Strong**.
 
 ### Worktree isolation and integration
@@ -243,12 +318,15 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   `src/batch.ts`; `src/parallel.test.ts`, `src/security.test.ts`.
 - **Authority/history:** `SECURITY.md`, `SOL_RULES.md`,
   `docs/TROUBLESHOOTING.md`; `5e388c3` and `da496df` (2026-08-14/23).
-- **Evidence:** Coverage **PASS**. Targeted execution is **PARTIAL**: evidence
-  reconciliation exercised retained-worktree behavior, but the full worktree,
-  cleanup, conflict, and integration suite was not rerun for this ledger.
-  Final live acceptance **DEEP PASS** covered distinct isolated worktrees, clean
-  disjoint integration, policy cleanup of completed worktrees and leases, and a
-  deliberately retained integration-disabled worktree used by continuation.
+- **Evidence:** Coverage and deterministic execution **PASS** on 2026-08-24. The
+  full worktree suite refreshed isolation, dependency linking, cleanup, stale
+  pruning, integration/conflicts, retained continuations, cross-process lease
+  ownership, acquisition/refresh failure, expiry, sweep, and legacy path-only
+  lease compatibility.
+  Current live acceptance **DEEP PASS** covered distinct isolated worktrees,
+  clean disjoint integration, same-file conflict retention, policy cleanup of
+  completed worktrees and leases, and a deliberately retained
+  integration-disabled worktree used by continuation.
   Older committed evidence remains **STALE** after lifecycle/lease changes.
 - **Dependencies/retest triggers:** git version/platform, junction/symlink
   handling, lease ownership, cleanup, or copy integration changes. **Gap:** raw
@@ -262,15 +340,17 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   `src/bench.test.ts`.
 - **Authority/history:** `docs/CONFIGURATION.md`, `SOL_RULES.md`; `a03a325`
   (2026-08-14) and `da496df` (2026-08-23).
-- **Evidence:** Coverage **PASS**; tests measure peaks and verify the configured
-  ceiling, but they were **NOT TESTED** in this ledger run. Historical scale
+- **Evidence:** Coverage and deterministic execution **PASS** on 2026-08-24;
+  tests measured peaks, queue progression, setup-before-run ordering, and the
+  configured ceiling. Historical scale
   evidence is **STALE**: committed records measured peak concurrency 4 and 6 in
   forced arms under the then-authorized setup, before latest lifecycle changes.
 - **Dependencies/retest triggers:** semaphore/config ceiling, scheduler,
   worktree setup, cancellation, or lease changes. **Live evidence:** final
-  acceptance observed peak concurrency 2, but did not saturate a larger configured
-  ceiling; this remains **PARTIAL**, not a scale result.
-- **Confidence:** **Basic**.
+  acceptance observed peak 3 at the published configured ceiling, with 3/3
+  isolated checks, queued progress, 3 attempted/3 applied integrations, and
+  complete worktree cleanup. Live state is **PASS**, not a broader scale claim.
+- **Confidence:** **Strong**. A second live configured limit remains untested.
 
 ### Adaptive worker effort
 
@@ -281,13 +361,13 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
 - **Evidence:** Coverage and targeted deterministic execution **PASS** on
   2026-08-24. Historical benchmark evidence is **STALE**: 2026-08-14 records show
   per-task medium/high/xhigh choices and no max selection, but later
-  prompt/schema/evidence changes affect freshness. No current live
-  effort-selection run is recorded.
+  prompt/schema/evidence changes affect freshness. A current fresh parent
+  naturally selected high effort for a broad cross-module audit.
 - **Dependencies/retest triggers:** effort ladder/default, worker prompt/schema,
   continuation/repair attempt rules, or model support changes. **Live gap:** the
-  final campaign used configured worker efforts but did not meaningfully test
-  adaptive selection.
-- **Confidence:** **Stale**.
+  other current medium-effort live tasks were caller-selected, so they do not
+  prove natural adaptation across two worker effort levels. Live is **PARTIAL**.
+- **Confidence:** **Basic**.
 
 ### Independent verification
 
@@ -298,13 +378,15 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   (2026-08-23).
 - **Evidence:** Coverage and targeted deterministic execution **PASS** on
   2026-08-24, including real exit-code capture, timeout, refusal, authority
-  ordering, and output handling. Final live acceptance **PASS**: single and
-  sequential tasks ran configured authoritative verification successfully, and
-  the final evidence agreed with Git state.
+  ordering, and output handling. Current live acceptance **DEEP PASS**: single,
+  sequential, parallel, continuation, and repaired tasks ran configured
+  authoritative verification; controlled repair exercised an initial
+  authoritative failure and successful rerun; and the exact contradiction case
+  preserved a failed worker row beside a passing authoritative row.
 - **Dependencies/retest triggers:** verification policy/parser, command runner,
   worker output schema, or authoritative evidence rules. **Gap:** raw
-  final-campaign verification rows are not committed; refusal and failure paths
-  were not forced live.
+  final-campaign verification rows are not committed; command refusal and
+  timeout paths remain deterministic-only.
 - **Confidence:** **Strong**.
 
 ### Claimed-versus-observed reconciliation
@@ -338,11 +420,14 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   2026-08-24; tests cover optional fields, omission of empty values, ordering,
   bounded rendering, malformed input, and activity privacy. The 2026-08-24
   session-local documentation run exercised Context Capsule v2, but its raw
-  artifacts are not committed.
+  artifacts are not committed. Current live **PASS** produced an exact verified
+  JSON artifact whose service, numeric port, and trace-header values materially
+  depended on the structured capsule; the private sentinel did not enter
+  campaign activity telemetry.
 - **Dependencies/retest triggers:** capsule schema/prompt rendering, prompt
   boundaries, worker contract, or telemetry changes. **Gap:** no model-backed
   context-efficiency measurement is committed.
-- **Confidence:** **Basic**.
+- **Confidence:** **Strong**.
 
 ### Compact Evidence Packets
 
@@ -354,10 +439,13 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   2026-08-24; tests verify compact/full defaults, removal of only passing output,
   retention of failures, discrepancies, scope evidence, and text parity. The
   2026-08-24 session-local documentation run exercised compact result packets,
-  but its raw artifacts are not committed.
+  but its raw artifacts are not committed. Current live **DEEP PASS** includes
+  compact verified success plus compact scope-failure and same-file-conflict
+  results that retained discrepancies, terminal evidence, conflicts, files,
+  and review guidance while removing only passing verbosity.
 - **Dependencies/retest triggers:** result schema/detail projection, verification
   capture, failure handling, or batch result rendering changes.
-- **Confidence:** **Basic**.
+- **Confidence:** **Strong**.
 
 ### CLI init/doctor/status/uninstall
 
@@ -370,10 +458,13 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
 - **Evidence:** Coverage and targeted deterministic execution **PASS** on
   2026-08-24. The CLI and CLI-activity configuration suites covered idempotent
   init, repair, doctor, status, uninstall, dry-run, migration, and discovery-hint
-  behavior. Live model acceptance is **NOT TESTED**.
+  behavior. Current published-CLI acceptance **PASS** used an isolated campaign
+  `CODEX_HOME` for init/repeat/dry-run/doctor/status/activity/reconciliation/
+  backup/uninstall, preserving unrelated TOML and user instruction bytes.
 - **Dependencies/retest triggers:** Codex config format, Node/Codex versions,
-  path resolution, discovery-hint ownership, or CLI writes. **Gap:** the real
-  `smoke:cli` program was not rerun for this ledger.
+  path resolution, discovery-hint ownership, or CLI writes. The packaged/local
+  `smoke:cli` program was also rerun and all 11 lifecycle groups passed in
+  isolated homes. **Gap:** no POSIX lifecycle run was available on this host.
 - **Confidence:** **Strong**.
 
 ### Activity, observability, and privacy
@@ -384,10 +475,10 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
 - **Authority/history:** `docs/OBSERVABILITY.md`, `SECURITY.md`, `CHANGELOG.md`
   v0.6.0/v0.8.0; `ce42a06` (2026-08-17), `deca34d` (2026-08-22), `da496df`
   (2026-08-23).
-- **Evidence:** Coverage **PASS** and targeted deterministic execution **PARTIAL**
-  on 2026-08-24: event-path configuration and prompt-to-activity privacy tests
-  passed, but the reducer, watch, redaction, and latest-batch suites were not
-  rerun for this ledger. Final live acceptance **DEEP PASS**: human and JSON
+- **Evidence:** Coverage and deterministic execution **PASS** on 2026-08-24:
+  event-path configuration, prompt-to-activity privacy, reducer, watch,
+  redaction, legacy compatibility, and latest-batch suites all passed. Final
+  live acceptance **DEEP PASS**: human and JSON
   activity views reflected actual sequential, parallel, integration,
   concurrency, and retained-worktree state. The private sentinel was absent from
   both views and appended telemetry, which contained neither objective nor
@@ -411,11 +502,15 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   2026-08-24 for installation, opt-out, override, and guidance behavior. The
   committed live record reports one 2026-08-22 fresh-session run found the
   orchestrator unprompted, but its transcript and diagnostic evidence were not
-  retained, so live acceptance is **PARTIAL**, not a reproducibility claim.
+  retained, so it was previously **PARTIAL**. Current live **PASS** records three
+  fresh-parent run and worker identifiers: two informed solo choices and one
+  unprompted high-effort Luna delegation with independent parent review. Raw
+  JSONL transcripts were session-local and are not committed.
 - **Dependencies/retest triggers:** global instruction-file selection, hint text,
   Codex startup/discovery behavior, parent guidance, or init/uninstall changes.
-  **Gap:** one observation on one platform and no retained artifacts.
-- **Confidence:** **Basic**.
+  **Gap:** no fresh parent naturally selected sequential or parallel batching
+  within the three-attempt limit.
+- **Confidence:** **Strong**.
 
 ### Explicit Change Intent
 
@@ -427,14 +522,13 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
 - **Evidence:** Coverage and targeted deterministic execution **PASS** on
   2026-08-24 for `required`, `optional`, and `forbidden`, independent of
   `allowedFiles` and task category, including zero-change and forbidden-edit
-  classification. Live acceptance is **PARTIAL**: the final single task made its
-  required edit and the retained-worktree continuation preserved the original
-  contract, but the campaign did not exercise `optional`, `forbidden`, or an
-  intent violation.
+  classification. Current live **DEEP PASS** covers required edits across single,
+  sequential, parallel, repair, contradiction, and continuation; legitimate
+  optional and forbidden zero-change tasks; and fail-closed scope precedence
+  from a malformed supervisor contract.
 - **Dependencies/retest triggers:** contract/schema, worker prompt, observed-file
-  reconciliation, repair admission, or release of P0.2a. **Gap:** only
-  `required` intent has current live evidence.
-- **Confidence:** **Basic**.
+  reconciliation, repair admission, or release of P0.2a.
+- **Confidence:** **Strong**.
 
 ### Worker Continuation
 
@@ -469,11 +563,14 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
 - **Evidence:** Coverage and targeted deterministic execution **PASS** on
   2026-08-24 for the conservative classifier, exact failure evidence,
   same-thread one-turn repair, immutable change intent, re-verification, and
-  exhaustion behavior. Live acceptance is **NOT TESTED**.
+  exhaustion behavior. Current live **DEEP PASS** includes two conservative
+  non-admissions with distinct environment/claims discrepancies and one clean
+  `local-verification` admission with exactly one same-thread repair and final
+  authoritative PASS.
 - **Dependencies/retest triggers:** verifier authority, failure classification,
   continuation, change intent, event lifecycle, or worker thread reuse changes.
-  **Gap:** no model-backed repair run.
-- **Confidence:** **Basic**.
+  **Gap:** recursive repair is proven only deterministically, by design.
+- **Confidence:** **Strong**.
 
 ### P1.0 parent/pricing foundation
 
@@ -481,16 +578,20 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   `src/selftest.ts`, `src/guidance.test.ts`, `src/activity.test.ts`.
 - **Authority/history:** `ROADMAP.md` P1.0 (foundation implemented for v0.9.0),
   `docs/CONFIGURATION.md`, `SOL_RULES.md`; `2d6e4c6` (2026-08-23).
-- **Evidence:** Coverage and targeted deterministic execution **PASS** on
-  2026-08-24 for explicit parent-identity provenance, distinct billing contexts,
-  promotional cards, complete post-hoc eligibility, stable unavailable reasons,
-  freshness/effective bounds, and no inferred prices. Live acceptance is **NOT
-  TESTED**.
+- **Evidence:** Coverage and deterministic execution **PASS** on 2026-08-24 for
+  explicit parent-identity provenance, distinct billing contexts, promotional
+  cards, all rate bases and charge-unit shapes, observed usage meters, complete
+  post-hoc eligibility, stable unavailable reasons (including missing input and
+  non-finite totals), freshness/effective bounds, and no inferred prices. Live
+  acceptance is **N/A** for these pure post-hoc primitives: real campaign usage
+  was observed, but no production rate-card lookup, billing-account consumer,
+  routing consumer, or cost-calculation API exists.
 - **Dependencies/retest triggers:** cost-input schema, rate-card applicability,
   usage projection, identity provenance, or any future routing/policy consumer.
   **Gap:** no retrieval, account lookup, prediction, routing, or measured saving
   is implemented; the foundation remains limited to post-hoc evidence.
-- **Confidence:** **Basic**.
+- **Confidence:** **Strong** for the shipped bounded foundation, not future P1.1
+  policy or pricing services.
 
 ### Worker `failureCauses` and authoritative-verification contradiction handling
 
@@ -503,12 +604,16 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   2026-08-24 for strict status-aligned causes, legacy normalization, malformed
   reports, complete one-to-one authoritative contradiction promotion only for a
   sole `verification` cause, terminal-evidence vetoes, and preserved worker claim
-  / untrustworthy result. Live acceptance is **NOT TESTED**.
+  / untrustworthy result. Current live **PASS** exercised the exact narrow
+  promotion with a required observed edit, worker `FAILED`, sole `verification`
+  cause, matching failed worker row, passing authoritative rerun, preserved
+  discrepancy/provenance, and activity `claimed: FAILED` versus `verdict: PASS`.
 - **Dependencies/retest triggers:** external worker schema, verification
   authority/equivalence, final Git evidence, repair classifier, or failure
   rendering changes. **Gap:** this is evidence for future P1.1 classification,
-  not the future classifier itself, and no model-backed run is retained.
-- **Confidence:** **Basic**.
+  not the future classifier itself; deterministic negative controls remain the
+  authority for malformed and veto cases.
+- **Confidence:** **Strong**.
 
 ## Closure campaign boundary
 

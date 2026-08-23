@@ -30,6 +30,7 @@ import {
 } from "./cli/toml-edit.js";
 import { parseInitOptions } from "./cli/init.js";
 import { ensureDiscoveryHint } from "./cli/discovery-hint.js";
+import { run as runCodex } from "./cli/codex.js";
 import { minimumNode } from "./cli/paths.js";
 import { inspectSettings, settingsSatisfied } from "./cli/settings.js";
 
@@ -377,6 +378,33 @@ test("the CLI never starts the MCP stdio server", async () => {
   const result = await runCli(["status"], { CODEX_HOME: emptyCodexHome() });
   assert.notEqual(result.code, null, "CLI hung — it may have started the server");
   assert.match(result.stdout, /Sol-Luna Orchestrator/);
+});
+
+test("codex command wrapper reports a missing executable on PATH", async () => {
+  const executable = "sol-luna-definitely-missing-executable-4f7c9b";
+  const result = await runCodex(executable, []);
+
+  assert.equal(result.code, null);
+  assert.match(result.stderr, new RegExp(`${executable} not found on PATH`));
+});
+
+test("codex command wrapper times out and resolves only once", async () => {
+  let resolutions = 0;
+  const resultPromise = runCodex(
+    process.execPath,
+    ["-e", "setTimeout(() => {}, 10_000)"],
+    100,
+  ).then((result) => {
+    resolutions += 1;
+    return result;
+  });
+
+  const result = await resultPromise;
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  assert.equal(result.code, null);
+  assert.match(result.stderr, /timed out after 100ms/);
+  assert.equal(resolutions, 1);
 });
 
 test("status reports an unconfigured install without throwing", async () => {

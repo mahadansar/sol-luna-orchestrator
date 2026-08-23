@@ -1653,6 +1653,136 @@ test("a promotional rate card applies without changing the underlying billing ki
   }
 });
 
+test("post-hoc cost preserves alternate rate bases and charge units", () => {
+  const parentIdentity = resolveParentIdentity([
+    {
+      model: "parent-model",
+      source: "request",
+      detail: "explicit request-scoped model field",
+      observedAt: COST_OCCURRED_AT,
+    },
+  ]);
+  const usage = {
+    uncachedInputTokens: 2,
+    cachedInputTokens: 3,
+    cacheWriteInputTokens: 0,
+    outputTokens: 4,
+  };
+  const base = {
+    usage,
+    parentIdentity,
+    billingContext: billingContext("api", "openai-api-standard"),
+    usageOccurredAt: COST_OCCURRED_AT,
+    calculatedAt: COST_CALCULATED_AT,
+  };
+
+  const perToken = calculatePostHocCost({
+    ...base,
+    rateCard: {
+      ...COST_RATE_CARD,
+      rateBasis: "per-token",
+      chargeUnit: { kind: "other", name: "internal-units" },
+      rates: {
+        uncachedInputTokens: 2,
+        cachedInputTokens: 3,
+        cacheWriteInputTokens: 5,
+        outputTokens: 7,
+      },
+    },
+  });
+  assert.equal(perToken.status, "calculated");
+  if (perToken.status === "calculated") {
+    assert.equal(perToken.amount, 41);
+    assert.equal(perToken.rateBasis, "per-token");
+    assert.deepEqual(perToken.chargeUnit, { kind: "other", name: "internal-units" });
+  }
+
+  const perThousand = calculatePostHocCost({
+    ...base,
+    rateCard: {
+      ...COST_RATE_CARD,
+      rateBasis: "per-1k-tokens",
+      chargeUnit: { kind: "credits", system: "codex-purchased-credits" },
+      rates: {
+        uncachedInputTokens: 2_000,
+        cachedInputTokens: 3_000,
+        cacheWriteInputTokens: 5_000,
+        outputTokens: 7_000,
+      },
+    },
+  });
+  assert.equal(perThousand.status, "calculated");
+  if (perThousand.status === "calculated") {
+    assert.equal(perThousand.amount, 41);
+    assert.equal(perThousand.rateBasis, "per-1k-tokens");
+    assert.deepEqual(perThousand.chargeUnit, {
+      kind: "credits",
+      system: "codex-purchased-credits",
+    });
+  }
+});
+
+test("post-hoc cost reports missing usage, rate cards, and non-finite results", () => {
+  const known = resolveParentIdentity([
+    {
+      model: "parent-model",
+      source: "supported-runtime",
+      detail: "supported parent identity field",
+      observedAt: COST_OCCURRED_AT,
+    },
+  ]);
+  const context = billingContext("api", "openai-api-standard");
+  const shared = {
+    parentIdentity: known,
+    billingContext: context,
+    usageOccurredAt: COST_OCCURRED_AT,
+    calculatedAt: COST_CALCULATED_AT,
+  };
+
+  assertCostUnavailable(
+    calculatePostHocCost({
+      ...shared,
+      usage: undefined as never,
+      rateCard: COST_RATE_CARD,
+    }),
+    "missing-usage",
+  );
+  assertCostUnavailable(
+    calculatePostHocCost({
+      ...shared,
+      usage: {
+        uncachedInputTokens: 1,
+        cachedInputTokens: 0,
+        cacheWriteInputTokens: 0,
+        outputTokens: 0,
+      },
+      rateCard: undefined as never,
+    }),
+    "missing-rate-card",
+  );
+  assertCostUnavailable(
+    calculatePostHocCost({
+      ...shared,
+      usage: {
+        uncachedInputTokens: Number.MAX_SAFE_INTEGER,
+        cachedInputTokens: 0,
+        cacheWriteInputTokens: 0,
+        outputTokens: 0,
+      },
+      rateCard: {
+        ...COST_RATE_CARD,
+        rates: {
+          uncachedInputTokens: Number.MAX_VALUE,
+          cachedInputTokens: 0,
+          cacheWriteInputTokens: 0,
+          outputTokens: 0,
+        },
+      },
+    }),
+    "non-finite-result",
+  );
+});
+
 test("post-hoc cost eligibility returns stable reasons for each major failure", () => {
   const known = resolveParentIdentity([
     {

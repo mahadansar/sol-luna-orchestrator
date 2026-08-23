@@ -1112,6 +1112,30 @@ test("expired orphan lease artifacts are swept without a Git worktree", async ()
   }
 });
 
+test("legacy path-only lease files protect live worktrees and sweep after expiry", async () => {
+  const repo = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-lease-legacy-"));
+  const worktreePath = path.join(repo, ".sol-luna", "worktrees", "legacy");
+  const artifact = continuationLeasePath(worktreePath);
+  let now = 100;
+  const leases = new WorktreeLeaseStore({ now: () => now });
+
+  try {
+    await fs.mkdir(path.dirname(artifact), { recursive: true });
+    await fs.writeFile(artifact, "200\n", "utf8");
+
+    assert.equal(await leases.isProtected(worktreePath), true);
+    assert.deepEqual(await sweepExpiredWorktreeLeases(repo, 199), []);
+    assert.ok(await fs.stat(artifact).catch(() => null));
+
+    now = 200;
+    assert.equal(await leases.isProtected(worktreePath), false);
+    assert.deepEqual(await sweepExpiredWorktreeLeases(repo, now), [worktreePath]);
+    assert.equal(await fs.stat(artifact).catch(() => null), null);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
 // --- Regression: concurrent worktree registration ---------------------------
 //
 // `git worktree add` walks the shared `.git/worktrees` directory. Two running at
