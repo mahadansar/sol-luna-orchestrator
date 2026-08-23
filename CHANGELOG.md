@@ -6,6 +6,8 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-24
+
 ### Added
 
 - Explicit per-task `changeIntent` contracts distinguish work where edits are
@@ -30,6 +32,10 @@ All notable changes to this project are documented here. Format follows
   evidence proves every worker-side failure is contradicted by successful
   authoritative execution. The contradiction and worker claim remain visible,
   and the result is not marked trustworthy.
+- Documentation now has explicit ownership boundaries, a feature-acceptance
+  ledger, and a transient release-body workflow instead of duplicate discovery,
+  acceptance, and release-note sources. Setup and upgrade guidance now presents
+  `init` and `doctor` as the normal reconciliation lifecycle.
 
 ### Fixed
 
@@ -564,7 +570,8 @@ Initial working version, verified end to end.
 development milestones and were never tagged or published, so they have no
 release links.
 
-[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.7.0...v0.7.1

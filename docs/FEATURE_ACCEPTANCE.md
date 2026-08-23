@@ -123,11 +123,11 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
 | CLI init/doctor/status/uninstall                        | shipped                              | PASS     | PASS (2026-08-24)        | NOT TESTED             | Strong     |
 | Activity, observability, privacy                        | shipped                              | PASS     | PARTIAL (2026-08-24)     | DEEP PASS (2026-08-24) | Strong     |
 | Natural discovery                                       | shipped v0.8.0                       | PASS     | PASS (2026-08-24)        | PARTIAL (2026-08-22)   | Basic      |
-| Explicit Change Intent                                  | unreleased on main                   | PASS     | PASS (2026-08-24)        | PARTIAL (2026-08-24)   | Basic      |
-| Worker Continuation                                     | unreleased on main                   | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong     |
-| Bounded Repair                                          | unreleased on main                   | PASS     | PASS (2026-08-24)        | NOT TESTED             | Basic      |
-| P1.0 parent/pricing foundation                          | unreleased on main                   | PASS     | PASS (2026-08-24)        | NOT TESTED             | Basic      |
-| `failureCauses` and verification contradiction handling | unreleased on main                   | PASS     | PASS (2026-08-24)        | NOT TESTED             | Basic      |
+| Explicit Change Intent                                  | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | PARTIAL (2026-08-24)   | Basic      |
+| Worker Continuation                                     | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong     |
+| Bounded Repair                                          | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | NOT TESTED             | Basic      |
+| P1.0 parent/pricing foundation                          | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | NOT TESTED             | Basic      |
+| `failureCauses` and verification contradiction handling | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | NOT TESTED             | Basic      |
 
 ## System-wide invariants
 
@@ -422,7 +422,7 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
 - **Implementation/tests:** `src/contract.ts`, `src/prompt.ts`, `src/worker.ts`,
   `src/server.ts`; `src/selftest.ts`, `src/prompt.test.ts`,
   `src/evidence.test.ts`, `src/parallel.test.ts`, `src/guidance.test.ts`.
-- **Authority/history:** `ROADMAP.md` P0.2a (implemented, pending release),
+- **Authority/history:** `ROADMAP.md` P0.2a (implemented for v0.9.0),
   `SOL_RULES.md`, `README.md`; `d1be8d6` (2026-08-23).
 - **Evidence:** Coverage and targeted deterministic execution **PASS** on
   2026-08-24 for `required`, `optional`, and `forbidden`, independent of
@@ -432,8 +432,8 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   contract, but the campaign did not exercise `optional`, `forbidden`, or an
   intent violation.
 - **Dependencies/retest triggers:** contract/schema, worker prompt, observed-file
-  reconciliation, repair admission, or release of P0.2a. **Gap:** unreleased;
-  only `required` intent has current live evidence.
+  reconciliation, repair admission, or release of P0.2a. **Gap:** only
+  `required` intent has current live evidence.
 - **Confidence:** **Basic**.
 
 ### Worker Continuation
@@ -441,7 +441,7 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
 - **Implementation/tests:** `src/continuation.ts`, `src/batch.ts`,
   `src/contract.ts`, `src/server.ts`; `src/selftest.ts`, `src/parallel.test.ts`,
   `src/evidence.test.ts`, `src/guidance.test.ts`.
-- **Authority/history:** `ROADMAP.md` P0.3 (implemented on main; unreleased),
+- **Authority/history:** `ROADMAP.md` P0.3 (implemented for v0.9.0),
   `SOL_RULES.md`, `docs/OBSERVABILITY.md`; `cdaf9f5` and `da496df`
   (2026-08-23).
 - **Evidence:** Coverage and targeted deterministic execution **PASS** on
@@ -454,8 +454,8 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   policy.
 - **Dependencies/retest triggers:** continuation TTL/reference store, worktree
   leases, final Git reconciliation, contract fields, or worker lifecycle changes.
-  **Gap:** unreleased and raw final-campaign artifacts are not committed; expiry
-  was not exercised live.
+  **Gap:** raw final-campaign artifacts are not committed; expiry was not
+  exercised live.
 - **Confidence:** **Strong**.
 
 ### Bounded Repair
@@ -463,7 +463,7 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
 - **Implementation/tests:** `src/worker.ts`, `src/batch.ts`, `src/contract.ts`,
   `src/events.ts`, `src/continuation.ts`; `src/evidence.test.ts`,
   `src/activity.test.ts`, `src/guidance.test.ts`, `src/selftest.ts`.
-- **Authority/history:** `ROADMAP.md` P0.4 (implemented on main; unreleased),
+- **Authority/history:** `ROADMAP.md` P0.4 (implemented for v0.9.0),
   `SOL_RULES.md`, `docs/OBSERVABILITY.md`; `9d2ebe9` and `da496df`
   (2026-08-23).
 - **Evidence:** Coverage and targeted deterministic execution **PASS** on
@@ -472,15 +472,15 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   exhaustion behavior. Live acceptance is **NOT TESTED**.
 - **Dependencies/retest triggers:** verifier authority, failure classification,
   continuation, change intent, event lifecycle, or worker thread reuse changes.
-  **Gap:** unreleased and no model-backed repair run.
+  **Gap:** no model-backed repair run.
 - **Confidence:** **Basic**.
 
 ### P1.0 parent/pricing foundation
 
 - **Implementation/tests:** `src/cost.ts`, `src/worker.ts`, `src/contract.ts`;
   `src/selftest.ts`, `src/guidance.test.ts`, `src/activity.test.ts`.
-- **Authority/history:** `ROADMAP.md` P1.0 (foundation implemented on main;
-  unreleased), `docs/CONFIGURATION.md`, `SOL_RULES.md`; `2d6e4c6` (2026-08-23).
+- **Authority/history:** `ROADMAP.md` P1.0 (foundation implemented for v0.9.0),
+  `docs/CONFIGURATION.md`, `SOL_RULES.md`; `2d6e4c6` (2026-08-23).
 - **Evidence:** Coverage and targeted deterministic execution **PASS** on
   2026-08-24 for explicit parent-identity provenance, distinct billing contexts,
   promotional cards, complete post-hoc eligibility, stable unavailable reasons,
@@ -489,7 +489,7 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
 - **Dependencies/retest triggers:** cost-input schema, rate-card applicability,
   usage projection, identity provenance, or any future routing/policy consumer.
   **Gap:** no retrieval, account lookup, prediction, routing, or measured saving
-  is implemented; the foundation is unreleased.
+  is implemented; the foundation remains limited to post-hoc evidence.
 - **Confidence:** **Basic**.
 
 ### Worker `failureCauses` and authoritative-verification contradiction handling
@@ -497,7 +497,7 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
 - **Implementation/tests:** `src/contract.ts`, `src/prompt.ts`, `src/worker.ts`,
   `src/batch.ts`; `src/selftest.ts`, `src/prompt.test.ts`, `src/evidence.test.ts`,
   `src/parallel.test.ts`, `src/guidance.test.ts`.
-- **Authority/history:** `CHANGELOG.md` Unreleased, `README.md`, `SOL_RULES.md`,
+- **Authority/history:** `CHANGELOG.md` v0.9.0, `README.md`, `SOL_RULES.md`,
   `ROADMAP.md` P1.1 note; `908c977` and `6d610b3` (2026-08-23).
 - **Evidence:** Coverage and targeted deterministic execution **PASS** on
   2026-08-24 for strict status-aligned causes, legacy normalization, malformed
@@ -506,9 +506,8 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   / untrustworthy result. Live acceptance is **NOT TESTED**.
 - **Dependencies/retest triggers:** external worker schema, verification
   authority/equivalence, final Git evidence, repair classifier, or failure
-  rendering changes. **Gap:** unreleased; this is evidence for future P1.1
-  classification, not the future classifier itself, and no model-backed run is
-  retained.
+  rendering changes. **Gap:** this is evidence for future P1.1 classification,
+  not the future classifier itself, and no model-backed run is retained.
 - **Confidence:** **Basic**.
 
 ## Closure campaign boundary

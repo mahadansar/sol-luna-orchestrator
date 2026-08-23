@@ -117,10 +117,10 @@ crossover. Raw tokens are not billed cost, and no cost saving is claimed. See
 
 ## Release status and roadmap
 
-Changes implemented on `main` but not yet released are recorded under
-[`CHANGELOG.md` Unreleased](CHANGELOG.md#unreleased). Future priorities,
-dependencies, constraints, and non-goals are maintained in
-[ROADMAP.md](ROADMAP.md).
+Shipped changes are recorded in versioned [`CHANGELOG.md`](CHANGELOG.md)
+sections; subsequent changes not yet released are recorded under
+[`Unreleased`](CHANGELOG.md#unreleased). Future priorities, dependencies,
+constraints, and non-goals are maintained in [ROADMAP.md](ROADMAP.md).
 
 ## Documentation
 
@@ -135,7 +135,7 @@ dependencies, constraints, and non-goals are maintained in
 | [`bench/RESULTS.md`](bench/RESULTS.md)           | Benchmark evidence, interpretation, and limitations   |
 | [ROADMAP.md](ROADMAP.md)                         | Prioritised future work and constraints               |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md)             | Development, live acceptance, and release workflow    |
-| [`CHANGELOG.md`](CHANGELOG.md)                   | Shipped changes and the Unreleased queue              |
+| [`CHANGELOG.md`](CHANGELOG.md)                   | Release history and the Unreleased queue              |
 
 ## Contributing
 
