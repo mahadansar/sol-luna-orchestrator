@@ -29,15 +29,18 @@ low-effort model will cheerfully claim it has a tool it does not have.
 
 ## Recovering a broken configuration
 
-Start with `sol-luna-orchestrator doctor`. It checks Node, git, Codex, the
-login, the registration, the resolved server path, both required settings, the
-activity log, the discovery hint and the verification mode, and prints the
-command that fixes each failure. `--json` gives the same report for scripts.
+Start with `sol-luna-orchestrator doctor`. It checks the Node range, git and
+Codex availability, Codex's local authentication file, the registration, the
+resolved server path, required settings, logs, discovery hint and runtime
+policy, and prints the command that fixes each failure. It does not validate
+git's numeric minimum or prove that stored credentials still work. `--json`
+gives the same report for scripts.
 
 Most problems are repaired by re-running `sol-luna-orchestrator init`. It is
 idempotent, it repairs only what is wrong, and it preserves any custom paths
-you set. Every write is atomic and leaves a `config.toml.sol-luna-backup`
-beside the original.
+you set. Config writes are atomic and replacing an existing config leaves a
+`config.toml.sol-luna-backup` beside the original. The discovery-hint write is
+atomic but does not create a backup.
 
 `sol-luna-orchestrator uninstall` removes this project's MCP table and exact
 managed discovery hint, and nothing else. It deliberately leaves your other

@@ -566,15 +566,15 @@ test("human pricing example is dated and distinct from durable runtime policy", 
   const roadmap = await readDoc("ROADMAP.md");
   assert.match(
     configuration,
-    /2026-08-23[\s\S]*Codex[\s\S]*100\/10\/500[\s\S]*5\/0\.5\/30[\s\S]*20:1[\s\S]*16\.7:1[\s\S]*promotional[\s\S]*2026-11-21[\s\S]*API[\s\S]*25:1/i,
+    /2026-08-24[\s\S]*API[\s\S]*Sol at \$4\/\$0\.40\/\$20[\s\S]*Luna at \$0\.20\/\$0\.02\/\$1\.20[\s\S]*20:1[\s\S]*16\.7:1/i,
   );
   assert.match(
     configuration,
-    /Sol at \$5\/\$0\.50\/\$30[\s\S]*Luna at[\s\S]*\$0\.20\/\$0\.02\/\$1\.20/i,
+    /Codex credit rates[\s\S]*separate billing context[\s\S]*cannot be derived from[\s\S]*API prices/i,
   );
   assert.match(
     configuration,
-    /promotion does not change included plan usage,[\s\S]*5-hour[\s\S]*weekly limits,[\s\S]*legacy credit rates/i,
+    /plan and rate card applicable to the[\s\S]*account[\s\S]*current official rate card/i,
   );
   assert.match(
     configuration,
@@ -591,7 +591,7 @@ test("human pricing example is dated and distinct from durable runtime policy", 
   assert.match(configuration, /legacy[\s\S]*rate card/i);
   assert.match(
     configuration,
-    /Purchased-credit rates do not describe every included Plus or Pro task/i,
+    /Codex credit,[\s\S]*included-plan,[\s\S]*promotional,[\s\S]*legacy schedules may differ from[\s\S]*API/i,
   );
   assert.match(roadmap, /Completed and implemented foundations[\s\S]*P0\.2a/i);
   assert.match(roadmap, /release status[\s\S]*CHANGELOG\.md/i);
@@ -600,4 +600,22 @@ test("human pricing example is dated and distinct from durable runtime policy", 
     [SERVER_INSTRUCTIONS, TOOL_DESCRIPTION, BATCH_TOOL_DESCRIPTION].join("\n"),
     /\$\s*\d|\b\d+(?:\.\d+)?\s*(?:x|:1)\b/i,
   );
+});
+
+test("release guidance creates drafts only after the validated tag exists", async () => {
+  const [contributing, agents] = await Promise.all([
+    readDoc("CONTRIBUTING.md"),
+    readDoc("AGENTS.md"),
+  ]);
+  const commit = contributing.indexOf("Commit and push the release candidate");
+  const tag = contributing.indexOf("Create the annotated release tag");
+  const publish = contributing.indexOf("tag-triggered publish succeeds");
+  const draft = contributing.indexOf("create the GitHub Release as a draft");
+  assert.ok(commit >= 0 && commit < tag && tag < publish && publish < draft);
+  assert.match(
+    contributing,
+    /gh release create vX\.Y\.Z --draft --verify-tag[\s\S]*cannot[\s\S]*implicitly create or retarget a tag/i,
+  );
+  assert.doesNotMatch(contributing, /RELEASE_NOTES\.md/);
+  assert.match(agents, /Only then create[\s\S]*existing[\s\S]*tag[\s\S]*--verify-tag/i);
 });

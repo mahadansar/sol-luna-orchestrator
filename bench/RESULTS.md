@@ -20,8 +20,9 @@ in `bench/results/*.json`.
 ## Headline
 
 1. **On small tasks, delegating is worse.** ~2.3x slower, ~3.5x the tokens, no
-   measurable quality difference. Unchanged from the previous release, and still
-   the single most useful thing this project has measured.
+   measurable quality difference. This committed micro dataset was not rerun
+   after v0.8.1 and remains the single most useful thing this project has
+   measured.
 2. **On three-module projects, parallel delegation beat sequential delegation in
    every task and every repetition** — median 155s vs 248s, and far more
    consistent (122–183s vs 193–565s).
@@ -29,7 +30,8 @@ in `bench/results/*.json`.
    solo-high was ~63s.
 4. **Left to its own judgement, the supervisor usually declines to delegate these
    tasks at all**, which is the policy working as intended.
-5. **No arm ever failed.** Quality was identical everywhere: 24/24 runs passed.
+5. **No arm ever failed.** The harness pass rate was identical across arms:
+   59/59 committed runs passed (micro 16/16, parallel 24/24, scale 19/19).
 6. **The crossover investigation found no crossover.** Four- and six-stream
    fixtures at roughly twice the module depth still favoured the supervisor
    alone, and going from four streams to six made orchestration relatively

@@ -23,8 +23,11 @@ Everything the orchestrator reads, and how to change it. The
   `gpt-5.6-luna`. The creator's examples are `gpt-5.6-sol` for the parent and
   `gpt-5.6-luna` for workers; compatible parent models are allowed.
 
-`sol-luna-orchestrator doctor` verifies all of this and tells you what to do
-about anything missing.
+`sol-luna-orchestrator doctor` checks the supported Node range, git and Codex
+availability, the presence of Codex's local authentication file, registration,
+owned settings, and runtime policy, then prints remedies. It does not validate
+git's numeric minimum or make a network call to prove the stored credentials
+are currently usable.
 
 Some required Codex behaviors are experimental surfaces established by testing
 rather than documented stable APIs. This release was built against
@@ -110,7 +113,8 @@ measured against codex-cli 0.147.0, adding a server deleted the comment above an
 unrelated `context7` table and rewrote that server's `startup_timeout_sec = 15`
 as `15.0`. `init` edits only the keys it owns, so comments, formatting, key order
 and other servers survive byte for byte. Every write is atomic and leaves a
-`config.toml.sol-luna-backup`.
+`config.toml.sol-luna-backup` when an existing config is replaced. The separate
+discovery-hint write is also atomic but does not create a backup.
 
 ### Installing without a global install
 
@@ -222,21 +226,17 @@ reports the registered server's value rather than only this shell's.
 
 #### Dated Sol-Luna unit-rate example
 
-As of **2026-08-23**, OpenAI's official
-[ChatGPT Work and Codex rate card](https://help.openai.com/en/articles/11481834-chatgpt-rate-card-business-enterprise-edu)
-listed purchased credit rates per 1M tokens of 100/10/500 for GPT-5.6 Sol and
-5/0.5/30 for GPT-5.6 Luna (input/cached input/output). For eligible usage paid
-with purchased credits, that is a **20:1** Sol:Luna unit-rate ratio for input and
-cached input and about **16.7:1** for output. The different ratios reflect
-promotional Sol purchased-credit pricing available at least through 2026-11-21.
-The rate card says the promotion does not change included plan usage, 5-hour or
-weekly limits, or legacy credit rates.
-
-The official API model pages separately listed Sol at $5/$0.50/$30 and Luna at
-$0.20/$0.02/$1.20 per 1M tokens, a **25:1** Sol:Luna unit-price ratio for input,
-cached input, and output:
+As of **2026-08-24**, the official API model pages listed Sol at $4/$0.40/$20
+and Luna at $0.20/$0.02/$1.20 per 1M tokens (input/cached input/output). That is
+a **20:1** Sol:Luna API unit-price ratio for input and cached input and about
+**16.7:1** for output:
 [Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol) and
 [Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna).
+
+Codex credit rates are a separate billing context and cannot be derived from
+those API prices. They depend on the plan and rate card applicable to the
+account; operators must consult that current official rate card rather than
+reusing this API ratio.
 
 This is a dated human reference only, not a bundled runtime rate card. It does
 not make Sol the required parent or convert a per-token ratio into a task
@@ -244,9 +244,9 @@ saving. Aggregate task token usage and its input/cache/output mix, the selected
 parent, worker count, applicable Codex or API schedule, fixed orchestration cost,
 coordination and review overhead, latency and quality determine realised task
 cost. Purchased-credit rates do not describe every included Plus or Pro task;
-promotional, included-plan, and legacy schedules may differ. The implementation
-requires the caller to supply the applicable card, and operators must re-check
-official sources before relying on this example.
+Codex credit, included-plan, promotional, and legacy schedules may differ from
+the API. The implementation requires the caller to supply the applicable card,
+and operators must re-check official sources before relying on this example.
 
 ## Parent model and effort
 

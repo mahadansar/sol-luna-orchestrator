@@ -8,6 +8,18 @@ All notable changes to this project are documented here. Format follows
 
 ### Added
 
+- Explicit per-task `changeIntent` contracts distinguish work where edits are
+  `forbidden`, `optional`, or `required`, independently of file scope and task
+  category. Omitted intent retains the compatible `required` default.
+- An opaque, single-use `continue_task` reference can resume one eligible worker
+  thread for one explicit follow-up without widening its original contract.
+- Fresh tasks can opt into one bounded same-thread automatic repair after the
+  runtime conservatively classifies a single authoritative verification failure
+  as a local implementation defect.
+- A pure post-hoc cost foundation keeps parent identity and billing context
+  explicit, applies caller-supplied rate cards only to eligible observed usage,
+  and returns stable unavailable reasons instead of inferring prices or account
+  state.
 - Structured worker-declared `failureCauses`, with conservative normalization
   for legacy reports and fail-closed validation for invalid new reports.
 
@@ -21,6 +33,12 @@ All notable changes to this project are documented here. Format follows
 
 ### Fixed
 
+- Parallel worktree lifecycle now serializes shared Git metadata operations,
+  protects active and continuation-owned worktrees with bounded owner-specific
+  leases, fails closed on renewal or evidence errors, and reports partial,
+  failed, disabled, or unattempted integration without overstating success.
+- The worker structured-output schema stays within the live model's supported
+  subset while duplicate `failureCauses` remain rejected after parsing.
 - Sequential batches no longer construct or render parallel integration
   conflicts when a later dependent task intentionally edits an earlier task's
   file. Parallel same-file collision behavior is unchanged.

@@ -225,8 +225,8 @@ Also audit `bench/RESULTS.md` when benchmark, routing, model, or performance
 claims changed. Audit the root or scoped `AGENTS.md` files and
 `.github/pull_request_template.md` when architecture, ownership, test selection,
 security-sensitive modules, or the release workflow changed. Reconcile the
-transient GitHub Release draft against the matching `CHANGELOG.md` entry for
-every release.
+intended transient GitHub Release body against the matching `CHANGELOG.md`
+entry for every release.
 
 This final audit is a safety net, not a substitute for same-change maintenance:
 material behavior, configuration, security, or CLI changes must update every
@@ -234,21 +234,23 @@ affected canonical document in the same change.
 
 1. Bump the version and record what shipped:
    `npm version <x.y.z> --no-git-tag-version`, then add the matching
-   `CHANGELOG.md` entry.
-2. Create and review a transient GitHub Release draft from that changelog entry.
-   Keep it unpublished and delete it if release preparation is abandoned; do not
-   maintain a second release-body source in the repository.
-3. Commit and push to `main`.
-4. Wait for CI to go green on `main`.
-5. Tag the release commit and push the tag:
+   `CHANGELOG.md` entry. Prepare and review the intended GitHub Release body
+   transiently from that entry; do not commit a second release-body source.
+2. Commit and push the release candidate to `main`.
+3. Wait for the required CI checks to pass on that exact `main` commit.
+4. Create the annotated release tag from that validated commit and push it:
    `git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`.
-6. `.github/workflows/publish.yml` fires on the tag. It refuses to continue if
+5. `.github/workflows/publish.yml` fires on the tag. It refuses to continue if
    the tag does not match `package.json`, then builds, typechecks, runs the
    tests and the MCP smoke test, and publishes via OIDC.
-7. npm attaches provenance automatically — the repository and package are both
+6. npm attaches provenance automatically — the repository and package are both
    public, so `--provenance` is neither passed nor needed.
-8. After the tag publish succeeds, publish the already reviewed GitHub Release
-   draft for that tag.
+7. Only after the tag-triggered publish succeeds and the remote tag exists,
+   create the GitHub Release as a draft against that existing tag. CLI automation
+   must use `gh release create vX.Y.Z --draft --verify-tag ...` so it cannot
+   implicitly create or retarget a tag. Supply the reviewed body transiently;
+   do not add a tracked release-notes file.
+8. Review the draft once more, then publish it.
 
 Only tags matching `vX.Y.Z` trigger a publish. Branches and pull requests never
 can. Pre-release tags such as `v1.0.0-rc.1` deliberately do not match; publishing

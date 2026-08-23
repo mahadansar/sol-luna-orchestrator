@@ -112,11 +112,12 @@ crossover. Raw tokens are not billed cost, and no cost saving is claimed. See
 [`bench/RESULTS.md`](bench/RESULTS.md) for the evidence and limitations and
 [Configuration](docs/CONFIGURATION.md#cost) for cost terminology.
 
-## Coming next
+## Release status and roadmap
 
-Work already queued for the next release is recorded under
-[`CHANGELOG.md` Unreleased](CHANGELOG.md#unreleased). Future priorities and
-dependencies are maintained in [ROADMAP.md](ROADMAP.md).
+Changes implemented on `main` but not yet released are recorded under
+[`CHANGELOG.md` Unreleased](CHANGELOG.md#unreleased). Future priorities,
+dependencies, constraints, and non-goals are maintained in
+[ROADMAP.md](ROADMAP.md).
 
 ## Documentation
 
