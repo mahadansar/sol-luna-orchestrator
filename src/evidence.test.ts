@@ -27,6 +27,7 @@ function mockResult(): DelegateTaskOutput {
     changeIntent: "optional",
     verdict: "PASS",
     workerClaimedStatus: "PASS",
+    workerClaimedFailureCauses: [],
     trustworthy: true,
     workerThreadId: "thread_123",
     continuationReference: "ctr_fixture_reference_12345678901234567890",
@@ -100,8 +101,10 @@ test("evidence packet - worker FAIL", () => {
   const result = mockResult();
   result.verdict = "FAILED";
   result.workerClaimedStatus = "FAILED";
+  result.workerClaimedFailureCauses = ["verification"];
   const text = renderResult(result);
   assert.ok(text.includes("VERDICT: FAILED"));
+  assert.ok(text.includes("WORKER-CLAIMED FAILURE CAUSES: verification"));
 });
 
 test("evidence packet - malformed worker result", () => {

@@ -17,6 +17,7 @@ import {
   MAX_COMMAND_LENGTH,
   parseCommand,
   tokenizeCommand,
+  verificationCommandsEquivalent,
   type CommandPolicy,
 } from "./command.js";
 import { findScopeViolations, resolvePath, type RealPathResolver } from "./scope.js";
@@ -155,6 +156,55 @@ test("Windows executable extensions match their base allowlist entry", () => {
   assert.equal(parseCommand("npm.cmd test", POLICY).file, "npm.cmd");
   assert.equal(parseCommand("NPM.CMD test", POLICY).file, "NPM.CMD");
   assert.throws(() => parseCommand("evil.cmd", POLICY), CommandPolicyError);
+});
+
+test("verification command equivalence is argv-exact and platform-scoped", () => {
+  for (const launcher of ["npm", "npm.cmd", "npm.ps1"]) {
+    assert.equal(
+      verificationCommandsEquivalent(
+        "npm test -- --runInBand",
+        `${launcher} test -- --runInBand`,
+        POLICY,
+        "win32",
+      ),
+      true,
+    );
+  }
+  assert.equal(
+    verificationCommandsEquivalent("npm test", "npm.cmd run test", POLICY, "win32"),
+    false,
+  );
+  assert.equal(
+    verificationCommandsEquivalent(
+      "npm test",
+      "./npm.cmd test",
+      { allowed: [...DEFAULT_ALLOWED_EXECUTABLES, "./npm.cmd"] },
+      "win32",
+    ),
+    false,
+  );
+  assert.equal(
+    verificationCommandsEquivalent(
+      "npm test",
+      "C:npm.cmd test",
+      { allowed: [...DEFAULT_ALLOWED_EXECUTABLES, "C:npm.cmd"] },
+      "win32",
+    ),
+    false,
+  );
+  assert.equal(
+    verificationCommandsEquivalent(
+      "npm test",
+      "npm.cmd test && echo unsafe",
+      POLICY,
+      "win32",
+    ),
+    false,
+  );
+  assert.equal(
+    verificationCommandsEquivalent("npm test", "npm.cmd test", POLICY, "linux"),
+    false,
+  );
 });
 
 test("oversized commands are refused", () => {

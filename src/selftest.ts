@@ -135,6 +135,7 @@ test("continuation resumes the exact thread and reruns verification under the or
   });
   const report: WorkerReport = {
     status: "PASS",
+    failureCauses: [],
     summary: "Follow-up evidence collected.",
     filesChanged: [{ path: "src/uploads/notes.md", change: "modified", why: "evidence" }],
     verification: [],
@@ -193,6 +194,7 @@ test("continuation resumes the exact thread and reruns verification under the or
 
   assert.equal(resumedThreadId, "thread-original");
   assert.equal(result.workerThreadId, "thread-original");
+  assert.deepEqual(result.workerClaimedFailureCauses, []);
   assert.equal(result.changeIntent, "optional");
   assert.deepEqual(result.scopeViolations, []);
   assert.equal(result.filesChanged[0]?.observed, true);
@@ -215,6 +217,7 @@ test("fresh task execution still starts a new thread", async () => {
   });
   const report: WorkerReport = {
     status: "PASS",
+    failureCauses: [],
     summary: "Fresh execution completed.",
     filesChanged: [],
     verification: [],
@@ -251,6 +254,57 @@ test("fresh task execution still starts a new thread", async () => {
   assert.equal(result.verdict, "PASS");
 });
 
+test("continuation failure causes come from the new turn", async () => {
+  const input = delegateTaskInputSchema.parse({
+    objective: "Continue the same bounded investigation.",
+    effortReason: "The next evidence step remains tightly scoped.",
+    acceptanceCriteria: ["The new turn reports its own outcome."],
+    changeIntent: "optional",
+  });
+  const causes = ["requirements", "implementation"] as const;
+  let turn = 0;
+  const fakeCodex: WorkerCodex = {
+    startThread: () => {
+      throw new Error("continuation must resume");
+    },
+    resumeThread: (threadId) => ({
+      id: threadId,
+      runStreamed: async () => {
+        const failureCauses = [causes[turn++]!];
+        const events = async function* (): AsyncGenerator<ThreadEvent> {
+          yield {
+            type: "item.completed",
+            item: {
+              id: `message-${turn}`,
+              type: "agent_message",
+              text: JSON.stringify(
+                makeReport({ status: "FAILED", failureCauses, filesChanged: [] }),
+              ),
+            },
+          };
+        };
+        return { events: events() };
+      },
+    }),
+  };
+
+  const first = await continueToLuna(input, {
+    workingDirectory: process.cwd(),
+    threadId: "thread-current-causes",
+    instruction: "Check the first remaining requirement.",
+    codex: fakeCodex,
+  });
+  const second = await continueToLuna(input, {
+    workingDirectory: process.cwd(),
+    threadId: "thread-current-causes",
+    instruction: "Check the implementation evidence now.",
+    codex: fakeCodex,
+  });
+
+  assert.deepEqual(first.workerClaimedFailureCauses, ["requirements"]);
+  assert.deepEqual(second.workerClaimedFailureCauses, ["implementation"]);
+});
+
 test("one automatic repair reuses the thread, passes exact evidence, and reruns verification", async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-repair-"));
   try {
@@ -269,6 +323,7 @@ test("one automatic repair reuses the thread, passes exact evidence, and reruns 
     });
     const report: WorkerReport = {
       status: "PASS",
+      failureCauses: [],
       summary: "Implemented the local change.",
       filesChanged: [{ path: "src/repair.ts", change: "modified", why: "fixture" }],
       verification: [],
@@ -359,6 +414,7 @@ test("automatic repair stops after its single resumed turn", async () => {
     });
     const report: WorkerReport = {
       status: "PASS",
+      failureCauses: [],
       summary: "Attempted the local implementation.",
       filesChanged: [{ path: "src/limit.ts", change: "modified", why: "fixture" }],
       verification: [],
@@ -452,6 +508,7 @@ test("worker output schema is strict enough for structured outputs", () => {
   const schema = workerOutputJsonSchema;
   assert.equal(schema.additionalProperties, false);
   assert.deepEqual([...schema.required].sort(), [
+    "failureCauses",
     "filesChanged",
     "followUps",
     "notes",
@@ -461,6 +518,16 @@ test("worker output schema is strict enough for structured outputs", () => {
   ]);
   // Strict mode requires every declared property to also be required.
   assert.deepEqual(Object.keys(schema.properties).sort(), [...schema.required].sort());
+  assert.equal(schema.properties.failureCauses.uniqueItems, true);
+  assert.deepEqual(schema.properties.failureCauses.items.enum, [
+    "verification",
+    "requirements",
+    "implementation",
+    "environment-tooling",
+    "timeout",
+    "blocked",
+    "unclassified",
+  ]);
 });
 
 test("paths normalize to workspace-relative POSIX form", () => {
@@ -533,7 +600,76 @@ test("worker report parses from bare JSON, fenced JSON, and JSON amid prose", ()
     const parsed = parseWorkerReport(text);
     if (!parsed) throw new Error(`failed to parse: ${text.slice(0, 40)}`);
     assert.equal(parsed.status, "PASS");
+    assert.deepEqual(parsed.failureCauses, []);
     assert.equal(parsed.filesChanged[0]?.path, "src/a.ts");
+  }
+});
+
+test("worker failure causes enforce the new status invariants", () => {
+  const report = {
+    summary: "structured cause fixture",
+    filesChanged: [],
+    verification: [],
+    notes: "",
+    followUps: [],
+  };
+  assert.deepEqual(
+    parseWorkerReport(JSON.stringify({ ...report, status: "PASS", failureCauses: [] }))
+      ?.failureCauses,
+    [],
+  );
+  assert.deepEqual(
+    parseWorkerReport(
+      JSON.stringify({ ...report, status: "FAILED", failureCauses: ["verification"] }),
+    )?.failureCauses,
+    ["verification"],
+  );
+  assert.deepEqual(
+    parseWorkerReport(
+      JSON.stringify({ ...report, status: "BLOCKED", failureCauses: ["blocked"] }),
+    )?.failureCauses,
+    ["blocked"],
+  );
+
+  for (const invalid of [
+    { status: "PASS", failureCauses: ["verification"] },
+    { status: "FAILED", failureCauses: [] },
+    { status: "FAILED", failureCauses: ["blocked"] },
+    { status: "BLOCKED", failureCauses: ["environment-tooling"] },
+  ]) {
+    assert.equal(parseWorkerReport(JSON.stringify({ ...report, ...invalid })), null);
+  }
+});
+
+test("legacy reports normalize absent failure causes and invalid present values fail closed", () => {
+  const report = {
+    summary: "legacy fixture",
+    filesChanged: [],
+    verification: [],
+    notes: "",
+    followUps: [],
+  };
+  assert.deepEqual(
+    parseWorkerReport(JSON.stringify({ ...report, status: "PASS" }))?.failureCauses,
+    [],
+  );
+  assert.deepEqual(
+    parseWorkerReport(JSON.stringify({ ...report, status: "FAILED" }))?.failureCauses,
+    ["unclassified"],
+  );
+  assert.deepEqual(
+    parseWorkerReport(JSON.stringify({ ...report, status: "BLOCKED" }))?.failureCauses,
+    ["blocked", "unclassified"],
+  );
+  for (const failureCauses of [
+    "verification",
+    ["unknown"],
+    ["verification", "verification"],
+  ]) {
+    assert.equal(
+      parseWorkerReport(JSON.stringify({ ...report, status: "FAILED", failureCauses })),
+      null,
+    );
   }
 });
 
@@ -594,6 +730,7 @@ const makeReport = (overrides: Partial<WorkerReport> = {}): WorkerReport => ({
   notes: "",
   followUps: [],
   ...overrides,
+  failureCauses: overrides.failureCauses ?? [],
 });
 
 const makeObserved = (
@@ -725,7 +862,12 @@ test("repair classifier permits only a clear local verification defect", () => {
       expected: "contract-or-requirement",
       input: eligibleInput,
       result: analyze(
-        makeReport({ status: "BLOCKED", filesChanged: [], verification: [] }),
+        makeReport({
+          status: "BLOCKED",
+          failureCauses: ["blocked"],
+          filesChanged: [],
+          verification: [],
+        }),
         [failingRun],
         { automaticRepair: true },
         { filesChanged: [] },
@@ -757,6 +899,170 @@ test("an honest PASS backed by evidence is accepted", () => {
   assert.equal(result.trustworthy, true);
   assert.deepEqual(result.discrepancies, []);
   assert.equal(result.filesChanged[0]?.observed, true);
+});
+
+const verificationOnlyFailure = (): WorkerReport =>
+  makeReport({
+    status: "FAILED",
+    failureCauses: ["verification"],
+    verification: [
+      { command: "npm test", exitCode: 1, passed: false, evidence: "worker failure" },
+    ],
+  });
+
+test("authoritative PASS narrowly promotes a verification-only worker FAILED", () => {
+  const result = analyze(verificationOnlyFailure(), [passingRun]);
+  assert.equal(result.verdict, "PASS");
+  assert.equal(result.workerClaimedStatus, "FAILED");
+  assert.deepEqual(result.workerClaimedFailureCauses, ["verification"]);
+  assert.equal(result.trustworthy, false);
+  assert.deepEqual(
+    result.verification.map((run) => run.source),
+    ["orchestrator", "worker"],
+  );
+  assert.ok(result.discrepancies.some((item) => /Worker claimed FAILED/.test(item)));
+  assert.ok(
+    result.reviewChecklist.some((item) =>
+      /both verification evidence sources/i.test(item),
+    ),
+  );
+  assert.equal(
+    classifyRepairEligibility(makeTask({ automaticRepair: true }), result).classification,
+    "not-needed",
+  );
+});
+
+test("a promoted verification contradiction does not start automatic repair", async () => {
+  const input = makeTask({
+    automaticRepair: true,
+    verificationCommands: ['node -e "process.exit(0)"'],
+  });
+  const report = makeReport({
+    status: "FAILED",
+    failureCauses: ["verification"],
+    verification: [
+      {
+        command: 'node -e "process.exit(0)"',
+        exitCode: 1,
+        passed: false,
+        evidence: "worker environment failed",
+      },
+    ],
+  });
+  let resumes = 0;
+  const events = async function* (): AsyncGenerator<ThreadEvent> {
+    yield {
+      type: "item.completed",
+      item: {
+        id: "change-promoted",
+        type: "file_change",
+        status: "completed",
+        changes: [{ path: "src/pagination.ts", kind: "update" }],
+      },
+    };
+    yield {
+      type: "item.completed",
+      item: {
+        id: "message-promoted",
+        type: "agent_message",
+        text: JSON.stringify(report),
+      },
+    };
+  };
+  const thread = {
+    id: "thread-promoted",
+    runStreamed: async () => ({ events: events() }),
+  };
+
+  const result = await executeTask(input, {
+    workingDirectory: process.cwd(),
+    codex: {
+      startThread: () => thread,
+      resumeThread: () => {
+        resumes += 1;
+        return thread;
+      },
+    },
+  });
+
+  assert.equal(result.verdict, "PASS");
+  assert.equal(result.repair?.classification, "not-needed");
+  assert.equal(resumes, 0);
+});
+
+test("non-verification and ambiguous worker failures remain FAILED", () => {
+  for (const failureCauses of [
+    ["verification", "requirements"],
+    ["verification", "implementation"],
+    ["unclassified"],
+  ] as const) {
+    const result = analyze(
+      makeReport({
+        status: "FAILED",
+        failureCauses: [...failureCauses],
+        verification: verificationOnlyFailure().verification,
+      }),
+      [passingRun],
+    );
+    assert.equal(result.verdict, "FAILED", failureCauses.join(","));
+  }
+});
+
+test("verification contradiction promotion requires complete one-to-one evidence", () => {
+  const noFailedRow = analyze(
+    makeReport({
+      status: "FAILED",
+      failureCauses: ["verification"],
+      verification: [{ ...verificationOnlyFailure().verification[0]!, passed: true }],
+    }),
+    [passingRun],
+  );
+  assert.equal(noFailedRow.verdict, "FAILED");
+
+  const unmatched = analyze(
+    makeReport({
+      status: "FAILED",
+      failureCauses: ["verification"],
+      verification: [
+        { command: "npm run other", exitCode: 1, passed: false, evidence: "failed" },
+      ],
+    }),
+    [passingRun],
+  );
+  assert.equal(unmatched.verdict, "FAILED");
+
+  for (const authoritative of [
+    [],
+    [failingRun],
+    [rejectedRun],
+    [passingRun, passingRun],
+  ]) {
+    assert.equal(analyze(verificationOnlyFailure(), authoritative).verdict, "FAILED");
+  }
+});
+
+test("terminal evidence prevents verification contradiction promotion", () => {
+  const result = analyze(
+    verificationOnlyFailure(),
+    [passingRun],
+    {},
+    {
+      errors: ["worker runtime failed"],
+    },
+  );
+  assert.equal(result.verdict, "FAILED");
+});
+
+test("final worktree terminal evidence overturns a provisional promotion", () => {
+  const input = makeTask();
+  const promoted = analyze(verificationOnlyFailure(), [passingRun]);
+  assert.equal(promoted.verdict, "PASS");
+
+  const reconciled = reconcileParallelWorktreeEvidence(input, promoted, REPO, [
+    { path: "outside/final.ts", kind: "add" },
+  ]);
+  assert.equal(reconciled.verdict, "FAILED");
+  assert.ok(reconciled.scopeViolations.length > 0);
 });
 
 test("a PASS is overturned when the orchestrator's own run fails", () => {
@@ -929,12 +1235,14 @@ test("forbidden intent fails on observed edits but preserves claim reconciliatio
 test("an honest BLOCKED is preserved rather than escalated", () => {
   const report = makeReport({
     status: "BLOCKED",
+    failureCauses: ["blocked"],
     filesChanged: [],
     verification: [],
     notes: "Needed to change a forbidden migration file.",
   });
   const result = analyze(report, [], {}, { filesChanged: [] });
   assert.equal(result.verdict, "BLOCKED");
+  assert.deepEqual(result.workerClaimedFailureCauses, ["blocked"]);
   assert.deepEqual(result.discrepancies, []);
   assert.equal(result.trustworthy, true);
 });
@@ -965,7 +1273,23 @@ test("unparseable worker output fails the task without inventing a summary", () 
     },
   );
   assert.equal(result.verdict, "FAILED");
+  assert.deepEqual(result.workerClaimedFailureCauses, ["unclassified"]);
   assert.ok(result.errors.some((e) => /not valid JSON/.test(e)));
+});
+
+test("an invalid present failure cause follows the malformed-report path", () => {
+  const malformed = { ...makeReport(), failureCauses: ["not-a-cause"] };
+  const result = analyze(
+    null,
+    [passingRun],
+    {},
+    {
+      finalResponse: JSON.stringify(malformed),
+    },
+  );
+  assert.equal(result.verdict, "FAILED");
+  assert.deepEqual(result.workerClaimedFailureCauses, ["unclassified"]);
+  assert.ok(result.errors.some((error) => /not valid JSON/.test(error)));
 });
 
 test("the review checklist always restates every acceptance criterion", () => {
@@ -1110,7 +1434,12 @@ test("a timeout advises splitting the task rather than raising effort", () => {
 });
 
 test("BLOCKED advises fixing the brief at the same effort", () => {
-  const report = makeReport({ status: "BLOCKED", filesChanged: [], verification: [] });
+  const report = makeReport({
+    status: "BLOCKED",
+    failureCauses: ["blocked"],
+    filesChanged: [],
+    verification: [],
+  });
   const result = analyze(report, [], {}, { filesChanged: [] });
   assert.equal(result.verdict, "BLOCKED");
   assert.match(result.escalationAdvice ?? "", /brief was incomplete/);

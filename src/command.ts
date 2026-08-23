@@ -272,6 +272,37 @@ export function parseCommand(command: string, policy: CommandPolicy): ParsedComm
   return { raw, file, args: rest };
 }
 
+/**
+ * Compare two verification commands as safe argv, never as shell text.
+ *
+ * Windows launcher suffixes are equivalent only for bare executable names;
+ * arguments remain exact and ordered on every platform.
+ */
+export function verificationCommandsEquivalent(
+  firstCommand: string,
+  secondCommand: string,
+  policy: CommandPolicy,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  try {
+    const first = parseCommand(firstCommand, policy);
+    const second = parseCommand(secondCommand, policy);
+    const pathQualified = (file: string): boolean =>
+      hasPathSeparator(file) || (platform === "win32" && /^[A-Za-z]:/.test(file));
+    if (pathQualified(first.file) || pathQualified(second.file)) return false;
+
+    const executable = (file: string): string =>
+      platform === "win32" ? stripExecutableExtension(file).toLowerCase() : file;
+    if (executable(first.file) !== executable(second.file)) return false;
+    return (
+      first.args.length === second.args.length &&
+      first.args.every((argument, index) => argument === second.args[index])
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Blank out quoted spans so construct detection only inspects live syntax. */
 function stripQuotedSections(command: string): string {
   let result = "";

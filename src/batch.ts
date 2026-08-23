@@ -247,12 +247,15 @@ export async function runBatch(
   const completed = running.filter(
     (task) => task.state === "completed" && task.result.changedFiles.length > 0,
   );
-  const integrationConflicts = findIntegrationConflicts(
-    completed.map((task) => ({
-      taskId: task.taskId,
-      changedFiles: task.result.changedFiles,
-    })),
-  );
+  const integrationConflicts =
+    mode === "parallel"
+      ? findIntegrationConflicts(
+          completed.map((task) => ({
+            taskId: task.taskId,
+            changedFiles: task.result.changedFiles,
+          })),
+        )
+      : [];
   for (const conflict of integrationConflicts) {
     emit({
       type: "integration.conflict",
@@ -957,7 +960,7 @@ function buildBatchChecklist(
 ): string[] {
   const checklist: string[] = [];
 
-  if (integrationConflicts.length > 0) {
+  if (mode === "parallel" && integrationConflicts.length > 0) {
     checklist.push(
       `Resolve ${integrationConflicts.length} integration conflict(s) yourself — ` +
         `nothing was merged automatically, and each worker's version is in its worktree.`,

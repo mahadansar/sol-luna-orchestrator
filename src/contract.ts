@@ -40,6 +40,18 @@ export type RepairClassification = (typeof REPAIR_CLASSIFICATIONS)[number];
 export const STATUSES = ["PASS", "BLOCKED", "FAILED"] as const;
 export type Status = (typeof STATUSES)[number];
 
+/** Low-trust reasons a worker declares for not returning PASS. */
+export const WORKER_FAILURE_CAUSES = [
+  "verification",
+  "requirements",
+  "implementation",
+  "environment-tooling",
+  "timeout",
+  "blocked",
+  "unclassified",
+] as const;
+export type WorkerFailureCause = (typeof WORKER_FAILURE_CAUSES)[number];
+
 /**
  * The task contract the parent orchestrator fills in when delegating.
  *
@@ -261,7 +273,15 @@ export type ContinueTaskInput = z.infer<typeof continueTaskInputSchema>;
 export const workerOutputJsonSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["status", "summary", "filesChanged", "verification", "notes", "followUps"],
+  required: [
+    "status",
+    "failureCauses",
+    "summary",
+    "filesChanged",
+    "verification",
+    "notes",
+    "followUps",
+  ],
   properties: {
     status: {
       type: "string",
@@ -269,6 +289,15 @@ export const workerOutputJsonSchema = {
       description:
         "PASS = every acceptance criterion met and verification passed. " +
         "BLOCKED = could not proceed. FAILED = attempted but criteria not met.",
+    },
+    failureCauses: {
+      type: "array",
+      uniqueItems: true,
+      items: { type: "string", enum: WORKER_FAILURE_CAUSES },
+      description:
+        "Structured worker-declared reasons status is not PASS. PASS uses []; " +
+        "FAILED uses one or more causes except blocked; BLOCKED includes blocked. " +
+        "Use verification when concrete failed verification rows are the only reason.",
     },
     summary: { type: "string", description: "What you did and why." },
     filesChanged: {
@@ -318,6 +347,7 @@ export const workerOutputJsonSchema = {
 /** The worker's self-reported result, as parsed from its final message. */
 export interface WorkerReport {
   status: Status;
+  failureCauses: WorkerFailureCause[];
   summary: string;
   filesChanged: Array<{ path: string; change: string; why: string }>;
   verification: Array<{
@@ -344,6 +374,14 @@ export const delegateTaskOutputShape = {
   workerClaimedStatus: z
     .enum(STATUSES)
     .describe("What the worker reported. Compare against `verdict`."),
+  workerClaimedFailureCauses: z
+    .array(z.enum(WORKER_FAILURE_CAUSES))
+    .optional()
+    .describe(
+      "Normalized worker-declared failure causes. This is claim evidence, not an " +
+        "orchestrator repair or retry classification. Current results always include it; " +
+        "the field is optional only for backwards-compatible consumers.",
+    ),
   trustworthy: z
     .boolean()
     .describe(
@@ -608,8 +646,9 @@ export const delegateTasksOutputShape = {
   integrationConflicts: z
     .array(z.object({ path: z.string(), tasks: z.array(z.string()) }))
     .describe(
-      "Files more than one worker actually changed. Non-empty means nothing was " +
-        "integrated and you must merge them yourself.",
+      "Parallel integration only: files more than one worker actually changed. " +
+        "Non-empty means nothing was integrated and you must merge them yourself. " +
+        "Sequential shared-workspace batches return an empty array.",
     ),
   integrated: z
     .boolean()

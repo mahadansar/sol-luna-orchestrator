@@ -6,6 +6,25 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- Structured worker-declared `failureCauses`, with conservative normalization
+  for legacy reports and fail-closed validation for invalid new reports.
+
+### Changed
+
+- Authoritative verification may override a worker `FAILED` only when its sole
+  declared cause is verification and complete one-to-one structured command
+  evidence proves every worker-side failure is contradicted by successful
+  authoritative execution. The contradiction and worker claim remain visible,
+  and the result is not marked trustworthy.
+
+### Fixed
+
+- Sequential batches no longer construct or render parallel integration
+  conflicts when a later dependent task intentionally edits an earlier task's
+  file. Parallel same-file collision behavior is unchanged.
+
 ## [0.8.1] - 2026-08-23
 
 A focused delegation-guidance and cost-semantics patch.

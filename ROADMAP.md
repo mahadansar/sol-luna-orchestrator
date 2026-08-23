@@ -289,11 +289,16 @@ be retried merely because a counter permits it.
 `previousAttempts` and the failure evidence should drive this rather than a
 counter.
 
+The shipped worker-declared `failureCauses` field is input evidence for this
+future decision, not P1.1's orchestrator-derived classifier. It records why the
+worker says its current status is not `PASS`; it does not select repair, retry,
+effort escalation, a stronger executor, or takeover.
+
 **Constraints.** Classification has to be conservative. Misreading a
 specification problem as a difficulty problem burns tokens and still fails.
 
-**Not decided.** The classification rules, the evidence schema, and which
-responses are automatic versus recommendations the supervisor acts on.
+**Not decided.** The orchestrator-derived classification rules and schema, and
+which responses are automatic versus recommendations the supervisor acts on.
 
 **Depends on** P0.4.
 

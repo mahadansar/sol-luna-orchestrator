@@ -15,6 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { renderBatch } from "./server.js";
 import { BatchRejectedError, runBatch as runProductionBatch } from "./batch.js";
 import { CONTINUATION_TTL_MS, ContinuationStore } from "./continuation.js";
 import {
@@ -215,6 +216,7 @@ const makeOutput = (overrides: Partial<DelegateTaskOutput> = {}): DelegateTaskOu
     changeIntent: "required",
     verdict: "PASS",
     workerClaimedStatus: "PASS",
+    workerClaimedFailureCauses: [],
     trustworthy: true,
     workerThreadId: "thread-x",
     continuationReference: null,
@@ -1654,7 +1656,8 @@ test("sequential mode shares the workspace so later tasks see earlier work", asy
   const repo = await makeRepo();
   try {
     const seen: string[] = [];
-    const result = await runBatch(
+    const eventTypes: string[] = [];
+    const result = await runProductionBatch(
       [
         makeTask({ objective: "Create the shared groundwork file." }),
         makeTask({ objective: "Build on top of the groundwork file." }),
@@ -1662,13 +1665,25 @@ test("sequential mode shares the workspace so later tasks see earlier work", asy
       {
         mode: "sequential",
         workingDirectory: repo,
+        eventEmitter: (event) => eventTypes.push(event.type),
         executor: async (_input, options) => {
-          const marker = path.join(options.workingDirectory, "step.txt");
+          const marker = path.join(options.workingDirectory, "sequence.txt");
           const existing = await fs.readFile(marker, "utf8").catch(() => "");
           seen.push(existing);
-          await fs.writeFile(marker, `${existing}step\n`, "utf8");
+          await fs.writeFile(
+            marker,
+            `${existing}${existing ? "beta" : "alpha"}\n`,
+            "utf8",
+          );
           return makeOutput({
-            filesChanged: [{ path: "step.txt", kind: "add", why: "t", observed: true }],
+            filesChanged: [
+              {
+                path: "sequence.txt",
+                kind: existing ? "update" : "add",
+                why: "sequential fixture",
+                observed: true,
+              },
+            ],
           });
         },
       },
@@ -1676,11 +1691,32 @@ test("sequential mode shares the workspace so later tasks see earlier work", asy
 
     assert.deepEqual(
       seen,
-      ["", "step\n"],
+      ["", "alpha\n"],
       "the second task must see the first task's write",
+    );
+    assert.equal(
+      await fs.readFile(path.join(repo, "sequence.txt"), "utf8"),
+      "alpha\nbeta\n",
     );
     assert.equal(result.integrated, true);
     assert.match(result.integrationSummary, /already in place/);
+    assert.deepEqual(result.integrationConflicts, []);
+    assert.equal(eventTypes.includes("integration.conflict"), false);
+    assert.ok(result.tasks.every((task) => task.worktreePath === null));
+    assert.ok(
+      result.reviewChecklist.every(
+        (item) =>
+          !/nothing was merged|version is in its worktree|integration conflict/i.test(
+            item,
+          ),
+      ),
+    );
+    const rendered = renderBatch(result);
+    assert.doesNotMatch(
+      rendered,
+      /INTEGRATION CONFLICTS|nothing was merged|worktree kept/i,
+    );
+    assert.match(rendered, /Sequential tasks worked directly in the workspace/);
   } finally {
     await cleanupRepo(repo);
   }
@@ -1699,6 +1735,55 @@ test("sequential mode needs no git repository at all", async () => {
       },
     );
     assert.equal(result.passed, 1);
+  } finally {
+    await cleanupRepo(real);
+  }
+});
+
+test("batch counts final verdict while rendering the contradictory worker claim", async () => {
+  const plain = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-verdict-batch-"));
+  const real = await fs.realpath(plain);
+  try {
+    const result = await runBatch([makeTask()], {
+      mode: "sequential",
+      workingDirectory: real,
+      executor: async () =>
+        makeOutput({
+          verdict: "PASS",
+          workerClaimedStatus: "FAILED",
+          workerClaimedFailureCauses: ["verification"],
+          trustworthy: false,
+          discrepancies: [
+            "Worker claimed FAILED because verification failed, but matching authoritative verification executed successfully.",
+          ],
+          verification: [
+            {
+              command: "npm test",
+              source: "orchestrator",
+              execution: "argv",
+              exitCode: 0,
+              passed: true,
+              output: "passed",
+            },
+            {
+              command: "npm test",
+              source: "worker",
+              execution: "reported",
+              exitCode: 1,
+              passed: false,
+              output: "failed",
+            },
+          ],
+        }),
+    });
+
+    assert.equal(result.passed, 1);
+    assert.equal(result.failed, 0);
+    const rendered = renderBatch(result);
+    assert.match(rendered, /PASS \(worker claimed FAILED\)/);
+    assert.match(rendered, /worker-claimed failure causes: verification/);
+    assert.match(rendered, /authoritative 1 executed \(1 passed, 0 failed\)/);
+    assert.match(rendered, /worker-reported 0 passed, 1 failed/);
   } finally {
     await cleanupRepo(real);
   }

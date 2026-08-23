@@ -281,8 +281,14 @@ for parent review.
 
 Use the returned evidence. Worker claims are not authoritative; judge the
 orchestrator's verdict, verification, observed files, discrepancies, scope
-violations, and review checklist. Choose review depth after seeing that evidence;
-do not pre-commit to rereading every file or rerunning every check. A clean
+violations, and review checklist. workerClaimedFailureCauses is structured claim
+evidence, not the runtime's repair or retry classification. A verification-only
+worker FAILED can become PASS only
+when every failed worker verification row matches a distinct passing authoritative
+run, every configured command passed authoritatively, and no other terminal
+evidence exists. Such a contradiction remains visible and trustworthy is false.
+Choose review depth after seeing that evidence; do not pre-commit to rereading
+every file or rerunning every check. A clean
 verified PASS with expected changes deserves proportionate review, not automatic
 re-derivation. Inspect more deeply for risk, weak coverage, unexpected changes,
 FAILED or BLOCKED results, trustworthy: false, discrepancies, or scope
@@ -348,6 +354,11 @@ export function renderResult(result: DelegateTaskOutput): string {
   lines.push(
     `VERDICT: ${result.verdict} (worker claimed ${result.workerClaimedStatus})${flag}`,
   );
+  if ((result.workerClaimedFailureCauses?.length ?? 0) > 0) {
+    lines.push(
+      `WORKER-CLAIMED FAILURE CAUSES: ${result.workerClaimedFailureCauses!.join(", ")}`,
+    );
+  }
   lines.push(
     `worker: ${result.model} @ ${result.effort} | attempt ${result.attempt} | ` +
       `thread ${result.workerThreadId ?? "unknown"} | ${result.durationSeconds}s`,
@@ -852,12 +863,14 @@ remainder as a second batch.
 Parallel declared scopes should be disjoint. \`allowOverlappingScopes:true\` is a
 call-level escape hatch that permits starting despite declared scope conflicts;
 it does not turn scopes into a write sandbox, and actual same-file edits still
-prevent automatic integration.
+prevent automatic parallel integration. integrationConflicts is a parallel-only
+result; sequential tasks share the workspace and may intentionally edit files
+changed by earlier sequential tasks.
 
-Partial outcomes remain visible for the parent orchestrator to judge. A completed worker's edits may
-be integrated even when its verdict is FAILED or BLOCKED. Declared scope
-conflicts can reject a batch; actual same-file edits prevent automatic
-integration and retain worktrees for manual resolution.
+Partial outcomes remain visible for the parent orchestrator to judge. A completed
+worker's edits may be integrated even when its verdict is FAILED or BLOCKED. Declared scope
+conflicts can reject a batch; actual same-file edits by parallel workers prevent
+automatic integration and retain worktrees for manual resolution.
 
 Parallel workers are verified in isolation. After integration, run additional
 integration or full-suite verification when changes can meaningfully interact
@@ -956,6 +969,11 @@ export function renderBatch(batch: BatchOutput): string {
     const flag = task.result && !task.result.trustworthy ? "  ! NEEDS SCRUTINY" : "";
     lines.push(`[${task.taskId}] ${verdict}${claimed}${flag}`);
     const result = task.result;
+    if ((result?.workerClaimedFailureCauses?.length ?? 0) > 0) {
+      lines.push(
+        `    worker-claimed failure causes: ${result!.workerClaimedFailureCauses!.join(", ")}`,
+      );
+    }
     lines.push(
       `    model: ${result?.model ?? "unknown"} | effort: ${task.effort} | ` +
         `duration: ${result ? `${result.durationSeconds}s` : "unknown"}`,
@@ -1009,7 +1027,7 @@ export function renderBatch(batch: BatchOutput): string {
     lines.push("");
   }
 
-  if (batch.integrationConflicts.length > 0) {
+  if (batch.mode === "parallel" && batch.integrationConflicts.length > 0) {
     lines.push("INTEGRATION CONFLICTS (same file changed by several workers)");
     for (const conflict of batch.integrationConflicts) {
       lines.push(`  ! ${conflict.path} <- ${conflict.tasks.join(", ")}`);

@@ -141,6 +141,19 @@ test("worker prompt describes the default verification mode conditionally", () =
   assert.doesNotMatch(prompt, /re-runs happen without a shell:/i);
 });
 
+test("worker prompt requires structured status-aligned failure causes", () => {
+  const prompt = buildWorkerPrompt(
+    delegateTaskInputSchema.parse(BASE_INPUT),
+    "/fake/dir",
+  );
+  assert.match(prompt, /`status`, `failureCauses`/);
+  assert.match(prompt, /PASS uses `\[\]`/);
+  assert.match(prompt, /FAILED uses one or more of `verification`/);
+  assert.match(prompt, /BLOCKED includes `blocked`/);
+  assert.match(prompt, /failed verification rows[\s\S]*entire reason for FAILED/);
+  assert.match(prompt, /Use `unclassified` whenever the cause cannot be stated safely/);
+});
+
 /** Every heading the capsule can produce, in the order it must produce them. */
 const CAPSULE_HEADINGS = [
   "## Relevant context",

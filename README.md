@@ -125,11 +125,22 @@ event shapes and privacy details are in [Observability](docs/OBSERVABILITY.md).
 
 ## Verification & safety
 
-A worker reports its own status, summary, changed files and verification result.
-Those are claims: the orchestrator independently reruns declared verification,
-compares claimed with observed edits, and reports scope violations and
-integration conflicts. In the default mode, verification commands are parsed
-without a shell and credential-shaped environment variables are withheld.
+A worker reports its own status, structured failure causes, summary, changed
+files and verification result. Those are claims: the orchestrator independently
+reruns declared verification, compares claimed with observed edits, and reports
+scope violations and parallel integration conflicts. In the default mode,
+verification commands are parsed without a shell and credential-shaped
+environment variables are withheld.
+
+A worker `FAILED` becomes an orchestrator `PASS` only for one narrow evidence
+contradiction: its sole declared cause is `verification`, every failed
+worker-reported command machine-matches a distinct passing authoritative run,
+and every configured command ran successfully with no other terminal evidence.
+The worker claim and both verification sources remain visible,
+`trustworthy` stays false, and review guidance calls out the disagreement.
+Windows matching treats bare `npm`, `npm.cmd`, and `npm.ps1` launchers as the
+same logical executable only when all arguments match; path-qualified commands,
+shell syntax, and POSIX launcher suffixes are not normalized.
 
 These are guardrails, not a sandbox. File scopes are detective rather than a
 write boundary, and verification runs outside the Codex sandbox with the user's

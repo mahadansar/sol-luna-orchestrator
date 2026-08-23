@@ -22,6 +22,7 @@ import {
   delegateTaskOutputShape,
   delegateTasksInputSchema,
   delegateTasksInputShape,
+  delegateTasksOutputShape,
 } from "./contract.js";
 import { buildWorkerPrompt } from "./prompt.js";
 import { DISCOVERY_HINT_TEXT } from "./cli/discovery-hint.js";
@@ -360,6 +361,13 @@ test("verification fields preserve authority without treating non-execution as p
   assert.match(execution, /Only successful executed rows prove a command/i);
 });
 
+test("worker failure causes remain worker claim evidence", () => {
+  const description =
+    delegateTaskOutputShape.workerClaimedFailureCauses.description ?? "";
+  assert.match(description, /worker-declared failure causes/i);
+  assert.match(description, /not an orchestrator repair or retry classification/i);
+});
+
 test("scope, discrepancy, and checklist descriptions demand review", () => {
   assert.match(delegateTaskOutputShape.scopeViolations.description ?? "", /workspace/i);
   assert.match(
@@ -395,6 +403,10 @@ test("batch input descriptions qualify overlap and integration", () => {
     /one-task batch remains accepted for compatibility/i,
   );
   assert.match(delegateTasksInputShape.integrate.description ?? "", /Set false/i);
+  assert.match(
+    delegateTasksOutputShape.integrationConflicts.description ?? "",
+    /parallel integration[\s\S]*sequential shared-workspace batches return an empty array/i,
+  );
   const task = delegateTasksInputSchema.shape.tasks.element;
   assert.ok("activityLabel" in task.shape);
   assert.match(
@@ -419,6 +431,10 @@ test("batch input descriptions qualify overlap and integration", () => {
     delegateTasksInputSchema.parse({ mode: "sequential", tasks: tooManyTasks }),
   );
   assert.match(BATCH_TOOL_DESCRIPTION, /concise[\s\S]*activityLabel[\s\S]*safe label/i);
+  assert.match(
+    BATCH_TOOL_DESCRIPTION,
+    /integrationConflicts is a parallel-only[\s\S]*result; sequential tasks/i,
+  );
 });
 
 test("parent model and effort guidance stays example-only across surfaces", async () => {

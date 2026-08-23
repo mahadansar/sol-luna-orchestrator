@@ -21,12 +21,19 @@ import type {
   DelegateTaskInput,
   DelegateTaskOutput,
   Status,
+  WorkerFailureCause,
   WorkerReport,
 } from "./contract.js";
-import { workerOutputJsonSchema } from "./contract.js";
+import { STATUSES, WORKER_FAILURE_CAUSES, workerOutputJsonSchema } from "./contract.js";
+import { verificationCommandsEquivalent } from "./command.js";
 import { buildWorkerPrompt } from "./prompt.js";
 import { findScopeViolations, toRelativePosix } from "./scope.js";
-import { runVerifications, truncate, type VerificationRun } from "./verify.js";
+import {
+  runVerifications,
+  truncate,
+  verificationPolicy,
+  type VerificationRun,
+} from "./verify.js";
 
 /**
  * Global cap on concurrently running workers.
@@ -261,10 +268,22 @@ export function parseWorkerReport(finalResponse: string): WorkerReport | null {
 
   for (const candidate of candidates) {
     try {
-      const parsed = JSON.parse(candidate) as Partial<WorkerReport>;
-      if (!parsed || typeof parsed !== "object" || !parsed.status) continue;
+      const parsed = JSON.parse(candidate) as Partial<WorkerReport> & {
+        failureCauses?: unknown;
+      };
+      if (
+        !parsed ||
+        typeof parsed !== "object" ||
+        !STATUSES.includes(parsed.status as Status)
+      ) {
+        continue;
+      }
+      const status = parsed.status as Status;
+      const failureCauses = parseFailureCauses(parsed, status);
+      if (!failureCauses) continue;
       return {
-        status: parsed.status,
+        status,
+        failureCauses,
         summary: parsed.summary ?? "",
         filesChanged: parsed.filesChanged ?? [],
         verification: parsed.verification ?? [],
@@ -276,6 +295,96 @@ export function parseWorkerReport(finalResponse: string): WorkerReport | null {
     }
   }
   return null;
+}
+
+function parseFailureCauses(
+  parsed: { failureCauses?: unknown },
+  status: Status,
+): WorkerFailureCause[] | null {
+  if (!Object.prototype.hasOwnProperty.call(parsed, "failureCauses")) {
+    if (status === "PASS") return [];
+    if (status === "BLOCKED") return ["blocked", "unclassified"];
+    return ["unclassified"];
+  }
+
+  if (!Array.isArray(parsed.failureCauses)) return null;
+  const causes = parsed.failureCauses;
+  if (
+    causes.some(
+      (cause) =>
+        typeof cause !== "string" ||
+        !WORKER_FAILURE_CAUSES.includes(cause as WorkerFailureCause),
+    )
+  ) {
+    return null;
+  }
+
+  const normalized = causes as WorkerFailureCause[];
+  if (new Set(normalized).size !== normalized.length) return null;
+  if (status === "PASS") return normalized.length === 0 ? normalized : null;
+  if (status === "FAILED") {
+    return normalized.length > 0 && !normalized.includes("blocked") ? normalized : null;
+  }
+  return normalized.includes("blocked") ? normalized : null;
+}
+
+function verificationFailureIsAuthoritativelyContradicted(
+  input: DelegateTaskInput,
+  report: WorkerReport,
+  orchestratorRuns: VerificationRun[],
+): boolean {
+  if (
+    report.status !== "FAILED" ||
+    report.failureCauses.length !== 1 ||
+    report.failureCauses[0] !== "verification" ||
+    input.verificationCommands.length === 0 ||
+    orchestratorRuns.length !== input.verificationCommands.length
+  ) {
+    return false;
+  }
+
+  for (let index = 0; index < input.verificationCommands.length; index += 1) {
+    const configured = input.verificationCommands[index]!;
+    const authoritative = orchestratorRuns[index]!;
+    if (
+      authoritative.command.trim() !== configured.trim() ||
+      (authoritative.execution !== "argv" && authoritative.execution !== "shell") ||
+      !authoritative.passed ||
+      authoritative.exitCode !== 0
+    ) {
+      return false;
+    }
+  }
+
+  if (
+    report.verification.some(
+      (claim) => typeof claim.command !== "string" || typeof claim.passed !== "boolean",
+    )
+  ) {
+    return false;
+  }
+  const failedClaims = report.verification.filter((claim) => claim.passed === false);
+  if (failedClaims.length === 0) return false;
+
+  const unmatched = new Set(orchestratorRuns.map((_, index) => index));
+  for (const claim of failedClaims) {
+    const match = [...unmatched].find((index) => {
+      const configured = input.verificationCommands[index]!;
+      const authoritative = orchestratorRuns[index]!;
+      return (
+        verificationCommandsEquivalent(claim.command, configured, verificationPolicy) &&
+        verificationCommandsEquivalent(
+          claim.command,
+          authoritative.command,
+          verificationPolicy,
+        )
+      );
+    });
+    if (match === undefined) return false;
+    unmatched.delete(match);
+  }
+
+  return true;
 }
 
 const CHANGE_KIND_ALIASES: Record<string, string> = {
@@ -336,6 +445,9 @@ export function buildDelegationResult({
   }
 
   const workerClaimedStatus: Status = report?.status ?? "FAILED";
+  const workerClaimedFailureCauses: WorkerFailureCause[] = report?.failureCauses ?? [
+    "unclassified",
+  ];
 
   // --- Merge observed edits with claimed edits -----------------------------
   const observedRelative = new Map<string, string>();
@@ -478,9 +590,30 @@ export function buildDelegationResult({
     );
   }
 
+  const verificationContradiction =
+    report !== null &&
+    verificationFailureIsAuthoritativelyContradicted(input, report, orchestratorRuns) &&
+    errors.length === 0 &&
+    !observed.timedOut &&
+    !observed.cancelled &&
+    scopeViolations.length === 0 &&
+    !changeIntentViolation &&
+    (changeIntent !== "required" || observedChanges.length > 0);
+
+  if (verificationContradiction) {
+    const failedCommands = report.verification
+      .filter((claim) => !claim.passed)
+      .map((claim) => `\`${claim.command}\``)
+      .join(", ");
+    discrepancies.push(
+      `Worker claimed FAILED because verification ${failedCommands} failed, but ` +
+        "matching authoritative verification executed successfully.",
+    );
+  }
+
   // --- Verdict -------------------------------------------------------------
   // Ordering matters: a real execution failure outranks a policy refusal.
-  let verdict: Status = workerClaimedStatus;
+  let verdict: Status = verificationContradiction ? "PASS" : workerClaimedStatus;
   if (errors.length > 0 || observed.timedOut) {
     verdict = "FAILED";
   } else if (
@@ -499,6 +632,7 @@ export function buildDelegationResult({
     input,
     verdict,
     workerClaimedStatus,
+    workerClaimedFailureCauses,
     discrepancies,
     orchestratorRuns,
     filesChanged,
@@ -508,6 +642,7 @@ export function buildDelegationResult({
     changeIntent,
     verdict,
     workerClaimedStatus,
+    workerClaimedFailureCauses,
     trustworthy: discrepancies.length === 0 && errors.length === 0,
     workerThreadId: observed.threadId,
     continuationReference: null,
@@ -724,6 +859,12 @@ export function reconcileParallelWorktreeEvidence(
       input,
       verdict,
       result.workerClaimedStatus,
+      result.workerClaimedFailureCauses ??
+        (result.workerClaimedStatus === "PASS"
+          ? []
+          : result.workerClaimedStatus === "BLOCKED"
+            ? ["blocked", "unclassified"]
+            : ["unclassified"]),
       discrepancies,
       result.verification.filter(
         (run) => run.source === "orchestrator" && run.execution !== "reported",
@@ -863,6 +1004,14 @@ export function classifyRepairEligibility(
       "environment-or-tooling",
       "Runtime, timeout, cancellation, or worker-tool errors require parent review.",
     );
+  }
+  if (
+    result.verdict === "PASS" &&
+    result.workerClaimedStatus === "FAILED" &&
+    result.workerClaimedFailureCauses?.length === 1 &&
+    result.workerClaimedFailureCauses[0] === "verification"
+  ) {
+    return repairDecision("not-needed", "The initial result passed.");
   }
   if (!result.workerThreadId) {
     return repairDecision(
@@ -1189,6 +1338,7 @@ function buildReviewChecklist(
   input: DelegateTaskInput,
   verdict: Status,
   claimed: Status,
+  claimedFailureCauses: WorkerFailureCause[],
   discrepancies: string[],
   orchestratorRuns: VerificationRun[],
   filesChanged: DelegateTaskOutput["filesChanged"],
@@ -1208,6 +1358,17 @@ function buildReviewChecklist(
   if (verdict !== claimed) {
     checklist.push(
       `The worker claimed ${claimed} but the orchestrator's verdict is ${verdict}. Read the diff before deciding.`,
+    );
+  }
+  if (
+    claimed === "FAILED" &&
+    claimedFailureCauses.length === 1 &&
+    claimedFailureCauses[0] === "verification" &&
+    verdict === "PASS"
+  ) {
+    checklist.push(
+      "The worker's verification failed while matching authoritative verification passed. " +
+        "Compare both verification evidence sources before accepting the result.",
     );
   }
 

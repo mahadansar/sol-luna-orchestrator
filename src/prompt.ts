@@ -153,12 +153,23 @@ and describe precisely what you checked.`,
 ## Output
 
 Your final message must be a single JSON object matching the required schema:
-\`status\`, \`summary\`, \`filesChanged\`, \`verification\`, \`notes\`, \`followUps\`.
+\`status\`, \`failureCauses\`, \`summary\`, \`filesChanged\`, \`verification\`,
+\`notes\`, \`followUps\`.
 
 Set \`status\`:
 - PASS — every acceptance criterion met and verification genuinely passed.
 - FAILED — you attempted the work but criteria are unmet or verification fails.
 - BLOCKED — you could not proceed at all.
+
+Set \`failureCauses\` using only structured evidence from this turn:
+- PASS uses \`[]\`.
+- FAILED uses one or more of \`verification\`, \`requirements\`, \`implementation\`,
+  \`environment-tooling\`, \`timeout\`, or \`unclassified\`; never \`blocked\`.
+- BLOCKED includes \`blocked\` and may include other applicable causes.
+
+Use \`verification\` as the only cause only when failed verification rows are the
+entire reason for FAILED. Do not omit another cause merely because verification also
+failed. Use \`unclassified\` whenever the cause cannot be stated safely.
 
 Only claim PASS if you would stake the review on it.`,
   );

@@ -175,6 +175,29 @@ verification execution records are stronger evidence. Only successfully
 executed orchestrator `argv` or `shell` verification rows prove a command;
 `rejected`, `skipped`, and worker `reported` rows do not.
 
+`workerClaimedFailureCauses` preserves the worker's structured explanation; it
+is evidence, not the repair classification or a future retry classifier. New
+worker reports obey these invariants: `PASS` uses no causes, `FAILED` uses one or
+more non-`blocked` causes, and `BLOCKED` includes `blocked`. Legacy reports with
+no field normalize conservatively to no causes for `PASS`, `unclassified` for
+`FAILED`, and `blocked` plus `unclassified` for `BLOCKED`. Invalid present values
+are malformed reports and fail closed. Never infer a cause from prose.
+
+A worker `FAILED` may become final `PASS` only when its normalized cause list is
+exactly `verification`, it reports at least one failed verification row, every
+such row machine-matches a distinct configured command and passing authoritative
+execution, and every configured command has exactly one successful executed
+authoritative result. Missing, extra, refused, skipped, failed, or unmatched
+rows prevent promotion, as does any runtime error, cancellation, timeout, scope
+or intent violation, terminal discrepancy, missing required edit, or terminal
+final-worktree evidence. Matching uses parsed argv only: arguments are exact;
+shell syntax and path-qualified executables never match; on Windows only, bare
+launcher suffixes such as `.cmd` and `.ps1` normalize to the same logical
+executable. `BLOCKED` and every other `FAILED` cause combination remain
+unchanged. A promoted result retains `workerClaimedStatus: FAILED`, the declared
+cause and both verification sources, records the inverse contradiction,
+sets `trustworthy: false`, and does not enter automatic repair.
+
 Start with `verdict`, `trustworthy`, `discrepancies`,
 `scopeViolations`, observed files, verification provenance and execution, and
 `reviewChecklist`. Confirm the acceptance criteria and retain final judgement.
@@ -205,8 +228,11 @@ should be disjoint by default. The call-level `allowOverlappingScopes: true`
 escape hatch may accept declared overlap for that batch, but actual same-file
 edits still prevent automatic integration.
 
-Integration is a file copy, not a merge. Actual same-file edits prevent
-automatic integration and retain worktrees for manual resolution. Completed
+Parallel integration is a file copy, not a merge. Actual same-file edits by
+parallel workers prevent automatic integration and retain worktrees for manual
+resolution. Sequential tasks intentionally share the workspace, so a later task
+may consume and modify a file changed by an earlier task without creating an
+integration conflict. Completed
 worker edits may be copied back even when that task's verdict is FAILED or
 BLOCKED; judge every task result and the integrated workspace. Partial outcomes
 remain visible rather than being hidden. Partial or failed integration and
