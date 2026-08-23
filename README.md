@@ -29,14 +29,25 @@ logged in (`codex login`), and Node.js 22.12 or newer.
 ```bash
 npm install -g sol-luna-orchestrator
 sol-luna-orchestrator init
+sol-luna-orchestrator doctor
 ```
 
-`init` registers the MCP server with Codex, applies the two Codex settings that
-delegation needs to work at all, and adds a small managed hint to your global
-Codex instructions so a fresh session can find the server. It changes only the
-keys and marker block it owns and preserves the rest of the file. Run it twice
-and it says `Already configured`; `init --no-discovery-hint` opts out of the
-hint.
+Global installation is the normal path because Codex needs a durable server
+path; `init` refuses an ephemeral npx-cache install unless you explicitly opt
+in. On first setup, `init` registers the installed server, reconciles the
+required Codex settings (`tool_timeout_sec = 3600` and
+`default_tools_approval_mode = "approve"`), its server environment (including
+the log/event paths and server name), and its managed discovery hint. Run it
+again after every upgrade so the registration and any newly required, missing,
+or incorrect owned values are reconciled with the upgraded install. Plain reruns
+preserve unrelated config and custom log/event paths; `--log` or `--events`
+explicitly replaces those paths. `init` is idempotent, and
+`--no-discovery-hint` opts out of the hint.
+
+`doctor` follows setup and upgrades: it checks the local Node.js, Codex, git,
+registration, settings, runtime policy, logs, and discovery hint, and prints
+remedies without making a model call. Project-local MCP overrides are mainly
+for developing Sol-Luna itself, not normal user setup.
 
 Now open Codex with any compatible parent model and work normally:
 
@@ -62,6 +73,20 @@ sol-luna-orchestrator uninstall   # remove this project's entry, nothing else
 and leaves your other instructions, logs and activity history alone. Both `init`
 and `uninstall` take `--dry-run` and write nothing. Install options, environment
 variables and Codex settings are in [Configuration](docs/CONFIGURATION.md).
+
+## Updating
+
+After installing a new release, rerun the lifecycle against the durable global
+install:
+
+```bash
+npm install -g sol-luna-orchestrator@latest
+sol-luna-orchestrator init
+sol-luna-orchestrator doctor
+```
+
+`init` reconciles Codex with the upgraded install and repairs the values it
+owns; `doctor` confirms the resulting setup.
 
 ## Features
 
@@ -184,6 +209,7 @@ limits are in [Configuration](docs/CONFIGURATION.md); planned work is in
 | [Troubleshooting](docs/TROUBLESHOOTING.md)           | Symptoms, and recovering a broken configuration               |
 | [Observability](docs/OBSERVABILITY.md)               | Event stream shapes, activity log, privacy                    |
 | [Live Acceptance](docs/ACCEPTANCE.md)                | Manual procedure for testing a fresh Codex session            |
+| [Feature Acceptance](docs/FEATURE_ACCEPTANCE.md)     | Per-feature evidence, freshness, confidence, and retest gaps  |
 | [Delegation Discovery](docs/DELEGATION_DISCOVERY.md) | Fresh-session discovery, and how routing differs from it      |
 | [`SOL_RULES.md`](SOL_RULES.md)                       | Supervisor policy: delegating, effort, reviewing evidence     |
 | [`SECURITY.md`](SECURITY.md)                         | Trust boundaries, what the logs hold, reporting an issue      |
