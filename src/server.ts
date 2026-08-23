@@ -195,7 +195,11 @@ do not pre-commit to rereading every file or rerunning every check. A clean
 verified PASS with expected changes deserves proportionate review, not automatic
 re-derivation. Inspect more deeply for risk, weak coverage, unexpected changes,
 FAILED or BLOCKED results, trustworthy: false, discrepancies, or scope
-violations.`;
+violations. Set each task's explicit changeIntent to forbidden, optional, or
+required; omitted intent defaults to required for compatibility. It is independent
+of allowedFiles and taskCategory. A forbidden runtime-observed edit is a contract
+violation, while a claimed-only edit remains a claims-versus-observations
+discrepancy for the parent to judge.`;
 
 /**
  * Strip the output of verification commands that passed.
@@ -241,6 +245,7 @@ export function renderResult(result: DelegateTaskOutput): string {
     `worker: ${result.model} @ ${result.effort} | attempt ${result.attempt} | ` +
       `thread ${result.workerThreadId ?? "unknown"} | ${result.durationSeconds}s`,
   );
+  lines.push(`CHANGE INTENT: ${result.changeIntent ?? "required"}`);
   lines.push("");
   lines.push(`WORKER SUMMARY (claim)\n${result.summary || "(none)"}`);
 
@@ -512,6 +517,11 @@ Optionally give each task a useful concise activityLabel for the local activity
 view; labels are not required and should not copy the full objective or include
 sensitive details.
 
+Set each task's explicit changeIntent to forbidden (read-only), optional, or
+required. Omitted intent defaults to required for compatibility. This expectation
+is independent of allowedFiles and taskCategory and is carried in each task's
+result evidence.
+
 While this batch is pending and has no meaningful new state, remain silent: do not
 narrate waiting, polling, elapsed time, or which task is still running. Report
 results, errors, cancellations, timeouts, or actionable state changes.
@@ -606,6 +616,7 @@ export function renderBatch(batch: BatchOutput): string {
     const flag = task.result && !task.result.trustworthy ? "  ! NEEDS SCRUTINY" : "";
     lines.push(`[${task.taskId}] ${verdict}${claimed}${flag}`);
     lines.push(`    effort: ${task.effort} - ${task.effortReason}`);
+    if (task.result) lines.push(`    change intent: ${task.result.changeIntent}`);
     lines.push(`    objective: ${task.objective.slice(0, 140)}`);
 
     if (task.result?.summary)

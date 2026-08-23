@@ -204,6 +204,7 @@ const makeTask = (overrides: Partial<DelegateTaskInput> = {}): DelegateTaskInput
 
 const makeOutput = (overrides: Partial<DelegateTaskOutput> = {}): DelegateTaskOutput =>
   ({
+    changeIntent: "required",
     verdict: "PASS",
     workerClaimedStatus: "PASS",
     trustworthy: true,

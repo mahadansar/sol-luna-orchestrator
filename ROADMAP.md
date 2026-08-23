@@ -26,21 +26,21 @@ or for taking Git actions on the user's behalf.
 
 ## Priorities at a glance
 
-| Priority | Item                                     | Status / Depends on    |
-| -------- | ---------------------------------------- | ---------------------- |
-| P0.1     | Context Capsule v2                       | Shipped in v0.7.0      |
-| P0.2     | Compact Evidence Packets                 | Shipped in v0.7.0      |
-| P0.2a    | Explicit Change Intent Contracts         | P0.2                   |
-| P0.3     | Worker Continuation                      | P0.2a                  |
-| P0.4     | Bounded Repair Loop                      | P0.3, P0.2a            |
-| P1.0     | Parent Model and Pricing Discovery       | Discovery before P1.2  |
-| P1.1     | Reasoned Retry and Effort Escalation     | P0.4                   |
-| P1.2     | Adaptive Worker Routing + Compute Policy | P1.0, P1.1             |
-| P1.3     | Automatic Context Lifecycle Management   | P0.1, P0.2, P0.3       |
-| P2.1     | Optional Explorer                        | P1.2                   |
-| P2.2     | Cross-Session Handoff                    | P1.3                   |
-| P2.3     | End-to-End Automated Workflow            | P1.2, P1.3, P2.1, P2.2 |
-| P2.4     | Mature Benchmark and Acceptance Pass     | P2.3                   |
+| Priority | Item                                     | Status / Depends on                              |
+| -------- | ---------------------------------------- | ------------------------------------------------ |
+| P0.1     | Context Capsule v2                       | Shipped in v0.7.0                                |
+| P0.2     | Compact Evidence Packets                 | Shipped in v0.7.0                                |
+| P0.2a    | Explicit Change Intent Contracts         | Implemented in the working tree; pending release |
+| P0.3     | Worker Continuation                      | P0.2a                                            |
+| P0.4     | Bounded Repair Loop                      | P0.3, P0.2a                                      |
+| P1.0     | Parent Model and Pricing Discovery       | Discovery before P1.2                            |
+| P1.1     | Reasoned Retry and Effort Escalation     | P0.4                                             |
+| P1.2     | Adaptive Worker Routing + Compute Policy | P1.0, P1.1                                       |
+| P1.3     | Automatic Context Lifecycle Management   | P0.1, P0.2, P0.3                                 |
+| P2.1     | Optional Explorer                        | P1.2                                             |
+| P2.2     | Cross-Session Handoff                    | P1.3                                             |
+| P2.3     | End-to-End Automated Workflow            | P1.2, P1.3, P2.1, P2.2                           |
+| P2.4     | Mature Benchmark and Acceptance Pass     | P2.3                                             |
 
 ```
 Context Capsule v2 (shipped in v0.7.0)
@@ -118,15 +118,22 @@ The default remains `"full"` for compatibility.
 
 ## P0.2a Explicit Change Intent Contracts
 
+**Status.** Implemented in the working tree; pending release. The shipped
+version remains recorded in `CHANGELOG.md` until the next release.
+
 **Problem.** A zero-change result can be correct for a read-only investigation,
 but the current contract vocabulary does not make the expectation explicit.
 That ambiguity makes zero-change classification and repair decisions less safe.
 
-**Direction.** Add explicit change intent to bounded contracts, distinguishing
-changes that are **forbidden/read-only**, **optional**, or **required**. The
-intent should be carried into the worker brief and the review evidence so a
-zero-change result is judged against the contract rather than inferred from the
-result, task category, or the allowlist.
+**Delivered.** `changeIntent` is accepted per task by `delegate_task` and every
+task in `delegate_tasks`, defaulting to `required` when omitted. The selected
+intent is stated distinctly in the worker brief and returned in structured and
+readable review evidence. A PASS with no claimed or observed changes is clean
+for `forbidden` and `optional`, while `required` retains the prior discrepancy
+and scrutiny. Intent is independent of `allowedFiles` and task category.
+Runtime-observed edits under `forbidden` are classified as a contract violation
+and fail the orchestrator verdict; claimed-only edits retain the existing
+claimed-versus-observed reconciliation.
 
 **Constraints.** `allowedFiles: []` means that there is no in-workspace
 allowlist; it does not mean the task is read-only. A read-only contract must
@@ -531,18 +538,6 @@ Visible, lower priority, not actively being implemented.
   repetitions would come before any mitigation work.
 - **Supervisor effort comparison.** Whether Medium changes the delegation
   decision relative to High, when it is worth the model usage to find out.
-
-## Maintenance backlog
-
-- **Read-only zero-change result classification.** Do not treat a worker `PASS`
-  with zero changed files as suspicious when the task contract explicitly expects
-  no modifications, such as an investigation, audit, review or other read-only
-  delegation. Preserve the existing scrutiny for implementation and editing tasks
-  whose contracts expected file changes; classify from explicit contract intent,
-  not from the result alone. This classification is part of P0.2a Explicit Change
-  Intent Contracts, which distinguishes changes forbidden/read-only, optional,
-  or required. Do not infer that intent from `allowedFiles: []` (which means no
-  in-workspace allowlist) or from task category alone.
 
 ## Not current goals
 

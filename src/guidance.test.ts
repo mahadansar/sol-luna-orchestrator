@@ -446,6 +446,9 @@ test("SOL_RULES carries the runtime's operational distinctions without benchmark
     /do not pre-commit to rereading[\s\S]*every changed file/i,
     /empty `allowedFiles` means no in-workspace allowlist/i,
     /does not[\s\S]*declare read-only intent/i,
+    /changeIntent[\s\S]*forbidden[\s\S]*optional[\s\S]*required/i,
+    /omitted[\s\S]*defaults to `required`/i,
+    /forbidden[\s\S]*runtime-observed edit[\s\S]*contract violation/i,
     /batch-level choice applied uniformly/i,
     /call-level `allowOverlappingScopes: true`[\s\S]*escape hatch/i,
     /actual same-file[\s\S]*edits still prevent[\s\S]*integration/i,
@@ -469,6 +472,10 @@ test("README preserves conditional integration and silent-waiting guidance", asy
   assert.match(
     readme,
     /`?delegate_tasks`?[\s\S]*intended for multiple meaningful tasks[\s\S]*accepts one task for compatibility/i,
+  );
+  assert.match(
+    readme,
+    /changeIntent[\s\S]*forbidden[\s\S]*optional[\s\S]*required[\s\S]*defaults to `required`/i,
   );
   assert.match(readme, /allowOverlappingScopes: true[\s\S]*actual same-file edits/i);
   const silentWaiting = readme.slice(
@@ -527,7 +534,7 @@ test("human pricing example is dated and distinct from durable runtime policy", 
   );
   assert.match(
     roadmap,
-    /explicit change intent[\s\S]*expected, optional, or required[\s\S]*Do not infer[\s\S]*`allowedFiles: \[\]`[\s\S]*task category/i,
+    /P0\.2a[\s\S]*Implemented in the working tree[\s\S]*changeIntent[\s\S]*forbidden[\s\S]*optional[\s\S]*required[\s\S]*task category[\s\S]*`allowedFiles: \[\]`/i,
   );
   assert.doesNotMatch(
     [SERVER_INSTRUCTIONS, TOOL_DESCRIPTION, BATCH_TOOL_DESCRIPTION].join("\n"),

@@ -281,6 +281,9 @@ export function buildDelegationResult({
   durationSeconds,
 }: AnalysisParams): DelegateTaskOutput {
   const report = parseWorkerReport(observed.finalResponse);
+  // The schema default keeps legacy callers safe even if they construct an
+  // input object without parsing it first.
+  const changeIntent = input.changeIntent ?? "required";
 
   const errors = [...observed.errors];
   if (!report && observed.finalResponse) {
@@ -382,7 +385,21 @@ export function buildDelegationResult({
     );
   }
 
-  if (workerClaimedStatus === "PASS" && filesChanged.length === 0) {
+  const observedChanges = filesChanged.filter((file) => file.observed);
+  const changeIntentViolation =
+    changeIntent === "forbidden" && observedChanges.length > 0;
+  if (changeIntentViolation) {
+    discrepancies.push(
+      `Change intent contract violated: intent is forbidden, but the runtime ` +
+        `observed edits in ${observedChanges.map((file) => file.path).join(", ")}.`,
+    );
+  }
+
+  if (
+    workerClaimedStatus === "PASS" &&
+    filesChanged.length === 0 &&
+    changeIntent === "required"
+  ) {
     discrepancies.push(
       "Worker claimed PASS but no file changes were recorded. Confirm the task " +
         "genuinely required no edits.",
@@ -430,6 +447,9 @@ export function buildDelegationResult({
   } else if (scopeViolations.length > 0) {
     // The code may be fine, but the contract was broken. The parent decides.
     verdict = "FAILED";
+  } else if (changeIntentViolation) {
+    // A forbidden edit is a contract violation even when it stayed in scope.
+    verdict = "FAILED";
   }
 
   const reviewChecklist = buildReviewChecklist(
@@ -442,6 +462,7 @@ export function buildDelegationResult({
   );
 
   return {
+    changeIntent,
     verdict,
     workerClaimedStatus,
     trustworthy: discrepancies.length === 0 && errors.length === 0,
@@ -630,6 +651,11 @@ function buildReviewChecklist(
   if (discrepancies.length > 0) {
     checklist.push(
       "Resolve every entry in `discrepancies` before accepting any part of this result.",
+    );
+  }
+  if (discrepancies.some((item) => /change intent contract violated/i.test(item))) {
+    checklist.push(
+      "The forbidden change intent was violated by a runtime-observed edit; inspect the diff before accepting the result.",
     );
   }
   if (verdict !== claimed) {
