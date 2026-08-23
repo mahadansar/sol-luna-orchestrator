@@ -121,6 +121,28 @@ test("evidence packet - verification failure", () => {
   assert.ok(text.includes("Failed 1 test"));
 });
 
+test("evidence packet - bounded repair decision and exact failure excerpt", () => {
+  const result = mockResult();
+  result.repair = {
+    requested: true,
+    attempted: true,
+    classification: "local-verification",
+    reason: "The one automatic repair turn completed.",
+    failureEvidence: [
+      {
+        command: "npm test",
+        execution: "argv",
+        exitCode: 1,
+        output: "exact failing assertion",
+      },
+    ],
+  };
+  const text = renderResult(result);
+  assert.match(text, /REPAIR: attempted.*local-verification/);
+  assert.match(text, /npm test/);
+  assert.match(text, /exact failing assertion/);
+});
+
 test("evidence packet - verification refusal", () => {
   const result = mockResult();
   if (result.verification[0]) {
@@ -441,6 +463,40 @@ test("single-task delegation records its result exactly once with the existing s
     ]);
     assert.equal(event.workerThreadId, "thread_123");
     assert.equal(event.verdict, "PASS");
+  } finally {
+    await fs.rm(workRoot, { recursive: true, force: true });
+  }
+});
+
+test("legacy activity records expose repair classification without failure output", async () => {
+  const workRoot = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-repair-event-"));
+  const eventsPath = path.join(workRoot, "events.jsonl");
+  try {
+    const result = mockResult();
+    result.repair = {
+      requested: true,
+      attempted: true,
+      classification: "local-verification",
+      reason: "completed",
+      failureEvidence: [
+        {
+          command: "npm test",
+          execution: "argv",
+          exitCode: 1,
+          output: "PRIVATE_FAILURE_OUTPUT",
+        },
+      ],
+    };
+    recordEvent(result, eventsPath);
+    const raw = await fs.readFile(eventsPath, "utf8");
+    assert.doesNotMatch(raw, /PRIVATE_FAILURE_OUTPUT|npm test/);
+    const event = JSON.parse(raw) as {
+      repair?: { attempted?: boolean; classification?: string };
+    };
+    assert.deepEqual(event.repair, {
+      attempted: true,
+      classification: "local-verification",
+    });
   } finally {
     await fs.rm(workRoot, { recursive: true, force: true });
   }

@@ -24,6 +24,7 @@ import {
   delegateTasksInputShape,
 } from "./contract.js";
 import { buildWorkerPrompt } from "./prompt.js";
+import { DISCOVERY_HINT_TEXT } from "./cli/discovery-hint.js";
 
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readDoc = (name: string): Promise<string> =>
@@ -58,6 +59,7 @@ test("backwards-compatible guidance fields retain their API defaults", () => {
   assert.equal(parsed.resultDetail, "full");
   assert.equal(parsed.contextCapsule, undefined);
   assert.equal(parsed.activityLabel, undefined);
+  assert.equal(parsed.automaticRepair, false);
 });
 
 test("activityLabel is optional, concise, and bounded", () => {
@@ -169,6 +171,29 @@ test("continuation guidance keeps the contract fixed and bounded", () => {
     CONTINUE_TOOL_DESCRIPTION,
     /verification[\s\S]*scope checks[\s\S]*evidence reconciliation/i,
   );
+  assert.match(CONTINUE_TOOL_DESCRIPTION, /never starts an automatic repair/i);
+});
+
+test("bounded repair guidance and schemas keep parent control and the one-turn limit", async () => {
+  assert.match(TOOL_DESCRIPTION, /automaticRepair/i);
+  assert.match(TOOL_DESCRIPTION, /at most one repair/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /automaticRepair/i);
+  assert.match(SERVER_INSTRUCTIONS, /same-thread automatic repair/i);
+  assert.match(
+    delegateTaskInputShape.automaticRepair.description ?? "",
+    /same worker thread and immutable task contract/i,
+  );
+  assert.equal(delegateTaskInputSchema.parse(BASE_INPUT).automaticRepair, false);
+  assert.equal(
+    delegateTasksInputSchema.parse({ mode: "sequential", tasks: [BASE_INPUT] }).tasks[0]
+      ?.automaticRepair,
+    false,
+  );
+  assert.match(delegateTaskOutputShape.repair.description ?? "", /failure evidence/i);
+
+  const rules = await readDoc("SOL_RULES.md");
+  assert.match(rules, /exactly one[\s\S]*same-thread repair/i);
+  assert.match(rules, /Manual[\s\S]*continue_task[\s\S]*never chains into repair/i);
 });
 
 test("delegation remains broader than implementation", () => {
@@ -427,23 +452,18 @@ test("parent model and effort guidance stays example-only across surfaces", asyn
   assert.match(example, /any compatible parent model and reasoning effort may be used/i);
   assert.doesNotMatch(example, /\bRECOMMENDED\b/i);
 
-  for (const [document, start, end] of [
-    [readme, "Raw token counts are not credit cost.", "## Quick start"],
-    [rules, "## Cost and parallelism", "## Worker effort"],
-  ] as const) {
-    const cost = document.slice(document.indexOf(start), document.indexOf(end));
-    assert.match(cost, /raw token[s\s\S]*not credit cost/i);
-    assert.match(
-      cost,
-      /only when[\s\S]*(?:selected parent(?: model)?|parent you picked)[\s\S]*priced above[\s\S]*worker[\s\S]*(?:current|applicable)[\s\S]*(?:pricing )?schedule/i,
-    );
-    assert.match(cost, /no (?:cost )?saving has been\s+measured/i);
-  }
-  const readmeCost = readme.slice(
-    readme.indexOf("Raw token counts are not credit cost."),
-    readme.indexOf("## Quick start"),
+  const rulesCost = rules.slice(
+    rules.indexOf("## Cost and parallelism"),
+    rules.indexOf("## Worker effort"),
   );
-  assert.match(readmeCost, /docs\/CONFIGURATION\.md#cost/i);
+  assert.match(rulesCost, /raw token[s\s\S]*not credit cost/i);
+  assert.match(
+    rulesCost,
+    /only when[\s\S]*(?:selected parent(?: model)?|parent you picked)[\s\S]*priced above[\s\S]*worker[\s\S]*(?:current|applicable)[\s\S]*(?:pricing )?schedule/i,
+  );
+  assert.match(rulesCost, /no (?:cost )?saving has been\s+measured/i);
+  assert.match(readme, /Raw tokens are not billed[\s\S]*no cost saving is claimed/i);
+  assert.match(readme, /docs\/CONFIGURATION\.md#cost/i);
 });
 
 test("SOL_RULES carries the runtime's operational distinctions without benchmark narration", async () => {
@@ -476,35 +496,34 @@ test("SOL_RULES carries the runtime's operational distinctions without benchmark
   assert.doesNotMatch(rules, /2\.3x|3\.5x|V6|around 70 seconds|four and six/i);
 });
 
-test("README preserves conditional integration and silent-waiting guidance", async () => {
-  const readme = await readDoc("README.md");
+test("landing page links to authoritative operational guidance", async () => {
+  const [readme, rules, discovery] = await Promise.all([
+    readDoc("README.md"),
+    readDoc("SOL_RULES.md"),
+    readDoc("docs/DELEGATION_DISCOVERY.md"),
+  ]);
   assert.doesNotMatch(
     readme,
     /told\s+to\s+run\s+the\s+full\s+suite\s+after\s+integration/i,
   );
+  assert.match(readme, /SOL_RULES\.md/);
+  assert.match(readme, /Delegation Discovery/);
   assert.match(
-    readme,
-    /Use the sol-luna-orchestrator MCP for this task\. Decide whether delegate_task or[\s\S]*delegate_tasks is appropriate based on the work\./,
+    discovery.replace(/^>\s?/gm, ""),
+    new RegExp(escapeRegExp(DISCOVERY_HINT_TEXT).replaceAll(" ", "\\s+")),
   );
   assert.match(
-    readme,
-    /`?delegate_tasks`?[\s\S]*intended for multiple meaningful tasks[\s\S]*accepts one task for compatibility/i,
+    rules,
+    /batch contract accepts one task for compatibility[\s\S]*use `delegate_task`/i,
   );
   assert.match(
-    readme,
+    rules,
     /changeIntent[\s\S]*forbidden[\s\S]*optional[\s\S]*required[\s\S]*defaults to `required`/i,
   );
-  assert.match(readme, /allowOverlappingScopes: true[\s\S]*actual same-file edits/i);
-  const silentWaiting = readme.slice(
-    readme.indexOf("While a call is in flight"),
-    readme.indexOf("Supervisor policy reaches the parent"),
-  );
-  assert.match(silentWaiting, /(?:in flight|pending)[\s\S]*no meaningful new state/i);
-  assert.match(silentWaiting, /parent[\s\S]*(?:stay quiet|remain silent)/i);
-  assert.match(
-    silentWaiting,
-    /(?:rather than|avoid|do not)[\s\S]*narrat[\s\S]*(?:polling|waiting|elapsed time)/i,
-  );
+  assert.match(rules, /allowOverlappingScopes: true[\s\S]*actual same-file edits/i);
+  assert.match(rules, /active Sol-Luna tool call[\s\S]*no meaningful new state/i);
+  assert.match(rules, /remain silent/i);
+  assert.match(rules, /do not[\s\S]*narrat[\s\S]*(?:polling|waiting|elapsed time)/i);
   for (const reportable of [
     "results?",
     "errors?",
@@ -512,13 +531,8 @@ test("README preserves conditional integration and silent-waiting guidance", asy
     "timeouts?",
     "actionable state changes?",
   ]) {
-    assert.match(silentWaiting, new RegExp(reportable, "i"));
+    assert.match(rules, new RegExp(reportable, "i"));
   }
-  assert.match(silentWaiting, /guidance to the parent[\s\S]*client/i);
-  assert.match(
-    silentWaiting,
-    /not (?:a )?behavior[\s\S]*server[\s\S]*(?:can|does) enforce/i,
-  );
 });
 
 test("human pricing example is dated and distinct from durable runtime policy", async () => {

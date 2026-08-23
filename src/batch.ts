@@ -511,6 +511,31 @@ async function runOne(
           taskId: task.taskId,
           commandCount,
         }),
+      onRepairStart: (classification) => {
+        emit({
+          type: "verification.completed",
+          batchId,
+          taskId: task.taskId,
+          passed: Math.max(0, task.input.verificationCommands.length - 1),
+          failed: 1,
+          refused: 0,
+        });
+        emit({
+          type: "repair.started",
+          batchId,
+          taskId: task.taskId,
+          classification,
+          turn: 1,
+        });
+      },
+      onRepairComplete: (verdict) =>
+        emit({
+          type: "repair.completed",
+          batchId,
+          taskId: task.taskId,
+          verdict,
+          turn: 1,
+        }),
     });
 
     task.result.result = result;

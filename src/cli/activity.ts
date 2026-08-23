@@ -181,7 +181,9 @@ export function renderHumanLines(
     if (worker.effort !== "unknown") details.push(worker.effort);
     if (!isPassed) {
       const renderedState =
-        worker.state === "running" || worker.state === "verifying"
+        worker.state === "running" ||
+        worker.state === "verifying" ||
+        worker.state === "repairing"
           ? green(status)
           : worker.state === "cancelled"
             ? yellow(status)
@@ -196,7 +198,9 @@ export function renderHumanLines(
     if (details.length > 0) lines.push(`   ${details.join(` ${symbols.divider} `)}`);
 
     const verification = worker.verification;
-    if (worker.state === "verifying") {
+    if (worker.state === "repairing") {
+      lines.push("   Repair: running (turn 1 of 1)");
+    } else if (worker.state === "verifying") {
       lines.push("   Verification: running");
     } else if (
       (worker.state === "running" || worker.state === "queued") &&
@@ -212,6 +216,13 @@ export function renderHumanLines(
     }
 
     const summary: string[] = [];
+    if (worker.repair?.verdict) {
+      summary.push(
+        worker.repair.verdict === "PASS"
+          ? "repair passed (1 turn)"
+          : "repair exhausted (1 turn)",
+      );
+    }
     const changedFiles = worker.changedFiles ?? worker.integration?.appliedFiles ?? null;
     if (changedFiles !== null && changedFiles > 0) {
       summary.push(`${plural(changedFiles, "file")} changed`);
@@ -434,7 +445,10 @@ export async function activityCommand(
       const active =
         snapshot.state === "running" &&
         snapshot.workers.some(
-          (worker) => worker.state === "running" || worker.state === "verifying",
+          (worker) =>
+            worker.state === "running" ||
+            worker.state === "verifying" ||
+            worker.state === "repairing",
         );
       if (active && !elapsedTimer) {
         elapsedTimer = setInterval(() => {
@@ -442,7 +456,10 @@ export async function activityCommand(
           const stillActive =
             snapshot.state === "running" &&
             snapshot.workers.some(
-              (worker) => worker.state === "running" || worker.state === "verifying",
+              (worker) =>
+                worker.state === "running" ||
+                worker.state === "verifying" ||
+                worker.state === "repairing",
             );
           if (stillActive) renderCurrent();
         }, 1000);

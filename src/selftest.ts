@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { DEFAULT_EFFORT, EFFORTS } from "./config.js";
@@ -14,6 +16,7 @@ import { findScopeViolations, toRelativePosix } from "./scope.js";
 import { runVerificationCommand, truncate, type VerificationRun } from "./verify.js";
 import {
   buildDelegationResult,
+  classifyRepairEligibility,
   continueToLuna,
   executeTask,
   parseWorkerReport,
@@ -39,6 +42,7 @@ test("task contract defaults effort to high and requires a justification", () =>
   assert.deepEqual(parsed.allowedFiles, []);
   assert.deepEqual(parsed.verificationCommands, []);
   assert.equal(parsed.changeIntent, "required");
+  assert.equal(parsed.automaticRepair, false);
 
   assert.throws(() =>
     delegateTaskInputSchema.parse({
@@ -104,6 +108,7 @@ test("continuation resumes the exact thread and reruns verification under the or
     allowedFiles: ["src/uploads/**"],
     forbiddenFiles: ["src/secrets/**"],
     changeIntent: "optional",
+    automaticRepair: true,
     verificationCommands: ["node --version"],
   });
   const report: WorkerReport = {
@@ -175,6 +180,7 @@ test("continuation resumes the exact thread and reruns verification under the or
   assert.match(prompt, /src\/uploads\/\*\*/);
   assert.match(prompt, /src\/secrets\/\*\*/);
   assert.match(prompt, /Selected intent: \*\*optional\*\*/);
+  assert.equal(result.repair, null, "manual continuation must not trigger auto repair");
 });
 
 test("fresh task execution still starts a new thread", async () => {
@@ -220,6 +226,159 @@ test("fresh task execution still starts a new thread", async () => {
   assert.equal(starts, 1);
   assert.equal(result.workerThreadId, "thread-fresh");
   assert.equal(result.verdict, "PASS");
+});
+
+test("one automatic repair reuses the thread, passes exact evidence, and reruns verification", async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-repair-"));
+  try {
+    fs.writeFileSync(
+      path.join(workspace, "repair-check.mjs"),
+      "import fs from 'node:fs'; if (!fs.existsSync('fixed.marker')) { console.error('LOCAL_ASSERTION_FAILURE'); process.exit(1); }\n",
+    );
+    const input = delegateTaskInputSchema.parse({
+      objective: "Implement the bounded local repair fixture and make its check pass.",
+      effortReason: "The fixture exercises one deterministic repair turn.",
+      acceptanceCriteria: ["The local verification command passes."],
+      automaticRepair: true,
+      changeIntent: "required",
+      allowedFiles: ["src/**"],
+      verificationCommands: ["node repair-check.mjs"],
+    });
+    const report: WorkerReport = {
+      status: "PASS",
+      summary: "Implemented the local change.",
+      filesChanged: [{ path: "src/repair.ts", change: "modified", why: "fixture" }],
+      verification: [],
+      notes: "",
+      followUps: [],
+    };
+    let starts = 0;
+    const resumed: string[] = [];
+    const prompts: string[] = [];
+    const events = async function* (): AsyncGenerator<ThreadEvent> {
+      yield {
+        type: "item.completed",
+        item: {
+          id: "change",
+          type: "file_change",
+          status: "completed",
+          changes: [{ path: "src/repair.ts", kind: "update" }],
+        },
+      };
+      yield {
+        type: "item.completed",
+        item: { id: "message", type: "agent_message", text: JSON.stringify(report) },
+      };
+    };
+    const fakeCodex: WorkerCodex = {
+      startThread: () => {
+        starts += 1;
+        return {
+          id: "thread-repair",
+          runStreamed: async (prompt) => {
+            prompts.push(String(prompt));
+            return { events: events() };
+          },
+        };
+      },
+      resumeThread: (threadId) => {
+        resumed.push(threadId);
+        return {
+          id: threadId,
+          runStreamed: async (prompt) => {
+            prompts.push(String(prompt));
+            fs.writeFileSync(path.join(workspace, "fixed.marker"), "fixed");
+            return { events: events() };
+          },
+        };
+      },
+    };
+    let verificationStarts = 0;
+    let repairStarts = 0;
+    const result = await executeTask(input, {
+      workingDirectory: workspace,
+      codex: fakeCodex,
+      onVerificationStart: () => (verificationStarts += 1),
+      onRepairStart: () => (repairStarts += 1),
+    });
+
+    assert.equal(result.verdict, "PASS");
+    assert.equal(result.repair?.attempted, true);
+    assert.equal(result.repair?.classification, "local-verification");
+    assert.equal(starts, 1);
+    assert.deepEqual(resumed, ["thread-repair"]);
+    assert.equal(result.workerThreadId, "thread-repair");
+    assert.equal(verificationStarts, 2);
+    assert.equal(repairStarts, 1);
+    assert.match(prompts[1] ?? "", /node repair-check\.mjs/);
+    assert.match(prompts[1] ?? "", /LOCAL_ASSERTION_FAILURE/);
+    assert.match(prompts[1] ?? "", /src\/\*\*/);
+    assert.match(prompts[1] ?? "", /Selected intent: \*\*required\*\*/);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("automatic repair stops after its single resumed turn", async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-repair-limit-"));
+  try {
+    fs.writeFileSync(
+      path.join(workspace, "always-fail.mjs"),
+      "console.error('STILL_LOCAL_FAILURE'); process.exit(1);\n",
+    );
+    const input = delegateTaskInputSchema.parse({
+      objective: "Exercise the one-turn automatic repair limit deterministically.",
+      effortReason: "The persistent local failure proves the hard bound.",
+      acceptanceCriteria: ["Only one repair turn is attempted."],
+      automaticRepair: true,
+      allowedFiles: ["src/**"],
+      verificationCommands: ["node always-fail.mjs"],
+    });
+    const report: WorkerReport = {
+      status: "PASS",
+      summary: "Attempted the local implementation.",
+      filesChanged: [{ path: "src/limit.ts", change: "modified", why: "fixture" }],
+      verification: [],
+      notes: "",
+      followUps: [],
+    };
+    let resumes = 0;
+    const events = async function* (): AsyncGenerator<ThreadEvent> {
+      yield {
+        type: "item.completed",
+        item: {
+          id: "change",
+          type: "file_change",
+          status: "completed",
+          changes: [{ path: "src/limit.ts", kind: "update" }],
+        },
+      };
+      yield {
+        type: "item.completed",
+        item: { id: "message", type: "agent_message", text: JSON.stringify(report) },
+      };
+    };
+    const thread = {
+      id: "thread-limit",
+      runStreamed: async () => ({ events: events() }),
+    };
+    const result = await executeTask(input, {
+      workingDirectory: workspace,
+      codex: {
+        startThread: () => thread,
+        resumeThread: () => {
+          resumes += 1;
+          return thread;
+        },
+      },
+    });
+    assert.equal(result.verdict, "FAILED");
+    assert.equal(resumes, 1);
+    assert.equal(result.repair?.attempted, true);
+    assert.match(result.repair?.reason ?? "", /limit is exhausted/i);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
 });
 
 test("change intent is explicit on single and batch task contracts", () => {
@@ -463,6 +622,110 @@ const rejectedRun: VerificationRun = {
   output: "[orchestrator] Command refused by verification policy.",
   execution: "rejected",
 };
+
+test("repair classifier permits only a clear local verification defect", () => {
+  const eligibleInput = makeTask({ automaticRepair: true });
+  const eligible = analyze(makeReport(), [failingRun], { automaticRepair: true });
+  assert.equal(
+    classifyRepairEligibility(eligibleInput, eligible).classification,
+    "local-verification",
+  );
+
+  const twoCheckInput = makeTask({
+    automaticRepair: true,
+    verificationCommands: ["node first-check.mjs", "npm test"],
+  });
+  const twoCheckResult = analyze(
+    makeReport(),
+    [
+      {
+        command: "node first-check.mjs",
+        exitCode: 0,
+        passed: true,
+        output: "first check passed",
+        execution: "argv",
+      },
+      failingRun,
+    ],
+    {
+      automaticRepair: true,
+      verificationCommands: ["node first-check.mjs", "npm test"],
+    },
+  );
+  assert.equal(
+    classifyRepairEligibility(twoCheckInput, twoCheckResult).classification,
+    "local-verification",
+  );
+  const authoritative = twoCheckResult.verification.filter(
+    (run) => run.source === "orchestrator",
+  );
+  assert.equal(authoritative.length, twoCheckInput.verificationCommands.length);
+  assert.equal(authoritative.filter((run) => run.passed).length, 1);
+  assert.equal(authoritative.filter((run) => !run.passed).length, 1);
+
+  const cases: Array<{
+    expected: NonNullable<ReturnType<typeof classifyRepairEligibility>>["classification"];
+    input: DelegateTaskInput;
+    result: ReturnType<typeof analyze>;
+  }> = [
+    {
+      expected: "read-only",
+      input: makeTask({ automaticRepair: true, changeIntent: "forbidden" }),
+      result: analyze(makeReport(), [failingRun], {
+        automaticRepair: true,
+        changeIntent: "forbidden",
+      }),
+    },
+    {
+      expected: "scope-or-conflict",
+      input: makeTask({ automaticRepair: true, allowedFiles: ["docs/**"] }),
+      result: analyze(makeReport(), [failingRun], {
+        automaticRepair: true,
+        allowedFiles: ["docs/**"],
+      }),
+    },
+    {
+      expected: "environment-or-tooling",
+      input: eligibleInput,
+      result: analyze(
+        makeReport(),
+        [{ ...failingRun, exitCode: null, output: "failed to launch: ENOENT" }],
+        { automaticRepair: true },
+      ),
+    },
+    {
+      expected: "security-or-trust-boundary",
+      input: eligibleInput,
+      result: analyze(makeReport(), [rejectedRun], { automaticRepair: true }),
+    },
+    {
+      expected: "contract-or-requirement",
+      input: eligibleInput,
+      result: analyze(
+        makeReport({ status: "BLOCKED", filesChanged: [], verification: [] }),
+        [failingRun],
+        { automaticRepair: true },
+        { filesChanged: [] },
+      ),
+    },
+    {
+      expected: "wider-scope",
+      input: eligibleInput,
+      result: analyze(
+        makeReport({ filesChanged: [], verification: [] }),
+        [failingRun],
+        { automaticRepair: true, changeIntent: "optional" },
+        { filesChanged: [] },
+      ),
+    },
+  ];
+  for (const item of cases) {
+    assert.equal(
+      classifyRepairEligibility(item.input, item.result).classification,
+      item.expected,
+    );
+  }
+});
 
 test("an honest PASS backed by evidence is accepted", () => {
   const result = analyze(makeReport(), [passingRun]);

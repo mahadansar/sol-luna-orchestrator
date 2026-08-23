@@ -86,9 +86,9 @@ and published release.
 
 ## Coming next
 
-Explicit Change Intent Contracts and Worker Continuation are implemented on
-`main` but await a release. The [roadmap](ROADMAP.md) then covers the Bounded
-Repair Loop, reasoned retry and effort escalation, adaptive worker routing with
+Explicit Change Intent Contracts, Worker Continuation, and the Bounded Repair
+Loop are implemented on `main` but await a release. The [roadmap](ROADMAP.md)
+then covers reasoned retry and effort escalation, adaptive worker routing with
 compute policy and stronger-executor fallback, automatic context lifecycle
 management, an optional Explorer, cross-session handoff, and an end-to-end
 automated workflow.
@@ -150,7 +150,8 @@ models, prompts and versions:
 
 The harness graded every run after the agent stopped. Raw tokens are not billed
 cost, and no cost saving is claimed. See [`bench/RESULTS.md`](bench/RESULTS.md)
-for methodology, per-task numbers and limitations.
+for methodology, per-task numbers and limitations, and
+[Configuration](docs/CONFIGURATION.md#cost) for the distinct cost concepts.
 
 ## Requirements
 
