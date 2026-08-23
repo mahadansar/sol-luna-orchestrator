@@ -4,6 +4,17 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { DEFAULT_EFFORT, EFFORTS } from "./config.js";
+import {
+  BILLING_CONTEXT_KINDS,
+  UNKNOWN_BILLING_CONTEXT,
+  UNKNOWN_PARENT_IDENTITY,
+  billingContext,
+  calculatePostHocCost,
+  resolveParentIdentity,
+  type CostUnavailableReason,
+  type RateCard,
+  type PostHocCostResult,
+} from "./cost.js";
 import { CONTINUATION_TTL_MS, ContinuationStore } from "./continuation.js";
 import {
   delegateTaskInputSchema,
@@ -176,6 +187,7 @@ test("continuation resumes the exact thread and reruns verification under the or
   assert.equal(result.filesChanged[0]?.observed, true);
   assert.equal(result.verification[0]?.source, "orchestrator");
   assert.equal(result.verification[0]?.execution, "argv");
+  assert.equal(result.usage?.cacheWriteInputTokens, 0);
   assert.match(prompt, /Re-check the upload notes/);
   assert.match(prompt, /src\/uploads\/\*\*/);
   assert.match(prompt, /src\/secrets\/\*\*/);
@@ -1075,4 +1087,305 @@ test("truncation keeps head and tail of long output", () => {
   assert.match(short, /omitted/);
   assert.ok(short.startsWith("A"));
   assert.ok(short.endsWith("B"));
+});
+
+const COST_OCCURRED_AT = "2026-01-15T00:00:00.000Z";
+const COST_CALCULATED_AT = "2026-01-20T00:00:00.000Z";
+const COST_RATE_CARD: RateCard = {
+  provenance: {
+    sourceUrl: "https://example.test/rates.json",
+    retrievedAt: "2026-01-01T00:00:00.000Z",
+  },
+  applicability: {
+    model: "parent-model",
+    billingKind: "api",
+    billingContextId: "openai-api-standard",
+  },
+  effectiveFrom: "2026-01-01T00:00:00.000Z",
+  effectiveUntil: null,
+  freshUntil: "2026-01-31T00:00:00.000Z",
+  rateBasis: "per-1m-tokens",
+  chargeUnit: { kind: "currency", code: "USD" },
+  rates: {
+    uncachedInputTokens: 10,
+    cachedInputTokens: 2,
+    cacheWriteInputTokens: 5,
+    outputTokens: 20,
+  },
+};
+
+function assertCostUnavailable(
+  result: PostHocCostResult,
+  reason: CostUnavailableReason,
+): void {
+  assert.equal(result.status, "unavailable");
+  if (result.status === "unavailable") assert.equal(result.reason, reason);
+}
+
+test("parent identity resolves only consistent explicit provenance", () => {
+  assert.deepEqual(UNKNOWN_PARENT_IDENTITY, {
+    status: "unknown",
+    reason: "not-provided",
+  });
+  const known = resolveParentIdentity([
+    {
+      model: "parent-model",
+      source: "controller",
+      detail: "controller-owned thread option",
+      observedAt: COST_OCCURRED_AT,
+    },
+    {
+      model: "parent-model",
+      source: "request",
+      detail: "explicit request-scoped model field",
+      observedAt: COST_OCCURRED_AT,
+    },
+  ]);
+  assert.equal(known.status, "known");
+  assert.deepEqual(
+    resolveParentIdentity([
+      {
+        model: "parent-model",
+        source: "session" as never,
+        detail: "unsupported session heuristic",
+        observedAt: COST_OCCURRED_AT,
+      },
+    ]),
+    { status: "unknown", reason: "invalid-evidence" },
+  );
+  assert.deepEqual(
+    resolveParentIdentity([
+      {
+        model: "parent-model",
+        source: "request",
+        detail: "first claim",
+        observedAt: COST_OCCURRED_AT,
+      },
+      {
+        model: "other-model",
+        source: "controller",
+        detail: "conflicting claim",
+        observedAt: COST_OCCURRED_AT,
+      },
+    ]),
+    { status: "unknown", reason: "conflicting-evidence" },
+  );
+});
+
+test("billing categories stay distinct and a complete post-hoc calculation succeeds", () => {
+  assert.deepEqual(BILLING_CONTEXT_KINDS, [
+    "api",
+    "purchased-codex-credits",
+    "included-subscription",
+    "legacy",
+    "other",
+    "unknown",
+  ]);
+  assert.notDeepEqual(
+    billingContext("api", "openai-api-standard"),
+    billingContext("purchased-codex-credits", "codex-purchased-credits"),
+  );
+  assert.deepEqual(
+    billingContext("promotional" as never, "promotion-2026"),
+    UNKNOWN_BILLING_CONTEXT,
+  );
+  const result = calculatePostHocCost({
+    usage: {
+      uncachedInputTokens: 2_000_000,
+      cachedInputTokens: 1_000_000,
+      cacheWriteInputTokens: 500_000,
+      outputTokens: 1_000_000,
+    },
+    parentIdentity: resolveParentIdentity([
+      {
+        model: "parent-model",
+        source: "request",
+        detail: "explicit request-scoped model field",
+        observedAt: COST_OCCURRED_AT,
+      },
+    ]),
+    billingContext: billingContext("api", "openai-api-standard"),
+    rateCard: COST_RATE_CARD,
+    usageOccurredAt: COST_OCCURRED_AT,
+    calculatedAt: COST_CALCULATED_AT,
+  });
+  assert.equal(result.status, "calculated");
+  if (result.status === "calculated") {
+    assert.equal(result.amount, 44.5);
+    assert.equal(result.kind, "quantitative");
+    assert.equal(result.basis, "supplied-rates-and-observed-usage");
+    assert.deepEqual(result.chargeUnit, { kind: "currency", code: "USD" });
+  }
+});
+
+test("a promotional rate card applies without changing the underlying billing kind", () => {
+  const purchasedCredits = billingContext(
+    "purchased-codex-credits",
+    "codex-purchased-credits",
+  );
+  const promotionalRateCard: RateCard = {
+    ...COST_RATE_CARD,
+    provenance: {
+      sourceUrl: "https://example.test/promotions/purchased-credit-rates.json",
+      retrievedAt: "2026-01-01T00:00:00.000Z",
+    },
+    applicability: {
+      model: "parent-model",
+      billingKind: "purchased-codex-credits",
+      billingContextId: "codex-purchased-credits",
+    },
+    effectiveFrom: "2026-01-01T00:00:00.000Z",
+    effectiveUntil: "2026-01-31T23:59:59.999Z",
+    freshUntil: "2026-01-31T23:59:59.999Z",
+    chargeUnit: { kind: "credits", system: "codex-purchased-credits" },
+  };
+  const result = calculatePostHocCost({
+    usage: {
+      uncachedInputTokens: 1_000_000,
+      cachedInputTokens: 0,
+      cacheWriteInputTokens: 0,
+      outputTokens: 0,
+    },
+    parentIdentity: resolveParentIdentity([
+      {
+        model: "parent-model",
+        source: "request",
+        detail: "explicit request-scoped model field",
+        observedAt: COST_OCCURRED_AT,
+      },
+    ]),
+    billingContext: purchasedCredits,
+    rateCard: promotionalRateCard,
+    usageOccurredAt: COST_OCCURRED_AT,
+    calculatedAt: COST_CALCULATED_AT,
+  });
+
+  assert.equal(purchasedCredits.kind, "purchased-codex-credits");
+  assert.equal(result.status, "calculated");
+  if (result.status === "calculated") {
+    assert.equal(result.billingContext.kind, "purchased-codex-credits");
+    assert.equal(
+      result.rateCardProvenance.sourceUrl,
+      promotionalRateCard.provenance.sourceUrl,
+    );
+  }
+});
+
+test("post-hoc cost eligibility returns stable reasons for each major failure", () => {
+  const known = resolveParentIdentity([
+    {
+      model: "parent-model",
+      source: "supported-runtime",
+      detail: "supported parent identity field",
+      observedAt: COST_OCCURRED_AT,
+    },
+  ]);
+  const base = {
+    usage: {
+      uncachedInputTokens: 1_000_000,
+      cachedInputTokens: 0,
+      cacheWriteInputTokens: 0,
+      outputTokens: 0,
+    },
+    parentIdentity: known,
+    billingContext: billingContext("api", "openai-api-standard"),
+    rateCard: COST_RATE_CARD,
+    usageOccurredAt: COST_OCCURRED_AT,
+    calculatedAt: COST_CALCULATED_AT,
+  };
+
+  assertCostUnavailable(
+    calculatePostHocCost({ ...base, parentIdentity: UNKNOWN_PARENT_IDENTITY }),
+    "unknown-parent-identity",
+  );
+  assertCostUnavailable(
+    calculatePostHocCost({ ...base, billingContext: UNKNOWN_BILLING_CONTEXT }),
+    "unknown-billing-context",
+  );
+  assertCostUnavailable(
+    calculatePostHocCost({
+      ...base,
+      parentIdentity: resolveParentIdentity([
+        {
+          model: "other-model",
+          source: "request",
+          detail: "explicit request-scoped model field",
+          observedAt: COST_OCCURRED_AT,
+        },
+      ]),
+    }),
+    "inapplicable-rate-card",
+  );
+  assertCostUnavailable(
+    calculatePostHocCost({
+      ...base,
+      usageOccurredAt: "2025-12-31T23:59:59.000Z",
+    }),
+    "rate-card-not-effective",
+  );
+  assertCostUnavailable(
+    calculatePostHocCost({ ...base, calculatedAt: "2026-02-01T00:00:00.000Z" }),
+    "rate-card-stale",
+  );
+  assertCostUnavailable(
+    calculatePostHocCost({
+      ...base,
+      rateCard: { ...COST_RATE_CARD, effectiveUntil: "2026-01-10T00:00:00.000Z" },
+    }),
+    "rate-card-expired",
+  );
+  assertCostUnavailable(
+    calculatePostHocCost({
+      ...base,
+      usage: { ...base.usage, cacheWriteInputTokens: -1 },
+    }),
+    "invalid-usage",
+  );
+  assertCostUnavailable(
+    calculatePostHocCost({
+      ...base,
+      usage: { uncachedInputTokens: 1_000_000 } as never,
+    }),
+    "invalid-usage",
+  );
+  assertCostUnavailable(
+    calculatePostHocCost({
+      ...base,
+      usage: { ...base.usage, cacheWriteInputTokens: 1 },
+      rateCard: {
+        ...COST_RATE_CARD,
+        rates: { uncachedInputTokens: 10, cachedInputTokens: 2, outputTokens: 20 },
+      },
+    }),
+    "missing-rate",
+  );
+  assertCostUnavailable(
+    calculatePostHocCost({
+      ...base,
+      rateCard: {
+        ...COST_RATE_CARD,
+        provenance: { ...COST_RATE_CARD.provenance, sourceUrl: "not-a-url" },
+      },
+    }),
+    "invalid-rate-card",
+  );
+  assertCostUnavailable(
+    calculatePostHocCost({
+      ...base,
+      billingContext: billingContext("api", "different-api-tier"),
+    }),
+    "inapplicable-rate-card",
+  );
+  assertCostUnavailable(
+    calculatePostHocCost({ ...base, calculatedAt: "not-a-date" }),
+    "invalid-calculation-time",
+  );
+  assertCostUnavailable(
+    calculatePostHocCost({
+      ...base,
+      usageOccurredAt: "2026-01-16T00:00:00.000Z",
+      calculatedAt: "2026-01-15T23:59:59.999Z",
+    }),
+    "invalid-calculation-time",
+  );
 });

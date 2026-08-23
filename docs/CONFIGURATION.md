@@ -180,13 +180,31 @@ reports the registered server's value rather than only this shell's.
 ### Cost
 
 - **Token counts are measured.** They come from the API, per turn, per worker.
-- **No price or credit total is produced, by design.** Prices are not exposed
-  through this integration. Exported JSONL contains the raw per-worker counts,
-  but applying the right current schedule is the operator's responsibility.
-- **API prices and Codex credit rates are not interchangeable.** Current Codex
-  rate cards map covered usage to input, cached-input and output tokens, while
-  included subscription usage, promotional pricing and legacy-plan accounting
-  can differ. Use the rate card that actually applies to your account.
+- **P1.0 provides a pure, post-hoc calculation foundation.** The calculation
+  applies a caller-supplied rate card to explicitly supplied, billing-ready
+  observed usage. The caller must provide complete uncached-input, cached-input,
+  cache-write-input, and output quantities rather than passing raw SDK totals. It
+  is not an invoice, estimate, forecast, or account statement.
+- **Parent identity is unknown by default.** A known identity must come from
+  explicit supported, controller, or request-scoped evidence. The project does
+  not infer it from client versions, sessions, environment variables, or process
+  heuristics.
+- **Billing contexts remain distinct.** API, purchased Codex credits, included
+  subscription usage, legacy arrangements, other arrangements, and unknown are
+  separate categories. A promotion is a temporary rate card for one of those
+  underlying contexts, not a billing context of its own. API prices and Codex
+  credit rates are not interchangeable.
+- **Rate cards are caller-owned evidence.** A usable card carries its source URL,
+  retrieval time, exact model/billing-context applicability, effective bounds,
+  freshness bound, rate basis, charge unit, and per-meter rates. Promotional
+  pricing is represented by those rate-card fields while the underlying billing
+  context remains unchanged. Currency and credit units remain distinct. No current
+  prices are bundled and no live retrieval or account lookup is performed.
+- **Calculation is eligibility-gated.** Only complete finite, nonnegative,
+  post-hoc inputs with a known applicable identity, known billing context,
+  effective/current rate card, and rates for every nonzero usage meter produce a
+  quantitative result. Otherwise the result is qualitative/unavailable with a
+  stable reason code.
 - Nothing in this project claims a cost saving, because none has been measured.
 
 #### Dated Sol-Luna unit-rate example
@@ -207,16 +225,15 @@ cached input, and output:
 [Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol) and
 [Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna).
 
-This dated example explains why a Luna worker can use materially more raw tokens
-than a Sol parent and still potentially have lower token cost. It does not make
-Sol the required parent, and it does not convert a per-token ratio into a task
+This is a dated human reference only, not a bundled runtime rate card. It does
+not make Sol the required parent or convert a per-token ratio into a task
 saving. Aggregate task token usage and its input/cache/output mix, the selected
 parent, worker count, applicable Codex or API schedule, fixed orchestration cost,
 coordination and review overhead, latency and quality determine realised task
 cost. Purchased-credit rates do not describe every included Plus or Pro task;
-promotional, included-plan, and legacy schedules may differ. No realised saving
-has been measured by this project. Re-check the official sources before relying
-on the example.
+promotional, included-plan, and legacy schedules may differ. The implementation
+requires the caller to supply the applicable card, and operators must re-check
+official sources before relying on this example.
 
 ## Parent model and effort
 

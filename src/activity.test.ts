@@ -8,6 +8,7 @@ import {
 import { renderHumanLines } from "./cli/activity.js";
 import { symbols } from "./cli/ui.js";
 import { activityFailureReason, renderEvent } from "./events.js";
+import { mergeUsage } from "./worker.js";
 
 // ========================================================================
 // parseEventLine
@@ -230,6 +231,7 @@ test("single worker lifecycle", () => {
       usage: {
         inputTokens: 100,
         cachedInputTokens: 25,
+        cacheWriteInputTokens: 7,
         outputTokens: 20,
         reasoningOutputTokens: 5,
       },
@@ -265,9 +267,83 @@ test("single worker lifecycle", () => {
   assert.equal(w.claimed, "Did it");
   assert.equal(w.threadId, "th1");
   assert.equal(w.usage?.inputTokens, 100);
+  assert.equal(w.usage?.cacheWriteInputTokens, 7);
   assert.equal(w.durationSeconds, 10);
   assert.equal(w.integration?.appliedFiles, 3);
   assert.equal(w.verification?.passed, 2);
+});
+
+test("usage projection keeps historical records without cache-write telemetry readable", () => {
+  const snapshot = reduceEvents([
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "b-legacy-usage",
+      mode: "single",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "worker.completed",
+      batchId: "b-legacy-usage",
+      taskId: "t1",
+      verdict: "PASS",
+      claimed: "Done",
+      durationSeconds: 1,
+      threadId: "thread-legacy",
+      model: "gpt-5.6-luna",
+      effort: "high",
+      usage: {
+        inputTokens: 10,
+        cachedInputTokens: 2,
+        outputTokens: 3,
+        reasoningOutputTokens: 1,
+      },
+    },
+  ]);
+
+  assert.deepEqual(snapshot.workers[0]?.usage, {
+    inputTokens: 10,
+    cachedInputTokens: 2,
+    outputTokens: 3,
+    reasoningOutputTokens: 1,
+  });
+});
+
+test("repair usage merge sums cache writes only when every turn reports them", () => {
+  const base = {
+    inputTokens: 10,
+    cachedInputTokens: 2,
+    outputTokens: 3,
+    reasoningOutputTokens: 1,
+  };
+
+  assert.deepEqual(
+    mergeUsage(
+      { ...base, cacheWriteInputTokens: 4 },
+      { ...base, cacheWriteInputTokens: 6 },
+    ),
+    {
+      inputTokens: 20,
+      cachedInputTokens: 4,
+      cacheWriteInputTokens: 10,
+      outputTokens: 6,
+      reasoningOutputTokens: 2,
+    },
+  );
+  assert.deepEqual(mergeUsage({ ...base }, { ...base, cacheWriteInputTokens: 6 }), {
+    inputTokens: 20,
+    cachedInputTokens: 4,
+    outputTokens: 6,
+    reasoningOutputTokens: 2,
+  });
+  assert.deepEqual(mergeUsage({ ...base }, { ...base }), {
+    inputTokens: 20,
+    cachedInputTokens: 4,
+    outputTokens: 6,
+    reasoningOutputTokens: 2,
+  });
 });
 
 test("repair activity is visible during the turn and after completion", () => {

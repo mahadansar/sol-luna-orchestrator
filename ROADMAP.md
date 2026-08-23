@@ -26,21 +26,21 @@ or for taking Git actions on the user's behalf.
 
 ## Priorities at a glance
 
-| Priority | Item                                     | Status / Depends on                              |
-| -------- | ---------------------------------------- | ------------------------------------------------ |
-| P0.1     | Context Capsule v2                       | Shipped in v0.7.0                                |
-| P0.2     | Compact Evidence Packets                 | Shipped in v0.7.0                                |
-| P0.2a    | Explicit Change Intent Contracts         | Implemented in the working tree; pending release |
-| P0.3     | Worker Continuation                      | Delivered in the working tree; depends on P0.2a  |
-| P0.4     | Bounded Repair Loop                      | Delivered in the working tree; P0.3, P0.2a       |
-| P1.0     | Parent Model and Pricing Discovery       | Discovery before P1.2                            |
-| P1.1     | Reasoned Retry and Effort Escalation     | P0.4                                             |
-| P1.2     | Adaptive Worker Routing + Compute Policy | P1.0, P1.1                                       |
-| P1.3     | Automatic Context Lifecycle Management   | P0.1, P0.2, P0.3                                 |
-| P2.1     | Optional Explorer                        | P1.2                                             |
-| P2.2     | Cross-Session Handoff                    | P1.3                                             |
-| P2.3     | End-to-End Automated Workflow            | P1.2, P1.3, P2.1, P2.2                           |
-| P2.4     | Mature Benchmark and Acceptance Pass     | P2.3                                             |
+| Priority | Item                                        | Status / Depends on                              |
+| -------- | ------------------------------------------- | ------------------------------------------------ |
+| P0.1     | Context Capsule v2                          | Shipped in v0.7.0                                |
+| P0.2     | Compact Evidence Packets                    | Shipped in v0.7.0                                |
+| P0.2a    | Explicit Change Intent Contracts            | Implemented in the working tree; pending release |
+| P0.3     | Worker Continuation                         | Delivered in the working tree; depends on P0.2a  |
+| P0.4     | Bounded Repair Loop                         | Delivered in the working tree; P0.3, P0.2a       |
+| P1.0     | Parent Identity, Billing, and Post-Hoc Cost | Shipped in the working tree                      |
+| P1.1     | Reasoned Retry and Effort Escalation        | P0.4                                             |
+| P1.2     | Adaptive Worker Routing + Compute Policy    | P1.0, P1.1                                       |
+| P1.3     | Automatic Context Lifecycle Management      | P0.1, P0.2, P0.3                                 |
+| P2.1     | Optional Explorer                           | P1.2                                             |
+| P2.2     | Cross-Session Handoff                       | P1.3                                             |
+| P2.3     | End-to-End Automated Workflow               | P1.2, P1.3, P2.1, P2.2                           |
+| P2.4     | Mature Benchmark and Acceptance Pass        | P2.3                                             |
 
 ```
 Context Capsule v2 (shipped in v0.7.0)
@@ -210,7 +210,11 @@ events remain visible to the parent. Manual continuation is unchanged.
 
 ---
 
-## P1.0 Parent Model and Pricing Discovery
+## P1.0 Parent Identity, Billing Context, and Post-Hoc Cost Foundation
+
+**Status.** Shipped in the working tree. This is a pure foundation only; it does
+not add routing, live retrieval, account lookup, predicted cost, or a global
+parent-model setting.
 
 **Problem.** Quantitative cost-aware routing would be unsafe if the
 orchestrator cannot reliably identify the selected parent model or cannot tell
@@ -218,30 +222,39 @@ which usage schedule applies. API pricing, Codex credits, included usage,
 promotions, and legacy schedules are different concepts and may not be
 interchangeable.
 
-**Direction.** First investigate and design, without assuming an
-implementation, whether Codex or MCP exposes the selected parent model to the
-orchestrator and which signal could be relied on. In parallel, map how API
-pricing, Codex credits, included usage, promotions, and legacy schedules could
-affect a task's quantitative cost, including their scope, time bounds,
-entitlements, and uncertainty. Define how a future policy could use those
-facts without presenting an estimate as a bill or confusing credits and
-included usage with API charges.
+**Delivered.** `src/cost.ts` keeps parent identity unknown unless the caller
+supplies explicit supported, controller, or request-scoped evidence, including
+that evidence's provenance. Billing contexts are represented distinctly for API,
+purchased Codex credits, included subscription usage, legacy arrangements, other
+arrangements, and unknown. A promotion is represented as a temporary rate card
+applying to one of those underlying contexts, not as a billing context. A
+caller-supplied rate card records its source URL, retrieval time, model and billing
+applicability, effective period, freshness bound, rate basis, distinct charge unit,
+and per-meter rates.
 
-**Constraints.** Cost comparisons and cost measurements must only be treated
-as quantitative when the applicable pricing or entitlement schedule is
-knowable for the work being compared. If the parent-model signal or schedule
-is unavailable, stale, ambiguous, promotional, or legacy in a way that cannot
-be resolved, future routing should fall back to qualitative policy or leave
-cost out rather than inventing precision. This item is discovery and design;
-it does not claim that model visibility, pricing lookup, or cost accounting
-exists today.
+The pure post-hoc calculation accepts only explicitly classified billing-ready
+usage, identity, billing context, a rate card, the usage time, and the calculation
+time. It calculates only when the complete usage vector is finite and nonnegative,
+identity and billing are known, the card applies and is effective/current, and
+every nonzero usage meter has a compatible rate. Otherwise it returns a
+qualitative/unavailable result with a stable reason code. The result describes
+applying supplied rates to supplied observed usage; it is not an invoice or an
+estimate.
 
-**Not decided.** Whether the selected parent model is exposed, which source is
-authoritative for each usage category, how schedule freshness is established,
-and the eventual representation of uncertainty.
+**Constraints.** No current prices are bundled. The foundation does not discover
+the parent model from client-version, session, environment, or process
+heuristics, fetch a schedule, inspect an account, choose a route, or produce a
+predicted/expected task cost. If evidence is unknown, inapplicable, incomplete,
+stale, or otherwise not current, it returns the stable qualitative/unavailable
+reason rather than inventing precision.
 
-**Dependency.** This discovery does not depend on implementing repair. It must
-finish before P1.2 treats cost as a quantitative routing input.
+**Not decided.** Which future integration, if any, will provide explicit parent
+identity and rate-card evidence, and whether later policy work should consume
+these post-hoc results. No routing behavior is implied by this item.
+
+**Dependency.** This foundation does not depend on implementing repair. P1.2
+must still preserve its explicit-input and no-estimate boundaries before treating
+cost as a quantitative routing input.
 
 ---
 
@@ -525,9 +538,9 @@ the gap with an estimate.
 
 **Constraints.** The pass should test zero-worker outcomes as valid, cover
 bounded failure handling and parent takeover, and preserve evidence for its
-claims. Cost results must identify whether they concern API pricing, Codex
-credits, included usage, promotions, or legacy schedules; they must not mix
-those categories or imply a quantitative comparison when the schedule is
+claims. Cost results must identify the underlying billing context and the
+applicable schedule, including whether the rate card is promotional; they must
+not mix contexts or imply a quantitative comparison when the schedule is
 uncertain.
 
 **Depends on** P2.3 and the completed routing, context, and handoff

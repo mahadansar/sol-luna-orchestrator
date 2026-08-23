@@ -552,7 +552,11 @@ test("human pricing example is dated and distinct from durable runtime policy", 
   );
   assert.match(
     configuration,
-    /API prices[\s\S]*Codex credit rates[\s\S]*not interchangeable/i,
+    /API prices[\s\S]*Codex\s+credit rates[\s\S]*not interchangeable/i,
+  );
+  assert.match(
+    configuration,
+    /promotion is a temporary rate card[\s\S]*underlying contexts[\s\S]*not a billing context/i,
   );
   assert.match(
     configuration,
