@@ -209,6 +209,7 @@ const makeOutput = (overrides: Partial<DelegateTaskOutput> = {}): DelegateTaskOu
     workerClaimedStatus: "PASS",
     trustworthy: true,
     workerThreadId: "thread-x",
+    continuationReference: null,
     model: "gpt-5.6-luna",
     effort: "high",
     effortReason: "because",
@@ -551,6 +552,64 @@ test("a parallel batch isolates workers and integrates disjoint results", async 
     );
   } finally {
     await cleanupRepo(repo);
+  }
+});
+
+test("batch continuations bind to the integrated workspace or a retained worktree", async () => {
+  const integratedRepo = await makeRepo();
+  const retainedRepo = await makeRepo();
+  try {
+    const integratedDirectories: string[] = [];
+    const integrated = await runBatch([makeTask({ allowedFiles: ["src/auth/**"] })], {
+      mode: "parallel",
+      workingDirectory: integratedRepo,
+      executor: fakeExecutor({ writes: () => ({ "src/auth/login.ts": "ok\n" }) }),
+      continuationRegistrar: (_input, _result, workingDirectory) => {
+        integratedDirectories.push(workingDirectory);
+        return `ctr_${"i".repeat(32)}`;
+      },
+    });
+
+    assert.equal(
+      integrated.tasks[0]?.result?.continuationReference,
+      `ctr_${"i".repeat(32)}`,
+    );
+    assert.deepEqual(integratedDirectories, [integratedRepo]);
+    assert.equal(integrated.tasks[0]?.worktreePath, null);
+
+    const retainedDirectories: string[] = [];
+    const retained = await runBatch([makeTask({ allowedFiles: ["src/payments/**"] })], {
+      mode: "parallel",
+      workingDirectory: retainedRepo,
+      integrate: false,
+      executor: fakeExecutor({
+        writes: () => ({ "src/payments/charge.ts": "ok\n" }),
+        output: () => ({
+          verdict: "FAILED",
+          workerClaimedStatus: "FAILED",
+          trustworthy: false,
+        }),
+      }),
+      continuationRegistrar: (_input, _result, workingDirectory) => {
+        retainedDirectories.push(workingDirectory);
+        return `ctr_${"r".repeat(32)}`;
+      },
+    });
+
+    const retainedPath = retained.tasks[0]?.worktreePath;
+    assert.equal(
+      retained.tasks[0]?.result?.continuationReference,
+      `ctr_${"r".repeat(32)}`,
+    );
+    assert.equal(retainedDirectories[0], retainedPath);
+    assert.ok(retainedPath, describeBatch(retained));
+    assert.ok(
+      await fs.stat(retainedPath).catch(() => null),
+      "retained worktree must remain usable",
+    );
+  } finally {
+    await cleanupRepo(integratedRepo);
+    await cleanupRepo(retainedRepo);
   }
 });
 

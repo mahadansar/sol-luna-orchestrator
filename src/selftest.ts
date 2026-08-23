@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 import { DEFAULT_EFFORT, EFFORTS } from "./config.js";
+import { CONTINUATION_TTL_MS, ContinuationStore } from "./continuation.js";
 import {
   delegateTaskInputSchema,
   delegateTasksInputSchema,
@@ -11,7 +12,15 @@ import {
 } from "./contract.js";
 import { findScopeViolations, toRelativePosix } from "./scope.js";
 import { runVerificationCommand, truncate, type VerificationRun } from "./verify.js";
-import { buildDelegationResult, parseWorkerReport, type ObservedRun } from "./worker.js";
+import {
+  buildDelegationResult,
+  continueToLuna,
+  executeTask,
+  parseWorkerReport,
+  type ObservedRun,
+  type WorkerCodex,
+} from "./worker.js";
+import type { ThreadEvent } from "@openai/codex-sdk";
 
 const WORKSPACE = path.resolve("/tmp/workspace");
 
@@ -49,6 +58,168 @@ test("task contract rejects efforts outside the ladder", () => {
       acceptanceCriteria: ["It retries."],
     }),
   );
+});
+
+test("continuation references are opaque, single-use, and deterministically expiring", () => {
+  let now = 10_000;
+  const reference = `ctr_${"a".repeat(32)}`;
+  const store = new ContinuationStore({ now: () => now, tokenFactory: () => reference });
+  const input = delegateTaskInputSchema.parse({
+    objective: "Continue the bounded upload investigation carefully.",
+    effortReason: "The follow-up needs focused evidence review.",
+    acceptanceCriteria: ["The upload behavior is assessed."],
+    allowedFiles: ["src/uploads/**"],
+    forbiddenFiles: ["src/secrets/**"],
+    changeIntent: "forbidden",
+  });
+
+  const issued = store.issue(input, "thread-original", path.resolve("/tmp/workspace"));
+  assert.match(issued, /^ctr_[A-Za-z0-9_-]{32,}$/);
+  const ready = store.consume(issued);
+  assert.equal(ready.status, "ready");
+  if (ready.status === "ready") {
+    assert.equal(ready.entry.threadId, "thread-original");
+    assert.deepEqual(ready.entry.input.allowedFiles, ["src/uploads/**"]);
+    assert.deepEqual(ready.entry.input.forbiddenFiles, ["src/secrets/**"]);
+    assert.equal(ready.entry.input.changeIntent, "forbidden");
+  }
+  assert.equal(store.consume(issued).status, "used");
+  assert.equal(
+    store.consume("ctr_unknown_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").status,
+    "unknown",
+  );
+  assert.equal(store.consume("not-a-reference").status, "invalid");
+
+  const expiring = store.issue(input, "thread-expiring", path.resolve("/tmp/workspace"));
+  now += CONTINUATION_TTL_MS;
+  assert.equal(store.consume(expiring).status, "expired");
+  assert.equal(store.consume(expiring).status, "expired");
+});
+
+test("continuation resumes the exact thread and reruns verification under the original contract", async () => {
+  const input = delegateTaskInputSchema.parse({
+    objective: "Continue the bounded upload investigation carefully.",
+    effortReason: "The follow-up needs focused evidence review.",
+    acceptanceCriteria: ["The upload behavior is assessed."],
+    allowedFiles: ["src/uploads/**"],
+    forbiddenFiles: ["src/secrets/**"],
+    changeIntent: "optional",
+    verificationCommands: ["node --version"],
+  });
+  const report: WorkerReport = {
+    status: "PASS",
+    summary: "Follow-up evidence collected.",
+    filesChanged: [{ path: "src/uploads/notes.md", change: "modified", why: "evidence" }],
+    verification: [],
+    notes: "",
+    followUps: [],
+  };
+  let resumedThreadId: string | null = null;
+  let prompt = "";
+  const events = async function* (): AsyncGenerator<ThreadEvent> {
+    yield {
+      type: "item.completed",
+      item: {
+        id: "change",
+        type: "file_change",
+        status: "completed",
+        changes: [{ path: "src/uploads/notes.md", kind: "update" }],
+      },
+    };
+    yield {
+      type: "item.completed",
+      item: { id: "message", type: "agent_message", text: JSON.stringify(report) },
+    };
+    yield {
+      type: "turn.completed",
+      usage: {
+        input_tokens: 1,
+        cached_input_tokens: 0,
+        cache_write_input_tokens: 0,
+        output_tokens: 1,
+        reasoning_output_tokens: 0,
+      },
+    };
+  };
+  const fakeCodex: WorkerCodex = {
+    startThread: () => {
+      throw new Error("continuation must not start a fresh thread");
+    },
+    resumeThread: (threadId) => {
+      resumedThreadId = threadId;
+      return {
+        id: threadId,
+        runStreamed: async (inputPrompt) => {
+          prompt = String(inputPrompt);
+          return { events: events() };
+        },
+      };
+    },
+  };
+
+  const result = await continueToLuna(input, {
+    workingDirectory: process.cwd(),
+    threadId: "thread-original",
+    instruction: "Re-check the upload notes and record the remaining evidence.",
+    codex: fakeCodex,
+  });
+
+  assert.equal(resumedThreadId, "thread-original");
+  assert.equal(result.workerThreadId, "thread-original");
+  assert.equal(result.changeIntent, "optional");
+  assert.deepEqual(result.scopeViolations, []);
+  assert.equal(result.filesChanged[0]?.observed, true);
+  assert.equal(result.verification[0]?.source, "orchestrator");
+  assert.equal(result.verification[0]?.execution, "argv");
+  assert.match(prompt, /Re-check the upload notes/);
+  assert.match(prompt, /src\/uploads\/\*\*/);
+  assert.match(prompt, /src\/secrets\/\*\*/);
+  assert.match(prompt, /Selected intent: \*\*optional\*\*/);
+});
+
+test("fresh task execution still starts a new thread", async () => {
+  const input = delegateTaskInputSchema.parse({
+    objective: "Run the existing bounded fresh-task execution path.",
+    effortReason: "This regression check is deliberately mechanical.",
+    acceptanceCriteria: ["The fresh task starts a new worker thread."],
+    changeIntent: "forbidden",
+  });
+  const report: WorkerReport = {
+    status: "PASS",
+    summary: "Fresh execution completed.",
+    filesChanged: [],
+    verification: [],
+    notes: "",
+    followUps: [],
+  };
+  let starts = 0;
+  const events = async function* (): AsyncGenerator<ThreadEvent> {
+    yield {
+      type: "item.completed",
+      item: { id: "message", type: "agent_message", text: JSON.stringify(report) },
+    };
+  };
+  const fakeCodex: WorkerCodex = {
+    startThread: () => {
+      starts += 1;
+      return {
+        id: "thread-fresh",
+        runStreamed: async () => ({ events: events() }),
+      };
+    },
+    resumeThread: () => {
+      throw new Error("fresh delegation must not resume an existing thread");
+    },
+  };
+
+  const result = await executeTask(input, {
+    workingDirectory: process.cwd(),
+    codex: fakeCodex,
+  });
+
+  assert.equal(starts, 1);
+  assert.equal(result.workerThreadId, "thread-fresh");
+  assert.equal(result.verdict, "PASS");
 });
 
 test("change intent is explicit on single and batch task contracts", () => {

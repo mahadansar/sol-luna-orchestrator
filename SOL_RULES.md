@@ -120,6 +120,22 @@ While an active Sol-Luna tool call has no meaningful new state, remain silent:
 do not narrate polling, waiting, elapsed time, or that it is still running.
 Report only a result, error, cancellation, timeout, or actionable state change.
 
+## Worker continuation
+
+An eligible delegated result may expose an opaque `continuationReference`. The
+parent must explicitly call `continue_task` with that reference and one bounded
+follow-up `instruction`; a continuation is never automatic repair or retry.
+References are in-memory, server-lifetime, single-use values with a 15-minute
+TTL. Invalid, unknown, expired and already-used references are rejected.
+
+The continuation resumes the exact Luna thread with the same worker isolation
+guards. Its original objective, `allowedFiles`, `forbiddenFiles`,
+`changeIntent`, acceptance criteria and verification commands are immutable;
+`continue_task` accepts no fields that can widen them. Prompt construction,
+scope checks, independent verification, claim-versus-observed reconciliation and
+verdict classification all run again. A resumed worker still has no delegation
+tools.
+
 ## Evidence and review
 
 A worker's status, summary, changed-file list, and verification report are

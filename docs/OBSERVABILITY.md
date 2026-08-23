@@ -30,6 +30,11 @@ or rejected; task queued; worker started, completed, failed, cancelled or timed
 out; worktree created and removed; verification started and completed; scope
 conflicts; integration conflicts and applied file counts.
 
+An explicit `continue_task` turn emits the same ordinary single-task lifecycle
+events and receives a fresh completion record. The opaque continuation reference
+itself is returned only in the tool result; it is not persisted in this event
+stream, and references expire with the server's in-memory store.
+
 Carried on those records:
 
 - Opaque task ids, and a batch id

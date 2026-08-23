@@ -18,17 +18,20 @@ import {
   WORKER_MARKER_ENV,
 } from "./config.js";
 import {
+  continueTaskInputShape,
   delegateTaskInputShape,
   delegateTaskOutputShape,
   delegateTasksInputShape,
   delegateTasksOutputShape,
   type BatchOutput,
+  type ContinueTaskInput,
   type DelegateTaskInput,
   type DelegateTaskOutput,
   type DelegateTasksInput,
 } from "./contract.js";
 import { BatchRejectedError, runBatch } from "./batch.js";
-import { delegateToLuna } from "./worker.js";
+import { ContinuationStore, type ContinuationConsumeResult } from "./continuation.js";
+import { continueToLuna, delegateToLuna } from "./worker.js";
 import { WorkspaceError } from "./workspace.js";
 import { activityFailureReason, emitEvent } from "./events.js";
 
@@ -52,6 +55,33 @@ export const SERVER_VERSION =
   typeof manifest.version === "string" ? manifest.version : "unknown";
 
 const log = createLogger(LOG_FILE);
+
+/** Deliberately in-memory: references die with this server process. */
+const continuationStore = new ContinuationStore();
+
+function registerContinuation(
+  input: DelegateTaskInput,
+  result: DelegateTaskOutput,
+  workingDirectory: string,
+): string | null {
+  if (!result.workerThreadId) return null;
+  return continuationStore.issue(input, result.workerThreadId, workingDirectory);
+}
+
+function continuationError(result: ContinuationConsumeResult): string {
+  switch (result.status) {
+    case "invalid":
+      return "Invalid continuation reference. Use the opaque reference returned by an eligible result.";
+    case "expired":
+      return "Continuation reference expired. Delegate a fresh task if more work is needed.";
+    case "used":
+      return "Continuation reference already consumed. Only one continuation is allowed per task.";
+    case "unknown":
+      return "Unknown continuation reference. It may belong to another server process or was never issued.";
+    case "ready":
+      return "";
+  }
+}
 
 /** Append one machine-readable record per delegation, for measurement. */
 export const recordEvent = (
@@ -201,6 +231,21 @@ of allowedFiles and taskCategory. A forbidden runtime-observed edit is a contrac
 violation, while a claimed-only edit remains a claims-versus-observations
 discrepancy for the parent to judge.`;
 
+export const CONTINUE_TOOL_DESCRIPTION = `Continue ONE eligible delegated task in the same Luna Codex thread for one explicit follow-up turn.
+
+Use only when the returned result includes a continuationReference and the parent
+has a concise, bounded instruction for that same task. The reference is opaque,
+server-lifetime and single-use; it is not a raw thread id and cannot be replayed.
+The original objective, allowedFiles, forbiddenFiles, changeIntent, acceptance
+criteria and verificationCommands are retained exactly. This tool accepts no
+scope, intent, effort, or verification widening fields. The worker still cannot
+delegate, and independent verification, scope checks, evidence reconciliation
+and verdict classification run again for the continuation turn.
+
+While this call is pending and has no meaningful new state, remain silent: do not
+narrate waiting, polling, elapsed time, or that it is still running. Report only
+a result, error, cancellation, timeout, or actionable state change.`;
+
 /**
  * Strip the output of verification commands that passed.
  *
@@ -246,6 +291,9 @@ export function renderResult(result: DelegateTaskOutput): string {
       `thread ${result.workerThreadId ?? "unknown"} | ${result.durationSeconds}s`,
   );
   lines.push(`CHANGE INTENT: ${result.changeIntent ?? "required"}`);
+  if (result.continuationReference) {
+    lines.push(`CONTINUATION REFERENCE: ${result.continuationReference}`);
+  }
   lines.push("");
   lines.push(`WORKER SUMMARY (claim)\n${result.summary || "(none)"}`);
 
@@ -349,6 +397,8 @@ export const SERVER_INSTRUCTIONS =
   `verification, coordination risk, and quality; more workers are not automatically ` +
   `better or cheaper. ` +
   `Worker claims are not orchestrator evidence. Judge returned verdicts and checks, ` +
+  `and use an eligible opaque continuation reference only for one explicit follow-up ` +
+  `without widening the original contract. ` +
   `reviewing in proportion to their risk and evidence. While an active Sol-Luna ` +
   `tool call has no meaningful new state, remain silent: do not narrate polling, ` +
   `waiting, elapsed time, or that it is still running. Report only a result, error, ` +
@@ -378,6 +428,7 @@ function registerDelegateTask(): void {
       const taskId = "t1";
       const startedAt = Date.now();
       let workerStarted = false;
+      let workerDirectory: string | null = null;
       log(
         `delegate_task: effort=${task.effort} cwd=${task.workingDirectory ?? process.cwd()} ` +
           `objective="${task.objective.slice(0, 80)}..."`,
@@ -404,6 +455,7 @@ function registerDelegateTask(): void {
         const result = await delegateToLuna(task, extra?.signal, {
           onStarted: (workingDirectory) => {
             workerStarted = true;
+            workerDirectory = workingDirectory;
             emitEvent({
               type: "worker.started",
               batchId,
@@ -421,6 +473,13 @@ function registerDelegateTask(): void {
               commandCount,
             }),
         });
+        if (workerDirectory) {
+          result.continuationReference = registerContinuation(
+            task,
+            result,
+            workerDirectory,
+          );
+        }
         emitSingleCompletion(
           batchId,
           taskId,
@@ -477,6 +536,125 @@ function registerDelegateTask(): void {
         log(`error: ${message}`);
         // Returned as a tool error (not a thrown protocol error) so the parent can read
         // the reason and adapt instead of seeing an opaque transport failure.
+        return {
+          content: [{ type: "text" as const, text: message }],
+          isError: true,
+        };
+      }
+    },
+  );
+}
+
+function registerContinueTask(): void {
+  server.registerTool(
+    "continue_task",
+    {
+      title: "Continue an eligible Luna task",
+      description: CONTINUE_TOOL_DESCRIPTION,
+      inputSchema: continueTaskInputShape,
+      outputSchema: delegateTaskOutputShape,
+    },
+    async (input, extra) => {
+      const request = input as ContinueTaskInput;
+      const reserved = continuationStore.consume(request.continuationReference);
+      if (reserved.status !== "ready") {
+        const message = continuationError(reserved);
+        log(`continue_task rejected: ${message}`);
+        return {
+          content: [{ type: "text" as const, text: message }],
+          isError: true,
+        };
+      }
+
+      const { entry } = reserved;
+      const batchId = makeSingleBatchId();
+      const taskId = "t1";
+      const startedAt = Date.now();
+      let workerStarted = false;
+      log(
+        `continue_task: thread=${entry.threadId} instruction="${request.instruction.slice(0, 80)}..."`,
+      );
+
+      emitEvent({
+        type: "batch.started",
+        batchId,
+        mode: "single",
+        taskCount: 1,
+        maxParallel: 1,
+      });
+      emitEvent({
+        type: "task.queued",
+        batchId,
+        taskId,
+        effort: entry.input.effort,
+        category: entry.input.taskCategory,
+        activityLabel: entry.input.activityLabel,
+        model: LUNA_MODEL,
+      });
+
+      try {
+        const result = await continueToLuna(entry.input, {
+          workingDirectory: entry.workingDirectory,
+          threadId: entry.threadId,
+          instruction: request.instruction,
+          signal: extra?.signal,
+          hooks: {
+            onStarted: (workingDirectory) => {
+              workerStarted = true;
+              emitEvent({
+                type: "worker.started",
+                batchId,
+                taskId,
+                effort: entry.input.effort,
+                workingDirectory,
+                model: LUNA_MODEL,
+              });
+            },
+            onVerificationStart: (commandCount) =>
+              emitEvent({ type: "verification.started", batchId, taskId, commandCount }),
+          },
+        });
+        emitSingleCompletion(
+          batchId,
+          taskId,
+          entry.input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS,
+          result,
+        );
+        recordEvent(result);
+        return {
+          content: [{ type: "text" as const, text: renderResult(result) }],
+          structuredContent: result,
+        };
+      } catch (error) {
+        const message =
+          error instanceof WorkspaceError
+            ? error.message
+            : `Continuation failed: ${(error as Error).message}`;
+        if (workerStarted) {
+          const durationSeconds = Math.round((Date.now() - startedAt) / 1000);
+          if (extra?.signal?.aborted) {
+            emitEvent({ type: "worker.cancelled", batchId, taskId });
+            emitEvent({ type: "batch.cancelled", batchId, reason: "worker cancelled" });
+          } else {
+            emitEvent({ type: "worker.failed", batchId, taskId, reason: message });
+            emitEvent({
+              type: "batch.completed",
+              batchId,
+              durationSeconds,
+              passed: 0,
+              failed: 1,
+            });
+          }
+        } else if (extra?.signal?.aborted) {
+          emitEvent({
+            type: "batch.cancelled",
+            batchId,
+            reason: "cancelled before worker start",
+          });
+        } else {
+          emitEvent({ type: "batch.rejected", batchId, reason: message });
+        }
+        log(`continue_task error: ${message}`);
         return {
           content: [{ type: "text" as const, text: message }],
           isError: true,
@@ -570,6 +748,7 @@ function registerDelegateTasks(): void {
           allowOverlappingScopes: batch.allowOverlappingScopes,
           integrate: batch.integrate,
           signal: extra?.signal,
+          continuationRegistrar: registerContinuation,
         });
         log(
           `batch done: ${result.passed}/${result.taskCount} passed in ` +
@@ -617,6 +796,9 @@ export function renderBatch(batch: BatchOutput): string {
     lines.push(`[${task.taskId}] ${verdict}${claimed}${flag}`);
     lines.push(`    effort: ${task.effort} - ${task.effortReason}`);
     if (task.result) lines.push(`    change intent: ${task.result.changeIntent}`);
+    if (task.result?.continuationReference) {
+      lines.push(`    continuation reference: ${task.result.continuationReference}`);
+    }
     lines.push(`    objective: ${task.objective.slice(0, 140)}`);
 
     if (task.result?.summary)
@@ -675,6 +857,7 @@ async function main(): Promise<void> {
   } else {
     registerDelegateTask();
     registerDelegateTasks();
+    registerContinueTask();
   }
 
   const transport = new StdioServerTransport();

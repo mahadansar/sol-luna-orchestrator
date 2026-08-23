@@ -31,7 +31,7 @@ or for taking Git actions on the user's behalf.
 | P0.1     | Context Capsule v2                       | Shipped in v0.7.0                                |
 | P0.2     | Compact Evidence Packets                 | Shipped in v0.7.0                                |
 | P0.2a    | Explicit Change Intent Contracts         | Implemented in the working tree; pending release |
-| P0.3     | Worker Continuation                      | P0.2a                                            |
+| P0.3     | Worker Continuation                      | Delivered in the working tree; depends on P0.2a  |
 | P0.4     | Bounded Repair Loop                      | P0.3, P0.2a                                      |
 | P1.0     | Parent Model and Pricing Discovery       | Discovery before P1.2                            |
 | P1.1     | Reasoned Retry and Effort Escalation     | P0.4                                             |
@@ -149,8 +149,12 @@ zero-change result or deciding whether a repair turn is appropriate.
 window. A small follow-up on work that just finished pays full setup cost and
 discards everything the worker learned.
 
-**Direction.** When useful, allow a bounded follow-up turn for the same
-bounded Luna task to resume the same Luna thread.
+**Delivered.** `continue_task` accepts an opaque in-memory
+`continuationReference` plus one explicit follow-up instruction and resumes the
+same Luna thread. References are single-use, expire after 15 minutes, and die
+with the server process. Eligible single and batch results expose the reference.
+Parallel batch results bind to the integrated workspace after safe integration,
+or to a retained worktree when integration is disabled or conflicted.
 
 **Constraints.**
 
@@ -158,11 +162,14 @@ bounded Luna task to resume the same Luna thread.
 - Supervision is unchanged: the supervisor still decides and still reviews.
 - No recursive delegation. A resumed worker has no delegation tools, exactly as
   a fresh one does not.
-- Verification and scope validation run again on the continued result.
+- Verification, scope validation, evidence reconciliation and verdict
+  classification run again on the continued result.
 - Continuations are bounded, and the bound is small.
 
-**Not decided.** How a thread reference is surfaced, and how long it stays
-resumable.
+The original objective, `allowedFiles`, `forbiddenFiles`, `changeIntent`,
+acceptance criteria and verification commands are preserved exactly. The
+continuation API accepts no widening fields, and resumed workers retain both
+recursive-delegation guards.
 
 **Depends on** P0.2a and P0.2.
 

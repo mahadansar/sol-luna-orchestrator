@@ -13,6 +13,7 @@ const bullets = (items: string[]): string => items.map((item) => `- ${item}`).jo
 export function buildWorkerPrompt(
   input: DelegateTaskInput,
   workingDirectory: string,
+  continuationInstruction?: string,
 ): string {
   const sections: string[] = [];
 
@@ -27,6 +28,15 @@ Working directory: ${workingDirectory}`,
   );
 
   sections.push(`## Objective\n\n${input.objective}`);
+
+  if (continuationInstruction?.trim()) {
+    sections.push(
+      `## Continuation instruction\n\n${continuationInstruction.trim()}\n\n` +
+        "This is an explicit follow-up turn on the same bounded task. Preserve the " +
+        "original objective, file scope, change intent, acceptance criteria, and " +
+        "verification contract below; do not widen or replace them.",
+    );
+  }
 
   if (input.taskCategory) {
     sections.push(`Task type: ${input.taskCategory}`);
