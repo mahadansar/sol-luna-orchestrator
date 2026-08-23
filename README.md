@@ -13,42 +13,15 @@ sequence, or independent tasks in parallel. Every delegated task carries a
 declared file scope, and what comes back is evidence the orchestrator produced
 rather than a claim the worker made.
 
-The parent supervisor is model-agnostic. It holds the requirements, decides
-whether delegating is worth it at all, and reviews the result. Workers run
-`gpt-5.6-luna` in their own Codex threads, at a reasoning effort chosen per
-task.
+The parent supervisor runs in OpenAI Codex but is not hardcoded to one specific
+Codex model. It holds the requirements, decides whether delegating is worth it
+at all, and reviews the result. Workers run `gpt-5.6-luna` in their own Codex
+threads, at a reasoning effort chosen per task.
 
 Two ideas do most of the work here: **a worker's `PASS` is a claim, not a
 conclusion**, and **not every task should be delegated**.
 
-## Why this exists
-
-The split is the one most teams already use with people. The supervisor keeps
-requirements, architecture, decomposition and review, because it has the
-context. Workers take bounded executable work such as implementation, test
-writing, mechanical refactors and focused investigation, because they need a
-clear brief rather than the whole picture.
-
-Delegation here is adaptive, not automatic. The parent decides first whether
-handing work off is worth the coordination cost, and the right answer is often
-zero workers. Once it does delegate, each task gets its own reasoning effort
-(`medium`, `high`, `xhigh` or `max`) based on that task's difficulty. Worker
-count and worker effort are separate decisions.
-
-**Worth using when** one substantial bounded task is worth moving out of the
-parent's context, dependent tasks benefit from running in sequence, independent
-tasks can run in parallel, or declared scopes and independently re-run
-verification are worth the fixed overhead.
-
-**Not worth it when** the work is small, tightly coupled, already obvious, or
-would take longer to specify and review than to do.
-
-Raw token counts are not credit cost. A delegated approach can use more raw
-tokens and still cost fewer credits, but only when the parent you picked is
-priced above the worker on the current schedule. No cost saving has been
-measured or is claimed. See the [cost guidance](docs/CONFIGURATION.md#cost).
-
-## Quick start
+## Quick Start
 
 You need [OpenAI Codex](https://developers.openai.com/codex) installed and
 logged in (`codex login`), and Node.js 22.12 or newer.
@@ -90,213 +63,105 @@ and leaves your other instructions, logs and activity history alone. Both `init`
 and `uninstall` take `--dry-run` and write nothing. Install options, environment
 variables and Codex settings are in [Configuration](docs/CONFIGURATION.md).
 
-## What the parent decides
+## Features
 
-For each piece of work the parent picks one of four outcomes:
+| Capability                               | What it does                                                                                                                       | Added  |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| Adaptive zero-worker delegation          | Lets the supervisor decide that a task is better done directly when delegation is not worth its overhead.                          | v0.6.0 |
+| Single-task delegation                   | Runs one bounded executable task in the shared workspace through `delegate_task`.                                                  | v0.5.0 |
+| Sequential and parallel batches          | Runs dependent tasks in sequence or independent tasks in parallel through `delegate_tasks`.                                        | v0.5.0 |
+| Isolated worktrees and safe integration  | Gives parallel workers separate worktrees and detects scope or same-file conflicts before copying safe changes back.               | v0.5.0 |
+| Bounded concurrency                      | Queues excess batch tasks behind a shared semaphore with a small configurable ceiling.                                             | v0.5.0 |
+| Adaptive worker effort                   | Chooses reasoning effort independently for each delegated task.                                                                    | v0.5.0 |
+| Independent verification                 | Re-runs declared verification commands after the worker exits and reports the evidence.                                            | v0.5.0 |
+| Claimed-versus-observed reconciliation   | Compares worker-reported edits with runtime-observed file changes and surfaces discrepancies.                                      | v0.5.0 |
+| Context Capsule v2                       | Passes selected structured background context to a worker without dumping the supervisor's whole session.                          | v0.7.0 |
+| Compact Evidence Packets                 | Omits routine successful verification output while retaining verdicts, failures, discrepancies and scope violations.               | v0.7.0 |
+| CLI, setup and diagnostics lifecycle     | Provides idempotent `init`, `doctor`, `status` and `uninstall` commands for setup and diagnosis.                                   | v0.5.0 |
+| Activity and observability               | Records structured lifecycle events and exposes live or machine-readable batch and worker activity.                                | v0.6.0 |
+| Natural discovery and normal Codex usage | Installs a managed fresh-session discovery hint while leaving the supervisor free to work normally and choose whether to delegate. | v0.8.0 |
 
-- **Solo, zero workers.** Small, tightly coupled or obvious work is done
-  directly. This is a valid and often correct outcome, not a failure to
-  delegate.
-- **One task.** A single substantial bounded task is worth moving out of the
-  parent's context on its own. No second seam is required to justify it.
-- **Sequential.** Two or more tasks depend on earlier changes, share workspace
-  state, or may touch the same files, so they run in order in the shared
-  workspace.
-- **Parallel.** Two or more tasks are genuinely independent and have disjoint
-  declared scopes, so each runs in its own isolated git worktree.
+Versions before v0.5.0 were development milestones; v0.5.0 was the first tagged
+and published release.
 
-### If a fresh session does not find the server
+## Coming next
 
-Codex can defer MCP tools in a brand new chat, and a generic "delegate this"
-request may reach Codex's own built-in delegation instead. The managed hint
-`init` writes exists to make this server discoverable first; it does not force a
-delegation or start workers. When you want to be explicit, name it:
-
-```
-Use the sol-luna-orchestrator MCP for this task. Decide whether delegate_task or
-delegate_tasks is appropriate based on the work.
-```
-
-You can also name worker counts, scopes and efforts when you have a reason to,
-and leave them unspecified otherwise. The mechanics, and the evidence behind
-them, are in [Delegation Discovery](docs/DELEGATION_DISCOVERY.md).
-
-## Watching a run
-
-`activity` prints one snapshot and exits. To follow a run live, leave a watcher
-open in a second terminal:
-
-```bash
-# terminal 1
-sol-luna-orchestrator activity --watch
-
-# terminal 2: Codex, working normally
-```
-
-It refreshes as each worker starts, verifies and completes, and stops on Ctrl+C.
-The view leads with batch state, mode, active and total workers, elapsed time
-and peak concurrency, then gives each worker a compact block: its optional
-activity label (or a `Delegated task N` fallback), model, effort, state,
-duration, verification outcome, changed-file count and any known failure reason.
-`activity --json` prints one machine-readable snapshot instead and cannot be
-combined with `--watch`.
-
-Worker prompts, objectives, task context, source code and command output are
-deliberately absent from the activity stream. The optional `activityLabel` is
-the exception: it is persisted locally on purpose, and it can reveal a short
-description of the work. [Observability](docs/OBSERVABILITY.md) has the event
-shapes and the fuller privacy picture.
-
-`init` configures the event log this reads, so no environment variable needs to
-be exported.
+Explicit Change Intent Contracts and Worker Continuation are implemented on
+`main` but await a release. The [roadmap](ROADMAP.md) then covers the Bounded
+Repair Loop, reasoned retry and effort escalation, adaptive worker routing with
+compute policy and stronger-executor fallback, automatic context lifecycle
+management, an optional Explorer, cross-session handoff, and an end-to-end
+automated workflow.
 
 ## How it works
 
 ```
-You
- |
- v
-Parent supervisor .......... decides whether delegating is worth it
- |
- |-- does the work itself ... zero workers, a valid outcome
- |
- +-- delegates bounded tasks
-        |
-        v
-     orchestrator (MCP over stdio)
-        |  validates contracts and declared scopes
-        |-- one task ....... shared workspace
-        |-- sequential ..... shared workspace, later tasks see earlier changes
-        +-- parallel ....... one git worktree per task, disjoint scopes
-        |
-        v
-     Luna workers, siblings with no delegation tools of their own
-        |  each with its own declared scope and effort
-        v
-     evidence produced by the orchestrator, not by the worker
-        |  verification commands re-run
-        |  claimed edits compared against observed ones
-        |  scope violations and integration conflicts detected
-        v
-Parent reviews the evidence and decides
+Parent in Codex
+  |-- Solo .............. zero workers; often the right choice
+  |-- Single ............ shared workspace via `delegate_task`
+  |-- Sequential ........ shared workspace; later tasks see earlier changes
+  +-- Parallel .......... isolated git worktree per task; normally disjoint scopes
+          |
+          v
+      MCP orchestrator validates contracts, runs Luna workers,
+      re-runs verification, and returns evidence for parent review.
 ```
 
-Workers are siblings, never a hierarchy: a Luna worker has no delegation tools,
-so it cannot spawn workers of its own. `delegate_task` runs one bounded task
-directly in the workspace and has no git requirement. `delegate_tasks` is
-intended for multiple meaningful tasks but accepts one task for compatibility.
-It runs either `sequential` in the shared workspace or `parallel` with one
-worktree per task, each task carrying its own contract, scope and effort.
+The parent owns requirements, decomposition and review. Workers are siblings,
+not a hierarchy: they have no delegation tools of their own. Parallel
+integration is a file copy, not a merge, and only proceeds safely for disjoint
+observed file sets; otherwise the work is returned for review. See
+[`SOL_RULES.md`](SOL_RULES.md) for the supervisor policy and
+[Delegation Discovery](docs/DELEGATION_DISCOVERY.md) for fresh-session discovery.
 
-An eligible result also carries an opaque `continuationReference`. The parent
-may explicitly call `continue_task` once with that reference and a concise
-follow-up instruction to resume the exact Luna thread. The original objective,
-`allowedFiles`, `forbiddenFiles`, `changeIntent`, acceptance criteria and
-verification commands remain fixed; the continuation runs independent
-verification and evidence reconciliation again. References live only in server
-memory, expire after 15 minutes, and cannot be replayed. Parallel batch results
-use the integrated workspace after safe integration, or a retained worktree when
-integration is disabled or conflicted, so they do not point at deleted paths.
+`delegate_tasks` handles sequential and parallel batches; a single task is
+supported there for compatibility.
 
-While a call is in flight and there is no meaningful new state, the parent is
-asked to stay quiet rather than narrate polling or elapsed time, and to report
-results, errors, cancellations, timeouts and actionable state changes as soon as
-they happen. That is guidance to the parent and its client, not behavior the
-server can enforce.
+`init` installs a managed discovery hint but does not force delegation;
+`init --no-discovery-hint` opts out. For activity, use `sol-luna-orchestrator
+activity` for a snapshot, `activity --watch` to follow a run, or `activity
+--json` for one machine-readable snapshot. `--watch` and `--json` cannot be combined;
+event shapes and privacy details are in [Observability](docs/OBSERVABILITY.md).
 
-Supervisor policy reaches the parent through the MCP instructions, tool
-descriptions and schemas. [`SOL_RULES.md`](SOL_RULES.md) is the optional fuller
-reference for humans and AGENTS files.
-
-## Verification and trust
+## Verification & safety
 
 A worker reports its own status, summary, changed files and verification result.
-Those are claims. The evidence the parent reviews is produced by the
-orchestrator: it re-runs the verification commands itself, compares claimed
-edits against observed ones, and reports scope violations and integration
-conflicts. A worker `PASS` is where review starts, not where it ends.
+Those are claims: the orchestrator independently reruns declared verification,
+compares claimed with observed edits, and reports scope violations and
+integration conflicts. In the default mode, verification commands are parsed
+without a shell and credential-shaped environment variables are withheld.
 
-**Enforced**
+These are guardrails, not a sandbox. File scopes are detective rather than a
+write boundary, and verification runs outside the Codex sandbox with the user's
+permissions. Parallel worktrees also write inside the repository. Read the
+[`SECURITY.md`](SECURITY.md) threat model before using it on untrusted code.
 
-- Verification commands are parsed into argv with **no shell**, so `;`, `&&`,
-  `|`, backticks and `$(...)` are rejected rather than executed. Only
-  allowlisted executables may launch, and never via a path.
-- Credential-shaped environment variables are withheld from those commands,
-  because their output flows back into a model transcript.
-- Workspace escapes are caught after resolving symlinks. `allowedFiles: ["**"]`
-  still cannot authorize a write outside the workspace. An empty `allowedFiles`
-  array means no in-workspace allowlist; it does not declare read-only intent.
-- Each task declares `changeIntent` as `forbidden` (read-only), `optional`, or
-  `required`; omission defaults to `required` for compatibility. Intent is
-  independent of `allowedFiles` and `taskCategory`. Forbidden runtime-observed
-  edits are contract violations, while claimed-only edits retain the normal
-  claimed-versus-observed discrepancy handling.
-- Workers cannot delegate, both by child configuration and by an environment
-  marker that makes a worker-side server register zero tools.
-- By default, parallel batches are refused when declared scopes overlap, and
-  changes are never merged when two workers touched the same file. A call may set
-  `allowOverlappingScopes: true` to accept declared overlap for that batch, but
-  actual same-file edits still prevent automatic integration.
+## Benchmark highlights
 
-**Detected, not prevented**
+The three reproducible suites are directional measurements of specific fixtures,
+models, prompts and versions:
 
-- **File scopes are detective, not a write sandbox.** Workers write real files.
-  A declared scope does not block a write, it makes the violation visible
-  afterwards.
-- **Verification runs outside the Codex sandbox**, with your user's permissions.
-  `npm test` runs your project's own test code, which can do anything you can.
-- **Parallel batches write inside your repository**, under
-  `.sol-luna/worktrees/`, and integration copies files back into your working
-  tree. That mode needs a git repository with at least one commit and no
-  uncommitted changes inside the declared scopes.
+- Small tasks: delegation was roughly 2.3x slower and used 3.5x the raw tokens,
+  with no measurable quality difference.
+- Three-module projects: actual delegated parallel runs had a 155s median versus
+  248s sequential, but neither beat the strong solo baseline in these fixtures.
+- Scale: no latency or token crossover was found at four or six streams; the
+  free-choice supervisor chose zero workers in all six runs and passed each time.
 
-This is a set of guardrails, not a sandbox. Read [`SECURITY.md`](SECURITY.md)
-before pointing it at anything you care about.
+The harness graded every run after the agent stopped. Raw tokens are not billed
+cost, and no cost saving is claimed. See [`bench/RESULTS.md`](bench/RESULTS.md)
+for methodology, per-task numbers and limitations.
 
-## What the benchmarks show
+## Requirements
 
-Three reproducible suites, all graded by the harness after the agent stops,
-never by the agent itself.
+- Node.js 22.12 or newer and a logged-in [Codex CLI](https://developers.openai.com/codex).
+- git 2.20 or newer for parallel batches only; single-task and sequential modes
+  do not require git.
+- Live model runs have been verified on Windows; Linux and macOS are covered by
+  deterministic CI but have not been driven end to end with a real model.
 
-- **On small tasks, delegating is worse.** Roughly 2.3x slower and 3.5x the
-  tokens, with no measurable quality difference.
-- **Once you are delegating, parallel beats sequential.** Median 155s against
-  248s on three-module projects, and far more consistent run to run.
-- **Delegation has not beaten the supervisor working alone in these fixtures.**
-  A crossover investigation at four and six independent workstreams found no
-  latency crossover and no token crossover, and six streams sat further behind
-  than four. Left to choose for itself, the supervisor declined to delegate in
-  all six free-choice scale runs, passed every time, and was the fastest arm on
-  two of the three fixtures. Those were routing decisions taken with the tools
-  in front of it, not failures to find the server.
-
-The token figures are raw measurements, not billed cost, and no raw-token or
-cost saving has been demonstrated. These results describe specific fixtures,
-models, prompts and versions; they do not establish that single-agent execution
-is universally better. Methodology, per-task numbers and everything that could
-not be measured are in [`bench/RESULTS.md`](bench/RESULTS.md).
-
-## Requirements and limits
-
-- **Node.js 22.12 or newer, and a logged-in Codex CLI.** `doctor` checks both
-  and tells you how to fix whatever is missing.
-- **git with at least one commit** is needed for parallel batches only. A single
-  task and sequential batches have no git requirement.
-- **Integration is a file copy, not a merge.** It is attempted only when worker
-  file sets are disjoint; anything else is handed back to you, with the
-  worktrees kept.
-- **Workers are verified in isolation.** Passing separately is not passing
-  together, so the parent is told to run an integration check whenever
-  integrated changes can interact.
-- **Windows is the only platform with live model runs.** Linux and macOS are
-  verified in CI, with the platform-specific code paths exercised, but have not
-  been driven end to end with a real model.
-- **Built against experimental surfaces.** Several behaviors this depends on are
-  undocumented and were established by testing, so upstream changes may break
-  it.
-- **The benchmarks are small.** Directional, not statistically significant.
-
-Planned work, and what is deliberately not a goal, is in
+`doctor` checks the installation. Configuration, platform details and runtime
+limits are in [Configuration](docs/CONFIGURATION.md); planned work is in
 [ROADMAP.md](ROADMAP.md).
 
 ## Documentation

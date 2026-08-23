@@ -25,6 +25,11 @@ Everything the orchestrator reads, and how to change it. The
 `sol-luna-orchestrator doctor` verifies all of this and tells you what to do
 about anything missing.
 
+Some required Codex behaviors are experimental surfaces established by testing
+rather than documented stable APIs. This release was built against
+`codex-cli 0.147.0`; upstream changes may require a compatibility update even
+when the local Node.js and git requirements are satisfied.
+
 ## Advanced installation
 
 `init` is the supported path. These notes are for people who want to know what it
