@@ -101,26 +101,154 @@ improve a benchmark number.
 Do not report benchmark numbers that the committed raw results in
 `bench/results/` do not support.
 
+## Live model-backed acceptance
+
+The project uses deterministic verification and live/model-backed acceptance.
+Deterministic verification comes first. Use the live procedure when affected
+behavior cannot be established mechanically and the model-backed run has been
+explicitly authorized; treat its results as observations, not guarantees.
+
+### Deterministic verification comes first
+
+Everything mechanical must be green before a live run is worth anyone's time:
+
+```bash
+npm run format:check
+npm run build
+npm run typecheck
+npm test
+```
+
+Also run the model-free smoke suites, `npm run smoke` (the MCP protocol
+handshake) and `npm run smoke:cli`, plus `npm run bench:validate` (benchmark
+fixture validation). Record the real totals, including skips: a test skipped for
+a platform permission is a skip, not a pass.
+
+`smoke:isolation`, `smoke:parallel` and `smoke:live` are not deterministic
+checks. They drive real Codex turns and spend model tokens, so they belong to
+the live acceptance work below. `smoke:isolation` is the one to reach whenever a
+worker appears able to delegate: it proves from the log that no orchestrator was
+started for the worker, which a model's own answer never can.
+
+What deterministic tests cannot prove is that a real parent, in a real session,
+with no prompting toward this project, finds the orchestrator and makes a
+sensible decision. This procedure is manual and model-backed; treat its results
+as observations, not guarantees.
+
+### Acceptance procedure
+
+**Step 0 — rebuild, then restart the client.** Run `npm run build` first, then
+fully terminate the Codex client or session and open a new one. Rebuilding
+`dist/` does not reload an MCP server that is already running: Codex spawned that
+process, and it keeps serving the old build until the session that owns it ends.
+The same applies to `SERVER_INSTRUCTIONS`, tool descriptions and the discovery
+hint — all of them are read at session start. A rebuild without a restart
+silently tests the previous build.
+
+1. **Fresh session.** Start a new Codex session, with any compatible parent model
+   and whatever effort the task warrants. Confirm `sol-luna-orchestrator status`
+   reports the installation configured and the discovery hint installed.
+2. **Natural prompting.** Give it a genuine, substantial task that would plausibly
+   benefit from bounded delegation. Do not mention this MCP, delegation, workers,
+   or the tool names. If you have to hint, the run does not test discovery.
+3. **Discovery.** Confirm the parent found the orchestrator and consulted its
+   guidance without being pointed at it. The diagnostic log is ground truth;
+   the model's own account of what tools it has is not.
+4. **Routing.** Inspect the decision between solo work, `delegate_task` and
+   `delegate_tasks`. Judge whether it was sensible for this task, including
+   solo. Zero workers is a pass when the work did not warrant delegation; a run
+   is a failure only if the decision was wrong, not if it was solo.
+5. **Activity output.** If it delegated, watch `sol-luna-orchestrator activity
+--watch` in a second terminal. Confirm it shows what is running, the
+   `activityLabel` or its `Delegated task N` fallback, model and effort, elapsed
+   time, verification state, changed-file and check summary, failures, and batch
+   mode, state and concurrency. Confirm no objective or prompt text appears
+   anywhere in it. Where usage is unavailable, confirm it reads as unavailable
+   rather than as zero.
+6. **Silence while pending.** Observe the parent while a call is in flight. It
+   should stay quiet when there is no meaningful new state — no polling
+   narration, no elapsed-time commentary, no "still working on it". This is
+   guidance to the parent, not a server-enforced output guarantee: the server
+   cannot make a client stay silent, so a chatty parent is a guidance
+   observation, not a server defect.
+7. **Result handling.** Confirm results, errors, cancellations and timeouts are
+   each surfaced to the parent and reported by it. Silence applies to non-events
+   only; every one of these must be reported.
+8. **Independent parent review.** Confirm that after the worker returns, the
+   parent reviews the work itself — verdict, verification outcome, observed
+   changed files, discrepancies, and scope violations — rather than repeating a
+   worker `PASS` as though it settled the matter.
+
+### Recording a run
+
+Record one entry per acceptance run using this complete template:
+
+- **Date**:
+- **Client and version**:
+- **Parent model**:
+- **Parent effort**:
+- **Orchestrator version / commit**:
+- **Worker model and effort**:
+- **Discovery**: (found unprompted / needed a cue / not found)
+- **Routing**: (solo / single task / batch — and whether that was the right call)
+- **Silence while pending**: (held / narrated)
+- **Parent review**: (independent / deferred to the worker)
+- **Outcome and anything surprising**:
+- **Retained evidence**: (where the event-stream excerpt and diagnostic log for
+  this run are kept)
+
+Record what happened, including a run that went badly. An acceptance log that
+only contains successes is not evidence.
+
 ## Releasing
 
 Maintainers only. Releases are published by GitHub Actions using
 [npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers), so there is
 no npm token in this repository, no publish secret, and nothing to rotate.
 
+Before every release, perform and record a semantic documentation freshness
+audit. At minimum, reconcile all of these documents with one another and with
+the implementation being released:
+
+- `CHANGELOG.md`
+- `README.md`
+- `ROADMAP.md`
+- `SOL_RULES.md`
+- `SECURITY.md`
+- `docs/CONFIGURATION.md`
+- `docs/TROUBLESHOOTING.md`
+- `docs/OBSERVABILITY.md`
+- `CONTRIBUTING.md`
+- `docs/FEATURE_ACCEPTANCE.md`
+
+Also audit `bench/RESULTS.md` when benchmark, routing, model, or performance
+claims changed. Audit the root or scoped `AGENTS.md` files and
+`.github/pull_request_template.md` when architecture, ownership, test selection,
+security-sensitive modules, or the release workflow changed. Reconcile the
+transient GitHub Release draft against the matching `CHANGELOG.md` entry for
+every release.
+
+This final audit is a safety net, not a substitute for same-change maintenance:
+material behavior, configuration, security, or CLI changes must update every
+affected canonical document in the same change.
+
 1. Bump the version and record what shipped:
-   `npm version <x.y.z> --no-git-tag-version`, then add the `CHANGELOG.md` entry
-   and draft the release body in `RELEASE_NOTES.md`.
-2. Commit and push to `main`.
-3. Wait for CI to go green on `main`.
-4. Tag the release commit and push the tag:
+   `npm version <x.y.z> --no-git-tag-version`, then add the matching
+   `CHANGELOG.md` entry.
+2. Create and review a transient GitHub Release draft from that changelog entry.
+   Keep it unpublished and delete it if release preparation is abandoned; do not
+   maintain a second release-body source in the repository.
+3. Commit and push to `main`.
+4. Wait for CI to go green on `main`.
+5. Tag the release commit and push the tag:
    `git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`.
-5. `.github/workflows/publish.yml` fires on the tag. It refuses to continue if
+6. `.github/workflows/publish.yml` fires on the tag. It refuses to continue if
    the tag does not match `package.json`, then builds, typechecks, runs the
    tests and the MCP smoke test, and publishes via OIDC.
-6. npm attaches provenance automatically — the repository and package are both
+7. npm attaches provenance automatically — the repository and package are both
    public, so `--provenance` is neither passed nor needed.
-7. Create the GitHub Release from the tag, using `RELEASE_NOTES.md` as the body,
-   then reset that file to its template so it never describes a shipped version.
+8. After the tag publish succeeds, publish the already reviewed GitHub Release
+   draft for that tag.
 
 Only tags matching `vX.Y.Z` trigger a publish. Branches and pull requests never
 can. Pre-release tags such as `v1.0.0-rc.1` deliberately do not match; publishing

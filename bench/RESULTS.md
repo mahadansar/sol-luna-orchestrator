@@ -315,9 +315,10 @@ configuration. These zero-worker outcomes are therefore routing decisions taken
 with delegation available, not discovery failures — and because the harness
 recorded the decision rather than the reasoning, no motive can be read into them,
 fixture size included. Discovery behaviour in fresh, unprompted sessions is a
-separate matter that has since changed; it is covered in
-[Delegation Discovery](../docs/DELEGATION_DISCOVERY.md) and is not projected back
-onto these runs.
+separate acceptance surface and must not be projected back onto these runs; a
+fresh-session non-discovery result is a different observation from these
+benchmark routing decisions. The live/model-backed acceptance procedure and run
+record are maintained in [CONTRIBUTING](../CONTRIBUTING.md).
 
 ### Reliability
 

@@ -512,7 +512,6 @@ test("SOL_RULES carries the runtime's operational distinctions without benchmark
     /batch-level choice applied uniformly/i,
     /call-level `allowOverlappingScopes: true`[\s\S]*escape hatch/i,
     /actual same-file[\s\S]*edits still prevent[\s\S]*integration/i,
-    /2026-08-23[\s\S]*API[\s\S]*25:1[\s\S]*purchased credits[\s\S]*20:1[\s\S]*16\.7:1/i,
   ]) {
     assert.match(rules, invariant);
   }
@@ -520,20 +519,24 @@ test("SOL_RULES carries the runtime's operational distinctions without benchmark
 });
 
 test("landing page links to authoritative operational guidance", async () => {
-  const [readme, rules, discovery] = await Promise.all([
+  const [readme, rules, configuration] = await Promise.all([
     readDoc("README.md"),
     readDoc("SOL_RULES.md"),
-    readDoc("docs/DELEGATION_DISCOVERY.md"),
+    readDoc("docs/CONFIGURATION.md"),
   ]);
   assert.doesNotMatch(
     readme,
     /told\s+to\s+run\s+the\s+full\s+suite\s+after\s+integration/i,
   );
   assert.match(readme, /SOL_RULES\.md/);
-  assert.match(readme, /Delegation Discovery/);
+  assert.match(readme, /CONFIGURATION\.md#discovery-hint-and-adaptive-routing/i);
   assert.match(
-    discovery.replace(/^>\s?/gm, ""),
+    configuration.replace(/^>\s?/gm, ""),
     new RegExp(escapeRegExp(DISCOVERY_HINT_TEXT).replaceAll(" ", "\\s+")),
+  );
+  assert.match(
+    rules,
+    /first discover[\s\S]*configured Sol-Luna MCP[\s\S]*Do not substitute Codex built-in delegation/i,
   );
   assert.match(
     rules,
@@ -590,10 +593,9 @@ test("human pricing example is dated and distinct from durable runtime policy", 
     configuration,
     /Purchased-credit rates do not describe every included Plus or Pro task/i,
   );
-  assert.match(
-    roadmap,
-    /P0\.2a[\s\S]*Implemented in the working tree[\s\S]*changeIntent[\s\S]*forbidden[\s\S]*optional[\s\S]*required[\s\S]*task category[\s\S]*`allowedFiles: \[\]`/i,
-  );
+  assert.match(roadmap, /Completed and implemented foundations[\s\S]*P0\.2a/i);
+  assert.match(roadmap, /release status[\s\S]*CHANGELOG\.md/i);
+  assert.doesNotMatch(roadmap, /25:1|20:1|16\.7:1/);
   assert.doesNotMatch(
     [SERVER_INSTRUCTIONS, TOOL_DESCRIPTION, BATCH_TOOL_DESCRIPTION].join("\n"),
     /\$\s*\d|\b\d+(?:\.\d+)?\s*(?:x|:1)\b/i,

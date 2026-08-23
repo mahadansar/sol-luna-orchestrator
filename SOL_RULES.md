@@ -18,6 +18,12 @@ the current pricing schedule, and no saving is guaranteed or measured. Balance
 expected credit cost, latency, context, fixed overhead, verification, coordination
 risk, and quality.
 
+For non-trivial work where delegation could plausibly help, first discover the
+configured Sol-Luna MCP and consult its guidance before choosing solo work,
+`delegate_task`, or `delegate_tasks`. Do not substitute Codex built-in delegation:
+it does not provide this orchestrator's contracts, isolation, or evidence. Discovery
+informs the choice; it does not require delegation.
+
 | Choice           | Use when                                                                                                                                                                                           |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Solo             | Work is small, simple, tightly coupled, already obvious, or cheaper to do than coordinate.                                                                                                         |
@@ -50,13 +56,10 @@ Balance expected total credit cost, latency, fixed overhead, context use,
 verification and isolation benefits, coordination risk, and quality. Decide
 whether to delegate separately from whether to run tasks in parallel.
 
-As a dated, non-normative example, on 2026-08-23 OpenAI's API unit-price ratio
-for GPT-5.6 Sol:GPT-5.6 Luna was 25:1 for input, cached input, and output. For
-eligible Codex usage paid with purchased credits, promotional Sol rates instead
-made the unit-rate ratios 20:1 for input and cached input and about 16.7:1 for
-output. Those are per-token rate ratios, not aggregate task-token or
-realised-cost ratios; they do not show that delegation saved money. See the
-[current-source detail](docs/CONFIGURATION.md#dated-sol-luna-unit-rate-example).
+Current prices, entitlements, and billing examples are intentionally not repeated
+here because they change independently of delegation policy. See
+[Configuration](docs/CONFIGURATION.md#cost) for current numeric details and
+their limits.
 
 ## Worker effort
 

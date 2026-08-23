@@ -27,9 +27,9 @@ must never accidentally start the MCP server.
 ## Shared behavior
 
 - Keep required Codex settings centralized in `settings.ts` so `init` and `doctor`
-  cannot drift. `tool_timeout_sec = 3600` and
-  `default_tools_approval_mode = "approve"` are experimentally verified requirements;
-  `"auto"` is not equivalent.
+  cannot drift. The current required values and their experimentally verified
+  rationale are documented in [docs/CONFIGURATION.md](../../docs/CONFIGURATION.md);
+  `"auto"` is not equivalent to the documented approval setting.
 - Resolve the activity file in one place (`events-path.ts`): current process override,
   then the registered server's env table, then unconfigured. Do not silently guess the
   default for an installation that never ran `init`.

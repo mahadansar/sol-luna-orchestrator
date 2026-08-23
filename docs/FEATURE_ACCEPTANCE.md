@@ -4,7 +4,10 @@ Living verification ledger for the material behavior at runtime baseline
 `6d610b37c277f7c6875627572306585b8f219a45` (2026-08-23). `CHANGELOG.md` is the
 source of truth for released behavior; `ROADMAP.md` is used here only to label
 unreleased implementation and future work. This ledger does not promote roadmap
-items to shipped features.
+items to shipped features. The live/model-backed acceptance procedure and run
+template are maintained in [CONTRIBUTING](../CONTRIBUTING.md); this file records
+the resulting evidence, freshness, and confidence rather than repeating that
+procedure.
 
 ## How to read this ledger
 
@@ -79,6 +82,29 @@ compact result packets, followed by one bounded continuation. It configured no
 authoritative verification commands and is recorded only as partial supporting
 evidence.
 
+### Historical natural-discovery run
+
+The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
+
+- **Client and version:** Codex; version not recorded
+- **Parent model and effort:** GPT-5.6 Sol, medium
+- **Orchestrator version / commit:** v0.8.0; commit not recorded
+- **Worker model and effort:** GPT-5.6 Luna, high
+- **Discovery:** found unprompted in a fresh Codex session before the parent
+  researched the public repository
+- **Routing:** one bounded read-only investigation for the initial broad audit,
+  then zero workers for a tightly coupled README refinement; both decisions fit
+  the work
+- **Silence while pending:** not recorded
+- **Parent review:** independent; the parent retained synthesis, editing, and
+  final verification, and checked package, release, CI, and link evidence itself
+- **Outcome:** completed successfully. The delegated read-only task returned
+  `PASS` with no changed files, but the then-current orchestrator still emitted
+  its generic no-file-changes discrepancy. There was no solo control; this was
+  not a performance benchmark and supports no speed, cost, or quality comparison.
+- **Retained evidence:** the task ran in another repository; its transcript and
+  diagnostic evidence are not retained here
+
 ## Top-level feature matrix
 
 | Capability                                              | State at runtime baseline            | Coverage | Deterministic (last run) | Live (last run)        | Confidence |
@@ -138,8 +164,8 @@ evidence.
 - **Implementation/tests:** `src/server.ts`, `src/prompt.ts`, `src/batch.ts`,
   `src/bench/*`; `src/guidance.test.ts`, `src/bench.test.ts`,
   `src/parallel.test.ts`.
-- **Authority/history:** `README.md`, `SOL_RULES.md`,
-  `docs/DELEGATION_DISCOVERY.md`; `a03a325` (2026-08-14), `18c29b6` and
+- **Authority/history:** policy in `SOL_RULES.md`; acceptance procedure in
+  `CONTRIBUTING.md`; `a03a325` (2026-08-14), `18c29b6` and
   `050c6cb` (2026-08-23), followed by `4118525` and `4657768` guidance/test
   alignment.
 - **Evidence:** Coverage **PASS**. Targeted guidance/schema execution **PASS** on
@@ -267,7 +293,7 @@ evidence.
 
 - **Implementation/tests:** `src/verify.ts`, `src/command.ts`, `src/worker.ts`;
   `src/security.test.ts`, `src/selftest.ts`, `src/evidence.test.ts`.
-- **Authority/history:** `SECURITY.md`, `SOL_RULES.md`, `docs/ACCEPTANCE.md`;
+- **Authority/history:** `SECURITY.md`, `SOL_RULES.md`, `CONTRIBUTING.md`;
   initial implementation in `a03a325` (2026-08-14), hardening in `908c977`
   (2026-08-23).
 - **Evidence:** Coverage and targeted deterministic execution **PASS** on
@@ -377,8 +403,9 @@ evidence.
 - **Implementation/tests:** `src/cli/discovery-hint.ts`, `src/cli/init.ts`,
   `src/cli/doctor.ts`, `src/cli.test.ts`, `src/activity-config.test.ts`,
   `src/guidance.test.ts`.
-- **Authority/history:** `docs/DELEGATION_DISCOVERY.md`, `docs/ACCEPTANCE.md`,
-  `README.md`, `CHANGELOG.md` v0.8.0; `c966365` (2026-08-22), then
+- **Authority/history:** setup mechanics in `docs/CONFIGURATION.md`; routing
+  policy in `SOL_RULES.md`; acceptance procedure in `CONTRIBUTING.md`;
+  `CHANGELOG.md` v0.8.0; `c966365` (2026-08-22), then
   `deca34d` and `4118525` (2026-08-22).
 - **Evidence:** Coverage and targeted deterministic execution **PASS** on
   2026-08-24 for installation, opt-out, override, and guidance behavior. The

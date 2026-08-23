@@ -5,6 +5,7 @@ Everything the orchestrator reads, and how to change it. The
 
 - [Requirements](#requirements)
 - [Advanced installation](#advanced-installation)
+- [Discovery hint and adaptive routing](#discovery-hint-and-adaptive-routing)
 - [Codex settings and environment variables](#codex-settings-and-environment-variables)
 - [Activity and diagnostics logs](#activity-and-diagnostics-logs)
 - [Parent model and effort](#parent-model-and-effort)
@@ -63,31 +64,44 @@ SOL_LUNA_LOG = "/path/to/codex-home/sol-luna-orchestrator.log"
 SOL_LUNA_EVENTS = "/path/to/codex-home/sol-luna-orchestrator.events.jsonl"
 ```
 
-Both of the first two settings are required and were found the hard way: Codex's
-60s default tool timeout aborts every delegation mid-flight, and
-`default_tools_approval_mode` must be `"approve"` — `"auto"`, despite the name,
-makes non-interactive runs cancel the call.
-
 Both env paths default to your Codex home (`$CODEX_HOME`, or `~/.codex`), so
 they accumulate across projects rather than inside whichever repository you ran
 `init` from. Override either with `init --log <path>` or `init --events <path>`;
 a plain `init` never overwrites a path you set.
 
-Normal `init` also adds one exact, managed discovery hint to the active global
-Codex instruction file: a non-empty `$CODEX_HOME/AGENTS.override.md` when one
-exists, otherwise `$CODEX_HOME/AGENTS.md` (normally `~/.codex/AGENTS.md`). It is
-intentionally tiny and helps fresh chats distinguish this MCP from built-in
-delegation while Codex's MCP catalog is deferred. For non-trivial work where
-delegation could plausibly help, it requires the parent to discover this MCP
-first and use its guidance to choose solo work, `delegate_task`, or
-`delegate_tasks`; it does not require delegation, and zero workers remains
-valid. The file is user-owned, so init preserves its existing bytes, migrates
-the prior exact managed hint, repeated init is idempotent, and uninstall removes
-only recognized exact managed blocks from either global instruction file. Use
-`sol-luna-orchestrator init --no-discovery-hint` to opt out. Both
-`init --dry-run` and `uninstall --dry-run` write nothing.
-
 A fully annotated example is in [`examples/codex-config.toml`](../examples/codex-config.toml).
+
+### Discovery hint and adaptive routing
+
+Fresh sessions can fail to discover the orchestrator before they ever evaluate
+whether delegation is useful. That is different from a session that has the
+tools and chooses to work solo. The discovery hint exists to make the routing
+decision informed; it does not make delegation mandatory.
+
+Normal `init` adds one exact, managed discovery hint to the active global Codex
+instruction file: a non-empty `$CODEX_HOME/AGENTS.override.md` when one exists,
+otherwise `$CODEX_HOME/AGENTS.md` (normally `~/.codex/AGENTS.md`). The hint tells
+the parent:
+
+> For non-trivial work where delegation could plausibly help, first discover the
+> configured sol-luna-orchestrator MCP and use its guidance to decide between
+> solo work, delegate_task, or delegate_tasks. Do not substitute Codex built-in
+> delegation. Zero workers is valid.
+
+Discovery comes before the routing decision so the parent can use the
+orchestrator's actual scoping, verification and isolation guidance. The parent
+may still choose solo work when that is right; zero workers remains a valid
+outcome. This is guidance to a model, not a deterministic guarantee that a
+parent will read the hint.
+
+The instruction file is user-owned. `init` preserves its existing bytes,
+migrates the prior exact managed hint, and is idempotent. A block you edit is
+treated as your content and left alone. `uninstall` removes only recognized
+exact managed blocks from either global instruction file. Use
+`sol-luna-orchestrator init --no-discovery-hint` to opt out. Both
+`init --dry-run` and `uninstall --dry-run` write nothing. `status` reports
+whether the hint is installed, missing or modified; `doctor` checks it and
+prints the command that repairs a missing or incorrect setup.
 
 ### Why init edits the file directly
 
@@ -114,10 +128,9 @@ concurrency. That separation is the core of the security model.
 
 ### Required Codex settings
 
-| Setting                       | Value       | Why                                                                                |
-| ----------------------------- | ----------- | ---------------------------------------------------------------------------------- |
-| `tool_timeout_sec`            | `3600`      | Codex's 60s default aborts every real delegation                                   |
-| `default_tools_approval_mode` | `"approve"` | Permits the tool without prompting. `"auto"` causes `user cancelled MCP tool call` |
+The annotated table under [What init writes](#what-init-writes) is the single
+authoritative presentation of the required keys, values, and failure rationale.
+`init` reconciles those owned values and `doctor` diagnoses either mismatch.
 
 ### Environment variables
 

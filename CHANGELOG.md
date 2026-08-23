@@ -62,10 +62,11 @@ No delegation input/output schema shape or execution algorithm changed.
   reasons.
 - `delegate_tasks` publishes its task-count cap in the tool schema as `maxItems`
   and still rejects an oversized batch at runtime.
-- New documentation: [Delegation Discovery](docs/DELEGATION_DISCOVERY.md),
-  [Observability](docs/OBSERVABILITY.md) and a manual
-  [Live Acceptance](docs/ACCEPTANCE.md) procedure for changes that only a real
-  session can verify.
+- Added discovery guidance, [Observability](docs/OBSERVABILITY.md), and a manual
+  live-acceptance procedure for changes that only a real session can verify.
+  Discovery mechanics now live in [Configuration](docs/CONFIGURATION.md#discovery-hint-and-adaptive-routing),
+  routing policy in [SOL_RULES](SOL_RULES.md), and the acceptance procedure in
+  [Contributing](CONTRIBUTING.md#live-model-backed-acceptance).
 
 ### Changed
 
@@ -277,9 +278,9 @@ benchmark suites, and event stream reliability hardening.
 - `SECURITY.md` now states that worktree create/remove/prune are serialized, and
   why, so the trust boundary around shared git metadata is documented rather than
   only fixed.
-- `RELEASE_NOTES.md` is now an explicit draft for the _next_ release rather than a
-  copy of the last one. Duplicating a shipped changelog entry only drifts from
-  it, which it had already done once.
+- Added an explicit next-release staging convention rather than retaining a copy
+  of the last release body. Release drafting is now transient and governed by
+  [Contributing](CONTRIBUTING.md#releasing).
 
 ## [0.5.1] - 2026-08-14
 

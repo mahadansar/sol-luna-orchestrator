@@ -1,9 +1,10 @@
 # Observability
 
-How the orchestrator records what it did, which file holds what, and what the
-telemetry does and does not reveal. Trust boundaries and sharing advice live in
-[Logs and telemetry](../SECURITY.md#logs-and-telemetry); this document describes
-the shapes.
+How the orchestrator records what it did and which file holds what. This
+document owns the event and activity representations. For path setup and
+precedence see [Configuration](CONFIGURATION.md#activity-and-diagnostics-logs);
+for sensitivity and sharing advice see
+[Logs and telemetry](../SECURITY.md#logs-and-telemetry).
 
 ## Diagnostic log vs activity event stream
 
@@ -12,16 +13,16 @@ Two separate local files, holding deliberately different things.
 1. **Diagnostic log (`SOL_LUNA_LOG`)** — line-oriented human-readable
    diagnostics for the server itself: client connections, each delegation as it
    starts and finishes, thread ids, durations, and verification activity. It
-   records **objectives, file paths and verification command output**. That
-   output is truncated but is not filtered for secrets, so if a test suite
-   prints one, this file contains it. Treat it as the sensitive one.
+   records **objectives, file paths and verification command output**; output is
+   truncated.
 2. **Activity event stream (`SOL_LUNA_EVENTS`)** — an append-only JSONL file of
    structured orchestration records. This is what `sol-luna-orchestrator activity`
-   reads, and it is the less sensitive of the two.
+   reads.
 
-Both are local files. Nothing is transmitted anywhere. Only control characters
-are stripped, from both — enough to stop a crafted string forging a log line,
-not a secret filter.
+The event stream is append-only JSONL; the diagnostic log is line-oriented.
+Representation details below describe what each contains and how consumers
+should interpret it. Sensitivity and sharing boundaries are defined in
+[Security](../SECURITY.md#logs-and-telemetry).
 
 ## What the event stream contains
 
