@@ -463,6 +463,7 @@ export const delegateTaskOutputShape = {
     .object({
       inputTokens: z.number(),
       cachedInputTokens: z.number(),
+      cacheWriteInputTokens: z.number().optional(),
       outputTokens: z.number(),
       reasoningOutputTokens: z.number(),
     })

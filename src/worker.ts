@@ -209,6 +209,9 @@ async function runWorkerThread(
           observed.usage = {
             inputTokens: event.usage.input_tokens,
             cachedInputTokens: event.usage.cached_input_tokens,
+            ...(event.usage.cache_write_input_tokens === undefined
+              ? {}
+              : { cacheWriteInputTokens: event.usage.cache_write_input_tokens }),
             outputTokens: event.usage.output_tokens,
             reasoningOutputTokens: event.usage.reasoning_output_tokens,
           };
@@ -748,15 +751,21 @@ export function buildRepairInstruction(decision: RepairDecision): string {
   ].join("\n");
 }
 
-function mergeUsage(
+export function mergeUsage(
   first: DelegateTaskOutput["usage"],
   second: DelegateTaskOutput["usage"],
 ): DelegateTaskOutput["usage"] {
   if (!first) return second;
   if (!second) return first;
+  const cacheWriteInputTokens =
+    first.cacheWriteInputTokens === undefined ||
+    second.cacheWriteInputTokens === undefined
+      ? undefined
+      : first.cacheWriteInputTokens + second.cacheWriteInputTokens;
   return {
     inputTokens: first.inputTokens + second.inputTokens,
     cachedInputTokens: first.cachedInputTokens + second.cachedInputTokens,
+    ...(cacheWriteInputTokens === undefined ? {} : { cacheWriteInputTokens }),
     outputTokens: first.outputTokens + second.outputTokens,
     reasoningOutputTokens: first.reasoningOutputTokens + second.reasoningOutputTokens,
   };

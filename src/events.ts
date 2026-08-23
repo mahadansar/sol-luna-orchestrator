@@ -70,6 +70,7 @@ export type OrchestratorEvent =
       usage: {
         inputTokens: number;
         cachedInputTokens: number;
+        cacheWriteInputTokens?: number;
         outputTokens: number;
         reasoningOutputTokens: number;
       } | null;

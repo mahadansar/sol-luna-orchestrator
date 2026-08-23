@@ -146,18 +146,22 @@ do not break.
 Per-worker usage is recorded exactly as the Codex SDK reports it on
 `turn.completed`:
 
-| Field                   | Meaning                                   |
-| ----------------------- | ----------------------------------------- |
-| `inputTokens`           | Prompt tokens for that worker's turn      |
-| `cachedInputTokens`     | Portion of the input served from cache    |
-| `outputTokens`          | Tokens the worker generated               |
-| `reasoningOutputTokens` | Reasoning portion of the output           |
-| `model`, `effort`       | Which model and effort that worker ran at |
-| `durationSeconds`       | Wall-clock for that worker                |
+| Field                   | Meaning                                                                                               |
+| ----------------------- | ----------------------------------------------------------------------------------------------------- |
+| `inputTokens`           | Prompt tokens for that worker's turn                                                                  |
+| `cachedInputTokens`     | Portion of the input served from cache                                                                |
+| `cacheWriteInputTokens` | Input tokens written to the prompt cache; optional because older SDK/event records may not include it |
+| `outputTokens`          | Tokens the worker generated                                                                           |
+| `reasoningOutputTokens` | Reasoning portion of the output                                                                       |
+| `model`, `effort`       | Which model and effort that worker ran at                                                             |
+| `durationSeconds`       | Wall-clock for that worker                                                                            |
 
 **Anything unavailable is written as `null`, never as `0`.** A cancelled or
 crashed worker produces no usage at all, and `null` means exactly that: not
-measured. Reading it as zero turns missing data into free work.
+measured. The additive `cacheWriteInputTokens` field is omitted when the SDK or
+historical event record does not provide it; repair-turn totals only add it when
+both turns report it, otherwise the aggregate field remains omitted. Reading
+missing data as zero would turn unknown usage into free work.
 
 The parent's own usage is not among these fields and cannot be: Codex does not
 report the parent turn to an MCP server it launched, so the snapshot's

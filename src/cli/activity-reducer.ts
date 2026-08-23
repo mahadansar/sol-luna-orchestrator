@@ -66,6 +66,7 @@ const timestampedEventSchema = z.discriminatedUnion("type", [
       .object({
         inputTokens: z.number().finite(),
         cachedInputTokens: z.number().finite(),
+        cacheWriteInputTokens: z.number().finite().optional(),
         outputTokens: z.number().finite(),
         reasoningOutputTokens: z.number().finite(),
       })
@@ -176,6 +177,7 @@ export interface WorkerActivity {
   usage: {
     inputTokens: number;
     cachedInputTokens: number;
+    cacheWriteInputTokens?: number;
     outputTokens: number;
     reasoningOutputTokens: number;
   } | null;
