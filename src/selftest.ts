@@ -504,7 +504,7 @@ test("change intent is explicit on single and batch task contracts", () => {
   );
 });
 
-test("worker output schema is strict enough for structured outputs", () => {
+test("worker output schema stays within the external structured-output subset", () => {
   const schema = workerOutputJsonSchema;
   assert.equal(schema.additionalProperties, false);
   assert.deepEqual([...schema.required].sort(), [
@@ -518,7 +518,10 @@ test("worker output schema is strict enough for structured outputs", () => {
   ]);
   // Strict mode requires every declared property to also be required.
   assert.deepEqual(Object.keys(schema.properties).sort(), [...schema.required].sort());
-  assert.equal(schema.properties.failureCauses.uniqueItems, true);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(schema.properties.failureCauses, "uniqueItems"),
+    false,
+  );
   assert.deepEqual(schema.properties.failureCauses.items.enum, [
     "verification",
     "requirements",
@@ -641,6 +644,19 @@ test("worker failure causes enforce the new status invariants", () => {
   }
 });
 
+test("worker failure causes reject duplicates beyond external schema validation", () => {
+  const report = {
+    status: "FAILED",
+    failureCauses: ["verification", "verification"],
+    summary: "duplicate cause fixture",
+    filesChanged: [],
+    verification: [],
+    notes: "",
+    followUps: [],
+  };
+  assert.equal(parseWorkerReport(JSON.stringify(report)), null);
+});
+
 test("legacy reports normalize absent failure causes and invalid present values fail closed", () => {
   const report = {
     summary: "legacy fixture",
@@ -661,11 +677,7 @@ test("legacy reports normalize absent failure causes and invalid present values 
     parseWorkerReport(JSON.stringify({ ...report, status: "BLOCKED" }))?.failureCauses,
     ["blocked", "unclassified"],
   );
-  for (const failureCauses of [
-    "verification",
-    ["unknown"],
-    ["verification", "verification"],
-  ]) {
+  for (const failureCauses of ["verification", ["unknown"]]) {
     assert.equal(
       parseWorkerReport(JSON.stringify({ ...report, status: "FAILED", failureCauses })),
       null,

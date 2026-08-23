@@ -292,7 +292,6 @@ export const workerOutputJsonSchema = {
     },
     failureCauses: {
       type: "array",
-      uniqueItems: true,
       items: { type: "string", enum: WORKER_FAILURE_CAUSES },
       description:
         "Structured worker-declared reasons status is not PASS. PASS uses []; " +
