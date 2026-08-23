@@ -77,6 +77,20 @@ export type OrchestratorEvent =
   | { type: "worker.failed"; batchId: string; taskId: string; reason: string }
   | { type: "worker.cancelled"; batchId: string; taskId: string }
   | { type: "worker.timedOut"; batchId: string; taskId: string; timeoutSeconds: number }
+  | {
+      type: "repair.started";
+      batchId: string;
+      taskId: string;
+      classification: string;
+      turn: 1;
+    }
+  | {
+      type: "repair.completed";
+      batchId: string;
+      taskId: string;
+      verdict: string;
+      turn: 1;
+    }
   | { type: "worktree.created"; batchId: string; taskId: string; path: string }
   | { type: "worktree.removed"; batchId: string; taskId: string; kept: boolean }
   | {

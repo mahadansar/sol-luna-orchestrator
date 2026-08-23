@@ -270,6 +270,66 @@ test("single worker lifecycle", () => {
   assert.equal(w.verification?.passed, 2);
 });
 
+test("repair activity is visible during the turn and after completion", () => {
+  const base: TimestampedEvent[] = [
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "b-repair",
+      mode: "single",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "worker.started",
+      batchId: "b-repair",
+      taskId: "t1",
+      effort: "high",
+      workingDirectory: "w",
+    },
+    {
+      timestamp: "2024-01-01T10:00:02Z",
+      type: "repair.started",
+      batchId: "b-repair",
+      taskId: "t1",
+      classification: "local-verification",
+      turn: 1,
+    },
+  ];
+  const repairing = reduceEvents(base);
+  assert.equal(repairing.workers[0]?.state, "repairing");
+  assert.equal(repairing.workers[0]?.repair?.classification, "local-verification");
+  assert.match(renderHumanLines(repairing).join("\n"), /Repair: running \(turn 1 of 1\)/);
+
+  const completed = reduceEvents([
+    ...base,
+    {
+      timestamp: "2024-01-01T10:00:03Z",
+      type: "repair.completed",
+      batchId: "b-repair",
+      taskId: "t1",
+      verdict: "PASS",
+      turn: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:04Z",
+      type: "worker.completed",
+      batchId: "b-repair",
+      taskId: "t1",
+      verdict: "PASS",
+      claimed: "PASS",
+      durationSeconds: 3,
+      threadId: "thread-repair",
+      model: "gpt-5.6-luna",
+      effort: "high",
+      usage: null,
+    },
+  ]);
+  assert.equal(completed.workers[0]?.repair?.verdict, "PASS");
+  assert.match(renderHumanLines(completed).join("\n"), /repair passed \(1 turn\)/);
+});
+
 // ========================================================================
 // Supervisor state
 // ========================================================================

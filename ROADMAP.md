@@ -32,7 +32,7 @@ or for taking Git actions on the user's behalf.
 | P0.2     | Compact Evidence Packets                 | Shipped in v0.7.0                                |
 | P0.2a    | Explicit Change Intent Contracts         | Implemented in the working tree; pending release |
 | P0.3     | Worker Continuation                      | Delivered in the working tree; depends on P0.2a  |
-| P0.4     | Bounded Repair Loop                      | P0.3, P0.2a                                      |
+| P0.4     | Bounded Repair Loop                      | Delivered in the working tree; P0.3, P0.2a       |
 | P1.0     | Parent Model and Pricing Discovery       | Discovery before P1.2                            |
 | P1.1     | Reasoned Retry and Effort Escalation     | P0.4                                             |
 | P1.2     | Adaptive Worker Routing + Compute Policy | P1.0, P1.1                                       |
@@ -175,6 +175,8 @@ recursive-delegation guards.
 
 ## P0.4 Bounded Repair Loop
 
+**Status.** Delivered in the working tree; pending release.
+
 **Problem.** When independent verification catches a small local defect, the
 current answer is to return to the supervisor, which writes a new contract for a
 new worker. For a failing assertion in code that was just written, that is a lot
@@ -183,6 +185,14 @@ of ceremony.
 **Direction.** When verification finds a routine, locally repairable defect,
 optionally resume the same worker with the exact failure evidence, then verify
 again.
+
+**Delivered.** Fresh single and batch task contracts may opt into one automatic
+repair. A conservative classifier admits only one authoritative local
+verification defect after an observed in-scope implementation edit. The runtime
+resumes the same thread with concise exact failure evidence and the immutable
+original contract, then reruns verification, scope checks, evidence
+reconciliation, and verdict classification. Repair decisions and lifecycle
+events remain visible to the parent. Manual continuation is unchanged.
 
 **Constraints.**
 

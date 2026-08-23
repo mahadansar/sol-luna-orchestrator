@@ -136,6 +136,31 @@ scope checks, independent verification, claim-versus-observed reconciliation and
 verdict classification all run again. A resumed worker still has no delegation
 tools.
 
+## Bounded automatic repair
+
+Fresh `delegate_task` and `delegate_tasks` contracts may opt in with
+`automaticRepair: true`; omission preserves the existing no-repair behavior.
+The runtime classifies the initial result before acting. It permits exactly one
+same-thread repair only when a worker claimed completion, made observed in-scope
+implementation edits, and exactly one authoritative executed verification
+command exposed a local defect without other claim or contract discrepancies.
+
+The repair instruction contains only the concise failing command, execution
+kind, exit code, and output excerpt. The original objective, `allowedFiles`,
+`forbiddenFiles`, `changeIntent`, acceptance criteria, verification commands,
+effort, and worker thread remain immutable. The repaired result goes through
+normal independent verification, scope validation, claimed-versus-observed
+reconciliation, and verdict classification again. Its repair decision and
+evidence remain visible for parent review.
+
+Do not automatically repair forbidden/read-only work, worker-declared failure or
+blockage, ambiguous or inconsistent contracts, scope violations or integration
+conflicts, environment/tooling failures, refused or disabled verification,
+security/trust-boundary failures, or failures whose locality is not established.
+After the one repair turn, success or failure returns to the parent; there is no
+automatic retry, effort escalation, or wider-scope contract. Manual
+`continue_task` remains an explicit follow-up and never chains into repair.
+
 ## Evidence and review
 
 A worker's status, summary, changed-file list, and verification report are

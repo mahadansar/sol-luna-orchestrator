@@ -88,6 +88,20 @@ const timestampedEventSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     ...eventBase,
+    type: z.literal("repair.started"),
+    taskId: eventString,
+    classification: eventString,
+    turn: z.literal(1),
+  }),
+  z.object({
+    ...eventBase,
+    type: z.literal("repair.completed"),
+    taskId: eventString,
+    verdict: eventString,
+    turn: z.literal(1),
+  }),
+  z.object({
+    ...eventBase,
     type: z.literal("worktree.created"),
     taskId: eventString,
     path: optionalEventString,
@@ -134,7 +148,14 @@ function eventTime(timestamp: string): number {
 }
 
 export type WorkerState =
-  "queued" | "running" | "verifying" | "completed" | "failed" | "cancelled" | "timedOut";
+  | "queued"
+  | "running"
+  | "verifying"
+  | "repairing"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "timedOut";
 
 export interface WorkerActivity {
   taskId: string;
@@ -169,6 +190,12 @@ export interface WorkerActivity {
     passed: number;
     failed: number;
     refused: number;
+  } | null;
+  repair: {
+    attempted: boolean;
+    classification: string;
+    verdict: string | null;
+    turn: 1;
   } | null;
   integration: {
     appliedFiles: number | null;
@@ -390,6 +417,7 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
         worktreePath: null,
         worktreeKept: null,
         verification: null,
+        repair: null,
         integration: null,
       };
       workerMap.set(event.taskId, worker);
@@ -443,6 +471,25 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
         worker.endTime = event.timestamp;
         worker.timeoutSeconds = event.timeoutSeconds ?? null;
         activeWorkerIds.delete(event.taskId);
+        break;
+      case "repair.started":
+        worker.state = "repairing";
+        worker.repair = {
+          attempted: true,
+          classification: event.classification,
+          verdict: null,
+          turn: event.turn,
+        };
+        break;
+      case "repair.completed":
+        worker.state = "running";
+        worker.repair ??= {
+          attempted: true,
+          classification: "unknown",
+          verdict: null,
+          turn: event.turn,
+        };
+        worker.repair.verdict = event.verdict;
         break;
       case "worktree.created":
         worker.worktreePath = event.path ?? null;

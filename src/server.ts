@@ -105,6 +105,14 @@ export const recordEvent = (
         filesChanged: result.filesChanged.length,
         scopeViolations: result.scopeViolations.length,
         discrepancies: result.discrepancies.length,
+        ...(result.repair
+          ? {
+              repair: {
+                attempted: result.repair.attempted,
+                classification: result.repair.classification,
+              },
+            }
+          : {}),
         usage: result.usage,
       })}\n`,
     );
@@ -218,6 +226,12 @@ The parent orchestrator retains architecture, decomposition, unresolved design
 and sequencing decisions, and final judgement. The worker cannot see the
 conversation or delegate further.
 
+Set automaticRepair only when one conservative same-thread repair is useful.
+The runtime classifies the initial failure first and permits at most one repair
+for a clear local verification defect. Read-only, contract, scope/conflict,
+environment/tooling, trust-boundary, and wider-scope failures return unchanged
+for parent review.
+
 Use the returned evidence. Worker claims are not authoritative; judge the
 orchestrator's verdict, verification, observed files, discrepancies, scope
 violations, and review checklist. Choose review depth after seeing that evidence;
@@ -240,7 +254,8 @@ The original objective, allowedFiles, forbiddenFiles, changeIntent, acceptance
 criteria and verificationCommands are retained exactly. This tool accepts no
 scope, intent, effort, or verification widening fields. The worker still cannot
 delegate, and independent verification, scope checks, evidence reconciliation
-and verdict classification run again for the continuation turn.
+and verdict classification run again for the continuation turn. Manual
+continuation never starts an automatic repair turn.
 
 While this call is pending and has no meaningful new state, remain silent: do not
 narrate waiting, polling, elapsed time, or that it is still running. Report only
@@ -293,6 +308,26 @@ export function renderResult(result: DelegateTaskOutput): string {
   lines.push(`CHANGE INTENT: ${result.changeIntent ?? "required"}`);
   if (result.continuationReference) {
     lines.push(`CONTINUATION REFERENCE: ${result.continuationReference}`);
+  }
+  if (result.repair) {
+    lines.push(
+      `REPAIR: ${result.repair.attempted ? "attempted" : "not attempted"} | ` +
+        `${result.repair.classification} | ${result.repair.reason}`,
+    );
+    for (const evidence of result.repair.failureEvidence) {
+      lines.push(
+        `  [INITIAL FAILURE] ${evidence.command} (exit ${evidence.exitCode ?? "n/a"}, ${evidence.execution})`,
+      );
+      if (evidence.output) {
+        lines.push(
+          evidence.output
+            .split("\n")
+            .slice(-12)
+            .map((line) => `         ${line}`)
+            .join("\n"),
+        );
+      }
+    }
   }
   lines.push("");
   lines.push(`WORKER SUMMARY (claim)\n${result.summary || "(none)"}`);
@@ -399,6 +434,8 @@ export const SERVER_INSTRUCTIONS =
   `Worker claims are not orchestrator evidence. Judge returned verdicts and checks, ` +
   `and use an eligible opaque continuation reference only for one explicit follow-up ` +
   `without widening the original contract. ` +
+  `Fresh contracts may opt into one conservatively classified same-thread automatic ` +
+  `repair; all other failures return to the parent. ` +
   `reviewing in proportion to their risk and evidence. While an active Sol-Luna ` +
   `tool call has no meaningful new state, remain silent: do not narrate polling, ` +
   `waiting, elapsed time, or that it is still running. Report only a result, error, ` +
@@ -471,6 +508,31 @@ function registerDelegateTask(): void {
               batchId,
               taskId,
               commandCount,
+            }),
+          onRepairStart: (classification) => {
+            emitEvent({
+              type: "verification.completed",
+              batchId,
+              taskId,
+              passed: Math.max(0, task.verificationCommands.length - 1),
+              failed: 1,
+              refused: 0,
+            });
+            emitEvent({
+              type: "repair.started",
+              batchId,
+              taskId,
+              classification,
+              turn: 1,
+            });
+          },
+          onRepairComplete: (verdict) =>
+            emitEvent({
+              type: "repair.completed",
+              batchId,
+              taskId,
+              verdict,
+              turn: 1,
             }),
         });
         if (workerDirectory) {
@@ -694,6 +756,10 @@ automatically cheaper.
 Optionally give each task a useful concise activityLabel for the local activity
 view; labels are not required and should not copy the full objective or include
 sensitive details.
+
+Each fresh task may opt into automaticRepair. The runtime permits at most one
+same-thread repair and only after classifying one authoritative verification
+failure as a clear local defect; other failures return for parent review.
 
 Set each task's explicit changeIntent to forbidden (read-only), optional, or
 required. Omitted intent defaults to required for compatibility. This expectation

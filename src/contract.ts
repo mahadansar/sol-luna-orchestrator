@@ -22,6 +22,20 @@ export type TaskCategory = (typeof TASK_CATEGORIES)[number];
 export const CHANGE_INTENTS = ["forbidden", "optional", "required"] as const;
 export type ChangeIntent = (typeof CHANGE_INTENTS)[number];
 
+/** Conservative outcomes from the bounded automatic-repair classifier. */
+export const REPAIR_CLASSIFICATIONS = [
+  "not-requested",
+  "not-needed",
+  "local-verification",
+  "read-only",
+  "contract-or-requirement",
+  "scope-or-conflict",
+  "environment-or-tooling",
+  "security-or-trust-boundary",
+  "wider-scope",
+] as const;
+export type RepairClassification = (typeof REPAIR_CLASSIFICATIONS)[number];
+
 /** Terminal states a worker may report, and that the orchestrator may assign. */
 export const STATUSES = ["PASS", "BLOCKED", "FAILED"] as const;
 export type Status = (typeof STATUSES)[number];
@@ -80,6 +94,15 @@ export const delegateTaskInputShape = {
         "be useful but are not required; required means the task is expected to " +
         "produce an edit. Omitted defaults to required for compatibility. This " +
         "is independent of allowedFiles and taskCategory.",
+    ),
+
+  automaticRepair: z
+    .boolean()
+    .default(false)
+    .describe(
+      "Opt in to at most one automatic repair turn when the initial result is " +
+        "conservatively classified as a local verification defect. The same worker " +
+        "thread and immutable task contract are reused. Omitted defaults to false.",
     ),
 
   allowedFiles: z
@@ -338,6 +361,27 @@ export const delegateTaskOutputShape = {
       "Opaque, single-use, server-lifetime reference for one explicit continuation; " +
         "null when this result cannot be continued or the bound was consumed.",
     ),
+  repair: z
+    .object({
+      requested: z.boolean(),
+      attempted: z.boolean(),
+      classification: z.enum(REPAIR_CLASSIFICATIONS),
+      reason: z.string(),
+      failureEvidence: z.array(
+        z.object({
+          command: z.string(),
+          execution: z.enum(["argv", "shell"]),
+          exitCode: z.number().nullable(),
+          output: z.string(),
+        }),
+      ),
+    })
+    .nullable()
+    .optional()
+    .describe(
+      "Bounded automatic-repair decision and the concise authoritative failure " +
+        "evidence supplied to the resumed worker. Null or omitted when not requested.",
+    ),
   model: z.string(),
   effort: z.string(),
   effortReason: z.string(),
@@ -450,6 +494,7 @@ const batchTaskShape = z.object({
   effortReason: delegateTaskInputShape.effortReason,
   taskCategory: delegateTaskInputShape.taskCategory,
   changeIntent: delegateTaskInputShape.changeIntent,
+  automaticRepair: delegateTaskInputShape.automaticRepair,
   allowedFiles: delegateTaskInputShape.allowedFiles,
   forbiddenFiles: delegateTaskInputShape.forbiddenFiles,
   acceptanceCriteria: delegateTaskInputShape.acceptanceCriteria,

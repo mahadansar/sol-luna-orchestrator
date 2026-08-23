@@ -498,6 +498,7 @@ export function buildDelegationResult({
     trustworthy: discrepancies.length === 0 && errors.length === 0,
     workerThreadId: observed.threadId,
     continuationReference: null,
+    repair: null,
     model: LUNA_MODEL,
     effort: input.effort,
     effortReason: input.effortReason,
@@ -533,12 +534,18 @@ export interface ExecuteOptions {
   continuationInstruction?: string;
   /** Test seam for the worker lifecycle; production creates the SDK client. */
   codex?: WorkerCodex;
+  /** Manual continuation disables this even when the original contract opted in. */
+  allowAutomaticRepair?: boolean;
+  onRepairStart?: (classification: string) => void;
+  onRepairComplete?: (verdict: Status) => void;
 }
 
 /** Optional lifecycle hooks used by the single-task MCP surface. */
 export interface DelegateHooks {
   onStarted?: (workingDirectory: string) => void;
   onVerificationStart?: (commandCount: number) => void;
+  onRepairStart?: (classification: string) => void;
+  onRepairComplete?: (verdict: Status) => void;
 }
 
 /**
@@ -547,10 +554,16 @@ export interface DelegateHooks {
  * Owns no concurrency accounting and no workspace validation, so both the
  * single-task tool and the batch runner can share it.
  */
-export async function executeTask(
+interface TaskTurn {
+  observed: ObservedRun;
+  orchestratorRuns: VerificationRun[];
+  durationSeconds: number;
+}
+
+async function executeTaskTurn(
   input: DelegateTaskInput,
   options: ExecuteOptions,
-): Promise<DelegateTaskOutput> {
+): Promise<TaskTurn> {
   const startedAt = Date.now();
   const timeoutSeconds = input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS;
   const { workingDirectory, signal } = options;
@@ -579,13 +592,248 @@ export async function executeTask(
     );
   }
 
-  return buildDelegationResult({
-    input,
-    workingDirectory,
+  return {
     observed,
     orchestratorRuns,
     durationSeconds: Math.round((Date.now() - startedAt) / 1000),
+  };
+}
+
+type RepairDecision = NonNullable<DelegateTaskOutput["repair"]>;
+
+const repairDecision = (
+  classification: RepairDecision["classification"],
+  reason: string,
+  failureEvidence: RepairDecision["failureEvidence"] = [],
+): RepairDecision => ({
+  requested: true,
+  attempted: false,
+  classification,
+  reason,
+  failureEvidence,
+});
+
+const ENVIRONMENT_FAILURE =
+  /(?:failed to launch|command not found|not recognized as an internal|ENOENT|is not installed|timed out|module not found|cannot find module|could not resolve host|network|permission denied|access is denied)/i;
+const TRUST_BOUNDARY_FAILURE =
+  /(?:refused by verification policy|outside (?:the )?workspace|sandbox violation|unsafe command|not in the verification allowlist)/i;
+
+/** Decide conservatively whether one automatic same-thread repair is safe. */
+export function classifyRepairEligibility(
+  input: DelegateTaskInput,
+  result: DelegateTaskOutput,
+): RepairDecision {
+  if (!input.automaticRepair) {
+    return {
+      requested: false,
+      attempted: false,
+      classification: "not-requested",
+      reason: "Automatic repair was not requested.",
+      failureEvidence: [],
+    };
+  }
+  if (input.changeIntent === "forbidden") {
+    return repairDecision(
+      "read-only",
+      "The immutable change intent forbids edits, so repair cannot convert this task into editing work.",
+    );
+  }
+  if (result.scopeViolations.length > 0) {
+    return repairDecision(
+      "scope-or-conflict",
+      "Scope violations require parent review and cannot be repaired automatically.",
+    );
+  }
+  if (result.errors.length > 0) {
+    return repairDecision(
+      "environment-or-tooling",
+      "Runtime, timeout, cancellation, or worker-tool errors require parent review.",
+    );
+  }
+  if (!result.workerThreadId) {
+    return repairDecision(
+      "environment-or-tooling",
+      "No resumable worker thread was observed, so same-thread repair is unavailable.",
+    );
+  }
+
+  const authoritative = result.verification.filter(
+    (run) => run.source === "orchestrator",
+  );
+  if (
+    authoritative.some(
+      (run) => run.execution === "rejected" || run.execution === "skipped",
+    )
+  ) {
+    return repairDecision(
+      "security-or-trust-boundary",
+      "Verification was refused or disabled, so the trust boundary does not permit an automatic repair decision.",
+    );
+  }
+  if (result.verdict === "PASS") {
+    return repairDecision("not-needed", "The initial result passed.");
+  }
+  if (result.workerClaimedStatus !== "PASS") {
+    return repairDecision(
+      "contract-or-requirement",
+      "The worker did not claim completion; the parent must resolve the implementation or requirement failure.",
+    );
+  }
+
+  const failed = authoritative.filter(
+    (run) => !run.passed && (run.execution === "argv" || run.execution === "shell"),
+  );
+  if (failed.length !== 1) {
+    return repairDecision(
+      "contract-or-requirement",
+      "Automatic repair requires exactly one concrete authoritative verification failure.",
+    );
+  }
+
+  const failure = failed[0]!;
+  const failureText = `${failure.command}\n${failure.output}`;
+  if (TRUST_BOUNDARY_FAILURE.test(failureText)) {
+    return repairDecision(
+      "security-or-trust-boundary",
+      "The verification evidence touches a security or trust boundary.",
+    );
+  }
+  if (failure.exitCode === null || ENVIRONMENT_FAILURE.test(failureText)) {
+    return repairDecision(
+      "environment-or-tooling",
+      "The verification evidence indicates an environment or tooling failure.",
+    );
+  }
+
+  const observedEdits = result.filesChanged.filter((file) => file.observed);
+  if (observedEdits.length === 0) {
+    return repairDecision(
+      "wider-scope",
+      "No implementation edit was observed, so locality is not established.",
+    );
+  }
+  const unrelatedDiscrepancy = result.discrepancies.some(
+    (item) =>
+      !item.startsWith("Worker claimed PASS but the orchestrator re-ran verification") &&
+      !item.startsWith("Worker reported `"),
+  );
+  if (unrelatedDiscrepancy) {
+    return repairDecision(
+      "contract-or-requirement",
+      "Claims, observed edits, or the contract disagree beyond the verification failure.",
+    );
+  }
+
+  return repairDecision(
+    "local-verification",
+    "One authoritative verification failure followed an in-scope implementation edit.",
+    [
+      {
+        command: failure.command,
+        execution: failure.execution === "shell" ? "shell" : "argv",
+        exitCode: failure.exitCode,
+        output: truncate(failure.output, 4_000),
+      },
+    ],
+  );
+}
+
+/** Build the only extra context supplied to an automatic repair turn. */
+export function buildRepairInstruction(decision: RepairDecision): string {
+  return [
+    "Repair the local defect caught by independent verification.",
+    "This is the only automatic repair turn. Keep the original objective, scope, change intent, acceptance criteria, and verification commands unchanged.",
+    "Use only the authoritative failure evidence below; do not widen the task:",
+    JSON.stringify(decision.failureEvidence),
+  ].join("\n");
+}
+
+function mergeUsage(
+  first: DelegateTaskOutput["usage"],
+  second: DelegateTaskOutput["usage"],
+): DelegateTaskOutput["usage"] {
+  if (!first) return second;
+  if (!second) return first;
+  return {
+    inputTokens: first.inputTokens + second.inputTokens,
+    cachedInputTokens: first.cachedInputTokens + second.cachedInputTokens,
+    outputTokens: first.outputTokens + second.outputTokens,
+    reasoningOutputTokens: first.reasoningOutputTokens + second.reasoningOutputTokens,
+  };
+}
+
+function mergeRepairReport(firstResponse: string, repairResponse: string): string {
+  const first = parseWorkerReport(firstResponse);
+  const repair = parseWorkerReport(repairResponse);
+  if (!first || !repair) return repairResponse;
+
+  const files = new Map(first.filesChanged.map((file) => [file.path, file]));
+  for (const file of repair.filesChanged) files.set(file.path, file);
+  return JSON.stringify({ ...repair, filesChanged: [...files.values()] });
+}
+
+/** Execute a fresh or resumed task, with at most one opted-in automatic repair. */
+export async function executeTask(
+  input: DelegateTaskInput,
+  options: ExecuteOptions,
+): Promise<DelegateTaskOutput> {
+  const initialTurn = await executeTaskTurn(input, options);
+  const initial = buildDelegationResult({
+    input,
+    workingDirectory: options.workingDirectory,
+    ...initialTurn,
   });
+  const allowRepair = options.allowAutomaticRepair ?? input.automaticRepair ?? false;
+  if (!allowRepair) return initial;
+
+  const decision = classifyRepairEligibility(input, initial);
+  initial.repair = decision;
+  if (decision.classification !== "local-verification" || !initial.workerThreadId) {
+    return initial;
+  }
+
+  options.onRepairStart?.(decision.classification);
+  const repairTurn = await executeTaskTurn(input, {
+    ...options,
+    allowAutomaticRepair: false,
+    resumeThreadId: initial.workerThreadId,
+    continuationInstruction: buildRepairInstruction(decision),
+  });
+  const observed: ObservedRun = {
+    ...repairTurn.observed,
+    finalResponse: mergeRepairReport(
+      initialTurn.observed.finalResponse,
+      repairTurn.observed.finalResponse,
+    ),
+    filesChanged: [
+      ...initialTurn.observed.filesChanged,
+      ...repairTurn.observed.filesChanged,
+    ],
+    errors: [...initialTurn.observed.errors, ...repairTurn.observed.errors],
+    usage: mergeUsage(initialTurn.observed.usage, repairTurn.observed.usage),
+  };
+  if (repairTurn.observed.threadId !== initial.workerThreadId) {
+    observed.errors.push(
+      "Automatic repair did not preserve the original worker thread identity.",
+    );
+  }
+  const repaired = buildDelegationResult({
+    input,
+    workingDirectory: options.workingDirectory,
+    observed,
+    orchestratorRuns: repairTurn.orchestratorRuns,
+    durationSeconds: initialTurn.durationSeconds + repairTurn.durationSeconds,
+  });
+  repaired.repair = {
+    ...decision,
+    attempted: true,
+    reason:
+      repaired.verdict === "PASS"
+        ? "The one automatic repair turn completed and normal classification passed."
+        : "The one automatic repair turn completed without passing; the repair limit is exhausted and control returns to the parent.",
+  };
+  options.onRepairComplete?.(repaired.verdict);
+  return repaired;
 }
 
 /**
@@ -608,6 +856,8 @@ export async function delegateToLuna(
       workingDirectory,
       signal,
       onVerificationStart: hooks?.onVerificationStart,
+      onRepairStart: hooks?.onRepairStart,
+      onRepairComplete: hooks?.onRepairComplete,
     });
   } finally {
     release();
@@ -637,6 +887,7 @@ export async function continueToLuna(
       resumeThreadId: options.threadId,
       continuationInstruction: options.instruction,
       codex: options.codex,
+      allowAutomaticRepair: false,
     });
   } finally {
     release();

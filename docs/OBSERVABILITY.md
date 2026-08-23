@@ -28,12 +28,20 @@ not a secret filter.
 Records are appended as the run progresses: batch started, completed, cancelled
 or rejected; task queued; worker started, completed, failed, cancelled or timed
 out; worktree created and removed; verification started and completed; scope
-conflicts; integration conflicts and applied file counts.
+conflicts; integration conflicts and applied file counts; and bounded repair
+started and completed.
 
 An explicit `continue_task` turn emits the same ordinary single-task lifecycle
 events and receives a fresh completion record. The opaque continuation reference
 itself is returned only in the tool result; it is not persisted in this event
 stream, and references expire with the server's in-memory store.
+
+An opted-in automatic repair emits `repair.started` and `repair.completed` on
+the original task id, with turn fixed to `1`. The start records the conservative
+classification and the completion records the repaired verdict. Failure command
+output is deliberately absent from activity events; it remains in the tool
+result's repair evidence for the parent. The activity view shows both an active
+repair and whether its single turn passed or was exhausted.
 
 Carried on those records:
 
