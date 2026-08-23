@@ -16,6 +16,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { BatchRejectedError, runBatch as runProductionBatch } from "./batch.js";
+import { CONTINUATION_TTL_MS, ContinuationStore } from "./continuation.js";
 import {
   MAX_PARALLEL,
   MAX_PARALLEL_LIMIT,
@@ -28,7 +29,7 @@ import {
   type DelegateTaskInput,
   type DelegateTaskOutput,
 } from "./contract.js";
-import { runGit } from "./git.js";
+import { collectWorktreeChanges, runGit } from "./git.js";
 import {
   expandGlob,
   findIntegrationConflicts,
@@ -38,9 +39,16 @@ import {
 import {
   cleanupWorktree,
   createTaskWorktree,
+  continuationLeasePath,
   linkSharedDirectories,
   prepareWorktreeBase,
   pruneStaleWorktrees,
+  releaseWorktreeLease,
+  releaseWorktreeOwnership,
+  sweepExpiredWorktreeLeases,
+  WORKTREE_LEASE_GRACE_MS,
+  WorktreeLeaseRenewalError,
+  WorktreeLeaseStore,
   worktreeMetadataQueue,
   WorktreeUnavailableError,
 } from "./worktree.js";
@@ -243,6 +251,19 @@ function moduleOf(task: DelegateTaskInput): string {
   const segments = scope.split("/").filter((part) => part && !part.includes("*"));
   return segments.at(-1) ?? task.objective;
 }
+
+test("a failed final git diff is an explicit evidence-scan failure", async () => {
+  const commands: string[] = [];
+  await assert.rejects(
+    collectWorktreeChanges("fixture-worktree", async (args) => {
+      commands.push(args[0] ?? "");
+      if (args[0] === "status") return "";
+      throw new Error("diff evidence unavailable");
+    }),
+    /diff evidence unavailable/,
+  );
+  assert.deepEqual(commands, ["status", "diff"]);
+});
 
 /**
  * An executor that writes the files it claims to have written, so integration
@@ -481,6 +502,9 @@ test("stale worktrees from a crashed run are pruned, and only ours", async () =>
   try {
     const base = await prepareWorktreeBase(repo, [["src/**"]]);
     const stale = await createTaskWorktree(base, "t1-stale", repo);
+    releaseWorktreeOwnership(stale);
+    assert.ok(stale.lease);
+    await releaseWorktreeLease(stale.lease);
 
     // A worktree the user made themselves, outside our runtime directory.
     await runGit(["worktree", "add", "--detach", userWorktree, base.baseCommit], repo);
@@ -613,6 +637,479 @@ test("batch continuations bind to the integrated workspace or a retained worktre
   }
 });
 
+test("retained worktrees have unique identities and protected continuations are not pruned", async () => {
+  const repo = await makeRepo();
+  const retainedPaths: string[] = [];
+  try {
+    const first = await runBatch([makeTask({ allowedFiles: ["src/one/**"] })], {
+      mode: "parallel",
+      workingDirectory: repo,
+      integrate: false,
+      executor: fakeExecutor({ writes: () => ({ "src/one/value.ts": "one\n" }) }),
+      continuationRegistrar: () => `ctr_${"p".repeat(32)}`,
+    });
+    const firstPath = first.tasks[0]?.worktreePath;
+    assert.ok(firstPath, describeBatch(first));
+    retainedPaths.push(firstPath);
+
+    const second = await runBatch([makeTask({ allowedFiles: ["src/two/**"] })], {
+      mode: "parallel",
+      workingDirectory: repo,
+      integrate: false,
+      executor: fakeExecutor({ writes: () => ({ "src/two/value.ts": "two\n" }) }),
+    });
+    const secondPath = second.tasks[0]?.worktreePath;
+    assert.ok(secondPath, describeBatch(second));
+    retainedPaths.push(secondPath);
+
+    assert.notEqual(firstPath, secondPath, "batch identity must be part of the path");
+    assert.ok(
+      await fs.stat(firstPath).catch(() => null),
+      "protected worktree was pruned",
+    );
+    assert.ok(await fs.stat(secondPath).catch(() => null));
+  } finally {
+    for (const retainedPath of retainedPaths) {
+      await cleanupWorktree(
+        {
+          taskId: path.basename(retainedPath),
+          path: retainedPath,
+          repoRoot: repo,
+          warnings: [],
+        },
+        "success",
+        "never",
+      ).catch(() => undefined);
+    }
+    await cleanupRepo(repo);
+  }
+});
+
+test("persistent ownership prevents a different process from pruning an active worktree", async () => {
+  const repo = await makeRepo();
+  const base = await prepareWorktreeBase(repo, [["src/**"]]);
+  const worktree = await createTaskWorktree(base, "cross-process-active", repo);
+
+  try {
+    releaseWorktreeOwnership(worktree);
+    assert.deepEqual(await pruneStaleWorktrees(repo), []);
+    assert.ok(await fs.stat(worktree.path).catch(() => null));
+
+    assert.ok(worktree.lease);
+    await releaseWorktreeLease(worktree.lease);
+    assert.deepEqual(await pruneStaleWorktrees(repo), [worktree.path]);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("a live retained continuation worktree cannot be reused by a replayed batch identity", async () => {
+  const repo = await makeRepo();
+  const base = await prepareWorktreeBase(repo, [["a.txt"]]);
+  const worktree = await createTaskWorktree(base, "replayed-t1", repo);
+
+  try {
+    releaseWorktreeOwnership(worktree);
+
+    await assert.rejects(
+      createTaskWorktree(base, "replayed-t1", repo),
+      /identity replayed-t1 is still in use/i,
+    );
+    assert.equal((await fs.stat(worktree.path)).isDirectory(), true);
+  } finally {
+    if (worktree.lease) await releaseWorktreeLease(worktree.lease);
+    await cleanupWorktree(worktree, "success", "never");
+  }
+});
+
+test("lease acquire and refresh publication are conservatively atomic to readers", async () => {
+  const repo = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-lease-atomic-"));
+  const worktreePath = path.join(repo, ".sol-luna", "worktrees", "atomic");
+  let now = 1_000;
+  let pause = true;
+  let published!: () => void;
+  let resume!: () => void;
+  const publicationStarted = new Promise<void>((resolve) => {
+    published = resolve;
+  });
+  const publicationGate = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  const writer = new WorktreeLeaseStore({
+    now: () => now,
+    tokenFactory: () => "owner-atomic",
+    beforePublish: async () => {
+      if (!pause) return;
+      published();
+      await publicationGate;
+    },
+  });
+  const reader = new WorktreeLeaseStore({ now: () => now });
+
+  try {
+    const acquiring = writer.acquire(worktreePath, now + 100, "creating");
+    await publicationStarted;
+    assert.equal(await reader.isProtected(worktreePath), true);
+    pause = false;
+    resume();
+    const lease = await acquiring;
+
+    let refreshPublished!: () => void;
+    let refreshResume!: () => void;
+    const refreshStarted = new Promise<void>((resolve) => {
+      refreshPublished = resolve;
+    });
+    const refreshGate = new Promise<void>((resolve) => {
+      refreshResume = resolve;
+    });
+    const refresher = new WorktreeLeaseStore({
+      now: () => now,
+      beforePublish: async (phase) => {
+        if (phase !== "executing-continuation") return;
+        refreshPublished();
+        await refreshGate;
+      },
+    });
+    now += 100;
+    const refreshing = refresher.refresh(lease, now + 1_000, "executing-continuation");
+    await refreshStarted;
+    assert.equal(
+      await reader.isProtected(worktreePath),
+      true,
+      "an expired old generation plus an in-progress new generation stays protected",
+    );
+    refreshResume();
+    await refreshing;
+    assert.equal(await reader.isProtected(worktreePath), true);
+    await refresher.release(lease);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("an acquisition crash before first generation expires and releases the metadata identity", async () => {
+  const repo = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-lease-acquire-crash-"));
+  const metadataPath = path.join(repo, ".sol-luna", "worktrees", ".metadata");
+  let now = 1_000;
+  let artifactCreated!: () => void;
+  const artifactCreatedPromise = new Promise<void>((resolve) => {
+    artifactCreated = resolve;
+  });
+  const crashedPublisher = new WorktreeLeaseStore({
+    now: () => now,
+    tokenFactory: () => "owner-crashed-metadata",
+    afterArtifactCreated: async () => {
+      artifactCreated();
+      await new Promise<void>(() => undefined);
+    },
+  });
+  const reader = new WorktreeLeaseStore({
+    now: () => now,
+    tokenFactory: () => "owner-replacement-metadata",
+  });
+
+  try {
+    const abandoned = crashedPublisher.acquire(metadataPath, now + 100, "metadata");
+    void abandoned.catch(() => undefined);
+    await artifactCreatedPromise;
+
+    assert.equal(await reader.isProtected(metadataPath), true);
+    await assert.rejects(
+      reader.acquire(metadataPath, now + 100, "metadata"),
+      /identity \.metadata is still in use/i,
+    );
+
+    now += 100;
+    assert.deepEqual(await sweepExpiredWorktreeLeases(repo, now), []);
+    assert.equal(await reader.isProtected(metadataPath), false);
+
+    const replacement = await reader.acquire(metadataPath, now + 100, "metadata");
+    assert.equal(await reader.isProtected(metadataPath), true);
+    await reader.release(replacement);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("a stale acquirer cannot publish into a replacement artifact", async (t) => {
+  for (const identity of ["reclaimed-task", ".metadata"]) {
+    await t.test(identity, async () => {
+      const repo = await fs.mkdtemp(
+        path.join(os.tmpdir(), "sol-luna-lease-stale-publisher-"),
+      );
+      const worktreePath = path.join(repo, ".sol-luna", "worktrees", identity);
+      const artifact = continuationLeasePath(worktreePath);
+      const reservation = `${artifact}.acquire`;
+      let now = 1_000;
+      let aCreated!: () => void;
+      let resumeA!: () => void;
+      const aCreatedPromise = new Promise<void>((resolve) => {
+        aCreated = resolve;
+      });
+      const aGate = new Promise<void>((resolve) => {
+        resumeA = resolve;
+      });
+      let bCreated!: () => void;
+      let resumeB!: () => void;
+      const bCreatedPromise = new Promise<void>((resolve) => {
+        bCreated = resolve;
+      });
+      const bGate = new Promise<void>((resolve) => {
+        resumeB = resolve;
+      });
+      const acquirerA = new WorktreeLeaseStore({
+        now: () => now,
+        tokenFactory: () => `owner-a-${identity}`,
+        afterArtifactCreated: async () => {
+          aCreated();
+          await aGate;
+        },
+      });
+      const acquirerB = new WorktreeLeaseStore({
+        now: () => now,
+        tokenFactory: () => `owner-b-${identity}`,
+        afterArtifactCreated: async () => {
+          bCreated();
+          await bGate;
+        },
+      });
+
+      try {
+        const stale = acquirerA.acquire(worktreePath, now + 100, "metadata");
+        await aCreatedPromise;
+        now += 100;
+        const swept = await sweepExpiredWorktreeLeases(repo, now);
+        assert.deepEqual(swept, identity === ".metadata" ? [] : [worktreePath]);
+
+        const replacement = acquirerB.acquire(worktreePath, now + 1_000, "metadata");
+        await bCreatedPromise;
+        assert.equal(await acquirerB.isProtected(worktreePath), true);
+        assert.ok(await fs.stat(artifact).catch(() => null));
+        assert.ok(await fs.stat(reservation).catch(() => null));
+
+        resumeA();
+        await assert.rejects(stale, /changed ownership before publication/i);
+        assert.equal(await acquirerB.isProtected(worktreePath), true);
+        assert.ok(await fs.stat(artifact).catch(() => null));
+        assert.ok(await fs.stat(reservation).catch(() => null));
+
+        resumeB();
+        const replacementLease = await replacement;
+        assert.equal(await acquirerB.isProtected(worktreePath), true);
+        assert.equal(
+          (await fs.readdir(artifact)).filter((name) => name.endsWith(".json")).length,
+          1,
+        );
+        await acquirerB.release(replacementLease);
+      } finally {
+        resumeA();
+        resumeB();
+        await cleanupRepo(repo);
+      }
+    });
+  }
+});
+
+test("lease maintenance surfaces renewal loss while the original horizon remains protective", async () => {
+  const repo = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-lease-renewal-"));
+  const metadataPath = path.join(repo, ".sol-luna", "worktrees", ".metadata");
+  let now = 10_000;
+  let failRefresh = false;
+  let refreshAttempted!: () => void;
+  const refreshAttemptedPromise = new Promise<void>((resolve) => {
+    refreshAttempted = resolve;
+  });
+  const leases = new WorktreeLeaseStore({
+    now: () => now,
+    tokenFactory: () => "owner-renewal-health",
+    maintenanceIntervalMs: 5,
+    beforePublish: async () => {
+      if (!failRefresh) return;
+      refreshAttempted();
+      throw new Error("fixture refresh failure");
+    },
+  });
+  const lifetimeMs = WORKTREE_LEASE_GRACE_MS + 1_000;
+  const lease = await leases.acquire(metadataPath, now + lifetimeMs, "metadata");
+  const maintenance = leases.maintain(lease, lifetimeMs, "metadata");
+
+  try {
+    maintenance.assertHealthy(lifetimeMs - 1);
+    assert.throws(
+      () => maintenance.assertHealthy(lifetimeMs),
+      /lease health is insufficient for the next bounded operation/i,
+    );
+    failRefresh = true;
+    await refreshAttemptedPromise;
+    await maintenance.whenUnhealthy;
+
+    assert.throws(
+      () => maintenance.assertHealthy(),
+      /persistent worktree lease renewal failed.*fixture refresh failure/i,
+    );
+    await assert.rejects(
+      maintenance.stop(),
+      /persistent worktree lease renewal failed.*fixture refresh failure/i,
+    );
+    assert.equal(await leases.isProtected(metadataPath, lease.expiresAt - 1), true);
+    assert.equal(await leases.isProtected(metadataPath, lease.expiresAt), false);
+  } finally {
+    await leases.release(lease);
+    await cleanupRepo(repo);
+  }
+});
+
+test("batch renewal failure releases local ownership but preserves the bounded lease", async () => {
+  const repo = await makeRepo();
+  const batchId = "lease-stop-failure";
+  const worktreePath = path.join(repo, ".sol-luna", "worktrees", `${batchId}-t1`);
+  const renewalError = new WorktreeLeaseRenewalError(
+    "fixture batch renewal failure",
+    undefined,
+  );
+
+  try {
+    await assert.rejects(
+      runBatch(
+        [
+          makeTask({
+            allowedFiles: ["src/renewal/**"],
+            timeoutSeconds: 1,
+          }),
+        ],
+        {
+          mode: "parallel",
+          workingDirectory: repo,
+          integrate: false,
+          batchId,
+          executor: fakeExecutor({
+            writes: () => ({ "src/renewal/value.ts": "x\n" }),
+          }),
+          leaseMaintainer: () => ({
+            assertHealthy: () => undefined,
+            whenUnhealthy: Promise.resolve(renewalError),
+            stop: async () => {
+              throw renewalError;
+            },
+          }),
+        },
+      ),
+      /fixture batch renewal failure/i,
+    );
+
+    assert.ok(await fs.stat(worktreePath).catch(() => null));
+    assert.deepEqual(await pruneStaleWorktrees(repo), []);
+
+    await sweepExpiredWorktreeLeases(repo, Date.now() + WORKTREE_LEASE_GRACE_MS + 10_000);
+    assert.deepEqual(await pruneStaleWorktrees(repo), [worktreePath]);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("near-expiry continuation consumption protects the full execution window", async () => {
+  const repo = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-lease-consume-"));
+  const worktreePath = path.join(repo, ".sol-luna", "worktrees", "continued");
+  let now = 10_000;
+  const reference = `ctr_${"c".repeat(32)}`;
+  const leases = new WorktreeLeaseStore({
+    now: () => now,
+    tokenFactory: () => "owner-continuation",
+  });
+  const lease = await leases.acquire(
+    worktreePath,
+    now + CONTINUATION_TTL_MS + WORKTREE_LEASE_GRACE_MS,
+    "retained-continuation",
+  );
+  const continuations = new ContinuationStore({
+    now: () => now,
+    tokenFactory: () => reference,
+  });
+  const input = makeTask({ timeoutSeconds: 7_200 });
+  const issuedAt = now;
+  continuations.issue(input, "thread", worktreePath, true, lease);
+
+  try {
+    now += CONTINUATION_TTL_MS - 1;
+    const consumed = continuations.consume(reference);
+    assert.equal(consumed.status, "ready");
+    assert.ok(consumed.status === "ready" && consumed.entry.worktreeLease);
+    const executionExpiresAt =
+      now + input.timeoutSeconds! * 1_000 + WORKTREE_LEASE_GRACE_MS;
+    await leases.refresh(
+      consumed.entry.worktreeLease,
+      executionExpiresAt,
+      "executing-continuation",
+    );
+
+    now = issuedAt + CONTINUATION_TTL_MS + WORKTREE_LEASE_GRACE_MS + 1;
+    assert.equal(await leases.isProtected(worktreePath), true);
+    assert.equal(await leases.isProtected(worktreePath, executionExpiresAt - 1), true);
+    assert.equal(await leases.isProtected(worktreePath, executionExpiresAt), false);
+    await leases.release(consumed.entry.worktreeLease);
+    continuations.release(reference);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("failed retained continuation registration releases protection and ownership", async () => {
+  const repo = await makeRepo();
+  try {
+    const batch = await runBatch([makeTask({ allowedFiles: ["src/failure/**"] })], {
+      mode: "parallel",
+      workingDirectory: repo,
+      integrate: false,
+      executor: fakeExecutor({ writes: () => ({ "src/failure/value.ts": "x\n" }) }),
+      continuationRegistrar: async () => {
+        throw new Error("fixture registration failure");
+      },
+    });
+    const task = batch.tasks[0]!;
+    assert.equal(task.result?.continuationReference, null);
+    assert.ok(task.warnings.some((warning) => /registration failed/i.test(warning)));
+    assert.ok(task.worktreePath);
+    assert.deepEqual(await pruneStaleWorktrees(repo), [task.worktreePath]);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("expired orphan lease artifacts are swept without a Git worktree", async () => {
+  const repo = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-lease-orphan-"));
+  const worktreePath = path.join(repo, ".sol-luna", "worktrees", "missing");
+  const interruptedPath = path.join(repo, ".sol-luna", "worktrees", "interrupted");
+  let now = 100;
+  const leases = new WorktreeLeaseStore({
+    now: () => now,
+    tokenFactory: () => "owner-orphan",
+  });
+  await leases.acquire(worktreePath, 200, "retained-continuation");
+  const interruptedArtifact = continuationLeasePath(interruptedPath);
+  await fs.mkdir(interruptedArtifact, { recursive: true });
+  await fs.writeFile(
+    path.join(interruptedArtifact, ".publish-200-deadbeef.tmp"),
+    "partially published",
+    "utf8",
+  );
+  assert.equal(await leases.isProtected(interruptedPath, 199), true);
+  now = 200;
+
+  try {
+    assert.deepEqual(
+      new Set(await sweepExpiredWorktreeLeases(repo, now)),
+      new Set([worktreePath, interruptedPath]),
+    );
+    assert.equal(
+      await fs.stat(continuationLeasePath(worktreePath)).catch(() => null),
+      null,
+    );
+    assert.equal(await fs.stat(interruptedArtifact).catch(() => null), null);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
 // --- Regression: concurrent worktree registration ---------------------------
 //
 // `git worktree add` walks the shared `.git/worktrees` directory. Two running at
@@ -738,8 +1235,13 @@ test("a worktree that cannot be created fails only its own task", async () => {
     // A *locked* worktree whose directory is missing is the one case git refuses
     // to overwrite with a single `--force`, which gives a deterministic
     // per-task creation failure rather than a contrived one.
+    const batchId = "b-create-failure";
     const secondTaskId = "t2";
-    const blocked = path.join(repo, ...WORKTREE_DIR.split("/"), secondTaskId);
+    const blocked = path.join(
+      repo,
+      ...WORKTREE_DIR.split("/"),
+      `${batchId}-${secondTaskId}`,
+    );
     await fs.mkdir(path.dirname(blocked), { recursive: true });
     await runGit(["worktree", "add", "--detach", blocked, "HEAD"], repo);
     await runGit(["worktree", "lock", blocked], repo);
@@ -754,6 +1256,7 @@ test("a worktree that cannot be created fails only its own task", async () => {
       ),
       {
         mode: "parallel",
+        batchId,
         workingDirectory: repo,
         executor: fakeExecutor({
           writes: (task) => ({ [`src/${moduleOf(task)}/mod.ts`]: "x\n" }),
@@ -1089,9 +1592,10 @@ test("mid-flight cancellation stops the remaining sequential tasks", async () =>
   const repo = await makeRepo();
   try {
     const controller = new AbortController();
+    const events: Array<Record<string, unknown>> = [];
     let calls = 0;
 
-    const result = await runBatch(
+    const result = await runProductionBatch(
       [
         makeTask({ objective: "First sequential step of the pipeline." }),
         makeTask({ objective: "Second sequential step of the pipeline." }),
@@ -1101,6 +1605,7 @@ test("mid-flight cancellation stops the remaining sequential tasks", async () =>
         mode: "sequential",
         workingDirectory: repo,
         signal: controller.signal,
+        eventEmitter: (event) => events.push(event),
         executor: async () => {
           calls += 1;
           controller.abort();
@@ -1114,6 +1619,32 @@ test("mid-flight cancellation stops the remaining sequential tasks", async () =>
     // cancelled. Finished work is never discarded because the batch stopped.
     assert.equal(result.tasks[0]?.state, "completed");
     assert.equal(result.tasks.filter((task) => task.state === "cancelled").length, 2);
+    assert.equal(events.filter((event) => event.type === "batch.cancelled").length, 1);
+    assert.equal(events.filter((event) => event.type === "batch.completed").length, 0);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("a late abort does not rewrite a completed batch as cancelled", async () => {
+  const repo = await makeRepo();
+  try {
+    const controller = new AbortController();
+    const events: Array<Record<string, unknown>> = [];
+    const result = await runProductionBatch([makeTask()], {
+      mode: "sequential",
+      workingDirectory: repo,
+      signal: controller.signal,
+      eventEmitter: (event) => events.push(event),
+      executor: async () => {
+        controller.abort();
+        return makeOutput();
+      },
+    });
+
+    assert.equal(result.tasks[0]?.state, "completed");
+    assert.equal(events.filter((event) => event.type === "batch.cancelled").length, 0);
+    assert.equal(events.filter((event) => event.type === "batch.completed").length, 1);
   } finally {
     await cleanupRepo(repo);
   }
@@ -1262,6 +1793,237 @@ test("batch results carry the structure a supervisor needs to act on", async () 
     assert.ok(result.reviewChecklist.length > 0);
   } finally {
     await cleanupRepo(repo);
+  }
+});
+
+test("parallel git evidence is reconciled into the nested result before integration", async () => {
+  const repo = await makeRepo();
+  try {
+    const events: Array<Record<string, unknown>> = [];
+    const result = await runProductionBatch(
+      [
+        makeTask({
+          objective: "Write the auth module from the worktree.",
+          allowedFiles: ["src/auth/**"],
+        }),
+        makeTask({
+          objective: "Write the payments module from the worktree.",
+          allowedFiles: ["src/payments/**"],
+        }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        eventEmitter: (event) => events.push(event),
+        executor: async (input, options) => {
+          const module = moduleOf(input);
+          const relative = `src/${module}/from-git.ts`;
+          const target = path.join(options.workingDirectory, ...relative.split("/"));
+          await fs.mkdir(path.dirname(target), { recursive: true });
+          await fs.writeFile(target, "export const done = true;\n", "utf8");
+          return makeOutput({
+            effort: input.effort,
+            // The runtime report deliberately omits the edit. Git is the
+            // authoritative evidence used by parallel integration.
+            filesChanged: [],
+          });
+        },
+      },
+    );
+
+    assert.equal(result.integrated, true, describeBatch(result));
+    for (const task of result.tasks) {
+      const nested = task.result?.filesChanged.find((file) => file.observed);
+      assert.ok(nested, describeBatch(result));
+      assert.equal(task.changedFiles.length, 1, describeBatch(result));
+      assert.equal(nested?.path, task.changedFiles[0], describeBatch(result));
+    }
+    const completed = events.filter((event) => event.type === "worker.completed");
+    assert.equal(completed.length, 2);
+    assert.ok(completed.every((event) => event.changedFiles === 1));
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("successful integration emits applied counts before an explicit completion", async () => {
+  const repo = await makeRepo();
+  const events: Array<Record<string, unknown>> = [];
+  try {
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/integration/**"] })],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        eventEmitter: (event) => events.push(event),
+        executor: fakeExecutor({
+          writes: () => ({ "src/integration/value.ts": "ok\n" }),
+        }),
+      },
+    );
+    assert.equal(result.integrated, true, describeBatch(result));
+    const appliedIndex = events.findIndex(
+      (event) => event.type === "integration.applied",
+    );
+    const completedIndex = events.findIndex(
+      (event) => event.type === "integration.completed",
+    );
+    assert.ok(appliedIndex >= 0, JSON.stringify(events));
+    assert.ok(completedIndex > appliedIndex, JSON.stringify(events));
+    assert.equal(events[appliedIndex]?.fileCount, 1);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("git evidence drives parallel scope and change-intent verdicts", async () => {
+  const repo = await makeRepo();
+  try {
+    const outside = await runBatch(
+      [
+        makeTask({
+          objective: "Write only inside the declared module.",
+          allowedFiles: ["src/allowed/**"],
+        }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        executor: async (_input, options) => {
+          await fs.writeFile(path.join(options.workingDirectory, "outside.ts"), "x\n");
+          return makeOutput({ filesChanged: [] });
+        },
+      },
+    );
+    const outsideResult = outside.tasks[0]?.result;
+    assert.ok(outsideResult?.verdict === "FAILED", describeBatch(outside));
+    assert.equal(outsideResult?.trustworthy, false);
+    assert.ok(
+      outsideResult?.scopeViolations.some((item) => /outside allowedFiles/.test(item)),
+    );
+    assert.match(outsideResult?.escalationAdvice ?? "", /outside its file scope/i);
+    assert.deepEqual(outside.tasks[0]?.changedFiles, ["outside.ts"]);
+
+    const forbidden = await runBatch(
+      [
+        makeTask({
+          objective: "Do not edit the forbidden module.",
+          changeIntent: "forbidden",
+          allowedFiles: ["src/forbidden/**"],
+        }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        executor: async (_input, options) => {
+          const target = path.join(options.workingDirectory, "src", "forbidden", "x.ts");
+          await fs.mkdir(path.dirname(target), { recursive: true });
+          await fs.writeFile(target, "x\n");
+          return makeOutput({ filesChanged: [] });
+        },
+      },
+    );
+    const forbiddenResult = forbidden.tasks[0]?.result;
+    assert.equal(forbiddenResult?.verdict, "FAILED", JSON.stringify(forbidden));
+    assert.equal(forbiddenResult?.trustworthy, false);
+    assert.ok(
+      forbiddenResult?.discrepancies.some((item) =>
+        /change intent contract violated/i.test(item),
+      ),
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("a worktree evidence scan failure is explicit and retains diagnosis state", async () => {
+  const repo = await makeRepo();
+  const events: Array<Record<string, unknown>> = [];
+  let retainedPath: string | null = null;
+  let movedPath: string | null = null;
+  try {
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/scan/**"] })],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        eventEmitter: (event) => events.push(event),
+        executor: async (_input, options) => {
+          movedPath = `${options.workingDirectory}.moved`;
+          await fs.rename(options.workingDirectory, movedPath);
+          await fs.writeFile(
+            options.workingDirectory,
+            "the worktree disappeared\n",
+            "utf8",
+          );
+          return makeOutput();
+        },
+      },
+    );
+
+    const task = result.tasks[0]!;
+    retainedPath = task.worktreePath;
+    assert.ok(
+      task.state === "failed",
+      `${describeBatch(result)} result=${JSON.stringify(task.result)}`,
+    );
+    assert.match(task.error ?? "", /worktree evidence/i);
+    assert.equal(task.result?.verdict, "FAILED");
+    assert.equal(task.result?.trustworthy, false);
+    assert.ok(task.result?.errors.some((error) => /evidence scan failed/i.test(error)));
+    assert.match(result.integrationSummary, /evidence scan failed/i);
+    assert.equal(result.integrated, false);
+    assert.ok(retainedPath, describeBatch(result));
+    assert.ok(await fs.stat(retainedPath!).catch(() => null));
+    assert.equal(
+      events.filter((event) => event.type === "integration.notAttempted").length,
+      1,
+    );
+    assert.equal(events.filter((event) => event.type === "integration.failed").length, 0);
+    assert.equal(
+      events.filter((event) => event.type === "integration.applied").length,
+      0,
+    );
+  } finally {
+    if (retainedPath) {
+      await fs.rm(retainedPath, { recursive: true, force: true }).catch(() => undefined);
+      if (movedPath && (await fs.stat(movedPath).catch(() => null))) {
+        await fs.rename(movedPath, retainedPath).catch(() => undefined);
+      }
+      await cleanupWorktree(
+        {
+          taskId: "t1",
+          path: retainedPath,
+          repoRoot: repo,
+          warnings: [],
+        },
+        "success",
+        "never",
+      ).catch(() => undefined);
+    }
+    await cleanupRepo(repo);
+  }
+});
+
+test("invalid batch workspace emits a reducer-visible rejected lifecycle", async () => {
+  const parent = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-invalid-workspace-"));
+  const events: Array<Record<string, unknown>> = [];
+  try {
+    await assert.rejects(
+      runProductionBatch([makeTask({ activityLabel: "Invalid workspace task" })], {
+        mode: "sequential",
+        workingDirectory: path.join(parent, "missing"),
+        eventEmitter: (event) => events.push(event),
+        executor: fakeExecutor({}),
+      }),
+      BatchRejectedError,
+    );
+    assert.deepEqual(
+      events.map((event) => event.type),
+      ["batch.started", "task.queued", "batch.rejected"],
+    );
+  } finally {
+    await cleanupRepo(parent);
   }
 });
 
@@ -1632,6 +2394,8 @@ for (const mode of ["parallel", "sequential"] as const) {
       const events = await captureBatchEvents(mode, repo, true);
       assert.equal(events.filter((event) => event.type === "worker.completed").length, 0);
       assert.equal(events.filter((event) => event.type === "worker.cancelled").length, 3);
+      assert.equal(events.filter((event) => event.type === "batch.cancelled").length, 1);
+      assert.equal(events.filter((event) => event.type === "batch.completed").length, 0);
     } finally {
       await cleanupRepo(repo);
     }

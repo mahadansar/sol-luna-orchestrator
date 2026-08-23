@@ -140,6 +140,44 @@ const timestampedEventSchema = z.discriminatedUnion("type", [
     taskId: eventString,
     fileCount: optionalEventNumber,
   }),
+  z.object({ ...eventBase, type: z.literal("integration.completed") }),
+  z.object({
+    ...eventBase,
+    type: z.literal("integration.notAttempted"),
+    reason: z.literal("evidence-failure"),
+  }),
+  z.object({
+    ...eventBase,
+    type: z.literal("integration.partial"),
+    taskId: eventString,
+    attemptedFiles: optionalEventNumber,
+    appliedFiles: optionalEventNumber,
+  }),
+  z.object({
+    ...eventBase,
+    type: z.literal("integration.failed"),
+    taskId: eventString,
+    attemptedFiles: optionalEventNumber,
+    appliedFiles: optionalEventNumber,
+  }),
+  z.object({ ...eventBase, type: z.literal("integration.disabled") }),
+  z.object({
+    ...eventBase,
+    type: z.literal("worktree.retained"),
+    taskId: eventString,
+    reason: z
+      .enum([
+        "integration-conflict",
+        "integration-disabled",
+        "integration-not-attempted",
+        "integration-partial",
+        "integration-failed",
+        "evidence-failure",
+        "cleanup-failed",
+        "retention-policy",
+      ])
+      .catch("cleanup-failed"),
+  }),
 ]);
 
 /** Treat only the runtime's ISO timestamps as sortable wall-clock values. */
@@ -231,6 +269,20 @@ export interface ActivitySnapshot {
     scope: string[];
     integration: string[];
   };
+  integration: {
+    status:
+      | "unknown"
+      | "completed"
+      | "conflicted"
+      | "partial"
+      | "failed"
+      | "disabled"
+      | "notAttempted";
+    attemptedFiles: number | null;
+    appliedFiles: number | null;
+  };
+  retainedWorktrees: number;
+  warnings: string[];
   updatedAt: string;
 }
 
@@ -261,6 +313,13 @@ export function createEmptySnapshot(
       scope: [],
       integration: [],
     },
+    integration: {
+      status: "unknown",
+      attemptedFiles: null,
+      appliedFiles: null,
+    },
+    retainedWorktrees: 0,
+    warnings: [],
     updatedAt,
   };
 }
@@ -296,6 +355,10 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
   let snapshot = createEmptySnapshot();
   const workerMap = new Map<string, WorkerActivity>();
   const activeWorkerIds = new Set<string>();
+  const diagnosedIntegrationIds = new Set<string>();
+  const addWarning = (warning: string): void => {
+    if (!snapshot.warnings.includes(warning)) snapshot.warnings.push(warning);
+  };
 
   // A shared append-only log can contain records from more than one process.
   // Select the newest batch by its event timestamp before reducing, so a stale
@@ -376,6 +439,7 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
       }
     } else if (event.type === "integration.conflict") {
       if (snapshot.batchId === event.batchId) {
+        snapshot.integration.status = "conflicted";
         snapshot.conflicts.integration.push(event.path);
         // Mark involved workers as conflicted
         for (const tid of event.tasks) {
@@ -388,6 +452,85 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
             }
           }
         }
+      }
+    } else if (event.type === "integration.partial") {
+      if (snapshot.batchId === event.batchId) {
+        if (snapshot.integration.status !== "failed")
+          snapshot.integration.status = "partial";
+        if (!diagnosedIntegrationIds.has(event.taskId)) {
+          snapshot.integration.attemptedFiles =
+            (snapshot.integration.attemptedFiles ?? 0) + (event.attemptedFiles ?? 0);
+          snapshot.integration.appliedFiles =
+            (snapshot.integration.appliedFiles ?? 0) + (event.appliedFiles ?? 0);
+          diagnosedIntegrationIds.add(event.taskId);
+        }
+        addWarning(
+          "Integration was partial; some worker changes may remain in a retained worktree.",
+        );
+      }
+    } else if (event.type === "integration.failed") {
+      if (snapshot.batchId === event.batchId) {
+        snapshot.integration.status = "failed";
+        if (!diagnosedIntegrationIds.has(event.taskId)) {
+          snapshot.integration.attemptedFiles =
+            (snapshot.integration.attemptedFiles ?? 0) + (event.attemptedFiles ?? 0);
+          snapshot.integration.appliedFiles =
+            (snapshot.integration.appliedFiles ?? 0) + (event.appliedFiles ?? 0);
+          diagnosedIntegrationIds.add(event.taskId);
+        }
+        addWarning(
+          "Integration failed for a worker; its worktree was retained for diagnosis.",
+        );
+      }
+    } else if (event.type === "integration.disabled") {
+      if (snapshot.batchId === event.batchId) {
+        snapshot.integration = {
+          status: "disabled",
+          attemptedFiles: null,
+          appliedFiles: null,
+        };
+        addWarning(
+          "Integration was disabled; worker worktrees were retained for review.",
+        );
+      }
+    } else if (event.type === "integration.completed") {
+      if (
+        snapshot.batchId === event.batchId &&
+        snapshot.integration.status === "unknown"
+      ) {
+        snapshot.integration.status = "completed";
+      }
+    } else if (event.type === "integration.notAttempted") {
+      if (snapshot.batchId === event.batchId) {
+        snapshot.integration = {
+          status: "notAttempted",
+          attemptedFiles: null,
+          appliedFiles: null,
+        };
+        addWarning(
+          "Integration was not attempted because final worker evidence was unavailable.",
+        );
+      }
+    } else if (event.type === "worktree.retained") {
+      if (snapshot.batchId === event.batchId) {
+        snapshot.retainedWorktrees += 1;
+        const warning =
+          event.reason === "integration-conflict"
+            ? "A worktree was retained after an integration conflict."
+            : event.reason === "integration-disabled"
+              ? "A worktree was retained because integration was disabled."
+              : event.reason === "evidence-failure"
+                ? "A worktree was retained because final evidence could not be read."
+                : event.reason === "integration-not-attempted"
+                  ? "A worktree was retained because integration was not attempted."
+                  : event.reason === "integration-partial"
+                    ? "A worktree was retained after partial integration."
+                    : event.reason === "cleanup-failed"
+                      ? "A worktree was retained because cleanup was incomplete."
+                      : event.reason === "retention-policy"
+                        ? null
+                        : "A worktree was retained after incomplete integration.";
+        if (warning) addWarning(warning);
       }
     }
 
@@ -524,8 +667,29 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
       case "integration.applied":
         worker.integration = {
           appliedFiles: event.fileCount ?? null,
+          conflicted: snapshot.integration.status === "conflicted",
+        };
+        if (!diagnosedIntegrationIds.has(event.taskId)) {
+          snapshot.integration.attemptedFiles =
+            (snapshot.integration.attemptedFiles ?? 0) + (event.fileCount ?? 0);
+          snapshot.integration.appliedFiles =
+            (snapshot.integration.appliedFiles ?? 0) + (event.fileCount ?? 0);
+          diagnosedIntegrationIds.add(event.taskId);
+        }
+        break;
+      case "integration.partial":
+        worker.integration = {
+          appliedFiles: event.appliedFiles ?? null,
           conflicted: false,
         };
+        break;
+      case "integration.failed":
+        worker.integration = {
+          appliedFiles: event.appliedFiles ?? null,
+          conflicted: false,
+        };
+        break;
+      case "worktree.retained":
         break;
     }
 
@@ -543,5 +707,14 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
   }
 
   snapshot.workers = Array.from(workerMap.values());
+  if (
+    snapshot.workers.some(
+      (worker) => !worker.activityLabel?.trim() && !worker.category?.trim(),
+    )
+  ) {
+    addWarning(
+      "Some tasks have no semantic activity label; using a positional fallback.",
+    );
+  }
   return snapshot;
 }

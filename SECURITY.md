@@ -102,16 +102,40 @@ explicit escape hatch with consequences: workers still branch from `HEAD`, so
 they neither see nor preserve uncommitted work inside their scopes, and
 integration can overwrite it.
 
+Worktree directory names include an opaque batch identity as well as the task
+ordinal, so retained worktrees are not reused by later batches. Every active
+parallel worktree has a bounded, owner-specific filesystem lease before Git
+registration begins. Retained continuations transfer that same lease through
+reference expiry and refresh it for the full continuation timeout; exact-owner
+release prevents an older run from unprotecting a newer identity. Acquisition
+atomically links a complete expiring reservation before creating the lease
+directory, so a crash before the first generation is distinguishable and later
+reclaimable without exposing a live publisher. Immediately before publishing
+the first generation, the acquirer revalidates the live same-owner reservation
+and its owner marker; stale publishers fail with owner-specific rollback and
+cannot remove a replacement artifact or reservation.
+
 `SOL_LUNA_WORKTREE_LINK` (default `node_modules`) links directories from your
 repository into each worktree — a junction on Windows, a directory symlink
 elsewhere. Anything linked is **shared, not copied**: a worker writing through
 that link writes into your real directory.
 
-Worktrees are created, removed and pruned one at a time. `git worktree add` walks
-metadata shared by the whole repository, so concurrent creation could corrupt
-another worker's registration (fixed in 0.5.1). Serializing those operations
-costs milliseconds and does not affect the workers themselves, which still run
-concurrently once their workspaces exist.
+Worktrees are created, removed and pruned one at a time, including across MCP
+server processes sharing a repository. `git worktree add` walks metadata shared
+by the whole repository, so concurrent creation could corrupt another worker's
+registration. Serializing those operations does not affect the workers
+themselves, which still run concurrently once their workspaces exist.
+Metadata-lease renewal is fail-closed: its first refresh failure becomes visible
+to the owning operation, which refuses to begin another Git metadata command.
+Every command begins only after checking that the last published horizon still
+covers Git's 120-second cap plus a five-second scheduling margin; retry loops
+check again between attempts. Worker and continuation leases are initially
+published for their complete configured execution timeout plus cleanup grace,
+so renewal loss cannot create a mid-turn pruning window and is still surfaced
+when maintenance stops. Teardown releases process-local ownership in a `finally`
+path even when renewal or cleanup fails; any retained filesystem state remains
+protected only by its real bounded persistent horizon and becomes pruneable
+after expiry.
 
 ### Logs and telemetry
 

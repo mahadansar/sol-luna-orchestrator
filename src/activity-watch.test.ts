@@ -288,6 +288,91 @@ test("watch startup silently folds historical runs into one current render", asy
   }
 });
 
+test("watch mode renders integration failure and retained-worktree diagnostics", async () => {
+  const workRoot = await fs.mkdtemp(path.join(os.tmpdir(), "luna-watch-integration-"));
+  const eventsPath = path.join(workRoot, "events.jsonl");
+  await fs.writeFile(
+    eventsPath,
+    `${JSON.stringify({
+      timestamp: "2024-02-03T00:00:00Z",
+      type: "batch.started",
+      batchId: "b-integration-warning",
+      mode: "parallel",
+      taskCount: 1,
+      maxParallel: 1,
+    })}\n`,
+    "utf8",
+  );
+
+  const originalStdoutWrite = process.stdout.write;
+  let output = "";
+  let watchPromise: Promise<number> | undefined;
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    output += chunk.toString();
+    return true;
+  }) as typeof process.stdout.write;
+
+  const waitFor = async (condition: () => boolean): Promise<void> => {
+    const deadline = Date.now() + 5_000;
+    while (!condition()) {
+      if (Date.now() >= deadline) throw new Error(`Timed out waiting for:\n${output}`);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  };
+
+  try {
+    const { activityCommand } = await import("./cli/activity.js");
+    watchPromise = activityCommand(["--watch"], { eventsFile: eventsPath });
+    await waitFor(() => output.includes("RUNNING"));
+
+    await fs.appendFile(
+      eventsPath,
+      [
+        {
+          timestamp: "2024-02-03T00:00:01Z",
+          type: "integration.failed",
+          batchId: "b-integration-warning",
+          taskId: "private-task-id",
+          attemptedFiles: 1,
+          appliedFiles: 0,
+        },
+        {
+          timestamp: "2024-02-03T00:00:02Z",
+          type: "worktree.retained",
+          batchId: "b-integration-warning",
+          taskId: "private-task-id",
+          reason: "evidence-failure",
+        },
+        {
+          timestamp: "2024-02-03T00:00:03Z",
+          type: "worker.failed",
+          batchId: "b-integration-warning",
+          taskId: "private-task-id",
+          reason: "Could not scan D:\\private\\worktrees\\secret",
+        },
+      ]
+        .map((event) => JSON.stringify(event))
+        .join("\n") + "\n",
+      "utf8",
+    );
+
+    await waitFor(
+      () =>
+        output.includes("Integration failed for a worker") &&
+        output.includes("final evidence could not be read") &&
+        output.includes("Could not scan <path>"),
+    );
+    assert.doesNotMatch(output, /private-task-id|D:\\private\\worktrees/);
+  } finally {
+    if (watchPromise) {
+      process.emit("SIGINT", "SIGINT");
+      await watchPromise.catch(() => undefined);
+    }
+    process.stdout.write = originalStdoutWrite;
+    await fs.rm(workRoot, { recursive: true, force: true }).catch(() => undefined);
+  }
+});
+
 test("startup folds history once and catches an append during attachment", async () => {
   const workRoot = await fs.mkdtemp(path.join(os.tmpdir(), "luna-watch-catchup-"));
   const eventsPath = path.join(workRoot, "events.jsonl");

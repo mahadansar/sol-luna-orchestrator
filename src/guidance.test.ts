@@ -76,7 +76,7 @@ test("activityLabel is optional, concise, and bounded", () => {
   );
   assert.match(
     delegateTaskInputShape.activityLabel.description ?? "",
-    /optional concise label/i,
+    /optional concise.*label/i,
   );
   assert.match(
     delegateTaskInputShape.activityLabel.description ?? "",
@@ -117,7 +117,7 @@ test("one substantial bounded task may be delegated without another seam", () =>
   assert.match(TOOL_DESCRIPTION, /does not need a second independent seam/i);
   assert.match(TOOL_DESCRIPTION, /small,[\s\S]*simple,[\s\S]*tightly coupled/i);
   assert.match(TOOL_DESCRIPTION, /overhead/i);
-  assert.match(TOOL_DESCRIPTION, /optionally provide a useful concise activityLabel/i);
+  assert.match(TOOL_DESCRIPTION, /concise[\s\S]*activityLabel/i);
 });
 
 test("single-task guidance is cost-aware without treating pricing as permanent", () => {
@@ -418,10 +418,7 @@ test("batch input descriptions qualify overlap and integration", () => {
   assert.throws(() =>
     delegateTasksInputSchema.parse({ mode: "sequential", tasks: tooManyTasks }),
   );
-  assert.match(
-    BATCH_TOOL_DESCRIPTION,
-    /optionally give each task a useful concise activityLabel/i,
-  );
+  assert.match(BATCH_TOOL_DESCRIPTION, /concise[\s\S]*activityLabel[\s\S]*safe label/i);
 });
 
 test("parent model and effort guidance stays example-only across surfaces", async () => {

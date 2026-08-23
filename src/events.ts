@@ -110,7 +110,42 @@ export type OrchestratorEvent =
     }
   | { type: "scope.conflict"; batchId: string; detail: string }
   | { type: "integration.conflict"; batchId: string; path: string; tasks: string[] }
-  | { type: "integration.applied"; batchId: string; taskId: string; fileCount: number };
+  | { type: "integration.applied"; batchId: string; taskId: string; fileCount: number }
+  | { type: "integration.completed"; batchId: string }
+  | {
+      type: "integration.notAttempted";
+      batchId: string;
+      reason: "evidence-failure";
+    }
+  | {
+      type: "integration.partial";
+      batchId: string;
+      taskId: string;
+      attemptedFiles: number;
+      appliedFiles: number;
+    }
+  | {
+      type: "integration.failed";
+      batchId: string;
+      taskId: string;
+      attemptedFiles: number;
+      appliedFiles: number;
+    }
+  | { type: "integration.disabled"; batchId: string }
+  | {
+      type: "worktree.retained";
+      batchId: string;
+      taskId: string;
+      reason:
+        | "integration-conflict"
+        | "integration-disabled"
+        | "integration-not-attempted"
+        | "integration-partial"
+        | "integration-failed"
+        | "evidence-failure"
+        | "cleanup-failed"
+        | "retention-policy";
+    };
 
 export type EventEmitter = (event: OrchestratorEvent) => void;
 

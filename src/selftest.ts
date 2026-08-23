@@ -31,6 +31,7 @@ import {
   continueToLuna,
   executeTask,
   parseWorkerReport,
+  reconcileParallelWorktreeEvidence,
   type ObservedRun,
   type WorkerCodex,
 } from "./worker.js";
@@ -88,8 +89,10 @@ test("continuation references are opaque, single-use, and deterministically expi
     changeIntent: "forbidden",
   });
 
-  const issued = store.issue(input, "thread-original", path.resolve("/tmp/workspace"));
+  const continuationDirectory = path.resolve("/tmp/workspace");
+  const issued = store.issue(input, "thread-original", continuationDirectory, true);
   assert.match(issued, /^ctr_[A-Za-z0-9_-]{32,}$/);
+  assert.deepEqual(store.protectedWorkingDirectories(), [continuationDirectory]);
   const ready = store.consume(issued);
   assert.equal(ready.status, "ready");
   if (ready.status === "ready") {
@@ -97,8 +100,16 @@ test("continuation references are opaque, single-use, and deterministically expi
     assert.deepEqual(ready.entry.input.allowedFiles, ["src/uploads/**"]);
     assert.deepEqual(ready.entry.input.forbiddenFiles, ["src/secrets/**"]);
     assert.equal(ready.entry.input.changeIntent, "forbidden");
+    assert.equal(ready.entry.reconcileFinalGit, true);
   }
+  assert.deepEqual(
+    store.protectedWorkingDirectories(),
+    [continuationDirectory],
+    "a consumed reference must lease its worktree until the continuation exits",
+  );
   assert.equal(store.consume(issued).status, "used");
+  store.release(issued);
+  assert.deepEqual(store.protectedWorkingDirectories(), []);
   assert.equal(
     store.consume("ctr_unknown_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").status,
     "unknown",
@@ -782,6 +793,36 @@ test("file edits claimed but never observed are flagged", () => {
   assert.equal(ghost?.observed, false);
   assert.ok(result.discrepancies.some((d) => /never recorded/.test(d)));
   assert.equal(result.trustworthy, false);
+});
+
+test("claimed-only paths remain discrepancies rather than observed scope violations", () => {
+  const report = makeReport({
+    filesChanged: [
+      { path: "src/pagination.ts", change: "modified", why: "the fix" },
+      { path: "outside/claimed-only.ts", change: "modified", why: "unsupported claim" },
+    ],
+  });
+  const result = analyze(report, [passingRun], { allowedFiles: ["src/**"] });
+
+  assert.equal(result.verdict, "PASS");
+  assert.equal(result.trustworthy, false);
+  assert.deepEqual(result.scopeViolations, []);
+  assert.ok(result.discrepancies.some((detail) => /never recorded/.test(detail)));
+});
+
+test("final Git reconciliation preserves a reverted forbidden runtime edit as terminal", () => {
+  const input = makeTask({ changeIntent: "forbidden" });
+  const initial = analyze(makeReport(), [passingRun], { changeIntent: "forbidden" });
+  const result = reconcileParallelWorktreeEvidence(input, initial, REPO, []);
+
+  assert.equal(result.verdict, "FAILED");
+  assert.equal(result.trustworthy, false);
+  assert.ok(
+    result.discrepancies.some((detail) =>
+      /change intent contract violated/i.test(detail),
+    ),
+  );
+  assert.equal(result.filesChanged[0]?.observed, false);
 });
 
 test("edits the worker did not mention are still surfaced", () => {

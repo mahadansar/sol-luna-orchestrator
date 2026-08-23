@@ -9,6 +9,7 @@ import {
   compactBatch,
   compactResult,
   recordEvent,
+  reconcileRetainedContinuationEvidence,
   renderBatch,
   renderResult,
 } from "./server.js";
@@ -216,6 +217,124 @@ test("evidence packet - parallel/batch per-task result", () => {
   const text = renderBatch(batch);
   assert.ok(text.includes("worker summary (claim)"));
   assert.ok(text.includes("change intent: optional"));
+});
+
+test("batch text rendering keeps compact operational and review parity", () => {
+  const result = mockResult();
+  result.verdict = "FAILED";
+  result.workerClaimedStatus = "PASS";
+  result.trustworthy = false;
+  result.durationSeconds = 42;
+  result.repair = {
+    requested: true,
+    attempted: true,
+    classification: "local-verification",
+    reason: "A bounded local check failed.",
+    failureEvidence: [],
+  };
+  result.verification.push({
+    command: "npm run typecheck",
+    source: "orchestrator",
+    execution: "argv",
+    exitCode: 1,
+    passed: false,
+    output: "PRIVATE_COMMAND_OUTPUT",
+  });
+  result.verification.push({
+    command: "npm test",
+    source: "worker",
+    execution: "reported",
+    exitCode: 0,
+    passed: true,
+    output: "WORKER_REPORTED_OUTPUT",
+  });
+  result.errors.push("runtime failure without command output");
+  result.reviewChecklist.push("Read the changed diff before accepting.");
+  result.discrepancies.push("Observed evidence needs review.");
+
+  const batch: BatchOutput = {
+    batchId: "b1",
+    mode: "parallel",
+    maxParallel: 2,
+    taskCount: 1,
+    passed: 0,
+    failed: 1,
+    durationSeconds: 43,
+    tasks: [
+      {
+        taskId: "t1",
+        state: "completed",
+        objective: "OBJECTIVE_NOT_RENDERED_IN_COMPACT_BATCH_TEXT",
+        effort: "high",
+        effortReason: "bounded judgement",
+        result,
+        changedFiles: ["src/file.ts"],
+        worktreePath: null,
+        error: "batch-level runtime error",
+        warnings: [],
+      },
+    ],
+    scopeConflicts: [],
+    integrationConflicts: [],
+    integrated: false,
+    integrationSummary: "partial",
+    warnings: ["integration warning"],
+    reviewChecklist: ["Review the integrated workspace."],
+  };
+
+  const text = renderBatch(batch);
+  for (const expected of [
+    "gpt-5.6-luna",
+    "effort: high",
+    "duration: 42s",
+    "continuation:",
+    "repair: attempted",
+    "verification: authoritative 2 executed (1 passed, 1 failed), 0 refused; worker-reported 1 passed, 0 failed",
+    "runtime error: runtime failure without command output",
+    "usage: 100 in",
+    "review: Read the changed diff before accepting.",
+    "INTEGRATION: partial",
+  ]) {
+    assert.ok(text.includes(expected), `missing ${expected}`);
+  }
+  assert.doesNotMatch(text, /OBJECTIVE_NOT_RENDERED|PRIVATE_COMMAND_OUTPUT/);
+});
+
+test("retained-worktree continuations reconcile the complete final Git snapshot", async () => {
+  const input = delegateTaskInputSchema.parse({
+    objective: "Continue the retained implementation without widening its contract.",
+    effortReason: "The same bounded task needs one follow-up.",
+    acceptanceCriteria: ["All retained edits remain visible in final evidence."],
+    allowedFiles: ["src/**"],
+    changeIntent: "required",
+  });
+  const result = mockResult();
+  result.filesChanged = [
+    { path: "src/current.ts", kind: "update", why: "continuation edit", observed: true },
+  ];
+
+  const reconciled = await reconcileRetainedContinuationEvidence(
+    input,
+    result,
+    path.resolve("retained-worktree"),
+    async () => ({
+      files: [
+        { path: "src/current.ts", status: "M" },
+        { path: "src/from-original-turn.ts", status: "A" },
+      ],
+      diff: "fixture diff",
+    }),
+  );
+
+  assert.deepEqual(
+    reconciled.filesChanged.filter((file) => file.observed).map((file) => file.path),
+    ["src/current.ts", "src/from-original-turn.ts"],
+  );
+  assert.match(
+    reconciled.filesChanged.find((file) => file.path === "src/from-original-turn.ts")
+      ?.why ?? "",
+    /not mentioned/i,
+  );
 });
 
 test("evidence packet - integration conflict", () => {

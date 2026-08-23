@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { DelegateTaskInput } from "./contract.js";
+import type { WorktreeLease } from "./worktree.js";
 
 /** How long an unused continuation remains valid in one server process. */
 export const CONTINUATION_TTL_MS = 15 * 60 * 1000;
@@ -10,6 +11,8 @@ interface ContinuationRecord {
   input: DelegateTaskInput;
   threadId: string;
   workingDirectory: string;
+  reconcileFinalGit: boolean;
+  worktreeLease: WorktreeLease | null;
   expiresAt: number;
 }
 
@@ -22,6 +25,10 @@ export interface ContinuationEntry {
   input: DelegateTaskInput;
   threadId: string;
   workingDirectory: string;
+  /** Retained parallel worktrees need a fresh final Git snapshot after continuation. */
+  reconcileFinalGit: boolean;
+  /** Exact persistent owner for a retained parallel worktree, when applicable. */
+  worktreeLease: WorktreeLease | null;
 }
 
 export type ContinuationConsumeResult =
@@ -44,6 +51,8 @@ export interface ContinuationStoreOptions {
  */
 export class ContinuationStore {
   private readonly active = new Map<string, ContinuationRecord>();
+  /** Consumed references stay leased until their one continuation turn exits. */
+  private readonly leased = new Map<string, ContinuationRecord>();
   private readonly retired = new Map<string, RetiredReference>();
   private readonly now: () => number;
   private readonly tokenFactory: () => string;
@@ -56,7 +65,13 @@ export class ContinuationStore {
   }
 
   /** Issue one opaque reference for an observed worker thread. */
-  issue(input: DelegateTaskInput, threadId: string, workingDirectory: string): string {
+  issue(
+    input: DelegateTaskInput,
+    threadId: string,
+    workingDirectory: string,
+    reconcileFinalGit = false,
+    worktreeLease: WorktreeLease | null = null,
+  ): string {
     const now = this.now();
     this.prune(now);
 
@@ -69,6 +84,8 @@ export class ContinuationStore {
       input: cloneTaskInput(input),
       threadId,
       workingDirectory,
+      reconcileFinalGit,
+      worktreeLease: worktreeLease ? { ...worktreeLease } : null,
       expiresAt: now + CONTINUATION_TTL_MS,
     });
     return reference;
@@ -91,6 +108,7 @@ export class ContinuationStore {
       }
 
       this.active.delete(reference);
+      this.leased.set(reference, record);
       this.retired.set(reference, { status: "used", until: now + CONTINUATION_TTL_MS });
       return {
         status: "ready",
@@ -98,6 +116,8 @@ export class ContinuationStore {
           input: cloneTaskInput(record.input),
           threadId: record.threadId,
           workingDirectory: record.workingDirectory,
+          reconcileFinalGit: record.reconcileFinalGit,
+          worktreeLease: record.worktreeLease ? { ...record.worktreeLease } : null,
         },
       };
     }
@@ -106,6 +126,23 @@ export class ContinuationStore {
     if (retired && now < retired.until) return { status: retired.status };
     if (retired) this.retired.delete(reference);
     return { status: "unknown" };
+  }
+
+  /** Release the filesystem lease after the consumed continuation turn exits. */
+  release(reference: string): void {
+    this.leased.delete(reference);
+  }
+
+  /** Directories that must not be pruned while a reference can still use them. */
+  protectedWorkingDirectories(): string[] {
+    this.prune(this.now());
+    return [
+      ...new Set(
+        [...this.active.values(), ...this.leased.values()].map(
+          (record) => record.workingDirectory,
+        ),
+      ),
+    ];
   }
 
   private prune(now: number): void {

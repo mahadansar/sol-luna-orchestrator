@@ -78,10 +78,11 @@ so the retry does not repeat failed approaches.
 
 - Make `objective` self-contained and give observable
   `acceptanceCriteria`.
-- Optionally provide a concise `activityLabel` (for example, `Update auth
-retries`) for the local activity view. It is not required, is bounded, and is
-  deliberately persisted locally, so do not copy the full objective or include
-  sensitive details.
+- Provide each task a concise, non-sensitive `activityLabel` (for example,
+  `Update auth retries`) for the local activity view whenever a safe label is
+  available. The field remains optional and bounded for backwards compatibility:
+  omit it when the brief is sensitive. Supply labels explicitly; never derive
+  one from or copy the objective text.
 - Declare workspace-relative `allowedFiles` and `forbiddenFiles`.
   File scope is detective: violations are reported after execution, not
   prevented. An empty `allowedFiles` means no in-workspace allowlist; it does not
@@ -135,6 +136,11 @@ guards. Its original objective, `allowedFiles`, `forbiddenFiles`,
 scope checks, independent verification, claim-versus-observed reconciliation and
 verdict classification all run again. A resumed worker still has no delegation
 tools.
+
+When a parallel result remains in an isolated worktree, its continuation is
+bound to that batch-unique worktree. The worktree is protected until the
+reference expires or its one continuation exits, and the continuation result is
+reconciled against a fresh final Git snapshot before the parent sees it.
 
 ## Bounded automatic repair
 
@@ -203,7 +209,9 @@ Integration is a file copy, not a merge. Actual same-file edits prevent
 automatic integration and retain worktrees for manual resolution. Completed
 worker edits may be copied back even when that task's verdict is FAILED or
 BLOCKED; judge every task result and the integrated workspace. Partial outcomes
-remain visible rather than being hidden.
+remain visible rather than being hidden. Partial or failed integration and
+retained worktrees are also surfaced in activity diagnostics without command
+output, objectives, thread ids, or sensitive paths.
 
 Workers are verified in isolation. After integration, run broader verification
 when changes can interact through shared contracts, types, state, or runtime

@@ -26,7 +26,7 @@ export class GitError extends Error {
   }
 }
 
-const GIT_TIMEOUT_MS = 120_000;
+export const GIT_TIMEOUT_MS = 120_000;
 
 export function runGit(
   args: string[],
@@ -207,10 +207,12 @@ export async function removeWorktree(
   repoRoot: string,
   target: string,
   attempts = 3,
+  beforeAttempt?: () => void,
 ): Promise<{ removed: boolean; error?: string }> {
   let lastError = "";
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    beforeAttempt?.();
     const result = await runGit(["worktree", "remove", "--force", target], repoRoot);
     if (result.code === 0) return { removed: true };
     lastError = result.stderr.trim() || result.stdout.trim();
@@ -239,6 +241,8 @@ export interface WorktreeChanges {
   diff: string;
 }
 
+export type GitCommand = (args: string[], cwd: string) => Promise<string>;
+
 /**
  * What a worker actually changed inside its worktree.
  *
@@ -247,8 +251,9 @@ export interface WorktreeChanges {
  */
 export async function collectWorktreeChanges(
   worktreePath: string,
+  run: GitCommand = git,
 ): Promise<WorktreeChanges> {
-  const status = await git(
+  const status = await run(
     ["status", "--porcelain", "-z", "--untracked-files=all"],
     worktreePath,
   );
@@ -265,8 +270,10 @@ export async function collectWorktreeChanges(
     if (code.startsWith("R") || code.startsWith("C")) i += 1;
   }
 
-  const diffResult = await runGit(["diff", "HEAD"], worktreePath);
-  return { files, diff: diffResult.code === 0 ? diffResult.stdout : "" };
+  // A failed diff is missing evidence, not an empty successful diff. Let the
+  // caller retain the worktree and surface an explicit evidence-scan failure.
+  const diff = await run(["diff", "HEAD"], worktreePath);
+  return { files, diff };
 }
 
 /** Add a pattern to `.git/info/exclude`, which is local and untracked. */

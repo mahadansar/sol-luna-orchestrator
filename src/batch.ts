@@ -19,17 +19,29 @@ import {
   findScopeConflicts,
   type IntegrationConflict,
 } from "./overlap.js";
-import { executeTask, UNCLAIMED_FILE, workerSlots } from "./worker.js";
+import {
+  executeTask,
+  reconcileParallelWorktreeEvidence,
+  UNCLAIMED_FILE,
+  workerSlots,
+} from "./worker.js";
 import {
   cleanupWorktree,
   createTaskWorktree,
+  maintainWorktreeLease,
   prepareWorktreeBase,
   pruneStaleWorktrees,
   readWorktreeOutcome,
+  refreshWorktreeLease,
+  releaseWorktreeLease,
+  releaseWorktreeOwnership,
+  WORKTREE_LEASE_GRACE_MS,
   WorktreeUnavailableError,
+  type WorktreeLease,
   type TaskWorktree,
 } from "./worktree.js";
 import { resolveWorkspace } from "./workspace.js";
+import { CONTINUATION_TTL_MS } from "./continuation.js";
 
 export class BatchRejectedError extends Error {
   constructor(message: string) {
@@ -52,6 +64,8 @@ interface RunningTask {
   input: DelegateTaskInput;
   state: TaskState;
   worktree: TaskWorktree | null;
+  leaseRenewal: { stop: () => Promise<void> } | null;
+  worktreeOutcomeError: string | null;
   result: BatchTaskResult;
 }
 
@@ -95,10 +109,18 @@ export async function runBatch(
       input: DelegateTaskInput,
       result: DelegateTaskOutput,
       workingDirectory: string,
-    ) => string | null;
+      reconcileFinalGit: boolean,
+      worktreeLease: WorktreeLease | null,
+    ) => string | null | Promise<string | null>;
+    /** Worktrees still referenced by unused or in-flight continuations. */
+    protectedWorktreePaths?: Iterable<string>;
+    /** Deterministic lifecycle seam for tests; production always generates one. */
+    batchId?: string;
+    /** Deterministic lease-maintenance seam; production uses persistent renewal. */
+    leaseMaintainer?: typeof maintainWorktreeLease;
   },
 ): Promise<BatchOutput> {
-  const batchId = makeBatchId();
+  const batchId = options.batchId ?? makeBatchId();
   const startedAt = Date.now();
   const mode = options.mode;
   const emit = options.eventEmitter ?? emitEvent;
@@ -113,7 +135,6 @@ export async function runBatch(
     );
   }
 
-  const workspace = resolveWorkspace(options.workingDirectory);
   const run = options.executor ?? executeTask;
 
   const running: RunningTask[] = tasks.map((input, index) => {
@@ -123,6 +144,8 @@ export async function runBatch(
       input,
       state: "queued" as TaskState,
       worktree: null,
+      leaseRenewal: null,
+      worktreeOutcomeError: null,
       result: {
         taskId,
         state: "queued",
@@ -155,6 +178,15 @@ export async function runBatch(
       activityLabel: task.input.activityLabel,
       model: LUNA_MODEL,
     });
+  }
+
+  let workspace: string;
+  try {
+    workspace = resolveWorkspace(options.workingDirectory);
+  } catch (error) {
+    const reason = (error as Error).message;
+    emit({ type: "batch.rejected", batchId, reason });
+    throw new BatchRejectedError(reason);
   }
 
   // --- Scope conflicts, before anything is created -------------------------
@@ -191,7 +223,16 @@ export async function runBatch(
       await runSequential(batchId, running, workspace, run, emit, options.signal);
     } else {
       warnings.push(
-        ...(await runParallel(batchId, running, workspace, run, emit, options.signal)),
+        ...(await runParallel(
+          batchId,
+          running,
+          workspace,
+          run,
+          emit,
+          options.signal,
+          options.protectedWorktreePaths,
+          options.leaseMaintainer,
+        )),
       );
     }
   } catch (error) {
@@ -224,15 +265,27 @@ export async function runBatch(
   let integrated = false;
   let integrationIncomplete = false;
   let integrationSummary: string;
+  const outcomeFailures = running.filter((task) => task.worktreeOutcomeError !== null);
 
   if (mode === "sequential") {
     integrated = true;
     integrationSummary =
       "Sequential tasks worked directly in the workspace, so their changes are already in place.";
   } else if (options.integrate === false) {
+    emit({ type: "integration.disabled", batchId });
     integrationSummary =
       "Integration was disabled. Each worker's changes remain in its worktree; " +
       "paths are listed per task.";
+  } else if (outcomeFailures.length > 0) {
+    integrationIncomplete = true;
+    warnings.push(
+      `Integration was not attempted because worktree evidence could not be read ` +
+        `for ${outcomeFailures.map((task) => task.taskId).join(", ")}.`,
+    );
+    integrationSummary =
+      "Integration was not attempted because at least one worker's final worktree " +
+      "evidence scan failed. The affected worktrees were kept for diagnosis.";
+    emit({ type: "integration.notAttempted", batchId, reason: "evidence-failure" });
   } else if (integrationConflicts.length > 0) {
     integrationSummary =
       `Nothing was integrated: ${integrationConflicts.length} file(s) were changed by ` +
@@ -250,16 +303,20 @@ export async function runBatch(
         `Worker worktrees were kept for inspection and continuation.`
       : `Copied ${applied.fileCount} file(s) from ${completed.length} worker(s) into ` +
         `the workspace. No two workers touched the same file.`;
+    if (!integrationIncomplete) emit({ type: "integration.completed", batchId });
   }
 
   // --- Cleanup -------------------------------------------------------------
+  let lifecycleError: unknown = null;
   for (const task of running) {
     if (!task.worktree) {
       if (task.result.result && options.continuationRegistrar) {
-        task.result.result.continuationReference = options.continuationRegistrar(
+        task.result.result.continuationReference = await options.continuationRegistrar(
           task.input,
           task.result.result,
           workspace,
+          false,
+          null,
         );
       }
       continue;
@@ -268,52 +325,144 @@ export async function runBatch(
       integrationConflicts.length > 0 ||
       options.integrate === false ||
       integrationIncomplete;
-    const reason =
-      task.state === "cancelled"
+    const reason = task.worktreeOutcomeError
+      ? "evidence-failure"
+      : task.state === "cancelled"
         ? "cancelled"
         : task.state === "completed" && !keepForConflict
           ? "success"
           : "failure";
 
-    const cleanup = await cleanupWorktree(task.worktree, reason);
-    emit({
-      type: "worktree.removed",
-      batchId,
-      taskId: task.taskId,
-      kept: !cleanup.removed,
-    });
-    task.result.worktreePath = cleanup.removed ? null : (cleanup.keptAt ?? null);
-    if (cleanup.error) {
-      task.result.warnings.push(`Worktree cleanup incomplete: ${cleanup.error}`);
+    let renewalError: unknown = null;
+    try {
+      await task.leaseRenewal?.stop();
+    } catch (error) {
+      renewalError = error;
+      lifecycleError ??= error;
+      task.result.warnings.push(
+        `Persistent worktree lease renewal failed: ${(error as Error).message}`,
+      );
+    } finally {
+      task.leaseRenewal = null;
     }
 
-    if (task.result.result && options.continuationRegistrar) {
-      // Integrated parallel work can safely continue in the requested
-      // workspace after its temporary worktree is removed. When integration
-      // was disabled or conflicted, the kept worktree is the only honest
-      // continuation directory and must remain available until expiry.
-      const continuationInWorkspace =
-        mode === "sequential" || (task.state === "completed" && !keepForConflict);
-      const continuationDirectory = continuationInWorkspace
-        ? workspace
-        : cleanup.removed
-          ? null
-          : (cleanup.keptAt ?? null);
-      if (continuationDirectory) {
-        task.result.result.continuationReference = options.continuationRegistrar(
-          task.input,
-          task.result.result,
-          continuationDirectory,
-        );
+    try {
+      const cleanup = await cleanupWorktree(task.worktree, reason);
+      emit({
+        type: "worktree.removed",
+        batchId,
+        taskId: task.taskId,
+        kept: !cleanup.removed,
+      });
+      task.result.worktreePath = cleanup.removed ? null : (cleanup.keptAt ?? null);
+      if (!cleanup.removed) {
+        const retainedReason = cleanup.error
+          ? "cleanup-failed"
+          : task.worktreeOutcomeError
+            ? "evidence-failure"
+            : integrationConflicts.length > 0
+              ? "integration-conflict"
+              : options.integrate === false
+                ? "integration-disabled"
+                : integrationIncomplete
+                  ? outcomeFailures.length > 0
+                    ? "integration-not-attempted"
+                    : "integration-partial"
+                  : "retention-policy";
+        emit({
+          type: "worktree.retained",
+          batchId,
+          taskId: task.taskId,
+          reason: retainedReason,
+        });
       }
+      if (cleanup.error) {
+        task.result.warnings.push(`Worktree cleanup incomplete: ${cleanup.error}`);
+      }
+
+      let retainedLease = false;
+      if (!renewalError && task.result.result && options.continuationRegistrar) {
+        // Integrated parallel work can safely continue in the requested
+        // workspace after its temporary worktree is removed. When integration
+        // was disabled or conflicted, the kept worktree is the only honest
+        // continuation directory and must remain available until expiry.
+        const continuationInWorkspace =
+          mode === "sequential" || (task.state === "completed" && !keepForConflict);
+        const continuationDirectory = continuationInWorkspace
+          ? workspace
+          : cleanup.removed
+            ? null
+            : (cleanup.keptAt ?? null);
+        if (continuationDirectory && !task.worktreeOutcomeError) {
+          let continuationProtected = true;
+          const worktreeLease = continuationInWorkspace
+            ? null
+            : (task.worktree.lease ?? null);
+          if (!continuationInWorkspace) {
+            if (!worktreeLease) {
+              continuationProtected = false;
+              task.result.warnings.push(
+                "Continuation was not issued because its retained worktree has no persistent lease.",
+              );
+            } else {
+              try {
+                await refreshWorktreeLease(
+                  worktreeLease,
+                  Date.now() + CONTINUATION_TTL_MS + WORKTREE_LEASE_GRACE_MS,
+                  "retained-continuation",
+                );
+              } catch (error) {
+                continuationProtected = false;
+                task.result.warnings.push(
+                  `Continuation was not issued because its retained worktree could not be protected: ${(error as Error).message}`,
+                );
+              }
+            }
+          }
+          if (continuationProtected) {
+            try {
+              const reference = await options.continuationRegistrar(
+                task.input,
+                task.result.result,
+                continuationDirectory,
+                !continuationInWorkspace,
+                worktreeLease,
+              );
+              task.result.result.continuationReference = reference;
+              retainedLease = Boolean(reference && worktreeLease);
+            } catch (error) {
+              task.result.warnings.push(
+                `Continuation registration failed: ${(error as Error).message}`,
+              );
+            }
+          }
+        }
+      }
+      if (!cleanup.removed && task.worktree.lease && !retainedLease && !renewalError) {
+        await releaseWorktreeLease(task.worktree.lease);
+      }
+    } catch (error) {
+      lifecycleError ??= error;
+    } finally {
+      releaseWorktreeOwnership(task.worktree);
     }
   }
+
+  if (lifecycleError) throw lifecycleError;
 
   const durationSeconds = Math.round((Date.now() - startedAt) / 1000);
   const passed = running.filter((task) => task.result.result?.verdict === "PASS").length;
   const failed = running.length - passed;
 
-  emit({ type: "batch.completed", batchId, durationSeconds, passed, failed });
+  if (running.some((task) => task.state === "cancelled")) {
+    emit({
+      type: "batch.cancelled",
+      batchId,
+      reason: "Batch cancellation was requested before the batch completed.",
+    });
+  } else {
+    emit({ type: "batch.completed", batchId, durationSeconds, passed, failed });
+  }
 
   return {
     batchId,
@@ -367,6 +516,8 @@ async function runParallel(
   run: TaskExecutor,
   emit: EventEmitter,
   signal?: AbortSignal,
+  protectedWorktreePaths: Iterable<string> = [],
+  leaseMaintainer: typeof maintainWorktreeLease = maintainWorktreeLease,
 ): Promise<string[]> {
   const warnings: string[] = [];
 
@@ -375,7 +526,7 @@ async function runParallel(
     running.map((task) => task.input.allowedFiles),
   );
 
-  const pruned = await pruneStaleWorktrees(base.repoRoot);
+  const pruned = await pruneStaleWorktrees(base.repoRoot, protectedWorktreePaths);
   if (pruned.length > 0) {
     warnings.push(`Removed ${pruned.length} stale worktree(s) from an earlier run.`);
   }
@@ -410,6 +561,13 @@ async function runParallel(
         workspace,
         emit,
       );
+      if (task.worktree.lease) {
+        task.leaseRenewal = leaseMaintainer(
+          task.worktree.lease,
+          taskLeaseLifetimeMs(task.input),
+          "running",
+        );
+      }
       task.result.warnings.push(...task.worktree.warnings);
     } catch (error) {
       // Partial failure is preserved: this task is marked failed and the rest
@@ -448,12 +606,47 @@ async function runParallel(
           return;
         }
 
-        await runOne(batchId, task, worktree.path, run, emit, signal);
+        await runOne(batchId, task, worktree.path, run, emit, signal, false);
 
         const outcome = await readWorktreeOutcome(worktree);
         task.result.warnings.push(...outcome.warnings);
-        task.result.changedFiles = outcome.changes.files.map((file) => file.path);
         task.result.diff = truncateDiff(outcome.changes.diff);
+
+        const changes = outcome.changes.files.map((file) => ({
+          path: file.path,
+          kind: file.status,
+        }));
+        if (task.result.result) {
+          task.result.result = reconcileParallelWorktreeEvidence(
+            task.input,
+            task.result.result,
+            worktree.path,
+            changes,
+            outcome.error,
+          );
+          task.result.changedFiles = task.result.result.filesChanged
+            .filter((file) => file.observed)
+            .map((file) => file.path);
+        } else {
+          task.result.changedFiles = outcome.changes.files.map((file) => file.path);
+        }
+
+        if (outcome.error) {
+          task.worktreeOutcomeError = outcome.error;
+          task.result.error = `Could not read worktree evidence: ${outcome.error}`;
+          if (!isCancelled(task)) {
+            task.state = "failed";
+            task.result.state = "failed";
+            emit({
+              type: "worker.failed",
+              batchId,
+              taskId: task.taskId,
+              reason: task.result.error,
+            });
+          }
+        } else if (!isCancelled(task) && !isFailed(task)) {
+          emitWorkerCompleted(batchId, task, emit);
+        }
       } finally {
         release();
       }
@@ -470,7 +663,12 @@ async function createTaskWorktreeTracked(
   workspace: string,
   emit: EventEmitter,
 ): Promise<TaskWorktree> {
-  const worktree = await createTaskWorktree(base, task.taskId, workspace);
+  const worktree = await createTaskWorktree(
+    base,
+    `${batchId}-${task.taskId}`,
+    workspace,
+    taskLeaseLifetimeMs(task.input),
+  );
   emit({
     type: "worktree.created",
     batchId,
@@ -478,6 +676,13 @@ async function createTaskWorktreeTracked(
     path: worktree.path,
   });
   return worktree;
+}
+
+function taskLeaseLifetimeMs(input: DelegateTaskInput): number {
+  return (
+    Math.max(1, input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000 +
+    WORKTREE_LEASE_GRACE_MS
+  );
 }
 
 /** Run one task and fold its outcome into the batch record. */
@@ -488,6 +693,7 @@ async function runOne(
   run: TaskExecutor,
   emit: EventEmitter,
   signal?: AbortSignal,
+  emitCompletion = true,
 ): Promise<void> {
   task.state = "running";
   task.result.state = "running";
@@ -589,20 +795,7 @@ async function runOne(
         .map((file) => file.path);
     }
 
-    emit({
-      type: "worker.completed",
-      batchId,
-      taskId: task.taskId,
-      verdict: result.verdict,
-      claimed: result.workerClaimedStatus,
-      durationSeconds: result.durationSeconds,
-      threadId: result.workerThreadId,
-      model: result.model,
-      effort: result.effort,
-      changedFiles: result.filesChanged.filter((file) => file.observed).length,
-      failureReason: activityFailureReason(result),
-      usage: result.usage,
-    });
+    if (emitCompletion) emitWorkerCompleted(batchId, task, emit);
   } catch (error) {
     task.state = "failed";
     task.result.state = "failed";
@@ -615,6 +808,32 @@ async function runOne(
     });
   }
 }
+
+function emitWorkerCompleted(
+  batchId: string,
+  task: RunningTask,
+  emit: EventEmitter,
+): void {
+  const result = task.result.result;
+  if (!result) return;
+  emit({
+    type: "worker.completed",
+    batchId,
+    taskId: task.taskId,
+    verdict: result.verdict,
+    claimed: result.workerClaimedStatus,
+    durationSeconds: result.durationSeconds,
+    threadId: result.workerThreadId,
+    model: result.model,
+    effort: result.effort,
+    changedFiles: result.filesChanged.filter((file) => file.observed).length,
+    failureReason: activityFailureReason(result),
+    usage: result.usage,
+  });
+}
+
+const isCancelled = (task: RunningTask): boolean => task.state === "cancelled";
+const isFailed = (task: RunningTask): boolean => task.state === "failed";
 
 function markCancelled(batchId: string, task: RunningTask, emit: EventEmitter): void {
   task.state = "cancelled";
@@ -674,6 +893,15 @@ async function integrateWorktrees(
     }
 
     fileCount += applied;
+    if (applied < task.result.changedFiles.length) {
+      emit({
+        type: applied > 0 ? "integration.partial" : "integration.failed",
+        batchId,
+        taskId: task.taskId,
+        attemptedFiles: task.result.changedFiles.length,
+        appliedFiles: applied,
+      });
+    }
     emit({
       type: "integration.applied",
       batchId,

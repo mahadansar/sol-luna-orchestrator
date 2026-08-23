@@ -792,6 +792,37 @@ test("scope conflict is recorded", () => {
   assert.equal(snap.conflicts.scope.length, 1);
 });
 
+test("workspace rejection remains visible after startup and queue events", () => {
+  const events: TimestampedEvent[] = [
+    {
+      timestamp: "1",
+      type: "batch.started",
+      batchId: "b-invalid-workspace",
+      mode: "parallel",
+      taskCount: 1,
+      maxParallel: 3,
+    },
+    {
+      timestamp: "2",
+      type: "task.queued",
+      batchId: "b-invalid-workspace",
+      taskId: "t1",
+      effort: "high",
+    },
+    {
+      timestamp: "3",
+      type: "batch.rejected",
+      batchId: "b-invalid-workspace",
+      reason: "workingDirectory does not exist",
+    },
+  ];
+
+  const snapshot = reduceEvents(events);
+  assert.equal(snapshot.state, "rejected");
+  assert.equal(snapshot.workers[0]?.state, "queued");
+  assert.equal(snapshot.supervisor.state, "not observable");
+});
+
 // ========================================================================
 // Worker failure / timeout / cancellation
 // ========================================================================
@@ -1822,4 +1853,344 @@ test("human rendering prefers the concise activity label", () => {
 
   assert.match(output, /Update auth retries/);
   assert.doesNotMatch(output, /opaque-task-id/);
+});
+
+test("human rendering falls back to task category and warns only when neither label exists", () => {
+  const categorized = reduceEvents([
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "b-category",
+      mode: "single",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "task.queued",
+      batchId: "b-category",
+      taskId: "opaque-category-task",
+      effort: "high",
+      category: "implementation",
+      objective: "OBJECTIVE MUST NEVER BE USED",
+    },
+  ]);
+  const categorizedOutput = renderHumanLines(categorized).join("\n");
+  assert.match(categorizedOutput, /Implementation task/);
+  assert.doesNotMatch(
+    categorizedOutput,
+    /OBJECTIVE MUST NEVER BE USED|opaque-category-task/,
+  );
+  assert.deepEqual(categorized.warnings, []);
+
+  const legacy = reduceEvents([
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "b-legacy-label",
+      mode: "single",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "worker.started",
+      batchId: "b-legacy-label",
+      taskId: "opaque-legacy-task",
+      effort: "medium",
+      workingDirectory: "w",
+    },
+  ]);
+  const legacyOutput = renderHumanLines(legacy).join("\n");
+  assert.match(legacyOutput, /Delegated task 1/);
+  assert.match(legacyOutput, /Some tasks have no semantic activity label/);
+  assert.doesNotMatch(legacyOutput, /opaque-legacy-task/);
+});
+
+test("human failure diagnostics redact absolute and worktree paths while JSON keeps them", () => {
+  const snapshot = reduceEvents([
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "b-redaction",
+      mode: "single",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "worker.completed",
+      batchId: "b-redaction",
+      taskId: "opaque-redaction-task",
+      verdict: "FAILED",
+      claimed: "FAILED",
+      durationSeconds: 1,
+      threadId: null,
+      model: "gpt-5.6-luna",
+      effort: "high",
+      failureReason:
+        "Could not read D:\\private\\worktree\\secret.ts, /home/user/project/file.ts, or .sol-luna/worktrees/b-private-t1/file.ts",
+      usage: null,
+    },
+  ]);
+  const rendered = renderHumanLines(snapshot).join("\n");
+  assert.equal(
+    snapshot.workers[0]?.failReason,
+    "Could not read D:\\private\\worktree\\secret.ts, /home/user/project/file.ts, or .sol-luna/worktrees/b-private-t1/file.ts",
+  );
+  assert.doesNotMatch(
+    rendered,
+    /D:\\private\\worktree|\/home\/user\/project|\.sol-luna[\\/]worktrees/,
+  );
+  assert.match(rendered, /Reason: Could not read .*<path>/);
+});
+
+test("explicit labels project consistently for single, sequential, and parallel batches", () => {
+  for (const [mode, batchId] of [
+    ["single", "b-single"],
+    ["sequential", "b-sequential"],
+    ["parallel", "b-parallel"],
+  ] as const) {
+    const snapshot = reduceEvents([
+      {
+        timestamp: "2024-01-01T10:00:00Z",
+        type: "batch.started",
+        batchId,
+        mode,
+        taskCount: 1,
+        maxParallel: 1,
+      },
+      {
+        timestamp: "2024-01-01T10:00:01Z",
+        type: "task.queued",
+        batchId,
+        taskId: `${mode}-opaque-id`,
+        effort: "high",
+        activityLabel: `${mode} safe label`,
+        objective: "OBJECTIVE MUST NOT BECOME A LABEL",
+      },
+    ]);
+    assert.equal(snapshot.workers[0]?.activityLabel, `${mode} safe label`);
+    const rendered = renderHumanLines(snapshot).join("\n");
+    assert.match(rendered, new RegExp(`${mode} safe label`));
+    assert.doesNotMatch(rendered, /OBJECTIVE MUST NOT BECOME A LABEL|opaque-id/);
+  }
+});
+
+test("partial integration and retained worktrees reduce to concise redacted warnings", () => {
+  const events: TimestampedEvent[] = [
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "b-diagnostics",
+      mode: "parallel",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "integration.partial",
+      batchId: "b-diagnostics",
+      taskId: "opaque-task-id",
+      attemptedFiles: 3,
+      appliedFiles: 2,
+    },
+    {
+      timestamp: "2024-01-01T10:00:02Z",
+      type: "worktree.retained",
+      batchId: "b-diagnostics",
+      taskId: "opaque-task-id",
+      reason: "integration-failed",
+    },
+  ];
+  const snapshot = reduceEvents(events);
+  assert.equal(snapshot.integration.status, "partial");
+  assert.equal(snapshot.integration.attemptedFiles, 3);
+  assert.equal(snapshot.integration.appliedFiles, 2);
+  assert.equal(snapshot.retainedWorktrees, 1);
+  assert.match(snapshot.warnings.join("\n"), /partial|retained/i);
+
+  const rendered = renderHumanLines(snapshot).join("\n");
+  assert.match(rendered, /WARNINGS|Integration was partial|worktree was retained/);
+  assert.doesNotMatch(
+    rendered,
+    /opaque-task-id|thread-private|OBJECTIVE|npm test|D:\\secret|src\\private/,
+  );
+});
+
+test("failed integration and disabled integration retain distinct truthful statuses", () => {
+  const failed = reduceEvents([
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "b-failed",
+      mode: "parallel",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "integration.failed",
+      batchId: "b-failed",
+      taskId: "t1",
+      attemptedFiles: 1,
+      appliedFiles: 0,
+    },
+  ]);
+  assert.equal(failed.integration.status, "failed");
+  assert.equal(failed.integration.appliedFiles, 0);
+
+  const disabled = reduceEvents([
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "b-disabled",
+      mode: "parallel",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "integration.disabled",
+      batchId: "b-disabled",
+    },
+  ]);
+  assert.equal(disabled.integration.status, "disabled");
+  assert.equal(disabled.integration.attemptedFiles, null);
+});
+
+test("integration totals accumulate across workers without double-counting diagnostics", () => {
+  const snapshot = reduceEvents([
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "b-totals",
+      mode: "parallel",
+      taskCount: 2,
+      maxParallel: 2,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "integration.applied",
+      batchId: "b-totals",
+      taskId: "t1",
+      fileCount: 2,
+    },
+    {
+      timestamp: "2024-01-01T10:00:02Z",
+      type: "integration.partial",
+      batchId: "b-totals",
+      taskId: "t2",
+      attemptedFiles: 3,
+      appliedFiles: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:03Z",
+      type: "integration.applied",
+      batchId: "b-totals",
+      taskId: "t2",
+      fileCount: 1,
+    },
+  ]);
+
+  assert.equal(snapshot.integration.status, "partial");
+  assert.equal(snapshot.integration.attemptedFiles, 5);
+  assert.equal(snapshot.integration.appliedFiles, 3);
+});
+
+test("legacy applied-only integration evidence remains unknown", () => {
+  const legacy = reduceEvents([
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "b-legacy-integration",
+      mode: "parallel",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "integration.applied",
+      batchId: "b-legacy-integration",
+      taskId: "t1",
+      fileCount: 1,
+    },
+  ]);
+  assert.equal(legacy.integration.status, "unknown");
+  assert.equal(legacy.integration.appliedFiles, 1);
+
+  const current = reduceEvents([
+    ...[
+      {
+        timestamp: "2024-01-01T10:00:00Z",
+        type: "batch.started" as const,
+        batchId: "b-current-integration",
+        mode: "parallel",
+        taskCount: 1,
+        maxParallel: 1,
+      },
+      {
+        timestamp: "2024-01-01T10:00:01Z",
+        type: "integration.applied" as const,
+        batchId: "b-current-integration",
+        taskId: "t1",
+        fileCount: 1,
+      },
+      {
+        timestamp: "2024-01-01T10:00:02Z",
+        type: "integration.completed" as const,
+        batchId: "b-current-integration",
+      },
+    ],
+  ]);
+  assert.equal(current.integration.status, "completed");
+  assert.equal(current.integration.appliedFiles, 1);
+});
+
+test("evidence failure records integration as not attempted without fabricated counts", () => {
+  const snapshot = reduceEvents([
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "b-not-attempted",
+      mode: "parallel",
+      taskCount: 2,
+      maxParallel: 2,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "integration.notAttempted",
+      batchId: "b-not-attempted",
+      reason: "evidence-failure",
+    },
+  ]);
+  assert.equal(snapshot.integration.status, "notAttempted");
+  assert.equal(snapshot.integration.attemptedFiles, null);
+  assert.equal(snapshot.integration.appliedFiles, null);
+  assert.match(snapshot.warnings.join("\n"), /not attempted/i);
+});
+
+test("policy-retained worktrees are counted without a false cleanup warning", () => {
+  const snapshot = reduceEvents([
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "b-policy-retained",
+      mode: "parallel",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "worktree.retained",
+      batchId: "b-policy-retained",
+      taskId: "t1",
+      reason: "retention-policy",
+    },
+  ]);
+
+  assert.equal(snapshot.retainedWorktrees, 1);
+  assert.deepEqual(snapshot.warnings, [
+    "Some tasks have no semantic activity label; using a positional fallback.",
+  ]);
 });

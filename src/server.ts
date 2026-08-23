@@ -31,9 +31,20 @@ import {
 } from "./contract.js";
 import { BatchRejectedError, runBatch } from "./batch.js";
 import { ContinuationStore, type ContinuationConsumeResult } from "./continuation.js";
-import { continueToLuna, delegateToLuna } from "./worker.js";
+import {
+  continueToLuna,
+  delegateToLuna,
+  reconcileParallelWorktreeEvidence,
+} from "./worker.js";
+import { collectWorktreeChanges, type WorktreeChanges } from "./git.js";
 import { WorkspaceError } from "./workspace.js";
 import { activityFailureReason, emitEvent } from "./events.js";
+import {
+  refreshWorktreeLease,
+  releaseWorktreeLease,
+  WORKTREE_LEASE_GRACE_MS,
+  type WorktreeLease,
+} from "./worktree.js";
 
 /**
  * stdout is the MCP transport. Anything written there that is not a JSON-RPC
@@ -63,9 +74,17 @@ function registerContinuation(
   input: DelegateTaskInput,
   result: DelegateTaskOutput,
   workingDirectory: string,
+  reconcileFinalGit = false,
+  worktreeLease: WorktreeLease | null = null,
 ): string | null {
   if (!result.workerThreadId) return null;
-  return continuationStore.issue(input, result.workerThreadId, workingDirectory);
+  return continuationStore.issue(
+    input,
+    result.workerThreadId,
+    workingDirectory,
+    reconcileFinalGit,
+    worktreeLease,
+  );
 }
 
 function continuationError(result: ContinuationConsumeResult): string {
@@ -80,6 +99,34 @@ function continuationError(result: ContinuationConsumeResult): string {
       return "Unknown continuation reference. It may belong to another server process or was never issued.";
     case "ready":
       return "";
+  }
+}
+
+/** Reconcile a continuation that ran inside a retained parallel worktree. */
+export async function reconcileRetainedContinuationEvidence(
+  input: DelegateTaskInput,
+  result: DelegateTaskOutput,
+  workingDirectory: string,
+  collect: (
+    workingDirectory: string,
+  ) => Promise<WorktreeChanges> = collectWorktreeChanges,
+): Promise<DelegateTaskOutput> {
+  try {
+    const changes = await collect(workingDirectory);
+    return reconcileParallelWorktreeEvidence(
+      input,
+      result,
+      workingDirectory,
+      changes.files.map((file) => ({ path: file.path, kind: file.status })),
+    );
+  } catch (error) {
+    return reconcileParallelWorktreeEvidence(
+      input,
+      result,
+      workingDirectory,
+      [],
+      `Could not read retained worktree changes: ${(error as Error).message}`,
+    );
   }
 }
 
@@ -629,6 +676,27 @@ function registerContinueTask(): void {
       }
 
       const { entry } = reserved;
+      const timeoutSeconds = entry.input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS;
+      if (entry.worktreeLease) {
+        try {
+          await refreshWorktreeLease(
+            entry.worktreeLease,
+            Date.now() + timeoutSeconds * 1000 + WORKTREE_LEASE_GRACE_MS,
+            "executing-continuation",
+          );
+        } catch (error) {
+          continuationStore.release(request.continuationReference);
+          await releaseWorktreeLease(entry.worktreeLease);
+          const message =
+            `Continuation could not start because its retained worktree lease ` +
+            `could not be refreshed: ${(error as Error).message}`;
+          log(`continue_task rejected: ${message}`);
+          return {
+            content: [{ type: "text" as const, text: message }],
+            isError: true,
+          };
+        }
+      }
       const batchId = makeSingleBatchId();
       const taskId = "t1";
       const startedAt = Date.now();
@@ -655,7 +723,7 @@ function registerContinueTask(): void {
       });
 
       try {
-        const result = await continueToLuna(entry.input, {
+        let result = await continueToLuna(entry.input, {
           workingDirectory: entry.workingDirectory,
           threadId: entry.threadId,
           instruction: request.instruction,
@@ -676,12 +744,14 @@ function registerContinueTask(): void {
               emitEvent({ type: "verification.started", batchId, taskId, commandCount }),
           },
         });
-        emitSingleCompletion(
-          batchId,
-          taskId,
-          entry.input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS,
-          result,
-        );
+        if (entry.reconcileFinalGit) {
+          result = await reconcileRetainedContinuationEvidence(
+            entry.input,
+            result,
+            entry.workingDirectory,
+          );
+        }
+        emitSingleCompletion(batchId, taskId, timeoutSeconds, result);
         recordEvent(result);
         return {
           content: [{ type: "text" as const, text: renderResult(result) }],
@@ -721,6 +791,9 @@ function registerContinueTask(): void {
           content: [{ type: "text" as const, text: message }],
           isError: true,
         };
+      } finally {
+        continuationStore.release(request.continuationReference);
+        if (entry.worktreeLease) await releaseWorktreeLease(entry.worktreeLease);
       }
     },
   );
@@ -753,9 +826,10 @@ coordination risk, and quality. Parallel execution may reduce latency, but it is
 not automatically cheaper than sequential execution. More workers are not
 automatically cheaper.
 
-Optionally give each task a useful concise activityLabel for the local activity
-view; labels are not required and should not copy the full objective or include
-sensitive details.
+Give each task a concise, non-sensitive activityLabel for the local activity view
+whenever a safe label is available. The field remains optional for compatibility:
+omit it when the work description is sensitive. Labels must be supplied
+explicitly and must never be derived from, or copy, objective text.
 
 Each fresh task may opt into automaticRepair. The runtime permits at most one
 same-thread repair and only after classifying one authoritative verification
@@ -815,6 +889,7 @@ function registerDelegateTasks(): void {
           integrate: batch.integrate,
           signal: extra?.signal,
           continuationRegistrar: registerContinuation,
+          protectedWorktreePaths: continuationStore.protectedWorkingDirectories(),
         });
         log(
           `batch done: ${result.passed}/${result.taskCount} passed in ` +
@@ -846,6 +921,26 @@ function registerDelegateTasks(): void {
 /** Render a batch result as readable text for the model's transcript. */
 export function renderBatch(batch: BatchOutput): string {
   const lines: string[] = [];
+  const compact = (value: string): string => value.replace(/\s+/g, " ").trim();
+  const verificationSummary = (result: DelegateTaskOutput): string => {
+    const authoritative = result.verification.filter(
+      (run) => run.source === "orchestrator",
+    );
+    const executed = authoritative.filter(
+      (run) => run.execution === "argv" || run.execution === "shell",
+    );
+    const refused = authoritative.filter(
+      (run) => run.execution === "rejected" || run.execution === "skipped",
+    );
+    const reported = result.verification.filter((run) => run.source === "worker");
+    const authoritativeCounts =
+      `${executed.length} executed (${executed.filter((run) => run.passed).length} passed, ` +
+      `${executed.filter((run) => !run.passed).length} failed), ${refused.length} refused`;
+    const reportedCounts =
+      `${reported.filter((run) => run.passed).length} passed, ` +
+      `${reported.filter((run) => !run.passed).length} failed`;
+    return `authoritative ${authoritativeCounts}; worker-reported ${reportedCounts}`;
+  };
 
   lines.push(
     `BATCH ${batch.batchId} | ${batch.mode} | ${batch.passed}/${batch.taskCount} passed | ` +
@@ -860,25 +955,46 @@ export function renderBatch(batch: BatchOutput): string {
       : "";
     const flag = task.result && !task.result.trustworthy ? "  ! NEEDS SCRUTINY" : "";
     lines.push(`[${task.taskId}] ${verdict}${claimed}${flag}`);
-    lines.push(`    effort: ${task.effort} - ${task.effortReason}`);
-    if (task.result) lines.push(`    change intent: ${task.result.changeIntent}`);
-    if (task.result?.continuationReference) {
-      lines.push(`    continuation reference: ${task.result.continuationReference}`);
+    const result = task.result;
+    lines.push(
+      `    model: ${result?.model ?? "unknown"} | effort: ${task.effort} | ` +
+        `duration: ${result ? `${result.durationSeconds}s` : "unknown"}`,
+    );
+    if (result) lines.push(`    verification: ${verificationSummary(result)}`);
+    if (result) lines.push(`    change intent: ${result.changeIntent}`);
+    if (result?.repair) {
+      lines.push(
+        `    repair: ${result.repair.attempted ? "attempted" : "not attempted"} | ` +
+          `${result.repair.classification} | ${compact(result.repair.reason)}`,
+      );
     }
-    lines.push(`    objective: ${task.objective.slice(0, 140)}`);
+    if (result?.continuationReference) {
+      lines.push(`    continuation: ${result.continuationReference}`);
+    }
 
-    if (task.result?.summary)
-      lines.push(`    worker summary (claim): ${task.result.summary}`);
+    if (result?.summary)
+      lines.push(`    worker summary (claim): ${compact(result.summary)}`);
     if (task.error) lines.push(`    error: ${task.error}`);
+    for (const error of result?.errors ?? [])
+      lines.push(`    runtime error: ${compact(error)}`);
 
     if (task.changedFiles.length > 0) {
       lines.push(`    changed: ${task.changedFiles.join(", ")}`);
     }
-    for (const discrepancy of task.result?.discrepancies ?? []) {
+    for (const discrepancy of result?.discrepancies ?? []) {
       lines.push(`    ! ${discrepancy}`);
     }
-    for (const violation of task.result?.scopeViolations ?? []) {
+    for (const violation of result?.scopeViolations ?? []) {
       lines.push(`    ! scope: ${violation}`);
+    }
+    for (const item of result?.reviewChecklist ?? []) {
+      lines.push(`    review: ${compact(item)}`);
+    }
+    if (result?.usage) {
+      lines.push(
+        `    usage: ${result.usage.inputTokens} in (${result.usage.cachedInputTokens} cached) ` +
+          `| ${result.usage.outputTokens} out (${result.usage.reasoningOutputTokens} reasoning)`,
+      );
     }
     if (task.worktreePath) {
       lines.push(`    worktree kept: ${task.worktreePath}`);

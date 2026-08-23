@@ -27,9 +27,10 @@ not a secret filter.
 
 Records are appended as the run progresses: batch started, completed, cancelled
 or rejected; task queued; worker started, completed, failed, cancelled or timed
-out; worktree created and removed; verification started and completed; scope
-conflicts; integration conflicts and applied file counts; and bounded repair
-started and completed.
+out; worktree created, removed or retained; verification started and completed;
+scope conflicts; integration conflicts, applied file counts, and completed,
+not-attempted, partial or failed integration; and bounded repair started and
+completed.
 
 An explicit `continue_task` turn emits the same ordinary single-task lifecycle
 events and receives a fresh completion record. The opaque continuation reference
@@ -52,7 +53,7 @@ Carried on those records:
 - Verification counts (passed, failed, refused) and the command count
 - Token usage per worker, or `null`
 - Working-directory and worktree paths, and whether a worktree was kept
-- Optional `activityLabel`
+- Optional explicit `activityLabel` (never derived from the objective)
 - Batch mode, task count and configured concurrency
 
 Deliberately **not** written to this stream:
@@ -78,12 +79,16 @@ terminal it is rendered into.
 the task contract (for example, `Update auth retries`). Unlike the objective it
 **is** persisted locally, deliberately, because the human view is close to
 useless without it — and because it is persisted it can reveal a short
-description of the delegated work. Keep it short, and omit it when the subject
-itself is sensitive.
+description of the delegated work. Provide it whenever a safe label is
+available, omit it when the subject itself is sensitive, and never derive it
+from or copy the objective.
 
-When it is absent the human view falls back to `Delegated task N`, where `N` is
-the worker's position in the run. The fallback is positional on purpose: it is
-neither derived from the objective nor from the opaque task id.
+When it is absent, the human and watch views use a safe label for the explicit
+`taskCategory` when one is present (for example, `Implementation task`). If
+both semantic fields are absent, they fall back to `Delegated task N`, where
+`N` is the worker's position in the run. A generic warning notes that the
+positional fallback was needed. None of these fallbacks is derived from the
+objective or the opaque task id.
 
 ## The two representations of a single delegation
 
@@ -110,16 +115,20 @@ always carried it.
 
 - **`sol-luna-orchestrator activity`** renders the latest run for a person: batch
   state, mode, active/total workers, elapsed time and peak concurrency, then one
-  compact block per worker with its label or fallback, model, effort, state,
-  duration, verification outcome, changed-file and check summary, and any known
-  failure reason, followed by scope and integration conflicts. It never prints
-  opaque task, batch or thread ids, worktree paths or token counts — not even on
-  failure. Those exist for machines, and crowding them into the terminal made the
-  view harder to read without making it more truthful.
+  compact block per worker with its label or safe category fallback, model,
+  effort, state, duration, verification outcome, changed-file and check summary,
+  and any known failure reason, followed by scope and integration conflicts plus
+  concise integration or retained-worktree warnings. It never prints
+  opaque task, batch or thread ids, absolute/worktree paths or token counts — not
+  even on failure. Failure diagnostics redact path-like details while preserving
+  their concise reason. Those details exist for machines, and crowding them into
+  the terminal made the view harder to read without making it more truthful.
 - **`sol-luna-orchestrator activity --json`** prints one reduced snapshot of the
   same latest run as machine-readable JSON — not the raw event lines. It is the
   fuller projection: it does include the task, batch and thread ids, worktree
-  paths, per-worker token usage and the verification and integration breakdowns.
+  paths, per-worker token usage and the verification and integration breakdowns,
+  including retained-worktree diagnostics. Older records use truthful unknown
+  or empty defaults for fields introduced later.
 
 `--watch` and `--json` cannot be combined; the CLI rejects the pair rather than
 guessing which was meant.
@@ -129,6 +138,16 @@ guessing which was meant.
 Both views reduce the whole event history to the **latest batch**, not a
 cumulative total across every run. Reduction is deterministic and tolerates
 out-of-order and non-ISO timestamps in old files.
+
+Integration diagnostics use typed `integration.completed`,
+`integration.notAttempted`, `integration.partial`, `integration.failed`, and
+`integration.disabled` events plus `worktree.retained` records. The reduced JSON
+reports an `unknown`, `completed`, `notAttempted`, `conflicted`, `partial`,
+`failed`, or `disabled` integration status, file counts when known, retained-worktree count,
+and generic warnings. Historical `integration.applied` records alone remain
+unknown because they did not prove that every attempted copy succeeded. Human
+and watch views render only concise generic warnings; they do not render command
+output, objectives, thread ids, or raw retention paths.
 
 `--watch` folds the existing history silently at startup and renders only that
 latest run, so an old log does not scroll past. It attaches its watcher before

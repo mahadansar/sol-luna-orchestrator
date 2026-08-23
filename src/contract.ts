@@ -61,9 +61,11 @@ export const delegateTaskInputShape = {
     .max(80)
     .optional()
     .describe(
-      "Optional concise label for local activity views; keep it short and useful " +
+      "Optional concise, non-sensitive label for local activity views; parents " +
+        "should provide one for each batch task when a safe label is available " +
         "(for example, 'Update auth retries'). It is persisted locally and may " +
-        "reveal this brief work description; omit it when that is not appropriate.",
+        "reveal this brief work description; omit it when that is not appropriate. " +
+        "Never derive it from the objective text.",
     ),
 
   effort: z
@@ -533,7 +535,9 @@ export const delegateTasksInputShape = {
         `mode runs at most ${MAX_PARALLEL} workers at once and queues the rest. ` +
         "Parallel tasks need disjoint scopes unless this call sets " +
         "allowOverlappingScopes:true; actual same-file edits still prevent " +
-        "automatic integration.",
+        "automatic integration. Provide each task an optional concise, non-sensitive " +
+        "activityLabel when one is safe; labels are explicit only and never derived " +
+        "from objective text.",
     ),
 
   workingDirectory: z

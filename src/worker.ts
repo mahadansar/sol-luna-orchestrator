@@ -281,10 +281,17 @@ export function parseWorkerReport(finalResponse: string): WorkerReport | null {
 const CHANGE_KIND_ALIASES: Record<string, string> = {
   added: "add",
   add: "add",
+  a: "add",
+  "??": "add",
+  "?": "add",
   modified: "update",
   update: "update",
+  m: "update",
+  r: "update",
+  c: "update",
   deleted: "delete",
   delete: "delete",
+  d: "delete",
 };
 
 const normalizeKind = (kind: string): string =>
@@ -379,7 +386,10 @@ export function buildDelegationResult({
   }
 
   // --- Scope enforcement ---------------------------------------------------
-  const touched = [...new Set([...observedRelative.keys(), ...claimedRelative])];
+  // Scope is an observation-backed contract. A claimed-only path is already a
+  // discrepancy, but it cannot prove that the worker actually crossed the
+  // boundary or make the authoritative verdict fail by itself.
+  const touched = [...observedRelative.keys()];
   const scopeViolations = findScopeViolations(
     touched,
     input.allowedFiles,
@@ -519,6 +529,207 @@ export function buildDelegationResult({
     durationSeconds,
     usage: observed.usage,
     errors,
+  };
+}
+
+/**
+ * Reconcile the final git view of an isolated worktree with the worker result.
+ *
+ * A parallel worker has two evidence sources: the Codex runtime's file-change
+ * items and the worktree's final git status. Git is authoritative for what can
+ * be integrated, so runtime-only changes are downgraded to unexplained claims
+ * and every git-observed path is represented in the nested result before the
+ * batch decides conflicts, cleanup, or review guidance.
+ */
+export function reconcileParallelWorktreeEvidence(
+  input: DelegateTaskInput,
+  result: DelegateTaskOutput,
+  workingDirectory: string,
+  changes: Array<{ path: string; kind: string }>,
+  evidenceError?: string,
+): DelegateTaskOutput {
+  const changeIntent = input.changeIntent ?? "required";
+  const runtimeObserved = new Set(
+    result.filesChanged
+      .filter((file) => file.observed)
+      .map((file) => toRelativePosix(file.path, workingDirectory)),
+  );
+  const gitChanges = new Map<string, string>();
+  for (const change of changes) {
+    gitChanges.set(
+      toRelativePosix(change.path, workingDirectory),
+      normalizeKind(change.kind),
+    );
+  }
+
+  const runtimeOnly = evidenceError
+    ? new Set<string>()
+    : new Set(
+        result.filesChanged
+          .filter((file) => file.observed)
+          .map((file) => toRelativePosix(file.path, workingDirectory))
+          .filter((file) => !gitChanges.has(file)),
+      );
+
+  const filesChanged = result.filesChanged.map((file) => {
+    const relative = toRelativePosix(file.path, workingDirectory);
+    const gitKind = gitChanges.get(relative);
+    if (evidenceError || gitKind === undefined) {
+      if (!evidenceError && runtimeOnly.has(relative) && file.observed) {
+        return { ...file, path: relative, observed: false };
+      }
+      return { ...file, path: relative };
+    }
+    return { ...file, path: relative, kind: gitKind, observed: true };
+  });
+
+  if (!evidenceError) {
+    for (const [relative, kind] of gitChanges) {
+      if (filesChanged.some((file) => file.path === relative)) continue;
+      filesChanged.push({
+        path: relative,
+        kind,
+        why: UNCLAIMED_FILE,
+        observed: true,
+      });
+    }
+  }
+
+  const evidenceDiscrepancy =
+    /^(Worker claimed edits the Codex runtime never recorded:|Runtime-observed edits were not present in the final worktree:|Change intent contract violated:|Worker claimed PASS but no file changes were recorded\.|File scope was violated:|Worktree evidence scan failed:)/;
+  const discrepancies = result.discrepancies.filter(
+    (detail) => !evidenceDiscrepancy.test(detail),
+  );
+  const errors = [...result.errors];
+
+  if (evidenceError) {
+    const detail = `Worktree evidence scan failed: ${evidenceError}`;
+    errors.push(detail);
+    discrepancies.push(detail);
+  }
+
+  const unobservedClaims = filesChanged.filter(
+    (file) => !file.observed && !runtimeOnly.has(file.path),
+  );
+  if (unobservedClaims.length > 0) {
+    discrepancies.push(
+      `Worker claimed edits the Codex runtime never recorded: ${unobservedClaims
+        .map((file) => file.path)
+        .join(", ")}`,
+    );
+  }
+  if (runtimeOnly.size > 0) {
+    discrepancies.push(
+      `Runtime-observed edits were not present in the final worktree: ${[...runtimeOnly].join(", ")}`,
+    );
+  }
+
+  // Final Git state decides what can be integrated, but it must not erase the
+  // fact that the runtime saw an edit. In particular, read-only intent is
+  // immutable even when a worker later reverts the file before exiting.
+  const observedChangePaths = new Set(
+    filesChanged.filter((file) => file.observed).map((file) => file.path),
+  );
+  for (const file of runtimeObserved) observedChangePaths.add(file);
+  const changeIntentViolation =
+    changeIntent === "forbidden" && observedChangePaths.size > 0;
+  if (changeIntentViolation) {
+    discrepancies.push(
+      `Change intent contract violated: intent is forbidden, but the runtime ` +
+        `observed edits in ${[...observedChangePaths].join(", ")}.`,
+    );
+  }
+
+  if (
+    result.workerClaimedStatus === "PASS" &&
+    filesChanged.length === 0 &&
+    changeIntent === "required"
+  ) {
+    discrepancies.push(
+      "Worker claimed PASS but no file changes were recorded. Confirm the task " +
+        "genuinely required no edits.",
+    );
+  }
+
+  const scopeViolations = findScopeViolations(
+    [...observedChangePaths],
+    input.allowedFiles,
+    input.forbiddenFiles,
+    workingDirectory,
+  );
+  if (scopeViolations.length > 0) {
+    discrepancies.push(`File scope was violated: ${scopeViolations.join("; ")}`);
+  }
+
+  let verdict = result.verdict;
+  const failedRuns = result.verification.filter(
+    (run) =>
+      run.source === "orchestrator" &&
+      !run.passed &&
+      (run.execution === "argv" || run.execution === "shell"),
+  );
+  if (
+    errors.length > 0 ||
+    failedRuns.length > 0 ||
+    scopeViolations.length > 0 ||
+    changeIntentViolation
+  ) {
+    verdict = "FAILED";
+  }
+
+  const escalationAdvice =
+    scopeViolations.length > 0
+      ? "The worker went outside its file scope. Effort is not the problem. Either widen allowedFiles deliberately, or restate the objective so the work fits the scope you intended."
+      : evidenceError
+        ? "Final worktree evidence could not be read. Preserve and inspect the retained worktree, then repair the environment or Git state before retrying."
+        : changeIntentViolation
+          ? "The worker violated the immutable read-only change intent. Inspect the retained evidence and restate or re-scope the task rather than raising effort."
+          : result.escalationAdvice;
+
+  const repair =
+    result.repair && !result.repair.attempted && scopeViolations.length > 0
+      ? {
+          ...result.repair,
+          classification: "scope-or-conflict" as const,
+          reason:
+            "Final Git worktree evidence revealed a scope violation, so automatic repair is not permitted.",
+        }
+      : result.repair && !result.repair.attempted && evidenceError
+        ? {
+            ...result.repair,
+            classification: "environment-or-tooling" as const,
+            reason:
+              "Final Git worktree evidence could not be read, so automatic repair is not permitted.",
+          }
+        : result.repair?.attempted && result.verdict === "PASS" && verdict !== "PASS"
+          ? {
+              ...result.repair,
+              reason:
+                "The automatic repair turn completed, but final Git evidence overturned its provisional PASS; control returns to the parent.",
+            }
+          : result.repair;
+
+  return {
+    ...result,
+    changeIntent,
+    verdict,
+    trustworthy: discrepancies.length === 0 && errors.length === 0,
+    filesChanged,
+    scopeViolations,
+    discrepancies,
+    errors,
+    repair,
+    escalationAdvice,
+    reviewChecklist: buildReviewChecklist(
+      input,
+      verdict,
+      result.workerClaimedStatus,
+      discrepancies,
+      result.verification.filter(
+        (run) => run.source === "orchestrator" && run.execution !== "reported",
+      ) as VerificationRun[],
+      filesChanged,
+    ),
   };
 }
 

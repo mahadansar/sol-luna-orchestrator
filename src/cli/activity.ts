@@ -85,6 +85,40 @@ function wrapParts(parts: string[], width: number): string[] {
   return lines;
 }
 
+function taskCategoryLabel(category: string | null): string | null {
+  switch (category?.trim().toLowerCase()) {
+    case "implementation":
+      return "Implementation task";
+    case "tests":
+      return "Tests task";
+    case "bugfix":
+      return "Bugfix task";
+    case "refactor":
+      return "Refactor task";
+    case "investigation":
+      return "Investigation task";
+    case "chore":
+      return "Chore task";
+    default:
+      return null;
+  }
+}
+
+/** Keep absolute and worktree paths out of terminal diagnostics. */
+function redactDiagnostic(text: string): string {
+  const quotedPath = /(["'`])((?:[A-Za-z]:[\\/]|\\\\|\/)[^"'`]*?)\1/g;
+  const pathSuffix = /[^\s"'`<>|,;:!?)]*/;
+  return text
+    .replace(
+      /(^|[\s([{:="'])(?:\.sol-luna[\\/](?:worktrees|continuation-leases)[\\/])[^\s"'`<>|,;:!?)]*/gi,
+      "$1<worktree>",
+    )
+    .replace(quotedPath, "$1<path>$1")
+    .replace(new RegExp(`[A-Za-z]:[\\\\/]${pathSuffix.source}`, "g"), "<path>")
+    .replace(new RegExp(`\\\\${pathSuffix.source}`, "g"), "<path>")
+    .replace(new RegExp(`(^|[\\s([{:="'])\\/${pathSuffix.source}`, "g"), "$1<path>");
+}
+
 /** Clear screen only when stdout is a TTY. Non-TTY gets a separator instead. */
 function clearScreen(): void {
   if (process.stdout.isTTY) {
@@ -134,7 +168,8 @@ export function renderHumanLines(
   lines.push(...wrapParts(batchParts, width), "");
 
   if (snapshot.reason) {
-    for (const [index, part] of wrapText(`Reason: ${snapshot.reason}`, width).entries()) {
+    const reasonLines = wrapText(`Reason: ${redactDiagnostic(snapshot.reason)}`, width);
+    for (const [index, part] of reasonLines.entries()) {
       lines.push(index === 0 ? part : `        ${part}`);
     }
     lines.push("");
@@ -168,7 +203,10 @@ export function renderHumanLines(
     // telemetry. An optional activity label is a deliberately persisted,
     // bounded hint; otherwise use a truthful presentation label without
     // exposing the opaque internal id or deriving text from the objective.
-    const label = worker.activityLabel?.trim() || `Delegated task ${index + 1}`;
+    const label =
+      worker.activityLabel?.trim() ||
+      taskCategoryLabel(worker.category) ||
+      `Delegated task ${index + 1}`;
     const prefix = `${marker}  `;
     const wrappedLabel = wrapText(label, width - prefix.length);
     lines.push(`${prefix}${wrappedLabel[0]}`);
@@ -246,7 +284,7 @@ export function renderHumanLines(
       reason = `${plural(verification.failed, "verification check")} failed`;
     }
     if (reason) {
-      const reasonLines = wrapText(`Reason: ${reason}`, width - 3);
+      const reasonLines = wrapText(`Reason: ${redactDiagnostic(reason)}`, width - 3);
       for (const part of reasonLines) lines.push(`   ${red(part)}`);
     }
 
@@ -257,7 +295,7 @@ export function renderHumanLines(
     if (lines.at(-1) !== "") lines.push("");
     lines.push(bold(red("SCOPE CONFLICTS")));
     for (const c of snapshot.conflicts.scope) {
-      lines.push(`- ${c}`);
+      lines.push(`- ${redactDiagnostic(c)}`);
     }
   }
 
@@ -265,7 +303,17 @@ export function renderHumanLines(
     if (lines.at(-1) !== "") lines.push("");
     lines.push(bold(red("INTEGRATION CONFLICTS")));
     for (const c of snapshot.conflicts.integration) {
-      lines.push(`- ${c}`);
+      lines.push(`- ${redactDiagnostic(c)}`);
+    }
+  }
+
+  if (snapshot.warnings.length > 0) {
+    if (lines.at(-1) !== "") lines.push("");
+    lines.push(bold(yellow("WARNINGS")));
+    for (const warning of snapshot.warnings) {
+      for (const [index, part] of wrapText(warning, width - 2).entries()) {
+        lines.push(`${index === 0 ? "- " : "  "}${part}`);
+      }
     }
   }
 
