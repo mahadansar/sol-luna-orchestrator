@@ -848,3 +848,48 @@ P1.1 were not started, and no broad hardening campaign was begun.
 - No package or lockfile version changed. No push, tag, publish, release, remote
   mutation, global Git/configuration change, credential operation, P1.1 work,
   Adaptive Effort work, or broad hardening campaign was performed.
+
+## [2026-08-24T07:29:49Z] Resolution update — second live configured concurrency limit
+
+Capability: Bounded Concurrency; live scheduler and activity evidence
+Original evidence gap: a second distinct live configured limit remained
+untested
+Status: resolved by live configured-limit evidence
+
+### Exact evidence
+
+- A fresh local MCP process started from this checkout's rebuilt
+  `dist/server.js` with `SOL_LUNA_MAX_PARALLEL=2`, distinct from the prior live
+  ceiling of 3. The Ubuntu/Linux run preserved the deliberate repo-local
+  `LUNA_SANDBOX=danger-full-access` host workaround and did not change global
+  Codex configuration.
+- Batch `bmt6wx6ibe3aq` queued four independent read-only tasks for four real
+  `gpt-5.6-luna` medium-effort workers. All four queued before execution; `t1`
+  and `t2` started first, then `t3` started exactly when `t2` completed and `t4`
+  exactly when `t1` completed. The later tasks waited 44.018 and 49.016 seconds
+  from queue to start.
+- Orchestrator-owned lifecycle events produced active counts 1, 2, 1, 2, 1, 0.
+  Peak concurrency reached configured 2 and never exceeded it. Every expected
+  task had queued, worktree-created, started, completed, and worktree-removed
+  evidence; no task disappeared.
+- The batch and reduced activity snapshot agreed on `maxParallel:2`, four tasks,
+  4 passed / 0 failed, peak 2, terminal current 0, four completed Luna workers,
+  no conflicts, and zero retained worktrees. All runtime-observed changed-file
+  sets were empty; only the main Git worktree remained, and no lease artifact or
+  worker process leaked.
+- The configured `git status --short` verification was refused because `git`
+  was not allowlisted. The results preserved that refusal and its discrepancies
+  and therefore reported `trustworthy:false`; semantic worker audit claims were
+  not used to prove scheduling. Scheduler acceptance rests on the typed event
+  stream, batch result, worktree lifecycle, and activity projection. An earlier
+  overlapping-scope submission was rejected before batch creation or worker
+  start and is not counted.
+
+### Product judgment and confidence impact
+
+No concurrency defect was observed and no runtime source changed. Combined with
+the prior live ceiling-3 run and broad current deterministic queue,
+cancellation, setup, and failure evidence, the distinct live ceiling-2 run
+closes the recorded second-limit gap and satisfies the existing Battle-tested
+definition for Bounded Concurrency. No unrelated feature is promoted; Adaptive
+Effort, P1.1, and the broader hardening campaign remain untouched.

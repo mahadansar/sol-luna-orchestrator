@@ -198,6 +198,51 @@ cancellation case passed **10/10** repeated executions, formatting and build
 passed, all nine benchmark fixtures discriminated correctly with mutation
 detection, and `git diff --check` was clean.
 
+### Focused second live configured-concurrency limit
+
+A focused live run on 2026-08-24 closed Bounded Concurrency's remaining
+second-configured-limit gap. A fresh local MCP process started from this
+checkout's rebuilt `dist/server.js` with `SOL_LUNA_MAX_PARALLEL=2`, distinct
+from the prior live ceiling of 3. The Ubuntu/Linux host retained the deliberate
+repo-local `LUNA_SANDBOX=danger-full-access` workaround because its normal Luna
+workspace sandbox is unavailable; this was host configuration, not a product
+change. The server's isolated command-line configuration and event paths did
+not alter user/global Codex configuration and remained ignored under
+`.sol-luna/`.
+
+The one worker-consuming batch, `bmt6wx6ibe3aq`, queued four independent,
+read-only investigations for four real `gpt-5.6-luna` medium-effort workers.
+All four `task.queued` events preceded any worker start. `t1` and `t2` then
+started 1 ms apart and reached active concurrency 2. `t3` started only when
+`t2` completed, after 44.018 seconds queued; `t4` started only when `t1`
+completed, after 49.016 seconds queued. Replaying the typed terminal events
+produced active counts 1, 2, 1, 2, 1, 0: peak 2 was reached and never exceeded.
+All four task ids had queued, worktree-created, started, completed, and
+worktree-removed evidence; the final event reported 4 passed / 0 failed in 106
+seconds. The reduced activity snapshot independently reported
+`maxParallel:2`, `current:0`, `peak:2`, four completed Luna workers, no
+conflicts, zero retained worktrees, and 4/0 results. Git exposed only the main
+worktree afterward, no lease artifact or worker process remained, and no source
+file changed.
+
+The configured `git status --short` verification was refused for every task
+because `git` was not in the operator verification allowlist. The structured
+results truthfully retained the refusal and corresponding discrepancies, so
+their task-level `PASS` verdicts were `trustworthy:false`; the semantic audit
+claims are not used as scheduler proof. Concurrency acceptance instead rests on
+the orchestrator-owned batch, queue, worker lifecycle, worktree, result, and
+activity evidence above, plus the runtime-observed empty changed-file sets. An
+initial contract submission had overlapping declared scopes and was rejected
+before batch creation or any worker start; it is not counted as a live run.
+No runtime concurrency defect was observed.
+
+Together with the prior live configured ceiling of 3 and the broad current
+deterministic scheduler evidence, including queue progression, cancellation,
+setup and failure paths, the distinct live ceiling-2 run now satisfies the
+existing Battle-tested definition for Bounded Concurrency. No unrelated feature
+is promoted, and Adaptive Effort, P1.1, and broader hardening remain out of
+scope.
+
 ### Earlier pre-release live acceptance campaign
 
 The final real-model campaign ran on 2026-08-24 against runtime baseline
@@ -262,7 +307,7 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
 | Sequential batches                                      | shipped                              | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong        |
 | Parallel batches                                        | shipped                              | PASS     | DEEP PASS (2026-08-24)   | DEEP PASS (2026-08-24) | Battle-tested |
 | Worktree isolation/integration                          | shipped                              | PASS     | DEEP PASS (2026-08-24)   | DEEP PASS (2026-08-24) | Battle-tested |
-| Bounded concurrency                                     | shipped                              | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong        |
+| Bounded concurrency                                     | shipped                              | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Battle-tested |
 | Adaptive effort                                         | shipped                              | PASS     | PASS (2026-08-24)        | PARTIAL (2026-08-24)   | Basic         |
 | Independent verification                                | shipped                              | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong        |
 | Claimed-vs-observed reconciliation                      | shipped                              | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong        |
@@ -445,8 +490,15 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   worktree setup, cancellation, or lease changes. **Live evidence:** final
   acceptance observed peak 3 at the published configured ceiling, with 3/3
   isolated checks, queued progress, 3 attempted/3 applied integrations, and
-  complete worktree cleanup. Live state is **PASS**, not a broader scale claim.
-- **Confidence:** **Strong**. A second live configured limit remains untested.
+  complete worktree cleanup. A distinct fresh-server run then configured 2,
+  queued 4 read-only tasks, reached but never exceeded peak 2, started the later
+  two workers only after slots opened, completed 4/4, and removed all four
+  worktrees and leases. Typed events and the reduced activity snapshot agreed
+  on configured 2, current 0, peak 2, and 4/0 results. Live state is **DEEP
+  PASS** for the repeated configured-limit evidence, not a broader scale claim.
+- **Confidence:** **Battle-tested**. Two distinct live configured limits now
+  complement broad deterministic happy, queue, cancellation, setup, and failure
+  coverage.
 
 ### Adaptive worker effort
 
