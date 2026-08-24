@@ -21,6 +21,49 @@ Only the explicitly live-model scripts (`smoke:live`, `smoke:parallel`,
 `smoke:isolation`, and `bench`) invoke real Codex turns; they may consume the
 quota or billing associated with your Codex setup.
 
+## Developing the MCP locally
+
+The normal end-user setup, `sol-luna-orchestrator init`, registers the published
+npm package. It does not switch that registration to a source checkout and
+should not be used to switch an active checkout into local development. For
+development, create an untracked `.codex/config.toml` in this repository so
+Codex sessions started here override the global registration while leaving the
+normal installation intact:
+
+```toml
+[mcp_servers.sol-luna-orchestrator]
+command = "<absolute-path-to-node>"
+args = ["<absolute-path-to-checkout>/dist/server.js"]
+tool_timeout_sec = 3600
+default_tools_approval_mode = "approve"
+startup_timeout_sec = 30
+
+[mcp_servers.sol-luna-orchestrator.env]
+SOL_LUNA_LOG = "<codex-home>/sol-luna-orchestrator.log"
+SOL_LUNA_EVENTS = "<codex-home>/sol-luna-orchestrator.events.jsonl"
+SOL_LUNA_SERVER_NAME = "sol-luna-orchestrator"
+```
+
+Use absolute paths for both the Node executable and `dist/server.js`; on
+Windows, forward slashes avoid TOML backslash escaping. Find Node with
+`command -v node` on Linux or macOS, or `where.exe node` on Windows. Keep this
+machine-specific config out of commits by following the repository's local
+ignore policy (add `.codex/` to `.git/info/exclude` if it is not already
+there); do not commit it.
+
+The development loop is: change source → `npm run build` → confirm the
+repo-local config points at this checkout's `dist/server.js` → start a fresh
+Codex session from this repository → Codex runs the local MCP build.
+`npm run build` only rebuilds the checkout; it does not change which MCP Codex
+launches. After changing runtime source, run `npm run build`. After rebuilding
+runtime code or changing MCP configuration, start a fresh session as required
+by [Step 0 of live model-backed acceptance](#acceptance-procedure).
+
+To verify what Codex will launch, run
+`codex mcp get sol-luna-orchestrator` from this repository and inspect the
+effective `command` and `args`. The server argument must be this checkout's
+absolute `dist/server.js` path, not a path under a global `node_modules`.
+
 ## Ground rules
 
 **Verify against the real thing, not the documentation.** Several behaviours in
