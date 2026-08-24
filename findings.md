@@ -893,3 +893,61 @@ cancellation, setup, and failure evidence, the distinct live ceiling-2 run
 closes the recorded second-limit gap and satisfies the existing Battle-tested
 definition for Bounded Concurrency. No unrelated feature is promoted; Adaptive
 Effort, P1.1, and the broader hardening campaign remain untouched.
+
+## [2026-08-24T08:30:17Z] Resolution update — natural batching and adaptive effort
+
+Capability: Natural discovery; adaptive routing; adaptive effort
+Original evidence gap: no natural batch and only one naturally selected worker
+effort level
+Status: resolved by six fresh-parent attempts
+
+### Exact evidence
+
+- Six materially different ordinary read-only repository prompts ran in
+  genuinely fresh ephemeral GPT-5.6 Sol / medium parent sessions. The prompts did
+  not name Sol-Luna, Luna, delegation, workers, routing, effort, or MCP discovery.
+  Each parent naturally consulted the configured guidance; dedicated MCP logs
+  prove a checkout-local server connection for every attempt.
+- Parents `01a032bd-8184-7be0-b8b7-443aae398e63`,
+  `01a032bf-1f8d-7612-8137-c50b146623c8`, and
+  `01a032c2-39a7-7d63-be0c-714ad91c89ed` chose zero workers for respectively a
+  small CLI/README parity check, one tightly coupled contradiction path, and one
+  cancellation state-machine audit. All three choices were defensible and all
+  three completed read-only reports without task events.
+- Parent `01a032c8-927d-7602-8301-4d49e83f9329` naturally chose a three-task
+  parallel release-readiness batch. Batch `bmt6y5ebj4olo` recorded three
+  concurrent real `gpt-5.6-luna` high-effort starts, 2 PASS / 1 FAILED, zero
+  observed edits, integration disabled, and retained review evidence. The parent
+  independently scrutinized the mixed results. Its initial overlapping-scope
+  contract was rejected before execution; a read-only overlap override was then
+  explicit and sensible. A later same-thread continuation preserved high effort
+  and failed closed on a scope violation.
+- Parent `01a032d6-56ae-7d51-b6a7-281ac86ba7de` naturally chose one high-effort
+  Luna task for a cross-surface privacy audit. Batch `bmt6yo0fp5mqy` recorded one
+  PASS/trustworthy completion, no discrepancies or scope violations, and zero
+  edits before independent parent review.
+- Parent `01a032dd-2aa0-7a52-af37-aff8b77a2736` naturally split an
+  environment-variable traceability inventory into two parallel tasks. Batch
+  `bmt6yy5l0cjtb` selected medium for the mechanical documentation mapping and
+  high for cross-file test-coverage judgment. Typed queued/started/completed
+  events recorded both real Luna tasks, 2 PASS / 0 FAILED, zero edits, and
+  integration disabled. Both selections plausibly matched intrinsic task
+  difficulty.
+- The portfolio stopped at attempt 6 under the predeclared anti-gaming rule:
+  natural medium/high variation and a meaningful natural batch were both
+  established. Four additional materially different prompts had been fixed in
+  advance but were not executed.
+- Raw parent JSONL, final responses, per-attempt diagnostic logs, structured MCP
+  results, and event streams are retained locally under ignored
+  `.sol-luna/acceptance/adaptive-routing-2026-08-24/`.
+
+### Product judgment and confidence impact
+
+No routing-policy or runtime source change was needed. Natural routing now has
+current representative zero-worker, single, and parallel-batch behavior; no
+fresh sequential batch was observed, so a complete natural routing ladder is not
+claimed. Adaptive Effort now has genuinely natural, task-plausible medium and
+high selections and advances from PARTIAL/Basic to PASS/Strong under the existing
+ledger definition. The natural-batch evidence gap is closed. No xhigh or max
+selection, unrelated capability promotion, P1.1 work, or broad hardening campaign
+is claimed.

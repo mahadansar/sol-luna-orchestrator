@@ -243,6 +243,46 @@ existing Battle-tested definition for Bounded Concurrency. No unrelated feature
 is promoted, and Adaptive Effort, P1.1, and broader hardening remain out of
 scope.
 
+### Focused adaptive-routing acceptance
+
+A focused Linux live pass on 2026-08-24 closed those two evidence gaps without
+changing runtime source or routing guidance. Six genuinely fresh ephemeral
+Codex parents ran ordinary read-only repository tasks using GPT-5.6 Sol at
+medium parent effort, the checkout-local MCP, dedicated diagnostic/event paths,
+and the deliberate repo-local `LUNA_SANDBOX=danger-full-access` Ubuntu
+workaround. None of the six task prompts named Sol-Luna, Luna, delegation,
+workers, routing, effort, or MCP discovery.
+
+| Parent thread                          | Task shape                                           | Natural route  | Orchestrator-owned result                                                                                               | Judgment                                                                                                                                    |
+| -------------------------------------- | ---------------------------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `01a032bd-8184-7be0-b8b7-443aae398e63` | Small CLI/README parity check                        | Solo           | MCP connected; no task events; parent PASS                                                                              | Sensible zero-worker choice                                                                                                                 |
+| `01a032bf-1f8d-7612-8137-c50b146623c8` | One tightly coupled verification-contradiction trace | Solo           | MCP connected; no task events; parent PASS                                                                              | Sensible zero-worker choice                                                                                                                 |
+| `01a032c2-39a7-7d63-be0c-714ad91c89ed` | Cross-module cancellation lifecycle audit            | Solo           | MCP connected; no task events; parent PASS                                                                              | Sensible because the requested boundaries formed one state machine                                                                          |
+| `01a032c8-927d-7602-8301-4d49e83f9329` | Three-stream release-readiness review                | Parallel batch | Batch `bmt6y5ebj4olo`: three concurrent high-effort Luna starts; 2 PASS / 1 FAILED; no edits; independent parent review | Sensible batch; an initial overlapping-scope contract was rejected, then explicitly accepted for read-only scopes with integration disabled |
+| `01a032d6-56ae-7d51-b6a7-281ac86ba7de` | Cross-surface privacy audit                          | Single         | Batch `bmt6yo0fp5mqy`: one high-effort Luna PASS/trustworthy, zero edits                                                | Sensible single bounded investigation                                                                                                       |
+| `01a032dd-2aa0-7a52-af37-aff8b77a2736` | Environment-variable traceability inventory          | Parallel batch | Batch `bmt6yy5l0cjtb`: concurrent medium/high Luna starts, 2 PASS / 0 FAILED, zero edits                                | Sensible split; documentation mapping was mechanical while coverage judgment was broader                                                    |
+
+Every parent naturally consulted the configured guidance before its routing
+decision. The three solo attempts are supported by the fresh-parent transcripts
+and dedicated MCP connection logs; delegated attempts additionally have typed
+queued, started, completed, worktree, integration, and batch events. Attempt 4's
+three initial tasks all selected `high`; its explicit same-thread continuation
+preserved `high` and failed closed on a scope violation. Attempt 5 selected one
+`high`. Attempt 6 independently selected `medium` for a mechanical documentation
+inventory and `high` for cross-file coverage judgment; both started as real
+GPT-5.6 Luna tasks and passed with no observed edits. The effort variation is
+therefore natural and plausible, not inferred from prose or supplied by the
+acceptance driver.
+
+The focused pass stopped after attempt 6 because it had both a meaningful
+natural batch and two naturally selected worker-effort levels. Natural routing
+now has current representative zero-worker, single, and parallel-batch evidence.
+No fresh parent selected a sequential batch in this portfolio, so this is not a
+claim of a complete natural sequential/parallel ladder. Adaptive effort advances
+to live **PASS** and **Strong** confidence under the ledger's existing definition.
+Raw transcripts, diagnostic logs, structured results, and event streams are
+retained under ignored `.sol-luna/acceptance/adaptive-routing-2026-08-24/`.
+
 ### Earlier pre-release live acceptance campaign
 
 The final real-model campaign ran on 2026-08-24 against runtime baseline
@@ -308,7 +348,7 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
 | Parallel batches                                        | shipped                              | PASS     | DEEP PASS (2026-08-24)   | DEEP PASS (2026-08-24) | Battle-tested |
 | Worktree isolation/integration                          | shipped                              | PASS     | DEEP PASS (2026-08-24)   | DEEP PASS (2026-08-24) | Battle-tested |
 | Bounded concurrency                                     | shipped                              | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Battle-tested |
-| Adaptive effort                                         | shipped                              | PASS     | PASS (2026-08-24)        | PARTIAL (2026-08-24)   | Basic         |
+| Adaptive effort                                         | shipped                              | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong        |
 | Independent verification                                | shipped                              | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong        |
 | Claimed-vs-observed reconciliation                      | shipped                              | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong        |
 | Context Capsule v2                                      | shipped v0.7.0                       | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong        |
@@ -366,14 +406,14 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   2026-08-14 scale records show 0/6 free-choice runs delegated and all 6
   passed, but later guidance, batch, evidence, repair, continuation, and
   pricing changes mean this is historical routing evidence, not a current
-  closure result. Fresh live **PASS** now records two genuinely fresh parents
-  consulting guidance and deliberately choosing zero workers, plus a third
-  fresh parent choosing one worker for a broader task; this distinguishes
-  informed solo routing from MCP non-discovery.
+  closure result. Fresh live **PASS** now records six genuinely fresh parents
+  consulting guidance and choosing among zero workers, one worker, and parallel
+  batches; this distinguishes informed solo routing from MCP non-discovery.
 - **Dependencies/retest triggers:** parent guidance, tool descriptions, cost
   semantics, batch semantics, or routing changes; rerun a fresh-session
-  acceptance and the scale/adaptive benchmark. **Gap:** no natural batch choice
-  was observed within three materially different fresh-parent attempts.
+  acceptance and the scale/adaptive benchmark. A natural sequential batch was
+  not observed, but the prior natural-batch gap is closed by two meaningful
+  parallel choices.
 - **Confidence:** **Strong**.
 
 ### Single delegation
@@ -509,13 +549,19 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
 - **Evidence:** Coverage and targeted deterministic execution **PASS** on
   2026-08-24. Historical benchmark evidence is **STALE**: 2026-08-14 records show
   per-task medium/high/xhigh choices and no max selection, but later
-  prompt/schema/evidence changes affect freshness. A current fresh parent
-  naturally selected high effort for a broad cross-module audit.
+  prompt/schema/evidence changes affect freshness. Current fresh-parent live
+  evidence naturally selected high effort for a broad cross-module audit, three
+  independent release-readiness streams, and a cross-surface privacy audit. A
+  separate environment-variable traceability task naturally split into a
+  medium-effort mechanical documentation inventory and a high-effort focused-test
+  coverage audit; typed events prove both real Luna starts and 2/2 PASS with no
+  observed edits.
 - **Dependencies/retest triggers:** effort ladder/default, worker prompt/schema,
-  continuation/repair attempt rules, or model support changes. **Live gap:** the
-  other current medium-effort live tasks were caller-selected, so they do not
-  prove natural adaptation across two worker effort levels. Live is **PARTIAL**.
-- **Confidence:** **Basic**.
+  continuation/repair attempt rules, parent routing guidance, or model support
+  changes. Live is **PASS**: medium and high were selected naturally for
+  materially different, plausibly matched subtasks. No xhigh or max selection is
+  claimed.
+- **Confidence:** **Strong**.
 
 ### Independent verification
 
@@ -656,14 +702,16 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   2026-08-24 for installation, opt-out, override, and guidance behavior. The
   committed live record reports one 2026-08-22 fresh-session run found the
   orchestrator unprompted, but its transcript and diagnostic evidence were not
-  retained, so it was previously **PARTIAL**. Current live **PASS** records three
-  fresh-parent run and worker identifiers: two informed solo choices and one
-  unprompted high-effort Luna delegation with independent parent review. Raw
-  JSONL transcripts were session-local and are not committed.
+  retained, so it was previously **PARTIAL**. Current live **PASS** records six
+  fresh-parent run and worker identifiers whose informed routing decisions span
+  zero workers, one high-effort Luna task, a three-task high-effort parallel
+  batch, and a mixed medium/high two-task parallel batch, each with independent
+  parent review. Raw JSONL transcripts are retained locally under the ignored
+  acceptance-artifact path and are not committed.
 - **Dependencies/retest triggers:** global instruction-file selection, hint text,
   Codex startup/discovery behavior, parent guidance, or init/uninstall changes.
-  **Gap:** no fresh parent naturally selected sequential or parallel batching
-  within the three-attempt limit.
+  **Gap:** no fresh parent naturally selected sequential batching; natural
+  parallel batching now has current representative evidence.
 - **Confidence:** **Strong**.
 
 ### Explicit Change Intent
