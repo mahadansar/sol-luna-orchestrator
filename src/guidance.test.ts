@@ -618,7 +618,10 @@ test("human pricing example is dated and distinct from durable runtime policy", 
 });
 
 test("release guidance creates a verified non-draft release after publishing", async () => {
-  const contributing = await readDoc("CONTRIBUTING.md");
+  const [contributing, agents] = await Promise.all([
+    readDoc("CONTRIBUTING.md"),
+    readDoc("AGENTS.md"),
+  ]);
   const version = contributing.indexOf("npm version <x.y.z> --no-git-tag-version");
   const tag = contributing.indexOf("Create the annotated release tag");
   const publish = contributing.indexOf("tag-triggered publish succeeds");
@@ -636,4 +639,20 @@ test("release guidance creates a verified non-draft release after publishing", a
     /Prepare and review the intended GitHub Release body[\s\S]*transiently[\s\S]*do not commit a second release-body source/i,
   );
   assert.doesNotMatch(contributing, /RELEASE_NOTES\.md/);
+
+  const releaseHeading = agents.indexOf("## Release discipline");
+  assert.ok(releaseHeading >= 0);
+  const releaseGuidance = agents.slice(releaseHeading);
+  const agentPublish = releaseGuidance.search(
+    /tag-matching OIDC\s+workflow publish successfully/i,
+  );
+  const agentRelease = releaseGuidance.search(/create a non-draft GitHub Release/i);
+  assert.ok(agentPublish >= 0 && agentPublish < agentRelease);
+  assert.match(releaseGuidance, /existing remote tag/i);
+  assert.match(releaseGuidance, /--verify-tag/);
+  assert.doesNotMatch(releaseGuidance, /GitHub Release draft|\b--draft\b/i);
+  assert.match(
+    releaseGuidance,
+    /GitHub Release body transiently[\s\S]*do not commit a separate release body/i,
+  );
 });

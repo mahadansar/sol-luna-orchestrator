@@ -60,7 +60,7 @@ Do not publish from a branch or pull request. Maintainers bump `package.json` an
 the lockfile, update [`CHANGELOG.md`](CHANGELOG.md), and prepare the intended
 GitHub Release body transiently; do not commit a separate release body. After
 green CI on `main`, tag the exact validated commit and let the tag-matching OIDC
-workflow publish. Only then create the GitHub Release draft against the existing
-remote tag; CLI automation must use `--verify-tag`. See
+workflow publish successfully. Only then create a non-draft GitHub Release
+against the existing remote tag; CLI automation must use `--verify-tag`. See
 [`CONTRIBUTING.md`](CONTRIBUTING.md) for the detailed release workflow. Never add
 npm tokens or publish secrets.
