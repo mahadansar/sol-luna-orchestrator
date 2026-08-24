@@ -8,6 +8,12 @@ All notable changes to this project are documented here. Format follows
 
 ### Fixed
 
+- Cancelled worker results are now terminal for continuation eligibility, so a
+  retained diagnostic worktree does not receive a continuation reference or
+  keep a continuation lease after cancellation.
+- Retained-continuation reconciliation now ignores the unchanged,
+  orchestrator-owned shared dependency link while still reporting a replaced
+  directory or retargeted link as observed evidence.
 - Defined `SOL_LUNA_KEEP_WORKTREES=never` as absolute for intentional retention,
   including conflicts, disabled or partial integration, evidence failures, and
   worktree-bound continuations. Continuation references and leases now agree

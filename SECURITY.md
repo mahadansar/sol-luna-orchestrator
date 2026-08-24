@@ -14,8 +14,9 @@ which is private, or a regular
 problem is not sensitive. Please include the orchestrator version, your platform
 and Node version, and a reproduction.
 
-**Redact before you send.** Logs and event files can contain repository paths,
-file contents and command output. Strip anything you would not publish.
+**Redact before you send.** Logs, event files and tool-result evidence can
+contain repository paths, model-supplied text, source details or command output.
+Strip anything you would not publish.
 
 There is no bounty programme and no formal SLA; this is a solo project. Expect an
 acknowledgement rather than an immediate fix.
@@ -143,9 +144,9 @@ after expiry.
 They hold different things, which matters when deciding what is safe to share:
 
 - **`SOL_LUNA_LOG`** is the human-readable diagnostics log. It records
-  objectives, file paths and **verification command output**. That output is
-  truncated but not sanitised, so if a test suite prints a secret, the log will
-  contain it. Treat it as sensitive.
+  objective previews for single delegations, paths, thread ids, verdicts and
+  errors. Verification command output is returned in tool-result evidence, not
+  copied into this file. Treat the log as sensitive even without command output.
 - **`SOL_LUNA_EVENTS`** is the structured stream `activity` reads, and the
   deliberately less sensitive of the two. Its schema carries opaque task and
   batch ids, effort, category, verdicts, model, durations, token counts,
@@ -156,6 +157,13 @@ They hold different things, which matters when deciding what is safe to share:
   command output; only a short failure reason may surface from a failed check.
   Paths, labels and failure reasons may themselves be revealing.
   [Observability](docs/OBSERVABILITY.md) documents the full shapes.
+
+Current activity writers exclude objectives and task context. Historical JSONL
+retained from pre-hardening versions may still contain older schema fields,
+including objectives; the current reader dropping such fields does not erase
+them from disk. Rotate old files if their contents should no longer be retained.
+Diagnostic logs and tool-result evidence remain more sensitive than current
+activity telemetry.
 
 Only control characters are stripped, from both — enough to stop a crafted
 string forging a log line, not a secret filter. Keep both outside the

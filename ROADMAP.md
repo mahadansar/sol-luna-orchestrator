@@ -137,7 +137,8 @@ Depends on P2.3 and the completed routing, context, and handoff primitives.
 Visible but lower priority and not actively implemented:
 
 - Sandboxed verification, if Codex exposes a suitable mechanism.
-- Live end-to-end verification on Linux and macOS beyond deterministic CI.
+- Broader live end-to-end platform coverage, especially macOS and Linux without
+  the documented trusted-development sandbox workaround.
 - Fixtures larger than one supervisor session.
 - Characterisation of slow-worker tails in parallel batches.
 - Comparison of supervisor effort levels when the evidence justifies the usage.

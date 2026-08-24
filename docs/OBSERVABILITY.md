@@ -12,9 +12,10 @@ Two separate local files, holding deliberately different things.
 
 1. **Diagnostic log (`SOL_LUNA_LOG`)** — line-oriented human-readable
    diagnostics for the server itself: client connections, each delegation as it
-   starts and finishes, thread ids, durations, and verification activity. It
-   records **objectives, file paths and verification command output**; output is
-   truncated.
+   starts and finishes, objective previews for single delegations, working
+   directories, thread ids, durations, verdicts, and errors. Verification
+   command output is returned in tool-result evidence; it is not copied into
+   this diagnostic log.
 2. **Activity event stream (`SOL_LUNA_EVENTS`)** — an append-only JSONL file of
    structured orchestration records. This is what `sol-luna-orchestrator activity`
    reads.
@@ -82,6 +83,12 @@ optional legacy fields are dropped rather than trusted, and strings are stripped
 of control characters again on read, so a crafted event cannot rewrite the
 terminal it is rendered into.
 
+Current writers omit objectives and task context, but an activity file retained
+from a pre-hardening version may still contain older schema fields such as an
+objective. Rotate or remove historical JSONL if that older local content is too
+sensitive to retain. The current reader validates and drops unsupported fields;
+it does not rewrite the file on disk.
+
 ### activityLabel
 
 `activityLabel` is optional, concise, and supplied explicitly by the parent in
@@ -104,7 +111,7 @@ objective or the opaque task id.
 Current behaviour, and the thing most likely to trip up anyone parsing the JSONL
 directly.
 
-A single `delegate_task` call is written **twice**:
+A normally returned `delegate_task` result is written **twice**:
 
 - as typed lifecycle events — a synthetic single-mode batch (`mode: "single"`,
   `taskCount: 1`, task id `t1`) plus the worker records, and
@@ -112,7 +119,8 @@ A single `delegate_task` call is written **twice**:
   effort, attempt, verdict, trustworthiness, thread id, duration, and counts of
   changed files, scope violations and discrepancies.
 
-A `delegate_tasks` batch writes typed events only.
+A rejected call or a failure before a normal result has typed lifecycle evidence
+only. A `delegate_tasks` batch also writes typed events only.
 
 `activity` is unaffected — the typeless line fails event validation and is
 dropped, so the CLI counts each delegation once. A consumer reading the raw file

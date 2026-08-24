@@ -656,3 +656,39 @@ test("release guidance creates a verified non-draft release after publishing", a
     /GitHub Release body transiently[\s\S]*do not commit a separate release body/i,
   );
 });
+
+test("current documentation distinguishes diagnostics, activity privacy, and legacy files", async () => {
+  const [observability, security] = await Promise.all([
+    readDoc("docs/OBSERVABILITY.md"),
+    readDoc("SECURITY.md"),
+  ]);
+
+  for (const text of [observability, security]) {
+    assert.match(
+      text,
+      /Verification\s+command output[\s\S]*tool-result evidence[\s\S]*not\s+copied/i,
+    );
+    assert.match(text, /pre-hardening/i);
+    assert.match(text, /objective/i);
+    assert.match(text, /current activity writers exclude|current writers omit/i);
+  }
+  assert.match(
+    observability,
+    /normally returned `delegate_task` result[\s\S]*written \*\*twice\*\*/i,
+  );
+  assert.match(observability, /failure before a normal result[\s\S]*typed/i);
+});
+
+test("acceptance ledger owns the current post-release baseline", async () => {
+  const acceptance = await readDoc("docs/FEATURE_ACCEPTANCE.md");
+  assert.match(acceptance, /package version remains `0\.9\.0`/i);
+  assert.match(acceptance, /current main runtime is not identical to that tag/i);
+  assert.match(acceptance, /\*\*472\/472 tests\*\*/);
+  assert.match(acceptance, /## Current capability matrix/);
+  assert.match(acceptance, /Parallel batches[\s\S]*Battle-tested/);
+  assert.match(acceptance, /Worker Continuation[\s\S]*Battle-tested/);
+  assert.match(acceptance, /no fresh parent[\s\S]*sequential batch/i);
+  assert.match(acceptance, /No natural `xhigh` or `max` selection is claimed/i);
+  assert.doesNotMatch(acceptance, /findings\.md/i);
+  assert.doesNotMatch(acceptance, /runtime is unchanged from/i);
+});

@@ -141,7 +141,7 @@ authoritative presentation of the required keys, values, and failure rationale.
 | Variable                          | Default                 | Purpose                                                           |
 | --------------------------------- | ----------------------- | ----------------------------------------------------------------- |
 | `LUNA_MODEL`                      | `gpt-5.6-luna`          | Worker model                                                      |
-| `LUNA_TIMEOUT_SECONDS`            | `1800`                  | Wall-clock budget per delegated task                              |
+| `LUNA_TIMEOUT_SECONDS`            | `1800`                  | Wall-clock budget per worker turn                                 |
 | `LUNA_VERIFY_TIMEOUT_SECONDS`     | `600`                   | Wall-clock budget per independently rerun verification command    |
 | `LUNA_SANDBOX`                    | `workspace-write`       | Codex sandbox mode for workers                                    |
 | `LUNA_NETWORK_ACCESS`             | off                     | `1` allows workers network access                                 |
@@ -321,7 +321,7 @@ real Codex sessions with real parent and Luna turns.
 | Platform       | Deterministic CI | Live Codex delegation | Notes                                                                       |
 | -------------- | ---------------- | --------------------- | --------------------------------------------------------------------------- |
 | **Windows 11** | Verified         | **Verified**          | Single + parallel delegation, worktree lifecycle, CLI lifecycle, benchmarks |
-| **Linux**      | Verified         | Not yet run           | `ubuntu-latest`, GitHub-hosted                                              |
+| **Linux**      | Verified         | **Verified**          | Ubuntu acceptance used the trusted-development sandbox workaround below     |
 | **macOS**      | Verified         | Not yet run           | `macos-latest`, GitHub-hosted                                               |
 
 Platform-specific behaviour is exercised by real code paths rather than mocked:
@@ -332,6 +332,10 @@ Windows uses junctions and `taskkill /T` for process-tree cleanup; POSIX uses
 directory symlinks and process-group kills.
 
 What that means in practice: the code paths that differ per platform are proven
-on all three, but only Windows has been driven end to end with a live model.
-Treat Linux and macOS as expected-to-work with the mechanics verified, rather
-than as proven end to end.
+on all three. Windows and Linux have also been driven end to end with live
+models; macOS has not. The accepted Ubuntu host could not run nested Codex
+`workspace-write` workers because AppArmor blocked the required bwrap/user-
+namespace setup, so its repo-local development MCP explicitly used
+`LUNA_SANDBOX=danger-full-access`. That is live product evidence under a
+qualified trusted-development configuration, not proof that the normal Luna
+sandbox works on every Linux host. See [Troubleshooting](TROUBLESHOOTING.md#luna-commands-fail-with-bwrap--rtm_newaddr-on-ubuntu).

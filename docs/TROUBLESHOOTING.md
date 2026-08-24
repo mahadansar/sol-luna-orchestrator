@@ -52,6 +52,20 @@ narrowly designed, administrator-managed AppArmor policy may be an advanced
 alternative, but the orchestrator does not install or modify host security
 policy.
 
+## Cleaning up a retained worktree manually
+
+Prefer orchestrator-managed cleanup and stale-worktree pruning. Do not blindly
+run `git worktree remove --force` on an orchestrator worktree while its shared
+dependency link is present: `SOL_LUNA_WORKTREE_LINK` points at the source
+checkout rather than a copy, and raw recursive Git cleanup can damage that
+shared target on some platforms.
+
+Never remove an active or continuation-owned worktree. If manual cleanup of an
+unleased retained worktree is unavoidable, first unlink the configured shared
+dependency entry inside that worktree, then remove the worktree. The runtime's
+link-aware cleanup follows this order, and source dependency survival is covered
+by deterministic worktree tests.
+
 ## Recovering a broken configuration
 
 Start with `sol-luna-orchestrator doctor`. It checks the Node range, git and

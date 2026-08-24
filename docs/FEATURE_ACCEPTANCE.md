@@ -1,15 +1,84 @@
-# Feature acceptance ledger
+# Feature Acceptance Ledger
 
-Living verification ledger for the material behavior released as `v0.9.0` at
-`b38acae33ca8d52740af6e9a0fdc2cf376f08075` (2026-08-23). The executable
-runtime is unchanged from `6d610b37c277f7c6875627572306585b8f219a45`; the
-intervening commits are documentation and release preparation. `CHANGELOG.md` is the
-source of truth for released behavior; `ROADMAP.md` is used here only to label
-unreleased implementation and future work. This ledger does not promote roadmap
-items to shipped features. The live/model-backed acceptance procedure and run
-template are maintained in [CONTRIBUTING](../CONTRIBUTING.md); this file records
-the resulting evidence, freshness, and confidence rather than repeating that
-procedure.
+This is the authoritative current capability, evidence, freshness, and
+confidence ledger for the repository. The package version remains `0.9.0`, whose
+release tag is `b38acae33ca8d52740af6e9a0fdc2cf376f08075` (2026-08-23), but the
+current main runtime is not identical to that tag. Main contains unreleased
+post-v0.9.0 hardening changes to cancellation continuation eligibility,
+retained-continuation dependency-link reconciliation, and worktree retention
+precedence/finalization. Shipped history belongs in `CHANGELOG.md`; future work
+belongs in `ROADMAP.md`.
+
+## Current baseline
+
+- **Runtime baseline:** commit-relative current main after the post-v0.9.0
+  hardening changes above. Package and lockfile versions remain `0.9.0`.
+- **Latest full deterministic validation:** `npm run verify` passed on
+  2026-08-24 with **472/472 tests**, no failures or skips, plus typecheck and the
+  deterministic MCP protocol smoke test.
+- **Current native platform evidence:** deterministic CI covers Windows, Linux,
+  and macOS. Focused Linux/POSIX symlink, dependency-link, and process-group
+  paths passed natively. Live Codex delegation has representative Windows and
+  Linux evidence; the accepted Ubuntu runs used the documented repo-local
+  `LUNA_SANDBOX=danger-full-access` trusted-development workaround.
+- **Live-evidence boundary:** published-v0.9.0 and earlier pre-release live runs
+  remain historical evidence. They support unchanged behavior, but do not by
+  themselves prove the later cancellation, reconciliation, or retention-policy
+  semantics. Those changed seams have current deterministic regression evidence.
+
+## Current capability matrix
+
+| Capability                                              | Coverage | Deterministic | Live evidence | Confidence    |
+| ------------------------------------------------------- | -------- | ------------- | ------------- | ------------- |
+| Zero-worker/adaptive delegation                         | PASS     | PASS          | PASS          | Strong        |
+| Single delegation                                       | PASS     | PASS          | PASS          | Strong        |
+| Sequential batches                                      | PASS     | PASS          | PASS          | Strong        |
+| Parallel batches                                        | PASS     | DEEP PASS     | DEEP PASS     | Battle-tested |
+| Worktree isolation/integration                          | PASS     | DEEP PASS     | DEEP PASS     | Battle-tested |
+| Bounded concurrency                                     | PASS     | PASS          | DEEP PASS     | Battle-tested |
+| Adaptive effort                                         | PASS     | PASS          | PASS          | Strong        |
+| Independent verification                                | PASS     | PASS          | DEEP PASS     | Strong        |
+| Claimed-vs-observed reconciliation                      | PASS     | PASS          | DEEP PASS     | Strong        |
+| Context Capsule v2                                      | PASS     | PASS          | PASS          | Strong        |
+| Compact Evidence Packets                                | PASS     | PASS          | DEEP PASS     | Strong        |
+| CLI lifecycle                                           | PASS     | PASS          | PASS          | Strong        |
+| Activity, observability, and privacy                    | PASS     | PASS          | DEEP PASS     | Strong        |
+| Natural discovery                                       | PASS     | PASS          | PASS          | Strong        |
+| Explicit Change Intent                                  | PASS     | PASS          | DEEP PASS     | Strong        |
+| Worker Continuation                                     | PASS     | DEEP PASS     | DEEP PASS     | Battle-tested |
+| Bounded Repair                                          | PASS     | PASS          | DEEP PASS     | Strong        |
+| P1.0 parent/pricing foundation                          | PASS     | PASS          | N/A           | Strong        |
+| `failureCauses` and verification contradiction handling | PASS     | PASS          | PASS          | Strong        |
+
+Dates, provenance, dependencies, and retest triggers are recorded below. A live
+status can combine historical evidence for unchanged behavior with current
+deterministic evidence for a later changed seam; the detailed record says when
+that distinction matters.
+
+## Current known evidence gaps and non-claims
+
+- No fresh parent in the current natural-routing portfolio selected a sequential
+  batch. Sequential execution itself has current deterministic and live
+  acceptance; this is a routing evidence boundary, not a defect or blocker.
+- Natural adaptive-effort evidence covers materially different `medium` and
+  `high` selections. No natural `xhigh` or `max` selection is claimed, and those
+  optional observations are not required for Strong confidence.
+- No fresh whole-system native coverage report was produced after the
+  post-v0.9.0 runtime changes. The latest coverage percentages belong to the
+  earlier v0.9.0 campaign; the current 472-test deterministic suite is green.
+- Raw transcripts, diagnostic logs, event streams, and some structured live
+  results are session-local and intentionally uncommitted. The ledger preserves
+  their reviewed conclusions, not durable raw artifacts.
+- There is no broad durable model-backed OS matrix. macOS has deterministic CI
+  but no current live delegation record; accepted Ubuntu live runs required the
+  documented trusted-development sandbox workaround.
+- Retention modes, continuation expiry, verification refusal/timeout, and
+  deceptive worker-claim variants have broader deterministic than live coverage.
+  These are evidence limits, not known product defects.
+
+**Confirmed current product defects:** none. **Product-validation blockers from
+the completed post-v0.9.0 hardening work:** none. Optional future work remains in
+`ROADMAP.md`; this ledger does not promote or implement it.
 
 ## How to read this ledger
 
@@ -39,13 +108,20 @@ Evidence status vocabulary is intentionally small: **N/A**, **NOT TESTED**,
 
 Coverage means a test or artifact exists. Execution means that it actually ran;
 a test file alone is not execution evidence. Freshness means the evidence still
-matches the implementation and dependencies at this runtime baseline. A
-historical result can therefore have coverage and execution evidence while its
-freshness is **STALE**. Dates are UTC dates from committed records or git
-history; an execution date is **unknown** when the repository does not establish
-it.
+matches the relevant implementation and dependencies at the current runtime
+baseline. Freshness is dependency-aware: an unrelated source change does not
+stale evidence, while a changed semantic seam does. A historical result can
+therefore remain applicable to unchanged behavior or become **STALE** for a
+changed seam. Dates are UTC dates from committed records or git history; an
+execution date is **unknown** when the repository does not establish it.
 
-Fresh deterministic evidence executed against the released v0.9.0 tree on
+## Historical acceptance campaigns
+
+The following sections preserve concise campaign chronology and historical test
+counts. They describe the state at each checkpoint and are superseded wherever
+the current baseline, matrix, gaps, or detailed records above say otherwise.
+
+The initial deterministic campaign executed against the released v0.9.0 tree on
 2026-08-24. `npm ci` and `npm run build` passed. An initial native Node coverage
 run across every package test suite reported **453 tests: 452 pass, 0 fail, 1
 skipped**; the skip was the real on-disk symlink case because symlink creation was
@@ -123,10 +199,12 @@ campaign fixture root, not product source. Fresh live evidence included:
   nothing integrated, both worktrees were retained, and activity/integration
   evidence named the conflict.
 
-The campaign did not naturally elicit a sequential or parallel batch from a
-fresh parent after three materially different discovery attempts. Adaptive
-effort has one natural high-effort selection but no second naturally selected
-worker effort level, so it remains PARTIAL rather than PASS.
+At that checkpoint, the campaign had not naturally elicited a sequential or
+parallel batch from a fresh parent after three materially different discovery
+attempts. Adaptive effort had only one natural high-effort selection and was
+then **PARTIAL**. The later focused adaptive-routing campaign superseded both
+limits with current natural parallel-batch evidence and natural `medium` plus
+`high` selections; a natural sequential batch remains unobserved.
 
 ### Focused Linux platform evidence closure
 
@@ -149,10 +227,11 @@ Windows campaign could not execute, without changing production/runtime source:
   and repeat uninstall, round trip, empty/malformed config, v0.6.0 migration,
   discovery opt-out, and active override handling.
 
-These results add the missing Linux/POSIX platform evidence but do not change
-any Strong, live DEEP PASS, or Battle-tested state. The three known cross-module
-abnormal lifecycle handoffs remain deliberately out of scope, as do Adaptive
-Effort and P1.1.
+These results added the missing Linux/POSIX platform evidence. At this
+checkpoint, the three known cross-module abnormal lifecycle handoffs remained
+out of scope; the later focused lifecycle closure superseded that state.
+Adaptive Effort was addressed by a later focused campaign. P1.1 remains future
+work and was never part of these campaigns.
 
 ### Focused abnormal-lifecycle findings closure
 
@@ -202,9 +281,9 @@ detection, and `git diff --check` was clean.
 
 ### Focused worktree-retention precedence closure
 
-The subsequent 2026-08-24 policy pass resolved the ambiguity recorded in
-`findings.md` between explicit `SOL_LUNA_KEEP_WORKTREES=never` and diagnostic,
-conflict, `integrate:false`, evidence-failure, and continuation retention.
+The subsequent 2026-08-24 policy pass resolved the temporary campaign finding
+between explicit `SOL_LUNA_KEEP_WORKTREES=never` and diagnostic, conflict,
+`integrate:false`, evidence-failure, and continuation retention.
 `never` now has absolute precedence for intentional retention after all
 obtainable structured evidence is captured. Worktree-bound continuations are
 issued only when configured cleanup actually retained their directory and a
@@ -373,30 +452,6 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
 - **Retained evidence:** the task ran in another repository; its transcript and
   diagnostic evidence are not retained here
 
-## Top-level feature matrix
-
-| Capability                                              | State at runtime baseline            | Coverage | Deterministic (last run) | Live (last run)        | Confidence    |
-| ------------------------------------------------------- | ------------------------------------ | -------- | ------------------------ | ---------------------- | ------------- |
-| Zero-worker/adaptive delegation                         | shipped; guidance refined 2026-08-23 | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong        |
-| Single delegation                                       | shipped                              | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong        |
-| Sequential batches                                      | shipped                              | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong        |
-| Parallel batches                                        | shipped                              | PASS     | DEEP PASS (2026-08-24)   | DEEP PASS (2026-08-24) | Battle-tested |
-| Worktree isolation/integration                          | shipped                              | PASS     | DEEP PASS (2026-08-24)   | DEEP PASS (2026-08-24) | Battle-tested |
-| Bounded concurrency                                     | shipped                              | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Battle-tested |
-| Adaptive effort                                         | shipped                              | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong        |
-| Independent verification                                | shipped                              | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong        |
-| Claimed-vs-observed reconciliation                      | shipped                              | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong        |
-| Context Capsule v2                                      | shipped v0.7.0                       | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong        |
-| Compact Evidence Packets                                | shipped v0.7.0                       | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong        |
-| CLI init/doctor/status/uninstall                        | shipped                              | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong        |
-| Activity, observability, privacy                        | shipped                              | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong        |
-| Natural discovery                                       | shipped v0.8.0                       | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong        |
-| Explicit Change Intent                                  | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong        |
-| Worker Continuation                                     | shipped v0.9.0                       | PASS     | DEEP PASS (2026-08-24)   | DEEP PASS (2026-08-24) | Battle-tested |
-| Bounded Repair                                          | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong        |
-| P1.0 parent/pricing foundation                          | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | N/A                    | Strong        |
-| `failureCauses` and verification contradiction handling | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong        |
-
 ## System-wide invariants
 
 - A parent chooses solo, one worker, sequential, or parallel work adaptively;
@@ -409,6 +464,16 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   integration. Sequential means shared workspace and ordered dependencies.
   Parallel setup mutations are serialized, concurrency is bounded, and same-file
   observed edits do not get copied over each other.
+- Parallel worktree finalization obeys the operator's retention mode:
+  `onFailure` is outcome/integration-aware, `always` retains every parallel task
+  worktree, and `never` permits no intentional retention. Structured evidence
+  survives cleanup; a deletion failure is reported as cleanup failure rather
+  than policy retention.
+- Workspace-bound continuation is independent of worktree retention.
+  Worktree-bound continuation requires the isolated directory to survive
+  cleanup under policy and hold a persistent lease. References are single-use;
+  cancelled results are terminal and leases are released on finalization,
+  failure, and cancellation.
 - Worker reports are claims. The orchestrator independently reruns permitted
   verification, reconciles claimed and observed files, records scope and
   integration conflicts, and leaves final judgment to the parent.
@@ -509,8 +574,9 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   concurrency 3 in distinct `.sol-luna` worktrees; three disjoint edits
   integrated with 3 attempted, 3 applied, and 0 conflicts. A materially
   different same-file batch then produced two isolated PASS results, correctly
-  withheld all integration, retained both worktrees, and exposed the conflict.
-  Completed non-retained worktrees and leases were cleaned according to policy.
+  withheld all integration, retained both worktrees under the configured
+  default `onFailure` mode, and exposed the conflict. Completed non-retained
+  worktrees and leases were cleaned according to that policy.
   Older committed benchmark evidence remains **STALE** where it predates
   lifecycle fixes.
 - **Dependencies/retest triggers:** scheduler, worktree metadata, cancellation,
@@ -531,11 +597,15 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   pruning, integration/conflicts, retained continuations, cross-process lease
   ownership, acquisition/refresh failure, expiry, sweep, and legacy path-only
   lease compatibility.
-  Current live acceptance **DEEP PASS** covered distinct isolated worktrees,
+  Historical live acceptance **DEEP PASS** covered distinct isolated worktrees,
   clean disjoint integration, same-file conflict retention, policy cleanup of
   completed worktrees and leases, and a deliberately retained
-  integration-disabled worktree used by continuation.
-  Older committed evidence remains **STALE** after lifecycle/lease changes. The
+  integration-disabled worktree used by continuation under the then-current
+  default policy. It remains applicable to isolation, linking, integration, and
+  cleanup mechanics, but does not prove every current retention mode. Current
+  retention precedence and finalization instead have focused deterministic
+  coverage in the 472-test baseline. Older committed evidence remains **STALE**
+  for lifecycle/lease seams that later changed. The
   focused Linux run added native POSIX evidence: the dependency link was an
   actual directory symlink resolving to the source dependency tree, cleanup
   removed the link/worktree without deleting the source, stale pruning left a
@@ -546,8 +616,8 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   finalization, and orchestrator pruning in end-to-end cases.
 - **Dependencies/retest triggers:** git version/platform, junction/symlink
   handling, lease ownership, cleanup, or copy integration changes. **Gap:** raw
-  final-campaign artifacts are not committed and no durable model-backed live
-  platform matrix is established.
+  final-campaign artifacts are not committed and no broad durable model-backed
+  live platform matrix is established.
 - **Confidence:** **Battle-tested**.
 
 ### Bounded concurrency
@@ -712,7 +782,7 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   (2026-08-23).
 - **Evidence:** Coverage and deterministic execution **PASS** on 2026-08-24:
   event-path configuration, prompt-to-activity privacy, reducer, watch,
-  redaction, legacy compatibility, and latest-batch suites all passed. Final
+  redaction, legacy compatibility, and latest-batch suites all passed. Historical
   live acceptance **DEEP PASS**: human and JSON
   activity views reflected actual sequential, parallel, integration,
   concurrency, and retained-worktree state. The private sentinel was absent from
@@ -720,8 +790,13 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   context fields.
 - **Dependencies/retest triggers:** event schema, reducer projection, path
   resolution, privacy fields, watch attachment, or CLI rendering changes.
+  That live run still supports the unchanged privacy and activity projections;
+  current retention-neutral integration wording and truthful retained/removed
+  projection are covered deterministically after the retention-policy change.
   **Gap:** raw activity and telemetry artifacts are not committed; diagnostic
-  logs remain more sensitive than activity events.
+  logs and tool-result evidence remain more sensitive than activity events.
+  Historical pre-hardening JSONL may contain objective fields that current
+  writers exclude.
 - **Confidence:** **Strong**.
 
 ### Natural discovery
@@ -777,16 +852,20 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   (2026-08-23).
 - **Evidence:** Coverage and targeted deterministic execution **PASS** on
   2026-08-24 for opaque single-use expiry, exact-thread resume, immutable
-  contract, repeat verification, integrated/retained worktree binding, and lease
-  protection. The focused lifecycle closure advanced deterministic evidence to
+  contract, repeat verification, integrated/retained worktree binding, lease
+  protection, terminal cancellation, dependency-link reconciliation, and all
+  retention modes. The focused lifecycle and policy closures advanced deterministic evidence to
   **DEEP PASS**: a real retained continuation crossed store consumption, lease
   refresh, same-thread/immutable-contract checks, server start/failure events,
   handler `finally`, replay refusal, lease release, and stale-worktree pruning in
-  one test. Live acceptance is **DEEP PASS**: an integration-disabled worktree
+  one test. Historical live acceptance is **DEEP PASS** for the unaffected
+  continuation behavior: an integration-disabled worktree
   was retained, the continuation resumed the same Luna thread, completed a real
   follow-up edit, and reconciled both retained files under the unchanged original
   contract. Replay was rejected and lease artifacts were released according to
-  policy.
+  the configured policy. That run predates the cancellation-eligibility,
+  dependency-link, and retention-precedence fixes and is not used as proof of
+  those changed semantics; current deterministic regressions are their authority.
 - **Dependencies/retest triggers:** continuation TTL/reference store, worktree
   leases, final Git reconciliation, contract fields, or worker lifecycle changes.
   Raw final-campaign artifacts are not committed and expiry was not exercised

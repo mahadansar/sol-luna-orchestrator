@@ -21,6 +21,10 @@ for future work only. Keep these ownership boundaries:
   platform support, and current numeric configuration details.
 - [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md): operational diagnosis and
   recovery.
+- [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md): event, activity, telemetry,
+  and privacy semantics.
+- [`docs/FEATURE_ACCEPTANCE.md`](docs/FEATURE_ACCEPTANCE.md): current capability
+  evidence, freshness, confidence, and acceptance history.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md): contributor and release workflow.
 - [`bench/RESULTS.md`](bench/RESULTS.md): benchmark evidence and limits.
 
