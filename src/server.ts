@@ -19,11 +19,11 @@ import {
   WORKER_MARKER_ENV,
 } from "./config.js";
 import {
-  continueTaskInputShape,
-  delegateTaskInputShape,
+  continueTaskMcpInputShape,
+  delegateTaskMcpInputShape,
   inputMetadataSizeReport,
   INPUT_METADATA_SIZE_BUDGETS,
-  delegateTasksInputShape,
+  delegateTasksMcpInputShape,
   type BatchOutput,
   type ContinueTaskInput,
   type DelegateTaskInput,
@@ -288,8 +288,8 @@ cheaper.
 
 Use automaticRepair for at most one repair of a conservatively classified local defect.
 An opaque continuationReference permits one bounded same-thread follow-up without
-widening the contract. Use resultDetail=compact routinely; full remains the compatibility
-default.
+widening the contract. resultDetail=handoff is the default: clean verified PASS returns
+only the thin text handoff; compact and full retain structured compatibility.
 
 Judge the returned verdict, verification, observed files, discrepancies, scope violations,
 and review checklist. Worker claims are not authoritative. Escalate FAILED/BLOCKED,
@@ -309,7 +309,8 @@ contract is retained; no widening fields are accepted. Luna still cannot delegat
 scoped verification, scope checks, evidence reconciliation, and verdict logic run again. Manual
 continuation never starts an automatic repair. When pending with no meaningful new state,
 remain silent; do not narrate waiting. Report only a result, error, cancellation, timeout,
-or actionable state change.`;
+or actionable state change. handoff is the default result detail; request compact or full
+structured compatibility only when needed.`;
 
 /**
  * Strip the output of verification commands that passed.
@@ -515,6 +516,43 @@ function isCleanPass(result: DelegateTaskOutput): boolean {
   );
 }
 
+export function structuredResultForDetail(
+  result: DelegateTaskOutput,
+  detail: DelegateTaskInput["resultDetail"],
+): DelegateTaskOutput | undefined {
+  if (detail === "full") return result;
+  if (detail === "compact") return compactResult(result);
+  return isCleanPass(result) ? undefined : result;
+}
+
+function isCleanBatch(batch: BatchOutput): boolean {
+  return (
+    batch.passed === batch.taskCount &&
+    batch.failed === 0 &&
+    batch.integrationConflicts.length === 0 &&
+    batch.scopeConflicts.length === 0 &&
+    batch.warnings.length === 0 &&
+    batch.integrated &&
+    batch.tasks.every(
+      (task) =>
+        task.state === "completed" &&
+        task.error === null &&
+        task.warnings.length === 0 &&
+        task.result &&
+        isCleanPass(task.result),
+    )
+  );
+}
+
+export function structuredBatchForDetail(
+  batch: BatchOutput,
+  detail: DelegateTaskInput["resultDetail"],
+): BatchOutput | undefined {
+  if (detail === "full") return batch;
+  if (detail === "compact") return compactBatch(batch);
+  return isCleanBatch(batch) ? undefined : batch;
+}
+
 /** Compact model-facing handoff for the routine verified success path. */
 export function renderResult(
   result: DelegateTaskOutput,
@@ -554,7 +592,7 @@ export const SERVER_INSTRUCTIONS =
   `parallel for genuinely independent disjoint scopes. Worker claims are not ` +
   `authoritative; claims are not orchestrator evidence: escalate suspicious evidence, discrepancies, scope violations, ` +
   `failed/blocked or refused verification results. Review proportionately. Clean verified PASS results use ` +
-  `the compact fast path; rich diagnostics remain for risks. automaticRepair is at ` +
+  `a text-only handoff by default; compact/full structured compatibility is opt-in and rich diagnostics remain for risks. automaticRepair is at ` +
   `most one bounded repair; same-thread automatic repair is bounded; continuationReference is one bounded follow-up with ` +
   `the immutable contract fixed. Raw tokens are not credit cost; cost/latency ` +
   `depend on parent model, task mix, coordination, isolation, and quality; the ` +
@@ -568,7 +606,7 @@ export const METADATA_SIZE_BUDGETS = {
   delegateTaskDescription: 2_700,
   delegateTasksDescription: 2_500,
   continueTaskDescription: 1_000,
-  combined: 19_000,
+  combined: 13_000,
 } as const;
 
 export function metadataSizeReport(): {
@@ -636,7 +674,7 @@ function registerDelegateTask(): void {
     {
       title: "Delegate a bounded task to a Luna worker",
       description: TOOL_DESCRIPTION,
-      inputSchema: delegateTaskInputShape,
+      inputSchema: delegateTaskMcpInputShape,
     },
     async (input, extra) => {
       const task = input as DelegateTaskInput;
@@ -732,10 +770,12 @@ function registerDelegateTask(): void {
             `thread=${result.workerThreadId ?? "?"} in ${result.durationSeconds}s`,
         );
         recordEvent(result);
-        const detail = task.resultDetail ?? "full";
-        const structuredContent = detail === "compact" ? compactResult(result) : result;
+        const structuredContent = structuredResultForDetail(
+          result,
+          task.resultDetail ?? "handoff",
+        );
 
-        return {
+        const response = {
           content: [
             {
               type: "text" as const,
@@ -746,8 +786,8 @@ function registerDelegateTask(): void {
               }),
             },
           ],
-          structuredContent,
         };
+        return structuredContent ? { ...response, structuredContent } : response;
       } catch (error) {
         const message =
           error instanceof WorkspaceError
@@ -811,7 +851,11 @@ export async function handleContinueTask(
   request: ContinueTaskInput,
   signal?: AbortSignal,
   overrides: Partial<ContinuationHandlerDependencies> = {},
-) {
+): Promise<{
+  content: Array<{ type: "text"; text: string }>;
+  structuredContent?: DelegateTaskOutput;
+  isError?: boolean;
+}> {
   const dependencies: ContinuationHandlerDependencies = {
     store: continuationStore,
     continueTask: continueToLuna,
@@ -912,7 +956,11 @@ export async function handleContinueTask(
     }
     emitSingleCompletion(batchId, taskId, timeoutSeconds, result, dependencies.emit);
     dependencies.record(result);
-    return {
+    const structuredContent = structuredResultForDetail(
+      result,
+      request.resultDetail ?? "handoff",
+    );
+    const response = {
       content: [
         {
           type: "text" as const,
@@ -925,8 +973,8 @@ export async function handleContinueTask(
           }),
         },
       ],
-      structuredContent: result,
     };
+    return structuredContent ? { ...response, structuredContent } : response;
   } catch (error) {
     const message =
       error instanceof WorkspaceError
@@ -977,7 +1025,7 @@ function registerContinueTask(): void {
     {
       title: "Continue an eligible Luna task",
       description: CONTINUE_TOOL_DESCRIPTION,
-      inputSchema: continueTaskInputShape,
+      inputSchema: continueTaskMcpInputShape,
     },
     async (input, extra) => {
       return handleContinueTask(input as ContinueTaskInput, extra?.signal);
@@ -993,7 +1041,7 @@ function registerDelegateTasks(): void {
     {
       title: "Delegate several tasks to Luna workers",
       description: BATCH_TOOL_DESCRIPTION,
-      inputSchema: delegateTasksInputShape,
+      inputSchema: delegateTasksMcpInputShape,
     },
     async (input, extra) => {
       const batch = input as DelegateTasksInput;
@@ -1018,13 +1066,15 @@ function registerDelegateTasks(): void {
             `${result.durationSeconds}s, integrated=${result.integrated}`,
         );
 
-        const detail = batch.resultDetail ?? "full";
-        const structuredContent = detail === "compact" ? compactBatch(result) : result;
+        const structuredContent = structuredBatchForDetail(
+          result,
+          batch.resultDetail ?? "handoff",
+        );
 
-        return {
+        const response = {
           content: [{ type: "text" as const, text: renderBatch(result) }],
-          structuredContent,
         };
+        return structuredContent ? { ...response, structuredContent } : response;
       } catch (error) {
         const message =
           error instanceof BatchRejectedError || error instanceof WorkspaceError
@@ -1171,13 +1221,7 @@ function renderRichBatch(batch: BatchOutput): string {
 
 /** Compact batch handoff; retain the rich renderer for every actionable result. */
 export function renderBatch(batch: BatchOutput): string {
-  const clean =
-    batch.integrationConflicts.length === 0 &&
-    batch.scopeConflicts.length === 0 &&
-    batch.warnings.length === 0 &&
-    batch.integrated &&
-    batch.tasks.every((task) => task.result && isCleanPass(task.result));
-  if (!clean) return renderRichBatch(batch);
+  if (!isCleanBatch(batch)) return renderRichBatch(batch);
 
   const lines = [
     `BATCH ${batch.batchId} | ${batch.mode} | ${batch.passed}/${batch.taskCount} passed`,

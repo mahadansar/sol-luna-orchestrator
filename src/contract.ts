@@ -71,6 +71,32 @@ export const WORKER_FAILURE_CAUSES = [
 ] as const;
 export type WorkerFailureCause = (typeof WORKER_FAILURE_CAUSES)[number];
 
+const contextCapsuleShape = {
+  relevantContext: z
+    .string()
+    .optional()
+    .describe("Background unavailable from the repository."),
+  interfaces: z
+    .string()
+    .optional()
+    .describe("Stable signatures, contracts, or boundaries."),
+  dependencies: z.string().optional().describe("Relevant dependencies."),
+  invariants: z.string().optional().describe("Rules that must remain true."),
+  upstreamDecisions: z.string().optional().describe("Settled parent decisions."),
+  knownPitfalls: z
+    .string()
+    .optional()
+    .describe("Pitfalls or failed approaches to avoid."),
+};
+
+const previousAttemptShape = {
+  effort: z.enum(EFFORTS),
+  verdict: z.enum(STATUSES),
+  whatWentWrong: z
+    .string()
+    .describe("Why the earlier attempt did not succeed, in one sentence."),
+};
+
 /**
  * The task contract the parent orchestrator fills in when delegating.
  *
@@ -155,45 +181,21 @@ export const delegateTaskInputShape = {
     ),
 
   contextCapsule: z
-    .object({
-      relevantContext: z
-        .string()
-        .optional()
-        .describe("Background unavailable from the repository."),
-      interfaces: z
-        .string()
-        .optional()
-        .describe("Stable signatures, contracts, or boundaries."),
-      dependencies: z.string().optional().describe("Relevant dependencies."),
-      invariants: z.string().optional().describe("Rules that must remain true."),
-      upstreamDecisions: z.string().optional().describe("Settled parent decisions."),
-      knownPitfalls: z
-        .string()
-        .optional()
-        .describe("Pitfalls or failed approaches to avoid."),
-    })
+    .object(contextCapsuleShape)
     .optional()
     .describe(
       "Optional structured background; supplements legacy context, omit empty fields, never copy the parent transcript, and do not duplicate other fields.",
     ),
 
   resultDetail: z
-    .enum(["full", "compact"])
-    .default("full")
+    .enum(["handoff", "compact", "full"])
+    .default("handoff")
     .describe(
-      "Choose compact routinely: it removes only successful verification output; schema default remains full for backwards compatibility; failed, refused, and skipped output is retained.",
+      "handoff (default) omits structuredContent for a clean verified PASS but keeps rich failure evidence; compact keeps the compatibility structure without successful verification output; full keeps the complete structure.",
     ),
 
   previousAttempts: z
-    .array(
-      z.object({
-        effort: z.enum(EFFORTS),
-        verdict: z.enum(STATUSES),
-        whatWentWrong: z
-          .string()
-          .describe("Why the earlier attempt did not succeed, in one sentence."),
-      }),
-    )
+    .array(z.object(previousAttemptShape))
     .default([])
     .describe("Prior failed attempts so retries can avoid repeating them."),
 
@@ -219,36 +221,19 @@ export const continueTaskInputShape = {
     .string()
     .min(1)
     .describe("One concise follow-up; the original immutable contract remains fixed."),
+  resultDetail: delegateTaskInputShape.resultDetail,
 };
 
 export const continueTaskInputSchema = z.object(continueTaskInputShape);
-export type ContinueTaskInput = z.infer<typeof continueTaskInputSchema>;
+export type ContinueTaskInput = z.input<typeof continueTaskInputSchema>;
 
 /** Deterministic budgets for the always-advertised input metadata. */
 export const INPUT_METADATA_SIZE_BUDGETS = {
-  delegateTask: 4_200,
-  continueTask: 700,
-  delegateTasks: 6_200,
-  combined: 11_000,
+  delegateTask: 2_500,
+  continueTask: 450,
+  delegateTasks: 2_900,
+  combined: 5_700,
 } as const;
-
-export function inputMetadataSizeReport(): {
-  delegateTask: number;
-  continueTask: number;
-  delegateTasks: number;
-  combined: number;
-} {
-  const size = (schema: unknown): number =>
-    JSON.stringify(z.toJSONSchema(schema as never)).length;
-  const report = {
-    delegateTask: size(delegateTaskInputSchema),
-    continueTask: size(continueTaskInputSchema),
-    delegateTasks: size(delegateTasksInputSchema),
-    combined: 0,
-  };
-  report.combined = report.delegateTask + report.continueTask + report.delegateTasks;
-  return report;
-}
 
 /**
  * JSON Schema handed to Codex via `--output-schema`, forcing the worker's final
@@ -576,9 +561,7 @@ export const delegateTasksInputShape = {
     ),
 
   resultDetail: delegateTaskInputShape.resultDetail.describe(
-    "Batch-level result detail applied uniformly to every returned task result; " +
-      "it is not a per-task field. Compact removes only successful verification " +
-      "output, while the schema default remains full for backwards compatibility.",
+    "Batch-level detail applied to every result; handoff is the economical default, compact and full preserve structured compatibility.",
   ),
 
   tasks: z
@@ -588,7 +571,7 @@ export const delegateTasksInputShape = {
     .describe(
       `Task contracts; this API is intended for multiple meaningful tasks but accepts ` +
         `one or more and at most ${MAX_BATCH_SIZE} tasks. A one-task batch remains ` +
-        "accepted for compatibility; prefer delegate_task for a single task. Batch size " +
+        "accepted for compatibility. Batch size " +
         `is not concurrency: sequential mode runs one at a time, while parallel ` +
         `mode runs at most ${MAX_PARALLEL} workers at once and queues the rest. ` +
         "Parallel tasks need disjoint scopes unless this call sets " +
@@ -630,6 +613,68 @@ export const delegateTasksInputShape = {
 
 export const delegateTasksInputSchema = z.object(delegateTasksInputShape);
 export type DelegateTasksInput = z.infer<typeof delegateTasksInputSchema>;
+
+/**
+ * MCP metadata reuses the exact validators/defaults while centralizing semantic
+ * guidance in the routing cards. Removing per-field prose from the advertised
+ * copies avoids replaying the same contract explanation on every supervisor turn.
+ */
+function withoutFieldDescriptions<T extends z.ZodRawShape>(shape: T): T {
+  return Object.fromEntries(
+    Object.entries(shape).map(([key, schema]) => [
+      key,
+      (schema as z.ZodType).meta({ description: undefined }),
+    ]),
+  ) as unknown as T;
+}
+
+export const delegateTaskMcpInputShape = {
+  ...withoutFieldDescriptions(delegateTaskInputShape),
+  contextCapsule: z.object(withoutFieldDescriptions(contextCapsuleShape)).optional(),
+  previousAttempts: z
+    .array(z.object(withoutFieldDescriptions(previousAttemptShape)))
+    .default([]),
+};
+export const continueTaskMcpInputShape = withoutFieldDescriptions(continueTaskInputShape);
+const batchTaskMcpSchema = z.object({
+  objective: delegateTaskMcpInputShape.objective,
+  activityLabel: delegateTaskMcpInputShape.activityLabel,
+  effort: delegateTaskMcpInputShape.effort,
+  effortReason: delegateTaskMcpInputShape.effortReason,
+  taskCategory: delegateTaskMcpInputShape.taskCategory,
+  changeIntent: delegateTaskMcpInputShape.changeIntent,
+  automaticRepair: delegateTaskMcpInputShape.automaticRepair,
+  allowedFiles: delegateTaskMcpInputShape.allowedFiles,
+  forbiddenFiles: delegateTaskMcpInputShape.forbiddenFiles,
+  acceptanceCriteria: delegateTaskMcpInputShape.acceptanceCriteria,
+  verificationCommands: delegateTaskMcpInputShape.verificationCommands,
+  context: delegateTaskMcpInputShape.context,
+  contextCapsule: delegateTaskMcpInputShape.contextCapsule,
+  previousAttempts: delegateTaskMcpInputShape.previousAttempts,
+  timeoutSeconds: delegateTaskMcpInputShape.timeoutSeconds,
+});
+export const delegateTasksMcpInputShape = {
+  ...withoutFieldDescriptions(delegateTasksInputShape),
+  tasks: z.array(batchTaskMcpSchema).min(1).max(MAX_BATCH_SIZE),
+};
+
+export function inputMetadataSizeReport(): {
+  delegateTask: number;
+  continueTask: number;
+  delegateTasks: number;
+  combined: number;
+} {
+  const size = (shape: z.ZodRawShape): number =>
+    JSON.stringify(z.toJSONSchema(z.object(shape))).length;
+  const report = {
+    delegateTask: size(delegateTaskMcpInputShape),
+    continueTask: size(continueTaskMcpInputShape),
+    delegateTasks: size(delegateTasksMcpInputShape),
+    combined: 0,
+  };
+  report.combined = report.delegateTask + report.continueTask + report.delegateTasks;
+  return report;
+}
 
 const delegateTaskOutputObject = z.object(delegateTaskOutputShape);
 

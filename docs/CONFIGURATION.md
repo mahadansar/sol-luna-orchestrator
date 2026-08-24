@@ -110,16 +110,20 @@ prints the command that repairs a missing or incorrect setup.
 ### Metadata and thin result fast path
 
 The MCP registration advertises a compact routing card and bounded input
-metadata. Output schemas are intentionally not advertised in tool metadata, but
-the existing structured result shapes are still returned for programmatic
-consumers. Deterministic metadata-size budgets protect this boundary.
+metadata. Output schemas are intentionally not advertised in tool metadata, and
+the advertised input schemas reuse the exact runtime validators/defaults without
+repeating per-field prose. Deterministic metadata-size budgets protect this
+boundary.
 
 Clean verified PASS text is a thin handoff with identity, changed paths,
 authoritative verification counts, integration status, continuation reference,
 and actionable risks. Rich diagnostics remain for any suspicious or incomplete
-result. These are context and routing controls; no measured cost or latency
-saving is claimed. Same-thread continuation prompts carry only the bounded
-follow-up and an immutable-contract reminder.
+result. `resultDetail: "handoff"` is the default and omits `structuredContent`
+only on that clean fast path. `compact` and `full` explicitly retain the existing
+structured compatibility forms; a suspicious or failed default result expands
+automatically. These are context and routing controls; no measured cost or
+latency saving is claimed. Same-thread continuation prompts carry only the
+bounded follow-up and an immutable-contract reminder.
 
 ### Why init edits the file directly
 

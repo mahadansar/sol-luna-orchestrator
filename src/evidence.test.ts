@@ -12,6 +12,8 @@ import {
   reconcileRetainedContinuationEvidence,
   renderBatch,
   renderResult,
+  structuredBatchForDetail,
+  structuredResultForDetail,
 } from "./server.js";
 import {
   delegateTaskInputSchema,
@@ -709,12 +711,12 @@ const BASE_TASK = {
   effortReason: "simple task because it is short",
 };
 
-test("resultDetail defaults to full when the caller omits it", () => {
-  assert.equal(delegateTaskInputSchema.parse(BASE_TASK).resultDetail, "full");
+test("resultDetail defaults to the thin handoff when the caller omits it", () => {
+  assert.equal(delegateTaskInputSchema.parse(BASE_TASK).resultDetail, "handoff");
 });
 
-test("resultDetail accepts both documented values", () => {
-  for (const value of ["full", "compact"] as const) {
+test("resultDetail accepts all documented values", () => {
+  for (const value of ["handoff", "compact", "full"] as const) {
     assert.equal(
       delegateTaskInputSchema.parse({ ...BASE_TASK, resultDetail: value }).resultDetail,
       value,
@@ -737,7 +739,7 @@ test("a batch carries resultDetail once, not per task", () => {
     mode: "parallel",
     tasks: [BASE_TASK, BASE_TASK],
   });
-  assert.equal(batch.resultDetail, "full");
+  assert.equal(batch.resultDetail, "handoff");
   // Per-task detail would let one batch return two different shapes. The batch
   // task shape deliberately leaves the field out, so Zod strips it.
   const mixed = delegateTasksInputSchema.parse({
@@ -746,6 +748,57 @@ test("a batch carries resultDetail once, not per task", () => {
     resultDetail: "compact",
   });
   assert.ok(!("resultDetail" in (mixed.tasks[0] ?? {})));
+});
+
+test("handoff omits structured content only for clean verified success", () => {
+  const clean = mockResult();
+  assert.equal(structuredResultForDetail(clean, "handoff"), undefined);
+  assert.equal(structuredResultForDetail(clean, "full"), clean);
+  assert.equal(structuredResultForDetail(clean, "compact")?.verification[0]?.output, "");
+
+  const failed = mockResult();
+  failed.verdict = "FAILED";
+  failed.workerClaimedStatus = "FAILED";
+  assert.equal(structuredResultForDetail(failed, "handoff"), failed);
+});
+
+test("batch handoff omits structured content only when every task is clean", () => {
+  const result = mockResult();
+  const batch: BatchOutput = {
+    batchId: "b-handoff",
+    mode: "parallel",
+    maxParallel: 1,
+    taskCount: 1,
+    passed: 1,
+    failed: 0,
+    durationSeconds: 1,
+    tasks: [
+      {
+        taskId: "t1",
+        state: "completed",
+        objective: "fixture",
+        effort: "high",
+        effortReason: "fixture reason",
+        result,
+        changedFiles: ["src/file.ts"],
+        worktreePath: null,
+        error: null,
+        warnings: [],
+      },
+    ],
+    scopeConflicts: [],
+    integrationConflicts: [],
+    integrated: true,
+    integrationSummary: "integrated",
+    warnings: [],
+    reviewChecklist: [],
+  };
+  assert.equal(structuredBatchForDetail(batch, "handoff"), undefined);
+  batch.tasks[0]!.warnings.push("integration needs review");
+  assert.equal(structuredBatchForDetail(batch, "handoff"), batch);
+  batch.tasks[0]!.warnings.length = 0;
+  batch.tasks[0]!.result!.discrepancies.push("unexpected evidence");
+  assert.equal(structuredBatchForDetail(batch, "handoff"), batch);
 });
 
 test("a one-task batch remains accepted for compatibility", () => {

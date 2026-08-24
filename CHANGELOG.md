@@ -18,8 +18,12 @@ All notable changes to this project are documented here. Format follows
 - Added a thin supervisor fast path: compact routing/ownership metadata,
   deterministic metadata-size budgets, clean PASS result handoffs, and compact
   same-thread continuation prompts. Rich diagnostics, strict worker output,
-  full structured-content compatibility, and verification semantics remain
-  unchanged. No live cost or latency saving is claimed.
+  explicit structured-content compatibility, and verification semantics remain
+  available. `resultDetail: "handoff"` is now the default and omits
+  `structuredContent` only for a clean verified PASS; suspicious or failed
+  results expand automatically, while `compact` and `full` remain explicit
+  compatibility modes. Advertised schemas reuse the exact runtime validators
+  without duplicating field prose. No live cost or latency saving is claimed.
 
 - Prepared Benchmark V2 with eight realistic externally graded fixtures,
   fixed-effort Solo/Adaptive/Forced arms, schema-4 credit telemetry, a dated

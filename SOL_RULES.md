@@ -27,7 +27,7 @@ informs the choice; it does not require delegation.
 The runtime advertises a compact routing/ownership card. The parent owns
 objective decomposition, scope, change intent, acceptance, verification choice,
 integration, and final judgement; Luna owns implementation and scoped
-verification. Clean verified PASS results are a compact fast-path handoff.
+verification. Clean verified PASS results are a text-only fast-path handoff.
 Progressive evidence remains required for suspicious, failed, blocked,
 discrepant, scope, refused/skipped-verification, runtime-error, and conflict
 results. Pending calls with no meaningful new state are silent.
@@ -128,13 +128,13 @@ so the retry does not repeat failed approaches.
   parent transcript. A capsule supplements rather than replaces objective,
   scope, acceptance, verification, or security constraints, and empty fields
   are omitted.
-- Choose `resultDetail: "compact"` for routine delegation. Compact removes
-  only successful verification output; failed, refused, and skipped output and
-  all verdict, discrepancy, scope, and file evidence remain. Use `"full"`
-  when successful command output is needed. The schema default remains
-  `"full"` for backwards compatibility. In a batch, `resultDetail` is one
-  batch-level choice applied uniformly to every returned task result; it is not
-  a task field.
+- Use the default `resultDetail: "handoff"` for routine delegation. A clean
+  verified PASS then returns only the thin text handoff; suspicious, incomplete,
+  and failed results expand automatically. Use `"compact"` when a programmatic
+  consumer needs the compatibility structure without successful verification
+  output, or `"full"` when it needs the complete structure. In a batch,
+  `resultDetail` is one batch-level choice applied uniformly to every returned
+  result; it is not a task field.
 - Set effort deliberately, explain it in `effortReason`, and use
   `timeoutSeconds` only when the configured default is unsuitable.
 

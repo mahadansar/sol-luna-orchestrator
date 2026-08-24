@@ -34,9 +34,11 @@ and only actionable risks. It omits routine summaries, usage dumps,
 transcript-like narration, and generic review prose; actionable worker notes are
 surfaced as risks. Failed, blocked, untrustworthy,
 discrepant, scope-violating, refused/skipped, runtime-error, partial, and
-integration-conflict results retain progressive diagnostics. The full
-`structuredContent` default remains unchanged; `resultDetail=compact` only
-removes successful verification output.
+integration-conflict results retain progressive diagnostics. The default
+`resultDetail=handoff` omits `structuredContent` only for a clean verified PASS;
+non-clean results expand automatically. Explicit `compact` retains the
+compatibility structure but removes successful verification output, while
+`full` returns the complete structure.
 
 ## What the event stream contains
 

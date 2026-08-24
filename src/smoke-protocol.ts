@@ -91,16 +91,20 @@ async function main(): Promise<void> {
 
   const continueTool = tools.find((t) => t.name === "continue_task");
   check("continue_task is advertised", () => assert.ok(continueTool));
-  check("continue_task accepts only an opaque reference and instruction", () => {
-    const properties = (continueTool?.inputSchema?.properties ?? {}) as Record<
-      string,
-      unknown
-    >;
-    assert.deepEqual(Object.keys(properties).sort(), [
-      "continuationReference",
-      "instruction",
-    ]);
-  });
+  check(
+    "continue_task accepts a bounded reference, instruction, and result detail",
+    () => {
+      const properties = (continueTool?.inputSchema?.properties ?? {}) as Record<
+        string,
+        unknown
+      >;
+      assert.deepEqual(Object.keys(properties).sort(), [
+        "continuationReference",
+        "instruction",
+        "resultDetail",
+      ]);
+    },
+  );
 
   check("delegate_tasks accepts a mode and a task list", () => {
     const properties = (batchTool?.inputSchema?.properties ?? {}) as Record<
@@ -158,10 +162,19 @@ async function main(): Promise<void> {
     assert.equal(effort.default, "high");
   });
 
-  check("effort field tells the parent when to pick max", () => {
-    const effort = properties.effort as { description?: string };
-    assert.match(effort.description ?? "", /task difficulty/i);
-  });
+  check(
+    "advertised fields omit repeated prose while the routing card keeps guidance",
+    () => {
+      const effort = properties.effort as { description?: string };
+      const verification = properties.verificationCommands as {
+        description?: string;
+      };
+      assert.equal(effort.description, undefined);
+      assert.equal(verification.description, undefined);
+      assert.match(tool?.description ?? "", /worker ownership/i);
+      assert.match(tool?.description ?? "", /verification/i);
+    },
+  );
 
   check("input schema carries escalation metadata", () => {
     for (const field of ["taskCategory", "previousAttempts"]) {
@@ -169,10 +182,13 @@ async function main(): Promise<void> {
     }
   });
 
-  check("verification field describes configured policy and default refusal", () => {
-    const verification = properties.verificationCommands as { description?: string };
-    assert.match(verification.description ?? "", /configured policy/i);
-    assert.match(verification.description ?? "", /orchestrator reruns/i);
+  check("handoff is the economical result default", () => {
+    const resultDetail = properties.resultDetail as {
+      enum?: string[];
+      default?: string;
+    };
+    assert.deepEqual(resultDetail.enum, ["handoff", "compact", "full"]);
+    assert.equal(resultDetail.default, "handoff");
   });
 
   check("structured output remains a runtime result boundary", () => {

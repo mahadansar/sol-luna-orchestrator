@@ -13,8 +13,8 @@ belongs in `ROADMAP.md`.
 - **Runtime baseline:** commit-relative current main for v0.9.1 after the
   hardening changes above. Package and lockfile versions are `0.9.1`.
 - **Latest full deterministic validation:** `npm run verify` passed on
-  2026-08-24 with **472/472 tests**, no failures or skips, plus typecheck and the
-  deterministic MCP protocol smoke test.
+  2026-08-25 with **508/511 tests passed and 3 expected platform skips**, no
+  failures, plus typecheck and the deterministic MCP protocol smoke test.
 - **Current native platform evidence:** deterministic CI covers Windows, Linux,
   and macOS. Focused Linux/POSIX symlink, dependency-link, and process-group
   paths passed natively. Live Codex delegation has representative Windows and
@@ -40,6 +40,7 @@ belongs in `ROADMAP.md`.
 | Claimed-vs-observed reconciliation                      | PASS     | PASS          | DEEP PASS     | Strong        |
 | Context Capsule v2                                      | PASS     | PASS          | PASS          | Strong        |
 | Compact Evidence Packets                                | PASS     | PASS          | DEEP PASS     | Strong        |
+| Thin handoff protocol boundary                          | PASS     | PASS          | NOT TESTED    | Basic         |
 | CLI lifecycle                                           | PASS     | PASS          | PASS          | Strong        |
 | Activity, observability, and privacy                    | PASS     | PASS          | DEEP PASS     | Strong        |
 | Natural discovery                                       | PASS     | PASS          | PASS          | Strong        |
@@ -64,6 +65,14 @@ reruns verification, reconciles final worktree evidence before integration, and
 records stable identities, attempt ordinals, classifications, and separate usage
 and duration. This ledger makes no claim of live economic or latency success.
 
+The thin handoff protocol defaults clean verified PASS responses to the compact
+text handoff without `structuredContent`. Explicit `compact` and `full` modes
+retain structured compatibility, and non-clean default responses expand to full
+evidence. Advertised schemas retain the canonical validators/defaults while
+omitting descriptive prose. Deterministic tests prove parser equivalence,
+failure expansion, and the protocol surface; live economic evidence is not yet
+claimed for this seam.
+
 ## Current known evidence gaps and non-claims
 
 - No fresh parent in the current natural-routing portfolio selected a sequential
@@ -73,8 +82,9 @@ and duration. This ledger makes no claim of live economic or latency success.
   `high` selections. No natural `xhigh` or `max` selection is claimed, and those
   optional observations are not required for Strong confidence.
 - No fresh whole-system native coverage report was produced after the v0.9.1
-  runtime changes. The latest coverage percentages belong to the
-  earlier v0.9.0 campaign; the current 472-test deterministic suite is green.
+  runtime changes. The latest coverage percentages belong to the earlier v0.9.0
+  campaign; the current 511-test deterministic suite is green with 3 expected
+  platform skips.
 - Raw transcripts, diagnostic logs, event streams, and some structured live
   results are session-local and intentionally uncommitted. The ledger preserves
   their reviewed conclusions, not durable raw artifacts.
@@ -613,7 +623,7 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   default policy. It remains applicable to isolation, linking, integration, and
   cleanup mechanics, but does not prove every current retention mode. Current
   retention precedence and finalization instead have focused deterministic
-  coverage in the 472-test baseline. Older committed evidence remains **STALE**
+  coverage in the 511-test baseline. Older committed evidence remains **STALE**
   for lifecycle/lease seams that later changed. The
   focused Linux run added native POSIX evidence: the dependency link was an
   actual directory symlink resolving to the source dependency tree, cleanup

@@ -22,7 +22,10 @@ batch identity, changed paths, authoritative verification counts, integration
 status, continuation reference when available, and actionable risks. Failed,
 blocked, suspicious, discrepant, scope-violating, refused-verification, and
 conflict results retain progressive diagnostics. This is a context-shaping fast
-path, not a measured cost or latency claim.
+path, not a measured cost or latency claim. `resultDetail: "handoff"` is the
+default: a clean PASS returns only this text handoff. Request `compact` or `full`
+when a programmatic consumer needs the structured compatibility result; failures
+still expand automatically.
 
 Parallel batches enable bounded automatic recovery by default. After the initial
 worker window, an eligible timeout resumes its same Luna thread in the same owned

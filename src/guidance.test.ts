@@ -9,6 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import assert from "node:assert/strict";
+import { z } from "zod";
 import {
   BATCH_TOOL_DESCRIPTION,
   CONTINUE_TOOL_DESCRIPTION,
@@ -19,9 +20,13 @@ import {
 } from "./server.js";
 import { LUNA_MODEL, MAX_BATCH_SIZE, MAX_PARALLEL } from "./config.js";
 import {
+  continueTaskInputSchema,
+  continueTaskMcpInputShape,
+  delegateTaskMcpInputShape,
   delegateTaskInputSchema,
   delegateTaskInputShape,
   delegateTaskOutputShape,
+  delegateTasksMcpInputShape,
   delegateTasksInputSchema,
   delegateTasksInputShape,
   delegateTasksOutputShape,
@@ -59,9 +64,9 @@ const assertSilentWaitGuidance = (guidance: string): void => {
   }
 };
 
-test("backwards-compatible guidance fields retain their API defaults", () => {
+test("guidance fields retain their documented API defaults", () => {
   const parsed = delegateTaskInputSchema.parse(BASE_INPUT);
-  assert.equal(parsed.resultDetail, "full");
+  assert.equal(parsed.resultDetail, "handoff");
   assert.equal(parsed.contextCapsule, undefined);
   assert.equal(parsed.activityLabel, undefined);
   assert.equal(parsed.automaticRepair, false);
@@ -85,6 +90,48 @@ test("thin metadata stays within deterministic budgets", () => {
   assert.ok(inputs.continueTask <= INPUT_METADATA_SIZE_BUDGETS.continueTask);
   assert.ok(inputs.delegateTasks <= INPUT_METADATA_SIZE_BUDGETS.delegateTasks);
   assert.ok(inputs.combined <= INPUT_METADATA_SIZE_BUDGETS.combined);
+});
+
+test("advertised schemas retain runtime validation and defaults without prose", () => {
+  const single = {
+    ...BASE_INPUT,
+    contextCapsule: { invariants: "The public API remains stable." },
+    previousAttempts: [
+      {
+        effort: "medium" as const,
+        verdict: "FAILED" as const,
+        whatWentWrong: "The first attempt missed the edge case.",
+      },
+    ],
+  };
+  assert.deepEqual(
+    z.object(delegateTaskMcpInputShape).parse(single),
+    delegateTaskInputSchema.parse(single),
+  );
+
+  const batch = { mode: "parallel" as const, tasks: [single] };
+  assert.deepEqual(
+    z.object(delegateTasksMcpInputShape).parse(batch),
+    delegateTasksInputSchema.parse(batch),
+  );
+
+  const continuation = {
+    continuationReference: "opaque-reference",
+    instruction: "Re-run the bounded verification.",
+  };
+  assert.deepEqual(
+    z.object(continueTaskMcpInputShape).parse(continuation),
+    continueTaskInputSchema.parse(continuation),
+  );
+
+  assert.throws(() =>
+    z.object(delegateTaskMcpInputShape).parse({
+      ...single,
+      objective: "too short",
+    }),
+  );
+  const advertised = JSON.stringify(z.toJSONSchema(z.object(delegateTasksMcpInputShape)));
+  assert.doesNotMatch(advertised, /"description"/);
 });
 
 test("activityLabel is optional, concise, and bounded", () => {
@@ -372,14 +419,13 @@ test("batch guidance states integration and partial-outcome behavior", () => {
   assert.match(BATCH_TOOL_DESCRIPTION, /merely because[\s\S]*parallel/i);
 });
 
-test("resultDetail pins compact preference and full compatibility default", () => {
+test("resultDetail makes the thin handoff default and preserves compatibility modes", () => {
   const text = delegateTaskInputShape.resultDetail.description ?? "";
-  assert.match(text, /compact routinely/i);
-  assert.match(text, /only successful verification output/i);
-  assert.match(text, /schema default remains full[\s\S]*backwards compatibility/i);
-  for (const retained of ["failed", "refused", "skipped"]) {
-    assert.match(text, new RegExp(retained, "i"));
-  }
+  assert.match(text, /handoff \(default\)/i);
+  assert.match(text, /omits structuredContent[\s\S]*clean verified PASS/i);
+  assert.match(text, /rich failure evidence/i);
+  assert.match(text, /compact[\s\S]*compatibility structure/i);
+  assert.match(text, /full[\s\S]*complete structure/i);
 });
 
 test("plain and structured context are complementary and bounded", () => {
@@ -445,7 +491,7 @@ test("batch input descriptions qualify overlap and integration", () => {
   );
   assert.match(
     delegateTasksInputShape.resultDetail.description ?? "",
-    /batch-level[\s\S]*uniformly[\s\S]*not a per-task field/i,
+    /batch-level[\s\S]*handoff[\s\S]*default/i,
   );
   assert.match(
     delegateTasksInputShape.tasks.description ?? "",
@@ -536,7 +582,7 @@ test("SOL_RULES carries the runtime's operational distinctions without benchmark
     /raw tokens[\s\S]*credit cost/i,
     /not an\s+immutable architectural\s+guarantee/i,
     /more workers are not[\s\S]*automatically[\s\S]*cheaper/i,
-    /schema default remains[\s\S]*full/i,
+    /default `resultDetail: "handoff"`[\s\S]*compact[\s\S]*full/i,
     /trustworthy: false/i,
     /Do not automatically rerun a full suite/i,
     /has no meaningful new state,[\s\S]*remain silent/i,
@@ -707,8 +753,9 @@ test("acceptance ledger owns the current release baseline", async () => {
   const acceptance = await readDoc("docs/FEATURE_ACCEPTANCE.md");
   assert.match(acceptance, /package version is `0\.9\.1`/i);
   assert.match(acceptance, /current main runtime is its release baseline/i);
-  assert.match(acceptance, /\*\*472\/472 tests\*\*/);
+  assert.match(acceptance, /\*\*508\/511 tests passed and 3 expected platform skips\*\*/);
   assert.match(acceptance, /## Current capability matrix/);
+  assert.match(acceptance, /Thin handoff protocol boundary[\s\S]*NOT TESTED/);
   assert.match(acceptance, /Parallel batches[\s\S]*Battle-tested/);
   assert.match(acceptance, /Worker Continuation[\s\S]*Battle-tested/);
   assert.match(acceptance, /no fresh parent[\s\S]*sequential batch/i);
