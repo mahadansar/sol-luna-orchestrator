@@ -1376,10 +1376,6 @@ function buildReviewChecklist(
     );
   }
 
-  for (const criterion of input.acceptanceCriteria) {
-    checklist.push(`Confirm acceptance criterion holds: ${criterion}`);
-  }
-
   const executed = orchestratorRuns.filter(
     (run) => run.execution === "argv" || run.execution === "shell",
   );
@@ -1423,12 +1419,7 @@ function buildReviewChecklist(
     unclaimed.length === 0 &&
     (input.verificationCommands.length === 0 || executed.length > 0);
 
-  if (clean) {
-    checklist.push(
-      "Judge whether the change is high-risk or architecturally significant, " +
-        "and read the diff if it is. Verified mechanical checks do not make it good.",
-    );
-  } else {
+  if (!clean) {
     checklist.push(
       "Read the actual diff of every file in `filesChanged` — the worker's summary is a claim, not evidence.",
     );

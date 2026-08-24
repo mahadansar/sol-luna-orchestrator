@@ -5,8 +5,23 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { buildWorkerPrompt } from "./prompt.js";
+import { buildContinuationPrompt, buildWorkerPrompt } from "./prompt.js";
 import { delegateTaskInputSchema } from "./contract.js";
+
+test("resumed prompt carries only the bounded follow-up and immutable reminder", () => {
+  const prompt = buildContinuationPrompt("/fake/dir", "Re-check the focused evidence.");
+  assert.match(prompt, /Re-check the focused evidence/);
+  assert.match(prompt, /immutable original contract/i);
+  for (const replayed of [
+    "## Objective",
+    "## Context",
+    "allowedFiles",
+    "acceptance criteria",
+    "verification commands",
+  ]) {
+    assert.doesNotMatch(prompt, new RegExp(replayed, "i"));
+  }
+});
 
 test("prompt states explicit change intent independently of scope and category", () => {
   const input = delegateTaskInputSchema.parse({

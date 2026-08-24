@@ -406,6 +406,157 @@ test("repair activity is visible during the turn and after completion", () => {
   assert.match(renderHumanLines(completed).join("\n"), /repair passed \(1 turn\)/);
 });
 
+test("parallel recovery activity preserves attempts and separate usage", () => {
+  const initialUsage = {
+    inputTokens: 100,
+    cachedInputTokens: 40,
+    outputTokens: 10,
+    reasoningOutputTokens: 2,
+  };
+  const recoveryUsage = {
+    inputTokens: 50,
+    cachedInputTokens: 25,
+    outputTokens: 6,
+    reasoningOutputTokens: 1,
+  };
+  const base: TimestampedEvent[] = [
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "b-recovery",
+      mode: "parallel",
+      taskCount: 1,
+      maxParallel: 3,
+      automaticRecovery: true,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "task.queued",
+      batchId: "b-recovery",
+      taskId: "t1",
+      effort: "high",
+      attempt: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:02Z",
+      type: "worker.started",
+      batchId: "b-recovery",
+      taskId: "t1",
+      effort: "high",
+      workingDirectory: "w",
+      attempt: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:03Z",
+      type: "worker.timedOut",
+      batchId: "b-recovery",
+      taskId: "t1",
+      timeoutSeconds: 10,
+      attempt: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:04Z",
+      type: "worker.completed",
+      batchId: "b-recovery",
+      taskId: "t1",
+      verdict: "FAILED",
+      claimed: "FAILED",
+      durationSeconds: 10,
+      threadId: "thread-initial",
+      model: "gpt-5.6-luna",
+      effort: "high",
+      usage: initialUsage,
+      attempt: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:05Z",
+      type: "recovery.started",
+      batchId: "b-recovery",
+      taskId: "t1",
+      attempt: 2,
+      classification: "timeout-continuation",
+      evidence: "Confined timeout evidence.",
+    },
+    {
+      timestamp: "2024-01-01T10:00:06Z",
+      type: "worker.started",
+      batchId: "b-recovery",
+      taskId: "t1",
+      effort: "high",
+      workingDirectory: "w",
+      attempt: 2,
+      recoveryClassification: "timeout-continuation",
+      recoveryEvidence: "Confined timeout evidence.",
+    },
+  ];
+
+  const recovering = reduceEvents(base);
+  assert.equal(recovering.automaticRecovery, true);
+  assert.equal(recovering.workers[0]?.state, "recovering");
+  assert.equal(recovering.workers[0]?.attempt, 2);
+  assert.deepEqual(recovering.workers[0]?.recovery?.initialUsage, initialUsage);
+  assert.match(
+    renderHumanLines(recovering).join("\n"),
+    /Recovery: running \(attempt 2, timeout-continuation\)/,
+  );
+
+  const completed = reduceEvents([
+    ...base,
+    {
+      timestamp: "2024-01-01T10:00:07Z",
+      type: "worker.completed",
+      batchId: "b-recovery",
+      taskId: "t1",
+      verdict: "PASS",
+      claimed: "PASS",
+      durationSeconds: 4,
+      threadId: "thread-recovery",
+      model: "gpt-5.6-luna",
+      effort: "high",
+      usage: recoveryUsage,
+      attempt: 2,
+      recoveryClassification: "timeout-continuation",
+      recoveryEvidence: "Confined timeout evidence.",
+    },
+    {
+      timestamp: "2024-01-01T10:00:08Z",
+      type: "recovery.completed",
+      batchId: "b-recovery",
+      taskId: "t1",
+      attempt: 2,
+      classification: "timeout-continuation",
+      evidence: "Confined timeout evidence.",
+      verdict: "PASS",
+      durationSeconds: 4,
+      threadId: "thread-recovery",
+      usage: recoveryUsage,
+    },
+  ]);
+  assert.equal(completed.workers[0]?.state, "completed");
+  assert.equal(completed.workers[0]?.recovery?.verdict, "PASS");
+  assert.equal(completed.workers[0]?.recovery?.recoveryDurationSeconds, 4);
+  assert.deepEqual(completed.workers[0]?.recovery?.recoveryUsage, recoveryUsage);
+  assert.match(renderHumanLines(completed).join("\n"), /recovery passed \(attempt 2\)/);
+
+  assert.ok(
+    parseEventLine(
+      JSON.stringify({
+        timestamp: "2024-01-01T10:00:08Z",
+        type: "recovery.completed",
+        batchId: "b-recovery",
+        taskId: "t1",
+        attempt: 2,
+        classification: "timeout-continuation",
+        evidence: "Confined timeout evidence.",
+        verdict: "PASS",
+        durationSeconds: 4,
+        threadId: "thread-recovery",
+        usage: recoveryUsage,
+      }),
+    ),
+  );
+});
+
 // ========================================================================
 // Supervisor state
 // ========================================================================

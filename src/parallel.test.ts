@@ -2559,6 +2559,248 @@ test("parallel git evidence is reconciled into the nested result before integrat
   }
 });
 
+test("parallel timeout recovery resumes the same thread and integrates final evidence", async () => {
+  const repo = await makeRepo();
+  const calls: Array<{ directory: string; resumeThreadId?: string }> = [];
+  const events: Array<Record<string, unknown>> = [];
+  try {
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/recovered/**"] })],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        eventEmitter: (event) => events.push(event),
+        executor: async (input, options) => {
+          calls.push({
+            directory: options.workingDirectory,
+            resumeThreadId: options.resumeThreadId,
+          });
+          const target = path.join(
+            options.workingDirectory,
+            "src",
+            "recovered",
+            "value.ts",
+          );
+          await fs.mkdir(path.dirname(target), { recursive: true });
+          await fs.writeFile(
+            target,
+            calls.length === 1 ? "initial\n" : "recovered\n",
+            "utf8",
+          );
+          return makeOutput({
+            effort: input.effort,
+            workerThreadId: "thread-timeout",
+            verdict: calls.length === 1 ? "FAILED" : "PASS",
+            workerClaimedStatus: calls.length === 1 ? "FAILED" : "PASS",
+            errors:
+              calls.length === 1
+                ? ["Worker exceeded its 1s budget and was aborted."]
+                : [],
+            filesChanged: [
+              {
+                path: "src/recovered/value.ts",
+                kind: "add",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0]?.directory, calls[1]?.directory);
+    assert.equal(calls[0]?.resumeThreadId, undefined);
+    assert.equal(calls[1]?.resumeThreadId, "thread-timeout");
+    assert.equal(result.tasks[0]?.attempt, 2);
+    assert.equal(result.tasks[0]?.result?.attempt, 2);
+    assert.equal(
+      result.tasks[0]?.result?.recovery?.classification,
+      "timeout-continuation",
+    );
+    assert.equal(result.tasks[0]?.result?.recovery?.recoveryAttempt, 2);
+    assert.equal(result.integrated, true);
+    assert.equal(
+      await fs.readFile(path.join(repo, "src", "recovered", "value.ts"), "utf8"),
+      "recovered\n",
+    );
+    const recoveryDone = events.findIndex((event) => event.type === "recovery.completed");
+    const integration = events.findIndex(
+      (event) => event.type === "integration.completed",
+    );
+    assert.ok(recoveryDone >= 0 && integration > recoveryDone);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel worker-process failures get one fresh retry in the same worktree", async () => {
+  const repo = await makeRepo();
+  const calls: Array<{ directory: string; resumeThreadId?: string }> = [];
+  try {
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/fresh/**"] })],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        executor: async (input, options) => {
+          calls.push({
+            directory: options.workingDirectory,
+            resumeThreadId: options.resumeThreadId,
+          });
+          if (calls.length === 1) throw new Error("worker process exited");
+          const target = path.join(options.workingDirectory, "src", "fresh", "value.ts");
+          await fs.mkdir(path.dirname(target), { recursive: true });
+          await fs.writeFile(target, "fresh retry\n", "utf8");
+          return makeOutput({
+            effort: input.effort,
+            workerThreadId: "thread-fresh",
+            filesChanged: [
+              { path: "src/fresh/value.ts", kind: "add", why: "test", observed: true },
+            ],
+          });
+        },
+      },
+    );
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0]?.directory, calls[1]?.directory);
+    assert.equal(calls[0]?.resumeThreadId, undefined);
+    assert.equal(calls[1]?.resumeThreadId, undefined);
+    assert.equal(
+      result.tasks[0]?.result?.recovery?.classification,
+      "worker-process-retry",
+    );
+    assert.equal(result.tasks[0]?.result?.attempt, 2);
+    assert.equal(result.passed, 1);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel recovery runs independent failures concurrently and never retries successes", async () => {
+  const repo = await makeRepo();
+  const calls = new Map<string, number>();
+  let activeRecovery = 0;
+  let peakRecovery = 0;
+  try {
+    const result = await runProductionBatch(
+      [
+        makeTask({
+          objective: "Successful stream stays single attempt.",
+          allowedFiles: ["src/one/**"],
+        }),
+        makeTask({
+          objective: "First failed stream recovers once.",
+          allowedFiles: ["src/two/**"],
+        }),
+        makeTask({
+          objective: "Second failed stream recovers once.",
+          allowedFiles: ["src/three/**"],
+        }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        executor: async (input, options) => {
+          const key = moduleOf(input);
+          const count = (calls.get(key) ?? 0) + 1;
+          calls.set(key, count);
+          if (key === "one") return makeOutput({ effort: input.effort });
+          if (count === 1) throw new Error(`first process failure for ${key}`);
+          activeRecovery += 1;
+          peakRecovery = Math.max(peakRecovery, activeRecovery);
+          await new Promise((resolve) => setTimeout(resolve, 35));
+          activeRecovery -= 1;
+          const relative = `src/${key}/value.ts`;
+          const target = path.join(options.workingDirectory, ...relative.split("/"));
+          await fs.mkdir(path.dirname(target), { recursive: true });
+          await fs.writeFile(target, "recovered\n", "utf8");
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [{ path: relative, kind: "add", why: "test", observed: true }],
+          });
+        },
+      },
+    );
+    assert.equal(calls.get("one"), 1);
+    assert.equal(calls.get("two"), 2);
+    assert.equal(calls.get("three"), 2);
+    assert.equal(peakRecovery, 2);
+    assert.equal(result.passed, 3);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel recovery does not retry contract discrepancies and stops after one failed retry", async () => {
+  const repo = await makeRepo();
+  const calls = new Map<string, number>();
+  try {
+    const result = await runProductionBatch(
+      [
+        makeTask({
+          objective: "Contract discrepancy stays parent-owned.",
+          allowedFiles: ["src/discrepancy/**"],
+        }),
+        makeTask({
+          objective: "Always failing stream gets one retry.",
+          allowedFiles: ["src/bounded/**"],
+        }),
+        makeTask({
+          objective: "Failed timeout recovery keeps the initial result evidence.",
+          allowedFiles: ["src/timeout/**"],
+        }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        executor: async (input) => {
+          const key = moduleOf(input);
+          const count = (calls.get(key) ?? 0) + 1;
+          calls.set(key, count);
+          if (key === "discrepancy") {
+            return makeOutput({
+              verdict: "FAILED",
+              workerClaimedStatus: "FAILED",
+              discrepancies: ["contract mismatch"],
+            });
+          }
+          if (key === "timeout" && count === 1) {
+            return makeOutput({
+              verdict: "FAILED",
+              workerClaimedStatus: "FAILED",
+              errors: ["Worker exceeded its 1s budget and was aborted."],
+            });
+          }
+          throw new Error("persistent worker process failure");
+        },
+      },
+    );
+    assert.equal(calls.get("discrepancy"), 1);
+    assert.equal(calls.get("bounded"), 2);
+    assert.equal(calls.get("timeout"), 2);
+    const bounded = result.tasks.find((task) => task.taskId === "t2")!;
+    assert.equal(bounded.result, null);
+    assert.equal(bounded.recovery?.attempted, true);
+    assert.equal(bounded.recovery?.recoveryAttempt, 2);
+    assert.equal(
+      result.tasks.find((task) => task.taskId === "t1")?.recovery?.classification,
+      "contract-discrepancy",
+    );
+    const timeout = result.tasks.find((task) => task.taskId === "t3")!;
+    assert.equal(timeout.result?.verdict, "FAILED");
+    assert.equal(timeout.result?.attempt, 2);
+    assert.equal(timeout.result?.recovery?.classification, "timeout-continuation");
+    assert.ok(
+      timeout.result?.errors.some((error) =>
+        error.includes("persistent worker process failure"),
+      ),
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
 test("successful integration emits applied counts before an explicit completion", async () => {
   const repo = await makeRepo();
   const events: Array<Record<string, unknown>> = [];
@@ -3087,9 +3329,10 @@ const { createEventEmitter } = await import(${JSON.stringify(eventsModule)});
 const tasks = ${JSON.stringify(tasks)};
 const controller = new AbortController();
 if (${JSON.stringify(abortBeforeStart)}) controller.abort();
-await runBatch(tasks, {
-  mode: ${JSON.stringify(mode)},
-  workingDirectory: ${JSON.stringify(workingDirectory)},
+  await runBatch(tasks, {
+    mode: ${JSON.stringify(mode)},
+    automaticRecovery: false,
+    workingDirectory: ${JSON.stringify(workingDirectory)},
   signal: controller.signal,
   eventEmitter: createEventEmitter(${JSON.stringify(eventsPath)}),
   executor: async (input) => {

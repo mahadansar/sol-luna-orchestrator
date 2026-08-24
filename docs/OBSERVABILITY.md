@@ -25,6 +25,19 @@ Representation details below describe what each contains and how consumers
 should interpret it. Sensitivity and sharing boundaries are defined in
 [Security](../SECURITY.md#logs-and-telemetry).
 
+## Model-facing result surfaces
+
+The human-readable tool text has a thin fast path for a clean verified PASS. It
+contains verdict and task/batch identity, observed changed paths, authoritative
+verification counts, integration status, an eligible continuation reference,
+and only actionable risks. It omits routine summaries, usage dumps,
+transcript-like narration, and generic review prose; actionable worker notes are
+surfaced as risks. Failed, blocked, untrustworthy,
+discrepant, scope-violating, refused/skipped, runtime-error, partial, and
+integration-conflict results retain progressive diagnostics. The full
+`structuredContent` default remains unchanged; `resultDetail=compact` only
+removes successful verification output.
+
 ## What the event stream contains
 
 Records are appended as the run progresses: batch started, completed, cancelled
@@ -32,7 +45,16 @@ or rejected; task queued; worker started, completed, failed, cancelled or timed
 out; worktree created, removed or retained; verification started and completed;
 scope conflicts; integration conflicts, applied file counts, and completed,
 not-attempted, partial or failed integration; and bounded repair started and
-completed.
+completed; and bounded recovery skipped, started, and completed.
+
+Parallel recovery keeps the original batchId/taskId and emits an explicit attempt
+ordinal. Its classification and concise evidence identify a timeout continuation
+or a fresh-process retry, while separate initial/recovery duration and usage
+remain in the structured result and recovery completion event. Recovery decisions
+are made before integration and cleanup; an opted-out or ineligible task emits a
+skipped decision rather than another worker turn. The JSON activity snapshot keeps
+the recovery attempt, classification, evidence, initial/recovery usage and duration;
+the human view labels running and completed recovery turns.
 
 Worktree events describe the outcome after configured cleanup, not merely why a
 worktree might have been useful. `worktree.removed` carries the historical
@@ -65,6 +87,7 @@ Carried on those records:
 - Working-directory and worktree paths, and whether a worktree was kept
 - Optional explicit `activityLabel` (never derived from the objective)
 - Batch mode, task count and configured concurrency
+- Attempt ordinal and bounded recovery classification/evidence when applicable
 
 Deliberately **not** written to this stream:
 

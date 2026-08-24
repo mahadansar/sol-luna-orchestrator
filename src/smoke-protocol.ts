@@ -113,17 +113,10 @@ async function main(): Promise<void> {
     assert.deepEqual(mode.enum, ["parallel", "sequential"]);
   });
 
-  check("delegate_tasks reports conflicts and integration state", () => {
-    const out = (batchTool?.outputSchema?.properties ?? {}) as Record<string, unknown>;
-    for (const field of [
-      "tasks",
-      "scopeConflicts",
-      "integrationConflicts",
-      "integrated",
-      "reviewChecklist",
-    ]) {
-      assert.ok(field in out, `missing batch output field: ${field}`);
-    }
+  check("all tools omit advertised output schemas", () => {
+    assert.equal(tool?.outputSchema, undefined);
+    assert.equal(batchTool?.outputSchema, undefined);
+    assert.equal(continueTool?.outputSchema, undefined);
   });
 
   check("the batch description tells the parent when parallel is inappropriate", () => {
@@ -167,8 +160,7 @@ async function main(): Promise<void> {
 
   check("effort field tells the parent when to pick max", () => {
     const effort = properties.effort as { description?: string };
-    assert.match(effort.description ?? "", /max = genuinely hard/i);
-    assert.match(effort.description ?? "", /task's difficulty/i);
+    assert.match(effort.description ?? "", /task difficulty/i);
   });
 
   check("input schema carries escalation metadata", () => {
@@ -180,27 +172,12 @@ async function main(): Promise<void> {
   check("verification field describes configured policy and default refusal", () => {
     const verification = properties.verificationCommands as { description?: string };
     assert.match(verification.description ?? "", /configured policy/i);
-    assert.match(verification.description ?? "", /Default allowlist mode refuses/i);
+    assert.match(verification.description ?? "", /orchestrator reruns/i);
   });
 
-  check("output schema exposes verdict and review fields", () => {
-    const out = (tool?.outputSchema?.properties ?? {}) as Record<string, unknown>;
-    for (const field of [
-      "verdict",
-      "workerClaimedStatus",
-      "workerThreadId",
-      "continuationReference",
-      "repair",
-      "filesChanged",
-      "verification",
-      "verificationMode",
-      "discrepancies",
-      "reviewChecklist",
-      "escalationAdvice",
-      "attempt",
-    ]) {
-      assert.ok(field in out, `missing output field: ${field}`);
-    }
+  check("structured output remains a runtime result boundary", () => {
+    assert.equal(tool?.outputSchema, undefined);
+    assert.equal(batchTool?.outputSchema, undefined);
   });
 
   // Exercise the call path without spending a model call: invalid input must be

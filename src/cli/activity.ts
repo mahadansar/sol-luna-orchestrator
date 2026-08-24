@@ -221,7 +221,8 @@ export function renderHumanLines(
       const renderedState =
         worker.state === "running" ||
         worker.state === "verifying" ||
-        worker.state === "repairing"
+        worker.state === "repairing" ||
+        worker.state === "recovering"
           ? green(status)
           : worker.state === "cancelled"
             ? yellow(status)
@@ -233,11 +234,16 @@ export function renderHumanLines(
     const duration =
       worker.durationSeconds ?? secondsBetween(worker.startTime, worker.endTime, now);
     if (duration !== null) details.push(formatSeconds(duration));
+    if (worker.attempt > 1) details.push(`attempt ${worker.attempt}`);
     if (details.length > 0) lines.push(`   ${details.join(` ${symbols.divider} `)}`);
 
     const verification = worker.verification;
     if (worker.state === "repairing") {
       lines.push("   Repair: running (turn 1 of 1)");
+    } else if (worker.state === "recovering") {
+      lines.push(
+        `   Recovery: running (attempt ${worker.recovery?.attempt ?? worker.attempt}, ${worker.recovery?.classification ?? "unknown"})`,
+      );
     } else if (worker.state === "verifying") {
       lines.push("   Verification: running");
     } else if (
@@ -259,6 +265,13 @@ export function renderHumanLines(
         worker.repair.verdict === "PASS"
           ? "repair passed (1 turn)"
           : "repair exhausted (1 turn)",
+      );
+    }
+    if (worker.recovery?.attempted && worker.recovery.verdict) {
+      summary.push(
+        worker.recovery.verdict === "PASS"
+          ? `recovery passed (attempt ${worker.recovery.attempt})`
+          : `recovery exhausted (attempt ${worker.recovery.attempt})`,
       );
     }
     const changedFiles = worker.changedFiles ?? worker.integration?.appliedFiles ?? null;

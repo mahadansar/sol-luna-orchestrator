@@ -67,21 +67,38 @@ function mockResult(): DelegateTaskOutput {
   };
 }
 
-test("evidence packet - legacy/full result compatibility", () => {
+test("evidence packet - clean PASS uses the compact model handoff", () => {
   const result = mockResult();
   const text = renderResult(result);
-  assert.ok(text.includes("needed change"), "the text block keeps each file's why");
-  assert.ok(text.includes("WORKER SUMMARY (claim)"), "should label summary as claim");
-  // renderResult has never printed the output of a command that passed. The
-  // compaction that matters happens in structuredContent, and is proved below
-  // against every model-visible surface at once.
+  assert.ok(text.includes("VERDICT: PASS"));
+  assert.ok(text.includes("BATCH: single"));
+  assert.ok(text.includes("TASK: t1"));
+  assert.ok(text.includes("CHANGED: src/file.ts"));
+  assert.ok(text.includes("authoritative 1 executed (1 passed, 0 failed), 0 refused"));
+  assert.ok(text.includes("INTEGRATION:"));
+  assert.ok(text.includes("CONTINUATION:"));
+  assert.ok(text.includes("RISKS: none"));
+  assert.doesNotMatch(text, /WORKER SUMMARY|tokens:|YOUR REVIEW|needed change/);
+});
+
+test("evidence packet - clean PASS preserves actionable worker notes as risks", () => {
+  const result = mockResult();
+  result.notes = "Recheck the generated fixture before release.";
+  result.followUps = ["Confirm the downstream compatibility window."];
+
+  const text = renderResult(result);
+
+  assert.ok(text.includes("WORKER: gpt-5.6-luna @ high | attempt 1 | thread thread_123"));
+  assert.ok(text.includes("RISKS: Recheck the generated fixture before release."));
+  assert.ok(text.includes("Confirm the downstream compatibility window."));
+  assert.doesNotMatch(text, /WORKER SUMMARY|tokens:|YOUR REVIEW/);
 });
 
 test("evidence packet - normal PASS", () => {
   const result = mockResult();
   const text = renderResult(result);
   assert.ok(text.includes("VERDICT: PASS"));
-  assert.ok(text.includes("CHANGE INTENT: optional"));
+  assert.ok(text.includes("VERIFICATION:"));
 });
 
 test("evidence packet - forbidden intent and contract violation are rendered", () => {
@@ -177,7 +194,7 @@ test("evidence packet - no changed files", () => {
   const result = mockResult();
   result.filesChanged = [];
   const text = renderResult(result);
-  assert.ok(text.includes("(none recorded)"));
+  assert.ok(text.includes("CHANGED: (none)"));
 });
 
 test("evidence packet - missing telemetry", () => {
@@ -218,8 +235,11 @@ test("evidence packet - parallel/batch per-task result", () => {
     reviewChecklist: [],
   };
   const text = renderBatch(batch);
-  assert.ok(text.includes("worker summary (claim)"));
-  assert.ok(text.includes("change intent: optional"));
+  assert.ok(text.includes("BATCH b1"));
+  assert.ok(text.includes("[t1] PASS"));
+  assert.ok(text.includes("changed: src/file.ts"));
+  assert.ok(text.includes("INTEGRATION: all merged"));
+  assert.doesNotMatch(text, /worker summary|change intent|YOUR REVIEW/i);
 });
 
 test("batch text rendering keeps compact operational and review parity", () => {
@@ -812,14 +832,14 @@ test("failing output reaches compact already bounded by capture-time truncation"
 
 // --- filesChanged[].why ------------------------------------------------------
 
-test("compact keeps filesChanged[].why on both model-visible surfaces", () => {
-  // `why` is a worker claim, but it is short next to command output and it is
-  // the only carrier of the runtime's own note about a file the worker never
-  // mentioned. Compact removes exactly one thing, and this is not it.
+test("compact keeps filesChanged[].why in structured compatibility content", () => {
   const result = mockResult();
   const surfaces = taskSurfaces(result, "compact");
-  assert.ok(surfaces.includes("needed change"), "why was dropped from compact");
-  assert.ok(renderResult(result).includes("needed change"), "why left the text block");
+  assert.ok(
+    surfaces.includes("needed change"),
+    "why was dropped from structured content",
+  );
+  assert.doesNotMatch(renderResult(result), /needed change/);
 });
 
 test("compact keeps the marker for a file the worker never claimed", () => {

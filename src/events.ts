@@ -18,6 +18,7 @@ export type OrchestratorEvent =
       mode: string;
       taskCount: number;
       maxParallel: number;
+      automaticRecovery?: boolean;
     }
   | {
       type: "batch.completed";
@@ -40,6 +41,9 @@ export type OrchestratorEvent =
       objective?: string;
       /** Configured worker model, known before the worker starts. */
       model?: string;
+      attempt?: number;
+      recoveryClassification?: string;
+      recoveryEvidence?: string;
     }
   | {
       type: "worker.started";
@@ -48,6 +52,9 @@ export type OrchestratorEvent =
       effort: string;
       workingDirectory: string;
       model?: string;
+      attempt?: number;
+      recoveryClassification?: string;
+      recoveryEvidence?: string;
     }
   | {
       type: "worker.completed";
@@ -74,10 +81,70 @@ export type OrchestratorEvent =
         outputTokens: number;
         reasoningOutputTokens: number;
       } | null;
+      attempt?: number;
+      recoveryClassification?: string;
+      recoveryEvidence?: string;
     }
-  | { type: "worker.failed"; batchId: string; taskId: string; reason: string }
-  | { type: "worker.cancelled"; batchId: string; taskId: string }
-  | { type: "worker.timedOut"; batchId: string; taskId: string; timeoutSeconds: number }
+  | {
+      type: "worker.failed";
+      batchId: string;
+      taskId: string;
+      reason: string;
+      attempt?: number;
+      recoveryClassification?: string;
+      recoveryEvidence?: string;
+    }
+  | {
+      type: "worker.cancelled";
+      batchId: string;
+      taskId: string;
+      attempt?: number;
+      recoveryClassification?: string;
+      recoveryEvidence?: string;
+    }
+  | {
+      type: "worker.timedOut";
+      batchId: string;
+      taskId: string;
+      timeoutSeconds: number;
+      attempt?: number;
+      recoveryClassification?: string;
+      recoveryEvidence?: string;
+    }
+  | {
+      type: "recovery.started";
+      batchId: string;
+      taskId: string;
+      attempt: number;
+      classification: string;
+      evidence: string;
+    }
+  | {
+      type: "recovery.skipped";
+      batchId: string;
+      taskId: string;
+      attempt: number;
+      classification: string;
+      evidence: string;
+    }
+  | {
+      type: "recovery.completed";
+      batchId: string;
+      taskId: string;
+      attempt: number;
+      classification: string;
+      evidence: string;
+      verdict: string;
+      durationSeconds: number;
+      threadId: string | null;
+      usage: {
+        inputTokens: number;
+        cachedInputTokens: number;
+        cacheWriteInputTokens?: number;
+        outputTokens: number;
+        reasoningOutputTokens: number;
+      } | null;
+    }
   | {
       type: "repair.started";
       batchId: string;

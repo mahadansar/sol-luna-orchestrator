@@ -8,6 +8,19 @@ All notable changes to this project are documented here. Format follows
 
 ### Added
 
+- Added bounded parallel automatic recovery, enabled by default with a batch-level
+  opt-out. After the initial worker window, one eligible timeout may resume its
+  same thread/worktree and one no-result worker-process failure may use a fresh
+  thread in the same worktree. Stable identities, attempt ordinals, recovery
+  evidence, final verification, and separate usage/duration are recorded; no
+  economic or latency success is claimed.
+
+- Added a thin supervisor fast path: compact routing/ownership metadata,
+  deterministic metadata-size budgets, clean PASS result handoffs, and compact
+  same-thread continuation prompts. Rich diagnostics, strict worker output,
+  full structured-content compatibility, and verification semantics remain
+  unchanged. No live cost or latency saving is claimed.
+
 - Prepared Benchmark V2 with eight realistic externally graded fixtures,
   fixed-effort Solo/Adaptive/Forced arms, schema-4 credit telemetry, a dated
   ChatGPT Plus Codex credit-rate snapshot, standard-speed campaign metadata and

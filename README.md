@@ -17,6 +17,20 @@ The parent owns the requirements, decides whether delegation is worthwhile, and
 reviews the result. Workers run in isolated Codex threads and cannot delegate
 further. Zero workers is a valid choice.
 
+Routine verified PASS results use a thin model-facing handoff: verdict, task and
+batch identity, changed paths, authoritative verification counts, integration
+status, continuation reference when available, and actionable risks. Failed,
+blocked, suspicious, discrepant, scope-violating, refused-verification, and
+conflict results retain progressive diagnostics. This is a context-shaping fast
+path, not a measured cost or latency claim.
+
+Parallel batches enable bounded automatic recovery by default. After the initial
+worker window, an eligible timeout resumes its same Luna thread in the same owned
+worktree, while a worker-process failure with no result gets one fresh thread in
+that worktree. Set `automaticRecovery: false` to opt out. Recovery is one extra
+turn only; successful tasks and trust-boundary, cancellation, evidence,
+contract, and integration-conflict failures remain for parent review.
+
 Requires Node.js 22.12 or newer and a logged-in Codex CLI.
 Any compatible parent model may supervise. Creator examples, platform details,
 and the full requirements are in [Configuration](docs/CONFIGURATION.md).

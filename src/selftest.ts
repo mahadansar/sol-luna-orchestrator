@@ -202,9 +202,10 @@ test("continuation resumes the exact thread and reruns verification under the or
   assert.equal(result.verification[0]?.execution, "argv");
   assert.equal(result.usage?.cacheWriteInputTokens, 0);
   assert.match(prompt, /Re-check the upload notes/);
-  assert.match(prompt, /src\/uploads\/\*\*/);
-  assert.match(prompt, /src\/secrets\/\*\*/);
-  assert.match(prompt, /Selected intent: \*\*optional\*\*/);
+  assert.match(prompt, /immutable original contract/i);
+  assert.doesNotMatch(prompt, /src\/uploads\/\*\*/);
+  assert.doesNotMatch(prompt, /src\/secrets\/\*\*/);
+  assert.doesNotMatch(prompt, /Selected intent:/i);
   assert.equal(result.repair, null, "manual continuation must not trigger auto repair");
 });
 
@@ -390,8 +391,9 @@ test("one automatic repair reuses the thread, passes exact evidence, and reruns 
     assert.equal(repairStarts, 1);
     assert.match(prompts[1] ?? "", /node repair-check\.mjs/);
     assert.match(prompts[1] ?? "", /LOCAL_ASSERTION_FAILURE/);
-    assert.match(prompts[1] ?? "", /src\/\*\*/);
-    assert.match(prompts[1] ?? "", /Selected intent: \*\*required\*\*/);
+    assert.match(prompts[1] ?? "", /immutable original contract/i);
+    assert.doesNotMatch(prompts[1] ?? "", /src\/\*\*/);
+    assert.doesNotMatch(prompts[1] ?? "", /Selected intent:/i);
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });
   }
@@ -1342,12 +1344,13 @@ test("an invalid present failure cause follows the malformed-report path", () =>
   assert.ok(result.errors.some((error) => /not valid JSON/.test(error)));
 });
 
-test("the review checklist always restates every acceptance criterion", () => {
+test("clean review checklists do not replay every acceptance criterion", () => {
   const result = analyze(makeReport(), [passingRun]);
-  assert.ok(
+  assert.equal(
     result.reviewChecklist.some((item) =>
       item.includes("Pagination returns the correct final page."),
     ),
+    false,
   );
 });
 
@@ -1362,10 +1365,7 @@ test("a clean verified PASS is not told to reread the whole diff", () => {
   assert.equal(result.verdict, "PASS");
   assert.equal(result.trustworthy, true);
   assert.equal(readsTheDiff(result.reviewChecklist), false);
-  assert.ok(
-    result.reviewChecklist.some((item) => /high-risk or architecturally/.test(item)),
-    "judgement about risk is still the parent's to make",
-  );
+  assert.equal(result.reviewChecklist.length, 0);
 });
 
 test("a failing verdict still demands the diff", () => {

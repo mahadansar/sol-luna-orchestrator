@@ -21,9 +21,9 @@ import {
 import {
   continueTaskInputShape,
   delegateTaskInputShape,
-  delegateTaskOutputShape,
+  inputMetadataSizeReport,
+  INPUT_METADATA_SIZE_BUDGETS,
   delegateTasksInputShape,
-  delegateTasksOutputShape,
   type BatchOutput,
   type ContinueTaskInput,
   type DelegateTaskInput,
@@ -172,6 +172,19 @@ export const recordEvent = (
               },
             }
           : {}),
+        ...(result.recovery
+          ? {
+              recovery: {
+                attempted: result.recovery.attempted,
+                classification: result.recovery.classification,
+                evidence: result.recovery.evidence,
+                initialAttempt: result.recovery.initialAttempt,
+                recoveryAttempt: result.recovery.recoveryAttempt,
+                initialDurationSeconds: result.recovery.initialDurationSeconds,
+                recoveryDurationSeconds: result.recovery.recoveryDurationSeconds,
+              },
+            }
+          : {}),
         usage: result.usage,
       })}\n`,
     );
@@ -256,76 +269,47 @@ function emitSingleCompletion(
 }
 
 export const TOOL_DESCRIPTION = `Delegate ONE substantial, bounded, well-specified executable task to an isolated ${LUNA_MODEL} worker.
+Use it for implementation, tests, bug fixing, refactoring, investigation, or chores
+when worker ownership beats fixed overhead. One task does not need a second independent seam.
+Keep small, simple, tightly coupled work solo when overhead dominates. Provide a
+concise activityLabel when safe.
 
-Use this for implementation, tests, bug fixing, refactoring, investigation, or
-chores when the objective, scope, acceptance criteria, and verification can be
-stated clearly and moving execution out of the parent orchestrator's context is
-worthwhile. One task does not need a second independent seam to justify
-delegation. Keep small, simple, tightly coupled, or already-obvious work solo
-when fixed coordination overhead would dominate.
+The parent owns architecture, decomposition, unresolved design, sequencing, scope,
+acceptance, and final judgement. Luna owns implementation and scoped verification. The
+worker cannot see the conversation or delegate. Provide objective, allowed/forbidden
+scope, changeIntent, acceptanceCriteria, and verificationCommands.
 
-When delegating, optionally provide a useful concise activityLabel (for example,
-"Update auth retries") for the local activity view. It is not required, and it
-should not copy the full objective or include sensitive details.
+Balance credit cost, latency, context, overhead, verification, isolation, coordination risk,
+and quality. Raw token count is not credit cost. The selected parent model is priced above
+${LUNA_MODEL} on the current pricing schedule only conditionally; whether delegation
+uses fewer total credits depends on which parent model is in use. It is not an architectural guarantee and not a measured saving.
+More workers is not automatically
+cheaper.
 
-While this call is pending and has no meaningful new state, remain silent: do not
-narrate waiting, polling, or elapsed time. Report the result, an error, a
-cancellation, a timeout, or an actionable state change.
+Use automaticRepair for at most one repair of a conservatively classified local defect.
+An opaque continuationReference permits one bounded same-thread follow-up without
+widening the contract. Use resultDetail=compact routinely; full remains the compatibility
+default.
 
-Be cost-aware, not raw-token-minimal: raw token count is not credit cost. When
-the selected parent model is priced above ${LUNA_MODEL} on the current pricing
-schedule, a delegated approach can use substantially more aggregate raw tokens
-and still cost fewer total credits, which is a legitimate input to the decision.
-Whether that applies depends on which parent model is in use and on current
-pricing; it is not an architectural guarantee and not a measured saving. Balance
-expected credit cost, latency, context use, fixed overhead, verification or
-isolation benefits, coordination risk, and quality. More workers is not
-automatically cheaper.
+Judge the returned verdict, verification, observed files, discrepancies, scope violations,
+and review checklist. Worker claims are not authoritative. Escalate FAILED/BLOCKED,
+trustworthy: false, discrepant, scope-violating, refused/skipped-verification,
+runtime-error, or conflict evidence. Choose review depth after seeing that evidence;
+do not pre-commit to rereading every file. A clean verified PASS receives a compact handoff
+and proportionate review. A verification-only worker FAILED can become PASS only when it
+matches a distinct passing authoritative check.
 
-The parent orchestrator retains architecture, decomposition, unresolved design
-and sequencing decisions, and final judgement. The worker cannot see the
-conversation or delegate further.
-
-Set automaticRepair only when one conservative same-thread repair is useful.
-The runtime classifies the initial failure first and permits at most one repair
-for a clear local verification defect. Read-only, contract, scope/conflict,
-environment/tooling, trust-boundary, and wider-scope failures return unchanged
-for parent review.
-
-Use the returned evidence. Worker claims are not authoritative; judge the
-orchestrator's verdict, verification, observed files, discrepancies, scope
-violations, and review checklist. workerClaimedFailureCauses is structured claim
-evidence, not the runtime's repair or retry classification. A verification-only
-worker FAILED can become PASS only
-when every failed worker verification row matches a distinct passing authoritative
-run, every configured command passed authoritatively, and no other terminal
-evidence exists. Such a contradiction remains visible and trustworthy is false.
-Choose review depth after seeing that evidence; do not pre-commit to rereading
-every file or rerunning every check. A clean
-verified PASS with expected changes deserves proportionate review, not automatic
-re-derivation. Inspect more deeply for risk, weak coverage, unexpected changes,
-FAILED or BLOCKED results, trustworthy: false, discrepancies, or scope
-violations. Set each task's explicit changeIntent to forbidden, optional, or
-required; omitted intent defaults to required for compatibility. It is independent
-of allowedFiles and taskCategory. A forbidden runtime-observed edit is a contract
-violation, while a claimed-only edit remains a claims-versus-observations
-discrepancy for the parent to judge.`;
+When pending with no meaningful new state, remain silent; do not narrate waiting or
+polling. Report only a result, error, cancellation, timeout, or actionable state change.`;
 
 export const CONTINUE_TOOL_DESCRIPTION = `Continue ONE eligible delegated task in the same Luna Codex thread for one explicit follow-up turn.
-
-Use only when the returned result includes a continuationReference and the parent
-has a concise, bounded instruction for that same task. The reference is opaque,
-server-lifetime and single-use; it is not a raw thread id and cannot be replayed.
-The original objective, allowedFiles, forbiddenFiles, changeIntent, acceptance
-criteria and verificationCommands are retained exactly. This tool accepts no
-scope, intent, effort, or verification widening fields. The worker still cannot
-delegate, and independent verification, scope checks, evidence reconciliation
-and verdict classification run again for the continuation turn. Manual
-continuation never starts an automatic repair turn.
-
-While this call is pending and has no meaningful new state, remain silent: do not
-narrate waiting, polling, elapsed time, or that it is still running. Report only
-a result, error, cancellation, timeout, or actionable state change.`;
+Use an opaque single-use continuationReference plus one concise bounded instruction.
+The original objective, allowedFiles, forbiddenFiles, changeIntent, acceptance, and verification
+contract is retained; no widening fields are accepted. Luna still cannot delegate;
+scoped verification, scope checks, evidence reconciliation, and verdict logic run again. Manual
+continuation never starts an automatic repair. When pending with no meaningful new state,
+remain silent; do not narrate waiting. Report only a result, error, cancellation, timeout,
+or actionable state change.`;
 
 /**
  * Strip the output of verification commands that passed.
@@ -360,7 +344,7 @@ export function compactBatch(batch: BatchOutput): BatchOutput {
 }
 
 /** Render the structured result as readable text for the model's transcript. */
-export function renderResult(result: DelegateTaskOutput): string {
+function renderRichResult(result: DelegateTaskOutput): string {
   const lines: string[] = [];
   const flag = result.trustworthy ? "" : "  ⚠ NEEDS SCRUTINY";
 
@@ -491,26 +475,151 @@ export function renderResult(result: DelegateTaskOutput): string {
   return lines.join("\n");
 }
 
+export interface RenderIdentity {
+  batchId?: string;
+  taskId?: string;
+  integration?: string;
+}
+
+function authoritativeVerificationCounts(result: DelegateTaskOutput): string {
+  const runs = result.verification.filter((run) => run.source === "orchestrator");
+  const executed = runs.filter(
+    (run) => run.execution === "argv" || run.execution === "shell",
+  );
+  const refused = runs.filter(
+    (run) => run.execution === "rejected" || run.execution === "skipped",
+  );
+  return (
+    `${executed.length} executed (${executed.filter((run) => run.passed).length} passed, ` +
+    `${executed.filter((run) => !run.passed).length} failed), ${refused.length} refused`
+  );
+}
+
+function isCleanPass(result: DelegateTaskOutput): boolean {
+  const authoritative = result.verification.filter(
+    (run) => run.source === "orchestrator",
+  );
+  return (
+    result.verdict === "PASS" &&
+    result.workerClaimedStatus === "PASS" &&
+    result.trustworthy &&
+    result.scopeViolations.length === 0 &&
+    result.discrepancies.length === 0 &&
+    result.errors.length === 0 &&
+    result.filesChanged.every((file) => file.observed) &&
+    !result.repair?.attempted &&
+    authoritative.length > 0 &&
+    authoritative.every(
+      (run) => (run.execution === "argv" || run.execution === "shell") && run.passed,
+    )
+  );
+}
+
+/** Compact model-facing handoff for the routine verified success path. */
+export function renderResult(
+  result: DelegateTaskOutput,
+  identity: RenderIdentity = {},
+): string {
+  if (!isCleanPass(result)) return renderRichResult(result);
+  const paths = result.filesChanged
+    .filter((file) => file.observed)
+    .map((file) => file.path);
+  const lines = [
+    `VERDICT: PASS | BATCH: ${identity.batchId ?? "single"} | TASK: ${identity.taskId ?? "t1"}`,
+    `WORKER: ${result.model} @ ${result.effort} | attempt ${result.attempt} | ` +
+      `thread ${result.workerThreadId ?? "unknown"} | ${result.durationSeconds}s`,
+    `CHANGED: ${paths.length > 0 ? paths.join(", ") : "(none)"}`,
+    `VERIFICATION: authoritative ${authoritativeVerificationCounts(result)}`,
+    `INTEGRATION: ${identity.integration ?? "single-task workspace"}`,
+  ];
+  if (result.recovery?.attempted) {
+    lines.push(
+      `RECOVERY: ${result.recovery.classification} | attempt ${result.recovery.recoveryAttempt} | ${result.recovery.evidence}`,
+    );
+  }
+  if (result.continuationReference)
+    lines.push(`CONTINUATION: ${result.continuationReference}`);
+  const risks = [result.notes.trim(), ...result.followUps].filter(Boolean);
+  lines.push(`RISKS: ${risks.length > 0 ? risks.join("; ") : "none"}`);
+  return lines.join("\n");
+}
+
 /** The short general policy sent to the parent during MCP initialization. */
 export const SERVER_INSTRUCTIONS =
-  `Any compatible parent Codex model may use the Sol-Luna Orchestrator. The parent ` +
-  `supervisor owns architecture, delegation, and final judgement; ${LUNA_MODEL} ` +
-  `workers execute bounded tasks. ` +
-  `Delegation is adaptive: zero workers is valid. Raw tokens are not credit cost; ` +
-  `cheaper-worker economics apply only when the selected parent model is priced ` +
-  `above ${LUNA_MODEL} on the current pricing schedule, and no saving is guaranteed ` +
-  `or measured. Balance expected credit cost, latency, context, fixed overhead, ` +
-  `verification, coordination risk, and quality; more workers are not automatically ` +
-  `better or cheaper. ` +
-  `Worker claims are not orchestrator evidence. Judge returned verdicts and checks, ` +
-  `and use an eligible opaque continuation reference only for one explicit follow-up ` +
-  `without widening the original contract. ` +
-  `Fresh contracts may opt into one conservatively classified same-thread automatic ` +
-  `repair; all other failures return to the parent. ` +
-  `reviewing in proportion to their risk and evidence. While an active Sol-Luna ` +
-  `tool call has no meaningful new state, remain silent: do not narrate polling, ` +
-  `waiting, elapsed time, or that it is still running. Report only a result, error, ` +
-  `cancellation, timeout, or actionable state change.`;
+  `Sol-Luna Orchestrator routing card: any compatible parent Codex model may use it; delegation is adaptive and zero workers is valid. The parent supervisor owns ` +
+  `architecture, decomposition, unresolved design, sequencing, scope, changeIntent, acceptance, verification ` +
+  `selection, integration, and final judgement; more workers are not automatically better or cheaper. ${LUNA_MODEL} Luna owns ` +
+  `implementation and scoped verification; workers execute bounded tasks. The parent retains decomposition and strategy. Use delegate_task for one substantial ` +
+  `task; use delegate_tasks sequentially for dependent/shared-state tasks or ` +
+  `parallel for genuinely independent disjoint scopes. Worker claims are not ` +
+  `authoritative; claims are not orchestrator evidence: escalate suspicious evidence, discrepancies, scope violations, ` +
+  `failed/blocked or refused verification results. Review proportionately. Clean verified PASS results use ` +
+  `the compact fast path; rich diagnostics remain for risks. automaticRepair is at ` +
+  `most one bounded repair; same-thread automatic repair is bounded; continuationReference is one bounded follow-up with ` +
+  `the immutable contract fixed. Raw tokens are not credit cost; cost/latency ` +
+  `depend on parent model, task mix, coordination, isolation, and quality; the ` +
+  `selected parent model is priced above ${LUNA_MODEL} on the current pricing schedule ` +
+  `only conditionally, with no guaranteed or measured savings. While a pending call has no meaningful new ` +
+  `state, remain silent: do not narrate polling, waiting, elapsed time, or that it is still running; report ` +
+  `result, error, cancellation, timeout, or actionable state change.`;
+
+export const METADATA_SIZE_BUDGETS = {
+  serverInstructions: 1_700,
+  delegateTaskDescription: 2_700,
+  delegateTasksDescription: 2_500,
+  continueTaskDescription: 1_000,
+  combined: 19_000,
+} as const;
+
+export function metadataSizeReport(): {
+  serverInstructions: number;
+  delegateTaskDescription: number;
+  delegateTasksDescription: number;
+  continueTaskDescription: number;
+  inputSchemas: ReturnType<typeof inputMetadataSizeReport>;
+  combined: number;
+} {
+  const inputSchemas = inputMetadataSizeReport();
+  const report = {
+    serverInstructions: SERVER_INSTRUCTIONS.length,
+    delegateTaskDescription: TOOL_DESCRIPTION.length,
+    delegateTasksDescription: BATCH_TOOL_DESCRIPTION.length,
+    continueTaskDescription: CONTINUE_TOOL_DESCRIPTION.length,
+    inputSchemas,
+    combined: 0,
+  };
+  report.combined =
+    report.serverInstructions +
+    report.delegateTaskDescription +
+    report.delegateTasksDescription +
+    report.continueTaskDescription +
+    inputSchemas.combined;
+  return report;
+}
+
+export function assertMetadataBudgets(): void {
+  const metadataSizes = metadataSizeReport();
+  if (
+    metadataSizes.serverInstructions > METADATA_SIZE_BUDGETS.serverInstructions ||
+    metadataSizes.delegateTaskDescription >
+      METADATA_SIZE_BUDGETS.delegateTaskDescription ||
+    metadataSizes.delegateTasksDescription >
+      METADATA_SIZE_BUDGETS.delegateTasksDescription ||
+    metadataSizes.continueTaskDescription >
+      METADATA_SIZE_BUDGETS.continueTaskDescription ||
+    metadataSizes.combined > METADATA_SIZE_BUDGETS.combined ||
+    Object.entries(INPUT_METADATA_SIZE_BUDGETS).some(([key, budget]) =>
+      key === "combined"
+        ? metadataSizes.inputSchemas.combined > budget
+        : metadataSizes.inputSchemas[key as keyof typeof metadataSizes.inputSchemas] >
+          budget,
+    )
+  ) {
+    throw new Error(
+      `MCP metadata exceeds deterministic budget: ${JSON.stringify(metadataSizes)}`,
+    );
+  }
+}
 
 const server = new McpServer(
   { name: "sol-luna-orchestrator", version: SERVER_VERSION },
@@ -528,7 +637,6 @@ function registerDelegateTask(): void {
       title: "Delegate a bounded task to a Luna worker",
       description: TOOL_DESCRIPTION,
       inputSchema: delegateTaskInputShape,
-      outputSchema: delegateTaskOutputShape,
     },
     async (input, extra) => {
       const task = input as DelegateTaskInput;
@@ -628,7 +736,16 @@ function registerDelegateTask(): void {
         const structuredContent = detail === "compact" ? compactResult(result) : result;
 
         return {
-          content: [{ type: "text" as const, text: renderResult(result) }],
+          content: [
+            {
+              type: "text" as const,
+              text: renderResult(result, {
+                batchId,
+                taskId,
+                integration: "single-task workspace",
+              }),
+            },
+          ],
           structuredContent,
         };
       } catch (error) {
@@ -796,7 +913,18 @@ export async function handleContinueTask(
     emitSingleCompletion(batchId, taskId, timeoutSeconds, result, dependencies.emit);
     dependencies.record(result);
     return {
-      content: [{ type: "text" as const, text: renderResult(result) }],
+      content: [
+        {
+          type: "text" as const,
+          text: renderResult(result, {
+            batchId,
+            taskId,
+            integration: entry.reconcileFinalGit
+              ? "retained workspace reconciled"
+              : "single-task workspace",
+          }),
+        },
+      ],
       structuredContent: result,
     };
   } catch (error) {
@@ -850,7 +978,6 @@ function registerContinueTask(): void {
       title: "Continue an eligible Luna task",
       description: CONTINUE_TOOL_DESCRIPTION,
       inputSchema: continueTaskInputShape,
-      outputSchema: delegateTaskOutputShape,
     },
     async (input, extra) => {
       return handleContinueTask(input as ContinueTaskInput, extra?.signal);
@@ -858,75 +985,7 @@ function registerContinueTask(): void {
   );
 }
 
-export const BATCH_TOOL_DESCRIPTION = `Delegate a batch of meaningful bounded tasks to ${LUNA_MODEL} workers. This API is
-intended for two or more tasks, but a one-task batch remains accepted for
-compatibility; prefer delegate_task for a single task.
-
-Choose sequential mode when tasks depend on earlier changes, share workspace
-state, or may touch the same files; they run one at a time in the shared
-workspace. Parallel mode is normally for genuinely independent tasks with
-disjoint declared scopes. Parallel tasks run in separate git worktrees from
-HEAD, require a repository with a commit and no uncommitted in-scope changes,
-and are integrated only when their observed changed-file sets do not collide.
-Parallelism may reduce latency but does not guarantee it.
-
-Do not create artificial seams or split work so finely that coordination
-dominates. Whether to delegate and whether to run in parallel are separate
-decisions.
-
-Be cost-aware, not raw-token-minimal: raw tokens are not credit cost. When the
-selected parent model is priced above ${LUNA_MODEL} on the current pricing
-schedule, a delegated batch can use more aggregate raw tokens and still cost
-fewer total credits. That is parent-conditional, not guaranteed or measured.
-Batch size and task mix affect the economics, and coordination and review
-overhead increase with additional workers. Balance expected credit cost,
-latency, context use, fixed batch overhead, verification or isolation benefits,
-coordination risk, and quality. Parallel execution may reduce latency, but it is
-not automatically cheaper than sequential execution. More workers are not
-automatically cheaper.
-
-Give each task a concise, non-sensitive activityLabel for the local activity view
-whenever a safe label is available. The field remains optional for compatibility:
-omit it when the work description is sensitive. Labels must be supplied
-explicitly and must never be derived from, or copy, objective text.
-
-Each fresh task may opt into automaticRepair. The runtime permits at most one
-same-thread repair and only after classifying one authoritative verification
-failure as a clear local defect; other failures return for parent review.
-
-Set each task's explicit changeIntent to forbidden (read-only), optional, or
-required. Omitted intent defaults to required for compatibility. This expectation
-is independent of allowedFiles and taskCategory and is carried in each task's
-result evidence.
-
-While this batch is pending and has no meaningful new state, remain silent: do not
-narrate waiting, polling, elapsed time, or which task is still running. Report
-results, errors, cancellations, timeouts, or actionable state changes.
-
-A batch accepts at most ${MAX_BATCH_SIZE} tasks. Batch size is not the number of
-simultaneous workers: sequential mode runs one at a time, and parallel mode runs
-at most ${MAX_PARALLEL} at once and queues the rest. Split larger work, or run the
-remainder as a second batch.
-
-Parallel declared scopes should be disjoint. \`allowOverlappingScopes:true\` is a
-call-level escape hatch that permits starting despite declared scope conflicts;
-it does not turn scopes into a write sandbox, and actual same-file edits still
-prevent automatic parallel integration. integrationConflicts is a parallel-only
-result; sequential tasks share the workspace and may intentionally edit files
-changed by earlier sequential tasks.
-
-Partial outcomes remain visible for the parent orchestrator to judge. A completed
-worker's edits may be integrated even when its verdict is FAILED or BLOCKED. Declared scope
-conflicts can reject a batch; actual same-file edits by parallel workers prevent
-automatic integration. Worktree retention follows the operator's configured
-policy; a continuation reference is omitted whenever its required worktree is
-removed.
-
-Parallel workers are verified in isolation. After integration, run additional
-integration or full-suite verification when changes can meaningfully interact
-through shared contracts, types, or runtime behavior. Disjoint tasks with
-adequate isolated verification do not require a full-suite rerun merely because
-they ran in parallel.`;
+export const BATCH_TOOL_DESCRIPTION = `Delegate a batch to ${LUNA_MODEL}; this API is intended for two or more tasks, though a one-task batch remains accepted for compatibility (prefer delegate_task for a single task). Use sequential for dependent tasks that share workspace state; give each task a concise activityLabel when a safe label is available; parallel is only for genuinely independent tasks with disjoint declared scopes. Do not create artificial seams. Parallel execution may reduce latency but is not automatically cheaper than sequential and does not guarantee savings. Batch size is not the number of simultaneous workers: at most ${MAX_BATCH_SIZE} tasks are accepted, at most ${MAX_PARALLEL} at once run, and queues the rest; split the remainder as a second batch. Raw tokens are not credit cost: batch size and task mix affect the economics, and coordination and review increase overhead. When the selected parent model is priced above ${LUNA_MODEL} on the current pricing schedule, fewer total credits is parent-conditional; savings are not guaranteed or measured, and more workers are not automatically cheaper, not merely because tasks are parallel. Use allowOverlappingScopes:true only as a call-level escape hatch; it does not turn scopes into a write sandbox: same-file edits still prevent automatic parallel integration, and same-file edits by parallel workers prevent all automatic integration. integrationConflicts is a parallel-only result; sequential tasks share the workspace and may intentionally edit files. Each task owns its objective, scope, changeIntent, acceptanceCriteria, and verificationCommands; the parent owns integration and final judgement. Partial outcomes remain visible; FAILED or BLOCKED, untrustworthy (trustworthy: false), discrepancy, scope, refusal, and conflict results stay actionable. Parallel tasks are verified in isolation; run integration checks when changes can meaningfully interact. automaticRepair is bounded. automaticRecovery defaults true for parallel: before integration it permits one eligible same-thread timeout retry or one fresh-process retry in the same worktree; false opts out. Success, cancellation, scope/security/evidence, refused verification, contract discrepancy, and integration conflict are ineligible. While pending, when there is no meaningful new state, remain silent: do not narrate waiting or polling; report only results, errors, cancellations, timeouts, or actionable state changes. Retention follows the operator; the continuation reference is omitted when unavailable.`;
 
 function registerDelegateTasks(): void {
   server.registerTool(
@@ -935,7 +994,6 @@ function registerDelegateTasks(): void {
       title: "Delegate several tasks to Luna workers",
       description: BATCH_TOOL_DESCRIPTION,
       inputSchema: delegateTasksInputShape,
-      outputSchema: delegateTasksOutputShape,
     },
     async (input, extra) => {
       const batch = input as DelegateTasksInput;
@@ -950,6 +1008,7 @@ function registerDelegateTasks(): void {
           workingDirectory: batch.workingDirectory,
           allowOverlappingScopes: batch.allowOverlappingScopes,
           integrate: batch.integrate,
+          automaticRecovery: batch.automaticRecovery,
           signal: extra?.signal,
           continuationRegistrar: registerContinuation,
           protectedWorktreePaths: continuationStore.protectedWorkingDirectories(),
@@ -982,7 +1041,7 @@ function registerDelegateTasks(): void {
 }
 
 /** Render a batch result as readable text for the model's transcript. */
-export function renderBatch(batch: BatchOutput): string {
+function renderRichBatch(batch: BatchOutput): string {
   const lines: string[] = [];
   const compact = (value: string): string => value.replace(/\s+/g, " ").trim();
   const verificationSummary = (result: DelegateTaskOutput): string => {
@@ -1026,7 +1085,7 @@ export function renderBatch(batch: BatchOutput): string {
     }
     lines.push(
       `    model: ${result?.model ?? "unknown"} | effort: ${task.effort} | ` +
-        `duration: ${result ? `${result.durationSeconds}s` : "unknown"}`,
+        `attempt: ${task.attempt ?? result?.attempt ?? 1} | duration: ${result ? `${result.durationSeconds}s` : "unknown"}`,
     );
     if (result) lines.push(`    verification: ${verificationSummary(result)}`);
     if (result) lines.push(`    change intent: ${result.changeIntent}`);
@@ -1035,6 +1094,18 @@ export function renderBatch(batch: BatchOutput): string {
         `    repair: ${result.repair.attempted ? "attempted" : "not attempted"} | ` +
           `${result.repair.classification} | ${compact(result.repair.reason)}`,
       );
+    }
+    if (task.recovery ?? result?.recovery) {
+      const recovery = task.recovery ?? result?.recovery;
+      lines.push(
+        `    recovery: ${recovery!.attempted ? "attempted" : "not attempted"} | ` +
+          `${recovery!.classification} | ${compact(recovery!.evidence)}`,
+      );
+      if (recovery!.attempted) {
+        lines.push(
+          `    recovery usage/duration: ${recovery!.recoveryUsage ? `${recovery!.recoveryUsage.inputTokens} in / ${recovery!.recoveryUsage.outputTokens} out` : "unknown usage"} / ${recovery!.recoveryDurationSeconds ?? "unknown"}s`,
+        );
+      }
     }
     if (result?.continuationReference) {
       lines.push(`    continuation: ${result.continuationReference}`);
@@ -1098,7 +1169,52 @@ export function renderBatch(batch: BatchOutput): string {
   return lines.join("\n");
 }
 
+/** Compact batch handoff; retain the rich renderer for every actionable result. */
+export function renderBatch(batch: BatchOutput): string {
+  const clean =
+    batch.integrationConflicts.length === 0 &&
+    batch.scopeConflicts.length === 0 &&
+    batch.warnings.length === 0 &&
+    batch.integrated &&
+    batch.tasks.every((task) => task.result && isCleanPass(task.result));
+  if (!clean) return renderRichBatch(batch);
+
+  const lines = [
+    `BATCH ${batch.batchId} | ${batch.mode} | ${batch.passed}/${batch.taskCount} passed`,
+  ];
+  for (const task of batch.tasks) {
+    const result = task.result!;
+    const paths = result.filesChanged
+      .filter((file) => file.observed)
+      .map((file) => file.path);
+    lines.push(`[${task.taskId}] PASS`);
+    lines.push(`  attempt: ${task.attempt ?? result.attempt}`);
+    if (task.recovery?.attempted || result.recovery?.attempted) {
+      const recovery = task.recovery ?? result.recovery!;
+      lines.push(
+        `  recovery: ${recovery.classification} (attempt ${recovery.recoveryAttempt})`,
+      );
+    }
+    lines.push(`  changed: ${paths.length > 0 ? paths.join(", ") : "(none)"}`);
+    lines.push(
+      `  verification: authoritative ${authoritativeVerificationCounts(result)}`,
+    );
+    const risks = [result.notes.trim(), ...result.followUps].filter(Boolean);
+    if (risks.length > 0) lines.push(`  risks: ${risks.join("; ")}`);
+    if (result.continuationReference)
+      lines.push(`  continuation: ${result.continuationReference}`);
+  }
+  lines.push(`INTEGRATION: ${batch.integrationSummary}`);
+  const hasRisks = batch.tasks.some((task) => {
+    const result = task.result!;
+    return result.notes.trim().length > 0 || result.followUps.length > 0;
+  });
+  if (!hasRisks) lines.push("RISKS: none");
+  return lines.join("\n");
+}
+
 async function main(): Promise<void> {
+  assertMetadataBudgets();
   if (IS_WORKER_PROCESS) {
     log(
       `${WORKER_MARKER_ENV}=1 detected - running inside a Luna worker. ` +

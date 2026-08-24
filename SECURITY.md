@@ -138,6 +138,19 @@ path even when renewal or cleanup fails; any retained filesystem state remains
 protected only by its real bounded persistent horizon and becomes pruneable
 after expiry.
 
+### Bounded parallel recovery
+
+When enabled (the `delegate_tasks` default), recovery is decided only after all
+initial parallel workers have stopped and their final worktree evidence has been
+read. A timeout may resume its observed thread only when the owned worktree is
+readable and confined; a worker-process failure with no result may start one fresh
+thread in that same owned worktree. No recovery widens a path scope, changes
+effort or acceptance, reruns a successful task, or crosses cancellation,
+scope/security, evidence, refused-verification, contract-discrepancy, or known
+integration-conflict boundaries. The one-turn bound and stable batch/task ids are
+recorded in results and telemetry. If the retry fails, the original sibling work
+remains available for normal integration and review.
+
 ### Logs and telemetry
 
 `SOL_LUNA_LOG` and `SOL_LUNA_EVENTS` write plain files with no access control.

@@ -9,6 +9,7 @@ Everything the orchestrator reads, and how to change it. The
 - [Codex settings and environment variables](#codex-settings-and-environment-variables)
 - [Activity and diagnostics logs](#activity-and-diagnostics-logs)
 - [Parent model and effort](#parent-model-and-effort)
+- [Metadata and thin result fast path](#metadata-and-thin-result-fast-path)
 - [Platform support](#platform-support)
 
 ---
@@ -106,6 +107,20 @@ exact managed blocks from either global instruction file. Use
 whether the hint is installed, missing or modified; `doctor` checks it and
 prints the command that repairs a missing or incorrect setup.
 
+### Metadata and thin result fast path
+
+The MCP registration advertises a compact routing card and bounded input
+metadata. Output schemas are intentionally not advertised in tool metadata, but
+the existing structured result shapes are still returned for programmatic
+consumers. Deterministic metadata-size budgets protect this boundary.
+
+Clean verified PASS text is a thin handoff with identity, changed paths,
+authoritative verification counts, integration status, continuation reference,
+and actionable risks. Rich diagnostics remain for any suspicious or incomplete
+result. These are context and routing controls; no measured cost or latency
+saving is claimed. Same-thread continuation prompts carry only the bounded
+follow-up and an immutable-contract reminder.
+
 ### Why init edits the file directly
 
 `init` does not use `codex mcp add`. That command round-trips the whole config:
@@ -178,6 +193,17 @@ and rejected again at runtime. `SOL_LUNA_MAX_PARALLEL` is a different thing:
 sequential mode runs one task at a time whatever the batch size, and parallel
 mode runs at most `SOL_LUNA_MAX_PARALLEL` at once — default 3, hard ceiling 8 —
 and queues the rest. A 12-task batch never means 12 simultaneous workers.
+
+### Automatic recovery
+
+`delegate_tasks` has a batch-level `automaticRecovery` boolean that defaults to
+`true`; set it to `false` to opt out. It affects only parallel batches and only
+after the initial worker window. Each eligible failed task receives at most one
+additional turn in its existing owned worktree: timeouts resume the same thread,
+and a worker-process failure with no result starts one fresh thread. Effort,
+scope, acceptance, verification commands, batchId, and taskId remain unchanged.
+Successful tasks and cancellation, scope/security/evidence, refused-verification,
+contract-discrepancy, and integration-conflict cases are not retried.
 
 ### Worktree retention
 

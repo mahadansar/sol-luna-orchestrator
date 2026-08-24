@@ -11,6 +11,7 @@ import type {
   BatchTaskResult,
   DelegateTaskInput,
   DelegateTaskOutput,
+  RecoveryClassification,
   TaskState,
 } from "./contract.js";
 import { activityFailureReason, emitEvent, type EventEmitter } from "./events.js";
@@ -24,8 +25,10 @@ import {
   reconcileParallelWorktreeEvidence,
   resultWasCancelled,
   UNCLAIMED_FILE,
+  mergeUsage,
   workerSlots,
 } from "./worker.js";
+import { findScopeViolations } from "./scope.js";
 import {
   cleanupWorktree,
   createTaskWorktree,
@@ -70,6 +73,19 @@ interface RunningTask {
   leaseRenewal: { stop: () => Promise<void> } | null;
   worktreeOutcomeError: string | null;
   result: BatchTaskResult;
+  recovery: RecoveryDecision | null;
+}
+
+interface RecoveryDecision {
+  attempted: boolean;
+  classification: RecoveryClassification;
+  evidence: string;
+  initialAttempt: number;
+  recoveryAttempt: number | null;
+  initialDurationSeconds: number | null;
+  recoveryDurationSeconds: number | null;
+  initialUsage: DelegateTaskOutput["usage"];
+  recoveryUsage: DelegateTaskOutput["usage"];
 }
 
 /**
@@ -93,6 +109,8 @@ export async function runBatch(
     workingDirectory?: string;
     allowOverlappingScopes?: boolean;
     integrate?: boolean;
+    /** Parallel-only bounded recovery; schema default is true. */
+    automaticRecovery?: boolean;
     signal?: AbortSignal;
     /**
      * Overridable so the scheduling, isolation and integration logic can be
@@ -162,7 +180,10 @@ export async function runBatch(
         worktreePath: null,
         error: null,
         warnings: [],
+        attempt: input.previousAttempts.length + 1,
+        recovery: null,
       },
+      recovery: null,
     };
   });
 
@@ -172,6 +193,7 @@ export async function runBatch(
     mode,
     taskCount: tasks.length,
     maxParallel: mode === "parallel" ? MAX_PARALLEL : 1,
+    automaticRecovery: options.automaticRecovery ?? true,
   });
   for (const task of running) {
     emit({
@@ -182,6 +204,7 @@ export async function runBatch(
       category: task.input.taskCategory,
       activityLabel: task.input.activityLabel,
       model: LUNA_MODEL,
+      attempt: task.result.attempt,
     });
   }
 
@@ -246,6 +269,28 @@ export async function runBatch(
       throw new BatchRejectedError(error.message);
     }
     throw error;
+  }
+
+  // Recovery is deliberately decided only after every initial parallel worker
+  // has finished and its owned worktree evidence has been reconciled. This
+  // keeps integration/cleanup out of the recovery window and preserves sibling
+  // successes while failed streams get at most one extra turn.
+  if (mode === "parallel") {
+    const initialConflicts = findIntegrationConflicts(
+      running
+        .filter((task) => task.result.changedFiles.length > 0)
+        .map((task) => ({ taskId: task.taskId, changedFiles: task.result.changedFiles })),
+    );
+    await recoverParallel(
+      batchId,
+      running,
+      workspace,
+      run,
+      emit,
+      options.signal,
+      options.automaticRecovery ?? true,
+      initialConflicts,
+    );
   }
 
   // --- Integration ---------------------------------------------------------
@@ -489,6 +534,7 @@ export async function runBatch(
     integrated,
     integrationSummary,
     warnings,
+    automaticRecovery: options.automaticRecovery ?? true,
     reviewChecklist: buildBatchChecklist(running, integrationConflicts, integrated, mode),
   };
 }
@@ -526,7 +572,9 @@ async function runSequential(
     }
     const release = await workerSlots.acquire();
     try {
-      await runOne(batchId, task, workspace, run, emit, signal);
+      await runOne(batchId, task, workspace, run, emit, signal, true, {
+        attempt: task.result.attempt ?? 1,
+      });
     } finally {
       release();
     }
@@ -631,7 +679,9 @@ async function runParallel(
           return;
         }
 
-        await runOne(batchId, task, worktree.path, run, emit, signal, false);
+        await runOne(batchId, task, worktree.path, run, emit, signal, false, {
+          attempt: task.result.attempt ?? 1,
+        });
 
         const outcome = await readWorktreeOutcome(worktree);
         task.result.warnings.push(...outcome.warnings);
@@ -667,10 +717,13 @@ async function runParallel(
               batchId,
               taskId: task.taskId,
               reason: task.result.error,
+              attempt: task.result.attempt ?? 1,
             });
           }
         } else if (!isCancelled(task) && !isFailed(task)) {
-          emitWorkerCompleted(batchId, task, emit);
+          emitWorkerCompleted(batchId, task, emit, {
+            attempt: task.result.attempt ?? 1,
+          });
         }
       } finally {
         release();
@@ -679,6 +732,331 @@ async function runParallel(
   );
 
   return warnings;
+}
+
+function hasRefusedVerification(result: DelegateTaskOutput): boolean {
+  return result.verification.some(
+    (run) =>
+      run.source === "orchestrator" &&
+      (run.execution === "rejected" || run.execution === "skipped"),
+  );
+}
+
+function confinedWorktreeEvidence(task: RunningTask): boolean {
+  if (!task.worktree || task.worktreeOutcomeError) return false;
+  const violations = findScopeViolations(
+    task.result.changedFiles,
+    task.input.allowedFiles,
+    task.input.forbiddenFiles,
+    task.worktree.path,
+  );
+  return violations.length === 0;
+}
+
+function recoveryDecision(
+  task: RunningTask,
+  enabled: boolean,
+  integrationConflicts: IntegrationConflict[],
+): RecoveryDecision {
+  const result = task.result.result;
+  const initialAttempt = task.result.attempt ?? result?.attempt ?? 1;
+  const base = (
+    attempted: boolean,
+    classification: RecoveryClassification,
+    evidence: string,
+    recoveryAttempt: number | null = null,
+    recoveryDurationSeconds: number | null = null,
+    recoveryUsage: DelegateTaskOutput["usage"] = null,
+  ): RecoveryDecision => ({
+    attempted,
+    classification,
+    evidence,
+    initialAttempt,
+    recoveryAttempt,
+    initialDurationSeconds: result?.durationSeconds ?? null,
+    recoveryDurationSeconds,
+    initialUsage: result?.usage ?? null,
+    recoveryUsage,
+  });
+
+  if (!enabled) return base(false, "disabled", "Batch automatic recovery was opted out.");
+  if (task.state === "completed" && result?.verdict === "PASS") {
+    return base(
+      false,
+      "already-successful",
+      "The initial task passed; successful streams are never rerun.",
+    );
+  }
+  if (task.state === "cancelled" || (result && resultWasCancelled(result))) {
+    return base(
+      false,
+      "cancellation",
+      "Cancellation is terminal and cannot trigger automatic recovery.",
+    );
+  }
+  if (integrationConflicts.some((conflict) => conflict.tasks.includes(task.taskId))) {
+    return base(
+      false,
+      "integration-conflict",
+      "Initial changed-file evidence already conflicts with another stream.",
+    );
+  }
+  if (!task.worktree) {
+    return base(
+      false,
+      "no-owned-worktree",
+      "No owned worktree remained after the initial parallel window.",
+    );
+  }
+  if (task.worktreeOutcomeError) {
+    return base(false, "evidence-failure", "Final worktree evidence could not be read.");
+  }
+  if (!confinedWorktreeEvidence(task)) {
+    return base(
+      false,
+      "scope-or-conflict",
+      "The owned worktree evidence is not confined to the immutable task scope.",
+    );
+  }
+
+  if (result) {
+    if (result.scopeViolations.length > 0) {
+      return base(false, "scope-or-conflict", "Scope violations require parent review.");
+    }
+    if (result.discrepancies.length > 0) {
+      return base(
+        false,
+        "contract-discrepancy",
+        "Claims and observed evidence disagree; recovery cannot repair that contract discrepancy.",
+      );
+    }
+    if (hasRefusedVerification(result)) {
+      return base(
+        false,
+        "refused-verification",
+        "Refused or skipped verification is not trustworthy recovery evidence.",
+      );
+    }
+    const timedOut =
+      task.state === "timedOut" ||
+      result.errors.some((error) => /exceeded its .* budget/.test(error));
+    if (timedOut) {
+      if (!result.workerThreadId) {
+        return base(
+          false,
+          "no-trustworthy-thread",
+          "The timeout produced no trustworthy Luna thread id to resume.",
+        );
+      }
+      if (result.errors.some((error) => !/exceeded its .* budget/.test(error))) {
+        return base(
+          false,
+          "security-or-trust-boundary",
+          "The timeout also produced another runtime error, so its evidence is not safe to resume.",
+        );
+      }
+      return base(
+        true,
+        "timeout-continuation",
+        "Timeout with a thread id and confined, readable worktree evidence; resume once in place.",
+      );
+    }
+    return base(
+      false,
+      "not-eligible",
+      "A non-timeout result failure is outside bounded parallel recovery.",
+    );
+  }
+
+  if (task.state === "failed") {
+    return base(
+      true,
+      "worker-process-retry",
+      "The worker process failed without a result, but its owned worktree evidence is confined and readable.",
+    );
+  }
+  return base(
+    false,
+    "not-eligible",
+    "The task did not produce an eligible failed parallel stream.",
+  );
+}
+
+function setRecoveryMetadata(task: RunningTask, metadata: RecoveryDecision): void {
+  task.recovery = metadata;
+  task.result.recovery = metadata;
+  if (task.result.result) task.result.result.recovery = metadata;
+}
+
+function recoveryInstruction(decision: RecoveryDecision): string {
+  return [
+    "Recover this failed parallel task in one bounded additional turn.",
+    "Preserve the original objective, scope, change intent, acceptance criteria, verification commands, effort, and task identity exactly; do not widen or delegate.",
+    `Recovery classification: ${decision.classification}`,
+    `Authoritative recovery evidence: ${decision.evidence}`,
+  ].join("\n");
+}
+
+function mergeRecoveredResult(
+  initial: DelegateTaskOutput | null,
+  recovered: DelegateTaskOutput,
+  metadata: RecoveryDecision,
+): void {
+  const attempt = (initial?.attempt ?? 1) + 1;
+  recovered.attempt = attempt;
+  recovered.durationSeconds = (initial?.durationSeconds ?? 0) + recovered.durationSeconds;
+  recovered.usage = mergeUsage(initial?.usage ?? null, recovered.usage);
+  recovered.recovery = metadata;
+}
+
+async function recoverParallel(
+  batchId: string,
+  running: RunningTask[],
+  workspace: string,
+  run: TaskExecutor,
+  emit: EventEmitter,
+  signal: AbortSignal | undefined,
+  enabled: boolean,
+  integrationConflicts: IntegrationConflict[],
+): Promise<void> {
+  const candidates: Array<{ task: RunningTask; decision: RecoveryDecision }> = [];
+  for (const task of running) {
+    const decision = recoveryDecision(task, enabled, integrationConflicts);
+    setRecoveryMetadata(task, decision);
+    task.result.attempt = decision.initialAttempt;
+    if (decision.attempted) {
+      candidates.push({ task, decision });
+    } else {
+      emit({
+        type: "recovery.skipped",
+        batchId,
+        taskId: task.taskId,
+        attempt: decision.initialAttempt,
+        classification: decision.classification,
+        evidence: decision.evidence,
+      });
+    }
+  }
+
+  await Promise.all(
+    candidates.map(async ({ task, decision }) => {
+      if (signal?.aborted) {
+        task.recovery = {
+          ...decision,
+          attempted: false,
+          classification: "cancellation",
+          evidence:
+            "Batch cancellation arrived before the bounded recovery turn started.",
+        };
+        setRecoveryMetadata(task, task.recovery);
+        emit({
+          type: "recovery.skipped",
+          batchId,
+          taskId: task.taskId,
+          attempt: decision.initialAttempt,
+          classification: "cancellation",
+          evidence: task.recovery.evidence,
+        });
+        return;
+      }
+
+      const initial = task.result.result;
+      const attempt = decision.initialAttempt + 1;
+      const startedAt = Date.now();
+      const release = await workerSlots.acquire();
+      try {
+        task.recovery = { ...decision, recoveryAttempt: attempt };
+        setRecoveryMetadata(task, task.recovery);
+        task.result.attempt = attempt;
+        task.result.result = null;
+        task.result.error = null;
+        task.worktreeOutcomeError = null;
+        emit({
+          type: "recovery.started",
+          batchId,
+          taskId: task.taskId,
+          attempt,
+          classification: decision.classification,
+          evidence: decision.evidence,
+        });
+
+        await runOne(batchId, task, task.worktree!.path, run, emit, signal, false, {
+          attempt,
+          resumeThreadId:
+            decision.classification === "timeout-continuation"
+              ? (initial?.workerThreadId ?? undefined)
+              : undefined,
+          continuationInstruction: recoveryInstruction(decision),
+          allowAutomaticRepair: false,
+        });
+
+        const outcome = await readWorktreeOutcome(task.worktree!);
+        task.result.warnings.push(...outcome.warnings);
+        task.result.diff = truncateDiff(outcome.changes.diff);
+        const changes = outcome.changes.files.map((file) => ({
+          path: file.path,
+          kind: file.status,
+        }));
+        if (task.result.result) {
+          task.result.result = reconcileParallelWorktreeEvidence(
+            task.input,
+            task.result.result,
+            task.worktree!.path,
+            changes,
+            outcome.error,
+          );
+          task.result.changedFiles = task.result.result.filesChanged
+            .filter((file) => file.observed)
+            .map((file) => file.path);
+        } else {
+          task.result.changedFiles = outcome.changes.files.map((file) => file.path);
+        }
+
+        const recoveryDurationSeconds = Math.round((Date.now() - startedAt) / 1000);
+        task.recovery = {
+          ...task.recovery!,
+          recoveryDurationSeconds,
+          recoveryUsage: task.result.result?.usage ?? null,
+        };
+        if (outcome.error) {
+          task.worktreeOutcomeError = outcome.error;
+          task.result.error = `Could not read worktree evidence: ${outcome.error}`;
+          task.state = "failed";
+          task.result.state = "failed";
+        } else if (task.result.result) {
+          emitWorkerCompleted(batchId, task, emit, { attempt });
+          if (task.state !== "cancelled") task.result.state = task.state;
+          mergeRecoveredResult(initial, task.result.result, task.recovery);
+        } else if (initial) {
+          // A failed recovery must not erase the trustworthy initial timeout
+          // result. The batch-level error and recovery metadata describe the
+          // second attempt while the original result preserves its evidence.
+          task.result.result = initial;
+          initial.attempt = attempt;
+          initial.recovery = task.recovery;
+          if (task.result.error && !initial.errors.includes(task.result.error)) {
+            initial.errors.push(task.result.error);
+          }
+        }
+        task.result.recovery = task.recovery;
+        if (task.result.result) task.result.result.recovery = task.recovery;
+        emit({
+          type: "recovery.completed",
+          batchId,
+          taskId: task.taskId,
+          attempt,
+          classification: task.recovery.classification,
+          evidence: task.recovery.evidence,
+          verdict: task.result.result?.verdict ?? "FAILED",
+          durationSeconds: recoveryDurationSeconds,
+          threadId: task.result.result?.workerThreadId ?? null,
+          usage: task.recovery.recoveryUsage,
+        });
+      } finally {
+        release();
+      }
+    }),
+  );
 }
 
 async function createTaskWorktreeTracked(
@@ -711,6 +1089,13 @@ function taskLeaseLifetimeMs(input: DelegateTaskInput): number {
 }
 
 /** Run one task and fold its outcome into the batch record. */
+interface RunAttemptOptions {
+  attempt: number;
+  resumeThreadId?: string;
+  continuationInstruction?: string;
+  allowAutomaticRepair?: boolean;
+}
+
 async function runOne(
   batchId: string,
   task: RunningTask,
@@ -719,6 +1104,7 @@ async function runOne(
   emit: EventEmitter,
   signal?: AbortSignal,
   emitCompletion = true,
+  attemptOptions: RunAttemptOptions = { attempt: 1 },
 ): Promise<void> {
   task.state = "running";
   task.result.state = "running";
@@ -729,12 +1115,24 @@ async function runOne(
     effort: task.input.effort,
     workingDirectory,
     model: LUNA_MODEL,
+    attempt: attemptOptions.attempt,
+    ...(task.recovery
+      ? {
+          recoveryClassification: task.recovery.classification,
+          recoveryEvidence: task.recovery.evidence,
+        }
+      : {}),
   });
 
   try {
     const result = await run(task.input, {
       workingDirectory,
       signal,
+      resumeThreadId: attemptOptions.resumeThreadId,
+      continuationInstruction: attemptOptions.continuationInstruction,
+      ...(attemptOptions.allowAutomaticRepair === undefined
+        ? {}
+        : { allowAutomaticRepair: attemptOptions.allowAutomaticRepair }),
       onVerificationStart: (commandCount) =>
         emit({
           type: "verification.started",
@@ -795,7 +1193,12 @@ async function runOne(
     if (resultWasCancelled(result)) {
       task.state = "cancelled";
       task.result.state = "cancelled";
-      emit({ type: "worker.cancelled", batchId, taskId: task.taskId });
+      emit({
+        type: "worker.cancelled",
+        batchId,
+        taskId: task.taskId,
+        attempt: attemptOptions.attempt,
+      });
       return;
     }
 
@@ -809,6 +1212,13 @@ async function runOne(
         batchId,
         taskId: task.taskId,
         timeoutSeconds: task.input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS,
+        attempt: attemptOptions.attempt,
+        ...(task.recovery
+          ? {
+              recoveryClassification: task.recovery.classification,
+              recoveryEvidence: task.recovery.evidence,
+            }
+          : {}),
       });
     }
 
@@ -820,7 +1230,7 @@ async function runOne(
         .map((file) => file.path);
     }
 
-    if (emitCompletion) emitWorkerCompleted(batchId, task, emit);
+    if (emitCompletion) emitWorkerCompleted(batchId, task, emit, attemptOptions);
   } catch (error) {
     task.state = "failed";
     task.result.state = "failed";
@@ -830,6 +1240,13 @@ async function runOne(
       batchId,
       taskId: task.taskId,
       reason: task.result.error,
+      attempt: attemptOptions.attempt,
+      ...(task.recovery
+        ? {
+            recoveryClassification: task.recovery.classification,
+            recoveryEvidence: task.recovery.evidence,
+          }
+        : {}),
     });
   }
 }
@@ -838,6 +1255,7 @@ function emitWorkerCompleted(
   batchId: string,
   task: RunningTask,
   emit: EventEmitter,
+  attemptOptions: RunAttemptOptions = { attempt: 1 },
 ): void {
   const result = task.result.result;
   if (!result) return;
@@ -854,6 +1272,13 @@ function emitWorkerCompleted(
     changedFiles: result.filesChanged.filter((file) => file.observed).length,
     failureReason: activityFailureReason(result),
     usage: result.usage,
+    attempt: attemptOptions.attempt,
+    ...(task.recovery
+      ? {
+          recoveryClassification: task.recovery.classification,
+          recoveryEvidence: task.recovery.evidence,
+        }
+      : {}),
   });
 }
 
@@ -864,7 +1289,12 @@ function markCancelled(batchId: string, task: RunningTask, emit: EventEmitter): 
   task.state = "cancelled";
   task.result.state = "cancelled";
   task.result.error = "Cancelled before this task started.";
-  emit({ type: "worker.cancelled", batchId, taskId: task.taskId });
+  emit({
+    type: "worker.cancelled",
+    batchId,
+    taskId: task.taskId,
+    attempt: task.result.attempt ?? 1,
+  });
 }
 
 const MAX_DIFF_CHARS = 20_000;

@@ -12,6 +12,8 @@ import assert from "node:assert/strict";
 import {
   BATCH_TOOL_DESCRIPTION,
   CONTINUE_TOOL_DESCRIPTION,
+  METADATA_SIZE_BUDGETS,
+  metadataSizeReport,
   SERVER_INSTRUCTIONS,
   TOOL_DESCRIPTION,
 } from "./server.js";
@@ -23,6 +25,8 @@ import {
   delegateTasksInputSchema,
   delegateTasksInputShape,
   delegateTasksOutputShape,
+  INPUT_METADATA_SIZE_BUDGETS,
+  inputMetadataSizeReport,
 } from "./contract.js";
 import { buildWorkerPrompt } from "./prompt.js";
 import { DISCOVERY_HINT_TEXT } from "./cli/discovery-hint.js";
@@ -61,6 +65,26 @@ test("backwards-compatible guidance fields retain their API defaults", () => {
   assert.equal(parsed.contextCapsule, undefined);
   assert.equal(parsed.activityLabel, undefined);
   assert.equal(parsed.automaticRepair, false);
+});
+
+test("thin metadata stays within deterministic budgets", () => {
+  const report = metadataSizeReport();
+  assert.ok(report.serverInstructions <= METADATA_SIZE_BUDGETS.serverInstructions);
+  assert.ok(
+    report.delegateTaskDescription <= METADATA_SIZE_BUDGETS.delegateTaskDescription,
+  );
+  assert.ok(
+    report.delegateTasksDescription <= METADATA_SIZE_BUDGETS.delegateTasksDescription,
+  );
+  assert.ok(
+    report.continueTaskDescription <= METADATA_SIZE_BUDGETS.continueTaskDescription,
+  );
+  assert.ok(report.combined <= METADATA_SIZE_BUDGETS.combined);
+  const inputs = inputMetadataSizeReport();
+  assert.ok(inputs.delegateTask <= INPUT_METADATA_SIZE_BUDGETS.delegateTask);
+  assert.ok(inputs.continueTask <= INPUT_METADATA_SIZE_BUDGETS.continueTask);
+  assert.ok(inputs.delegateTasks <= INPUT_METADATA_SIZE_BUDGETS.delegateTasks);
+  assert.ok(inputs.combined <= INPUT_METADATA_SIZE_BUDGETS.combined);
 });
 
 test("activityLabel is optional, concise, and bounded", () => {

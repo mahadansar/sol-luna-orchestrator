@@ -36,6 +36,25 @@ export const REPAIR_CLASSIFICATIONS = [
 ] as const;
 export type RepairClassification = (typeof REPAIR_CLASSIFICATIONS)[number];
 
+/** Bounded batch-recovery outcomes, kept separate from per-task repair. */
+export const RECOVERY_CLASSIFICATIONS = [
+  "disabled",
+  "already-successful",
+  "timeout-continuation",
+  "worker-process-retry",
+  "cancellation",
+  "scope-or-conflict",
+  "security-or-trust-boundary",
+  "evidence-failure",
+  "refused-verification",
+  "contract-discrepancy",
+  "integration-conflict",
+  "no-owned-worktree",
+  "no-trustworthy-thread",
+  "not-eligible",
+] as const;
+export type RecoveryClassification = (typeof RECOVERY_CLASSIFICATIONS)[number];
+
 /** Terminal states a worker may report, and that the orchestrator may assign. */
 export const STATUSES = ["PASS", "BLOCKED", "FAILED"] as const;
 export type Status = (typeof STATUSES)[number];
@@ -62,10 +81,7 @@ export const delegateTaskInputShape = {
   objective: z
     .string()
     .min(20, "objective must be a concrete, self-contained brief")
-    .describe(
-      "One bounded executable task. Make the what, why, and expected outcome " +
-        "self-contained because the worker cannot see the conversation.",
-    ),
+    .describe("Self-contained bounded task; the worker cannot see the conversation."),
 
   activityLabel: z
     .string()
@@ -73,98 +89,69 @@ export const delegateTaskInputShape = {
     .max(80)
     .optional()
     .describe(
-      "Optional concise, non-sensitive label for local activity views; parents " +
-        "should provide one for each batch task when a safe label is available " +
-        "(for example, 'Update auth retries'). It is persisted locally and may " +
-        "reveal this brief work description; omit it when that is not appropriate. " +
-        "Never derive it from the objective text.",
+      "Optional concise non-sensitive activity label; persisted locally; omit if sensitive.",
     ),
 
   effort: z
     .enum(EFFORTS)
     .default(DEFAULT_EFFORT)
-    .describe(
-      "Worker reasoning effort: medium = mechanical; high = bounded work needing " +
-        "judgement (routine default); xhigh = subtle, cross-cutting, or unclear cause; " +
-        "max = genuinely hard. Rate this task's difficulty, not project importance.",
-    ),
+    .describe("Worker effort for task difficulty: medium, high, xhigh, or max."),
 
-  effortReason: z
-    .string()
-    .min(10)
-    .describe("One sentence justifying the effort from this task's difficulty."),
+  effortReason: z.string().min(10).describe("Brief reason for the selected effort."),
 
   taskCategory: z
     .enum(TASK_CATEGORIES)
     .optional()
-    .describe("Kind of executable work; it does not determine effort."),
+    .describe("Optional work kind; does not determine effort."),
 
   changeIntent: z
     .enum(CHANGE_INTENTS)
     .default("required")
     .describe(
-      "Explicit file-change expectation: forbidden means read-only and any " +
-        "runtime-observed edit violates the contract; optional means edits may " +
-        "be useful but are not required; required means the task is expected to " +
-        "produce an edit. Omitted defaults to required for compatibility. This " +
-        "is independent of allowedFiles and taskCategory.",
+      "File-change expectation: forbidden, optional, or required; default required.",
     ),
 
   automaticRepair: z
     .boolean()
     .default(false)
     .describe(
-      "Opt in to at most one automatic repair turn when the initial result is " +
-        "conservatively classified as a local verification defect. The same worker " +
-        "thread and immutable task contract are reused. Omitted defaults to false.",
+      "Opt into at most one conservative same-thread repair; reuses the same worker thread and immutable task contract; default false.",
     ),
 
   allowedFiles: z
     .array(z.string())
     .default([])
     .describe(
-      "Declared workspace-relative glob scope, checked against observed edits after " +
-        "the run. Empty declares no in-workspace allowlist and does not declare read-only " +
-        "intent; workspace confinement remains.",
+      "Workspace-relative edit globs checked after the run; empty means no allowlist.",
     ),
 
   forbiddenFiles: z
     .array(z.string())
     .default([])
-    .describe(
-      "Workspace-relative globs observed edits must not match. Checked after the " +
-        "run and takes precedence over allowedFiles.",
-    ),
+    .describe("Workspace-relative edit globs forbidden after the run; takes precedence."),
 
   acceptanceCriteria: z
     .array(z.string().min(1))
     .min(1, "at least one acceptance criterion is required")
-    .describe("Observable conditions that define done and can be judged from evidence."),
+    .describe("Observable conditions defining done."),
 
   verificationCommands: z
     .array(z.string().min(1))
     .default([])
     .describe(
-      "Targeted deterministic checks that prove the bounded task; use a full suite " +
-        "only when the task genuinely requires it. The worker runs and reports them, " +
-        "and the orchestrator independently processes each under the configured " +
-        "policy. Executed orchestrator rows are authoritative, while refused or " +
-        "skipped rows prove nothing. Default allowlist mode refuses shell syntax.",
+      "Targeted deterministic checks; use a full suite only when the task genuinely requires it; the worker reports them and the orchestrator reruns them under configured policy. Executed orchestrator rows are authoritative; refused or skipped rows prove nothing.",
     ),
 
   workingDirectory: z
     .string()
     .optional()
-    .describe(
-      "Absolute worker directory; defaults to the orchestrator's current directory.",
-    ),
+    .describe("Absolute worker directory; defaults to the current directory."),
 
   context: z
     .string()
     .optional()
     .describe(
-      "Legacy plain-text task background. If contextCapsule is also supplied, both " +
-        "are sent; avoid duplication.",
+      "Legacy plain-text background; both are sent when contextCapsule is supplied.",
     ),
 
   contextCapsule: z
@@ -172,41 +159,29 @@ export const delegateTaskInputShape = {
       relevantContext: z
         .string()
         .optional()
-        .describe("Task background the worker cannot infer from the repository."),
+        .describe("Background unavailable from the repository."),
       interfaces: z
         .string()
         .optional()
-        .describe("Signatures, contracts, or boundaries that must remain stable."),
-      dependencies: z
-        .string()
-        .optional()
-        .describe("Services, libraries, or internal modules the task depends on."),
+        .describe("Stable signatures, contracts, or boundaries."),
+      dependencies: z.string().optional().describe("Relevant dependencies."),
       invariants: z.string().optional().describe("Rules that must remain true."),
-      upstreamDecisions: z
-        .string()
-        .optional()
-        .describe(
-          "Architecture or design decisions already settled by the parent orchestrator.",
-        ),
+      upstreamDecisions: z.string().optional().describe("Settled parent decisions."),
       knownPitfalls: z
         .string()
         .optional()
-        .describe("Task-specific mistakes or failed approaches to avoid."),
+        .describe("Pitfalls or failed approaches to avoid."),
     })
     .optional()
     .describe(
-      "Optional structured task background the worker cannot infer. It supplements " +
-        "the contract and legacy context; include only useful fields, omit empty fields, " +
-        "never copy the parent transcript, and do not duplicate other fields.",
+      "Optional structured background; supplements legacy context, omit empty fields, never copy the parent transcript, and do not duplicate other fields.",
     ),
 
   resultDetail: z
     .enum(["full", "compact"])
     .default("full")
     .describe(
-      "Choose compact routinely; it removes only successful verification output. " +
-        "Use full when that output is needed. The schema default remains full for " +
-        "backwards compatibility; failed, refused, and skipped output is retained.",
+      "Choose compact routinely: it removes only successful verification output; schema default remains full for backwards compatibility; failed, refused, and skipped output is retained.",
     ),
 
   previousAttempts: z
@@ -220,10 +195,7 @@ export const delegateTaskInputShape = {
       }),
     )
     .default([])
-    .describe(
-      "Prior FAILED or BLOCKED attempts at this objective, so a retry can avoid " +
-        "repeating them and the result can report its attempt number.",
-    ),
+    .describe("Prior failed attempts so retries can avoid repeating them."),
 
   timeoutSeconds: z
     .number()
@@ -231,10 +203,7 @@ export const delegateTaskInputShape = {
     .positive()
     .max(7200)
     .optional()
-    .describe(
-      "Optional per-turn wall-clock budget; otherwise uses the configured default " +
-        "(normally 1800 seconds).",
-    ),
+    .describe("Optional per-turn wall-clock budget; otherwise use configured default."),
 };
 
 export const delegateTaskInputSchema = z.object(delegateTaskInputShape);
@@ -245,22 +214,41 @@ export const continueTaskInputShape = {
   continuationReference: z
     .string()
     .min(1)
-    .describe(
-      "Opaque server-lifetime reference returned on an eligible delegated result. " +
-        "Do not send a raw Codex thread id.",
-    ),
+    .describe("Opaque single-use continuation reference; never send a raw thread id."),
   instruction: z
     .string()
     .min(1)
-    .describe(
-      "One concise follow-up instruction for the same bounded task. The original " +
-        "objective, allowedFiles, forbiddenFiles, changeIntent, acceptance criteria, " +
-        "and verification commands remain fixed and are not accepted here.",
-    ),
+    .describe("One concise follow-up; the original immutable contract remains fixed."),
 };
 
 export const continueTaskInputSchema = z.object(continueTaskInputShape);
 export type ContinueTaskInput = z.infer<typeof continueTaskInputSchema>;
+
+/** Deterministic budgets for the always-advertised input metadata. */
+export const INPUT_METADATA_SIZE_BUDGETS = {
+  delegateTask: 4_200,
+  continueTask: 700,
+  delegateTasks: 6_200,
+  combined: 11_000,
+} as const;
+
+export function inputMetadataSizeReport(): {
+  delegateTask: number;
+  continueTask: number;
+  delegateTasks: number;
+  combined: number;
+} {
+  const size = (schema: unknown): number =>
+    JSON.stringify(z.toJSONSchema(schema as never)).length;
+  const report = {
+    delegateTask: size(delegateTaskInputSchema),
+    continueTask: size(continueTaskInputSchema),
+    delegateTasks: size(delegateTasksInputSchema),
+    combined: 0,
+  };
+  report.combined = report.delegateTask + report.continueTask + report.delegateTasks;
+  return report;
+}
 
 /**
  * JSON Schema handed to Codex via `--output-schema`, forcing the worker's final
@@ -420,6 +408,39 @@ export const delegateTaskOutputShape = {
     .describe(
       "Bounded automatic-repair decision and the concise authoritative failure " +
         "evidence supplied to the resumed worker. Null or omitted when not requested.",
+    ),
+  recovery: z
+    .object({
+      attempted: z.boolean(),
+      classification: z.enum(RECOVERY_CLASSIFICATIONS),
+      evidence: z.string(),
+      initialAttempt: z.number(),
+      recoveryAttempt: z.number().nullable(),
+      initialDurationSeconds: z.number().nullable(),
+      recoveryDurationSeconds: z.number().nullable(),
+      initialUsage: z
+        .object({
+          inputTokens: z.number(),
+          cachedInputTokens: z.number(),
+          cacheWriteInputTokens: z.number().optional(),
+          outputTokens: z.number(),
+          reasoningOutputTokens: z.number(),
+        })
+        .nullable(),
+      recoveryUsage: z
+        .object({
+          inputTokens: z.number(),
+          cachedInputTokens: z.number(),
+          cacheWriteInputTokens: z.number().optional(),
+          outputTokens: z.number(),
+          reasoningOutputTokens: z.number(),
+        })
+        .nullable(),
+    })
+    .nullable()
+    .optional()
+    .describe(
+      "At most one internal parallel-batch recovery decision; records classification, evidence, and separate initial/recovery usage and duration.",
     ),
   model: z.string(),
   effort: z.string(),
@@ -598,6 +619,13 @@ export const delegateTasksInputShape = {
         "do not collide. Set false to skip copying; worktree retention then follows " +
         "the operator's SOL_LUNA_KEEP_WORKTREES policy.",
     ),
+
+  automaticRecovery: z
+    .boolean()
+    .default(true)
+    .describe(
+      "Parallel only: automatically recover each eligible failed task once after the initial worker window; default true. Set false to return initial failures unchanged.",
+    ),
 };
 
 export const delegateTasksInputSchema = z.object(delegateTasksInputShape);
@@ -629,6 +657,13 @@ export const batchTaskResultSchema = z.object({
     ),
   error: z.string().nullable(),
   warnings: z.array(z.string()),
+  attempt: z
+    .number()
+    .optional()
+    .describe(
+      "Stable task attempt ordinal; recovery uses the same taskId and increments this once.",
+    ),
+  recovery: delegateTaskOutputShape.recovery,
 });
 
 export type BatchTaskResult = z.infer<typeof batchTaskResultSchema>;
@@ -659,6 +694,10 @@ export const delegateTasksOutputShape = {
     ),
   integrationSummary: z.string(),
   warnings: z.array(z.string()),
+  automaticRecovery: z
+    .boolean()
+    .optional()
+    .describe("Whether bounded parallel recovery was enabled for this batch."),
   reviewChecklist: z
     .array(z.string())
     .describe(

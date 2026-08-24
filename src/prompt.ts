@@ -2,6 +2,25 @@ import type { DelegateTaskInput } from "./contract.js";
 
 const bullets = (items: string[]): string => items.map((item) => `- ${item}`).join("\n");
 
+/** The resumed thread already retains the immutable contract in its context. */
+export function buildContinuationPrompt(
+  workingDirectory: string,
+  instruction: string,
+): string {
+  return `You are Luna, continuing the same bounded task in an isolated Codex thread.
+
+Working directory: ${workingDirectory}
+
+## Bounded follow-up
+
+${instruction.trim()}
+
+Preserve the immutable original contract exactly: objective, context, file scope,
+changeIntent, acceptance requirements, fixed checks, output schema, and
+security rules. Do not widen or replace it. Implement only this follow-up, run the
+fixed scoped verification, and return the required JSON result. You cannot delegate.`;
+}
+
 /**
  * Render the task contract into the worker's opening prompt.
  *
@@ -15,6 +34,10 @@ export function buildWorkerPrompt(
   workingDirectory: string,
   continuationInstruction?: string,
 ): string {
+  if (continuationInstruction?.trim()) {
+    return buildContinuationPrompt(workingDirectory, continuationInstruction);
+  }
+
   const sections: string[] = [];
 
   sections.push(
@@ -28,15 +51,6 @@ Working directory: ${workingDirectory}`,
   );
 
   sections.push(`## Objective\n\n${input.objective}`);
-
-  if (continuationInstruction?.trim()) {
-    sections.push(
-      `## Continuation instruction\n\n${continuationInstruction.trim()}\n\n` +
-        "This is an explicit follow-up turn on the same bounded task. Preserve the " +
-        "original objective, file scope, change intent, acceptance criteria, and " +
-        "verification contract below; do not widen or replace them.",
-    );
-  }
 
   if (input.taskCategory) {
     sections.push(`Task type: ${input.taskCategory}`);

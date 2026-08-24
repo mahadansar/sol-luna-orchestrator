@@ -24,6 +24,24 @@ configured Sol-Luna MCP and consult its guidance before choosing solo work,
 it does not provide this orchestrator's contracts, isolation, or evidence. Discovery
 informs the choice; it does not require delegation.
 
+The runtime advertises a compact routing/ownership card. The parent owns
+objective decomposition, scope, change intent, acceptance, verification choice,
+integration, and final judgement; Luna owns implementation and scoped
+verification. Clean verified PASS results are a compact fast-path handoff.
+Progressive evidence remains required for suspicious, failed, blocked,
+discrepant, scope, refused/skipped-verification, runtime-error, and conflict
+results. Pending calls with no meaningful new state are silent.
+
+Parallel `delegate_tasks` calls default `automaticRecovery:true`. Only after the
+initial parallel worker window, and before integration or cleanup, the runtime
+may make one additional attempt for each eligible failed task: a timeout resumes
+the same thread in the same owned worktree, and a worker-process failure with no
+result starts one fresh thread there. Set it to `false` to opt out. Successful
+tasks are never rerun; cancellation, scope/security/evidence failures, refused
+verification, contract discrepancies, and integration conflicts stay with the
+parent. The batch and task identities remain stable, and attempt evidence is
+reported separately without changing effort or contract fields.
+
 | Choice           | Use when                                                                                                                                                                                           |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Solo             | Work is small, simple, tightly coupled, already obvious, or cheaper to do than coordinate.                                                                                                         |

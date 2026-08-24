@@ -133,6 +133,8 @@ export interface DelegationRecord {
   effort: string;
   verdict: string;
   attempt: number;
+  recoveryClassification?: string;
+  recoveryEvidence?: string;
   durationSeconds: number | null;
   usage: BenchmarkUsage | null;
 }
@@ -624,7 +626,12 @@ export function readTelemetry(
         break;
 
       case "worker.started":
-        if (stamp !== null) workerStarts.set(String(parsed.taskId), stamp);
+        if (stamp !== null) {
+          workerStarts.set(
+            `${String(parsed.taskId)}:${Number(parsed.attempt ?? 1)}`,
+            stamp,
+          );
+        }
         break;
 
       case "worker.failed":
@@ -647,7 +654,8 @@ export function readTelemetry(
       }
 
       case "worker.completed": {
-        const started = workerStarts.get(String(parsed.taskId));
+        const attempt = Number(parsed.attempt ?? 1);
+        const started = workerStarts.get(`${String(parsed.taskId)}:${attempt}`);
         if (stamp !== null && started !== undefined) {
           spans.push({ start: started, end: stamp });
         }
@@ -657,7 +665,15 @@ export function readTelemetry(
           model: String(parsed.model ?? "gpt-5.6-luna"),
           effort: String(parsed.effort ?? ""),
           verdict: String(parsed.verdict ?? ""),
-          attempt: 1,
+          attempt,
+          recoveryClassification:
+            typeof parsed.recoveryClassification === "string"
+              ? parsed.recoveryClassification
+              : undefined,
+          recoveryEvidence:
+            typeof parsed.recoveryEvidence === "string"
+              ? parsed.recoveryEvidence
+              : undefined,
           durationSeconds: optionalSeconds(parsed.durationSeconds),
           // Batch workers now report full usage. Older event files only carried
           // `outputTokens`, so fall back rather than dropping historical runs.

@@ -46,6 +46,7 @@ belongs in `ROADMAP.md`.
 | Explicit Change Intent                                  | PASS     | PASS          | DEEP PASS     | Strong        |
 | Worker Continuation                                     | PASS     | DEEP PASS     | DEEP PASS     | Battle-tested |
 | Bounded Repair                                          | PASS     | PASS          | DEEP PASS     | Strong        |
+| Bounded parallel automatic recovery                     | PASS     | PASS          | N/A           | Strong        |
 | P1.0 parent/pricing foundation                          | PASS     | PASS          | N/A           | Strong        |
 | `failureCauses` and verification contradiction handling | PASS     | PASS          | PASS          | Strong        |
 
@@ -53,6 +54,15 @@ Dates, provenance, dependencies, and retest triggers are recorded below. A live
 status can combine historical evidence for unchanged behavior with current
 deterministic evidence for a later changed seam; the detailed record says when
 that distinction matters.
+
+Bounded parallel automatic recovery is deterministic and internal to the original
+batch call. The default is enabled with an explicit opt-out. Only one eligible
+failed task turn is added after the initial parallel window: timeout continuation
+uses the same thread/worktree, while a no-result worker-process failure uses a
+fresh thread in the same owned worktree. Recovery preserves partial successes,
+reruns verification, reconciles final worktree evidence before integration, and
+records stable identities, attempt ordinals, classifications, and separate usage
+and duration. This ledger makes no claim of live economic or latency success.
 
 ## Current known evidence gaps and non-claims
 

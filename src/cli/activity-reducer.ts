@@ -22,6 +22,7 @@ const timestampedEventSchema = z.discriminatedUnion("type", [
     mode: eventString,
     taskCount: z.number().finite(),
     maxParallel: z.number().finite(),
+    automaticRecovery: optionalEventBoolean,
   }),
   z.object({
     ...eventBase,
@@ -41,6 +42,7 @@ const timestampedEventSchema = z.discriminatedUnion("type", [
     activityLabel: optionalEventString,
     objective: optionalEventString,
     model: optionalEventString,
+    attempt: optionalEventNumber,
   }),
   z.object({
     ...eventBase,
@@ -49,6 +51,9 @@ const timestampedEventSchema = z.discriminatedUnion("type", [
     effort: optionalEventString,
     workingDirectory: optionalEventString,
     model: optionalEventString,
+    attempt: optionalEventNumber,
+    recoveryClassification: optionalEventString,
+    recoveryEvidence: optionalEventString,
   }),
   z.object({
     ...eventBase,
@@ -62,6 +67,9 @@ const timestampedEventSchema = z.discriminatedUnion("type", [
     effort: optionalEventString,
     changedFiles: optionalEventNumber,
     failureReason: optionalEventString,
+    attempt: optionalEventNumber,
+    recoveryClassification: optionalEventString,
+    recoveryEvidence: optionalEventString,
     usage: z
       .object({
         inputTokens: z.number().finite(),
@@ -79,13 +87,63 @@ const timestampedEventSchema = z.discriminatedUnion("type", [
     type: z.literal("worker.failed"),
     taskId: eventString,
     reason: optionalEventString,
+    attempt: optionalEventNumber,
+    recoveryClassification: optionalEventString,
+    recoveryEvidence: optionalEventString,
   }),
-  z.object({ ...eventBase, type: z.literal("worker.cancelled"), taskId: eventString }),
+  z.object({
+    ...eventBase,
+    type: z.literal("worker.cancelled"),
+    taskId: eventString,
+    attempt: optionalEventNumber,
+    recoveryClassification: optionalEventString,
+    recoveryEvidence: optionalEventString,
+  }),
   z.object({
     ...eventBase,
     type: z.literal("worker.timedOut"),
     taskId: eventString,
     timeoutSeconds: optionalEventNumber,
+    attempt: optionalEventNumber,
+    recoveryClassification: optionalEventString,
+    recoveryEvidence: optionalEventString,
+  }),
+  z.object({
+    ...eventBase,
+    type: z.literal("recovery.started"),
+    taskId: eventString,
+    attempt: z.number().finite(),
+    classification: eventString,
+    evidence: eventString,
+  }),
+  z.object({
+    ...eventBase,
+    type: z.literal("recovery.skipped"),
+    taskId: eventString,
+    attempt: z.number().finite(),
+    classification: eventString,
+    evidence: eventString,
+  }),
+  z.object({
+    ...eventBase,
+    type: z.literal("recovery.completed"),
+    taskId: eventString,
+    attempt: z.number().finite(),
+    classification: eventString,
+    evidence: eventString,
+    verdict: eventString,
+    durationSeconds: z.number().finite(),
+    threadId: optionalEventString.nullable().catch(undefined),
+    usage: z
+      .object({
+        inputTokens: z.number().finite(),
+        cachedInputTokens: z.number().finite(),
+        cacheWriteInputTokens: z.number().finite().optional(),
+        outputTokens: z.number().finite(),
+        reasoningOutputTokens: z.number().finite(),
+      })
+      .nullable()
+      .catch(null),
   }),
   z.object({
     ...eventBase,
@@ -191,6 +249,7 @@ export type WorkerState =
   | "running"
   | "verifying"
   | "repairing"
+  | "recovering"
   | "completed"
   | "failed"
   | "cancelled"
@@ -203,6 +262,7 @@ export interface WorkerActivity {
   objective: string | null;
   category: string | null;
   effort: string;
+  attempt: number;
   model: string | null;
   workingDirectory: string | null;
   state: WorkerState;
@@ -237,6 +297,18 @@ export interface WorkerActivity {
     verdict: string | null;
     turn: 1;
   } | null;
+  recovery: {
+    attempted: boolean;
+    classification: string;
+    evidence: string;
+    attempt: number;
+    verdict: string | null;
+    initialDurationSeconds: number | null;
+    recoveryDurationSeconds: number | null;
+    initialUsage: WorkerActivity["usage"];
+    recoveryUsage: WorkerActivity["usage"];
+    threadId: string | null;
+  } | null;
   integration: {
     appliedFiles: number | null;
     conflicted: boolean;
@@ -249,6 +321,7 @@ export interface ActivitySnapshot {
   state: "running" | "completed" | "cancelled" | "rejected" | "unknown";
   taskCount: number;
   maxParallel: number | null;
+  automaticRecovery: boolean | null;
   startTime: string | null;
   durationSeconds: number | null;
   passed: number | null;
@@ -295,6 +368,7 @@ export function createEmptySnapshot(
     state: "unknown",
     taskCount: 0,
     maxParallel: null,
+    automaticRecovery: null,
     startTime: null,
     durationSeconds: null,
     passed: null,
@@ -411,6 +485,7 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
       snapshot.state = "running";
       snapshot.taskCount = event.taskCount;
       snapshot.maxParallel = event.maxParallel;
+      snapshot.automaticRecovery = event.automaticRecovery ?? null;
       snapshot.startTime = event.timestamp;
       snapshot.supervisor = { state: "awaiting delegation", usage: null };
     } else if (event.type === "batch.completed") {
@@ -542,6 +617,7 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
         objective: null,
         category: null,
         effort: "unknown",
+        attempt: 1,
         model: null,
         workingDirectory: null,
         state: "queued",
@@ -559,6 +635,7 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
         worktreeKept: null,
         verification: null,
         repair: null,
+        recovery: null,
         integration: null,
       };
       workerMap.set(event.taskId, worker);
@@ -570,13 +647,29 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
         worker.category = event.category ?? worker.category;
         worker.activityLabel = event.activityLabel ?? worker.activityLabel;
         worker.model = event.model ?? worker.model;
+        worker.attempt = event.attempt ?? worker.attempt;
         break;
       case "worker.started":
-        worker.state = "running";
+        worker.state = event.recoveryClassification ? "recovering" : "running";
         worker.startTime = event.timestamp;
+        worker.attempt = event.attempt ?? worker.attempt;
         worker.effort = event.effort ?? worker.effort;
         worker.model = event.model ?? worker.model;
         worker.workingDirectory = event.workingDirectory ?? worker.workingDirectory;
+        if (event.recoveryClassification) {
+          worker.recovery ??= {
+            attempted: true,
+            classification: event.recoveryClassification,
+            evidence: event.recoveryEvidence ?? "Recovery attempt in progress.",
+            attempt: worker.attempt,
+            verdict: null,
+            initialDurationSeconds: worker.durationSeconds,
+            recoveryDurationSeconds: null,
+            initialUsage: worker.usage,
+            recoveryUsage: null,
+            threadId: null,
+          };
+        }
         activeWorkerIds.add(event.taskId);
         break;
       case "worker.completed":
@@ -585,6 +678,7 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
         // as a successful-looking completion.
         if (worker.state !== "timedOut") worker.state = "completed";
         worker.endTime = event.timestamp;
+        worker.attempt = event.attempt ?? worker.attempt;
         worker.verdict = event.verdict ?? null;
         worker.claimed = event.claimed ?? null;
         worker.threadId = event.threadId ?? null;
@@ -599,18 +693,73 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
       case "worker.failed":
         worker.state = "failed";
         worker.endTime = event.timestamp;
+        worker.attempt = event.attempt ?? worker.attempt;
         worker.failReason = event.reason ?? null;
         activeWorkerIds.delete(event.taskId);
         break;
       case "worker.cancelled":
         worker.state = "cancelled";
         worker.endTime = event.timestamp;
+        worker.attempt = event.attempt ?? worker.attempt;
         activeWorkerIds.delete(event.taskId);
         break;
       case "worker.timedOut":
         worker.state = "timedOut";
         worker.endTime = event.timestamp;
+        worker.attempt = event.attempt ?? worker.attempt;
         worker.timeoutSeconds = event.timeoutSeconds ?? null;
+        activeWorkerIds.delete(event.taskId);
+        break;
+      case "recovery.started":
+        worker.state = "recovering";
+        worker.attempt = event.attempt;
+        worker.recovery = {
+          attempted: true,
+          classification: event.classification,
+          evidence: event.evidence,
+          attempt: event.attempt,
+          verdict: null,
+          initialDurationSeconds: worker.durationSeconds,
+          recoveryDurationSeconds: null,
+          initialUsage: worker.usage,
+          recoveryUsage: null,
+          threadId: null,
+        };
+        break;
+      case "recovery.skipped":
+        worker.recovery = {
+          attempted: false,
+          classification: event.classification,
+          evidence: event.evidence,
+          attempt: event.attempt,
+          verdict: null,
+          initialDurationSeconds: worker.durationSeconds,
+          recoveryDurationSeconds: null,
+          initialUsage: worker.usage,
+          recoveryUsage: null,
+          threadId: null,
+        };
+        break;
+      case "recovery.completed":
+        worker.attempt = event.attempt;
+        worker.state = event.verdict === "PASS" ? "completed" : "failed";
+        worker.verdict = event.verdict;
+        worker.recovery ??= {
+          attempted: true,
+          classification: event.classification,
+          evidence: event.evidence,
+          attempt: event.attempt,
+          verdict: null,
+          initialDurationSeconds: null,
+          recoveryDurationSeconds: null,
+          initialUsage: null,
+          recoveryUsage: null,
+          threadId: null,
+        };
+        worker.recovery.verdict = event.verdict;
+        worker.recovery.recoveryDurationSeconds = event.durationSeconds;
+        worker.recovery.recoveryUsage = event.usage;
+        worker.recovery.threadId = event.threadId ?? null;
         activeWorkerIds.delete(event.taskId);
         break;
       case "repair.started":
