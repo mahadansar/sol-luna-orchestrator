@@ -1,0 +1,495 @@
+{
+  "schema": 4,
+  "benchmarkVersion": 2,
+  "suite": "v2",
+  "supervisorModel": "gpt-5.6-sol",
+  "supervisorEffort": "medium",
+  "executionProfile": {
+    "speedMode": "standard",
+    "fastModeDisabled": true,
+    "serviceTier": null,
+    "serviceTierStatus": "not-exposed-by-codex-sdk",
+    "sdkSpeedPinningSupported": false,
+    "enforcement": "operator-confirmed-pre-run"
+  },
+  "pricingProfile": {
+    "profileId": "benchmark-v2-chatgpt-plus-codex-credits-2026-08-24",
+    "sourceUrl": "https://help.openai.com/en/articles/20001106",
+    "snapshotDate": "2026-08-24",
+    "units": "credits-per-1m-tokens",
+    "applicability": "Token-based Codex credit rates for the ChatGPT Plus account used by Benchmark V2",
+    "promotionalTerms": null,
+    "rates": {
+      "gpt-5.6-sol": {
+        "input": 125,
+        "cachedInput": 12.5,
+        "output": 750,
+        "cacheWrite": 0
+      },
+      "gpt-5.6-luna": {
+        "input": 5,
+        "cachedInput": 0.5,
+        "output": 30,
+        "cacheWrite": 0
+      }
+    }
+  },
+  "campaignId": "benchmark-v2-initial",
+  "startedAt": "2026-08-24T20-45-06-971Z",
+  "platform": "win32 x64",
+  "nodeVersion": "v26.7.0",
+  "reps": 3,
+  "records": [
+    {
+      "benchmarkVersion": 2,
+      "suite": "v2",
+      "taskId": "v2-integration-toolkit",
+      "taskCategory": "delegation-friendly",
+      "workloadClass": "delegation-friendly",
+      "tier": "C",
+      "streams": 4,
+      "maxParallelConfigured": 4,
+      "arm": "forced-delegation",
+      "armLabel": "Forced Delegation",
+      "supervisorEffort": "medium",
+      "repetition": 3,
+      "startedAt": "2026-08-24T20:45:07.279Z",
+      "durationSeconds": 609,
+      "passed": true,
+      "grades": [
+        {
+          "label": "all four integration utilities pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ looks up and replaces names case-insensitively (1.5687ms)\n✔ appends duplicate values using HTTP list syntax (0.2381ms)\n✔ deletes entries and exposes deterministic canonical output (1.5972ms)\n✔ rejects invalid names and values (0.5198ms)\n✔ formats currencies with grouping and two decimals (1.219ms)\n✔ uses an ISO code for unknown currencies (0.2065ms)\n✔ parses symbols, codes, commas, and negative values (1.4908ms)\n✔ rejects malformed or over-precise amounts (0.6252ms)\n✔ returns a first-attempt result without sleeping (1.4812ms)\n✔ uses exponential delays between failed attempts (0.3881ms)\n✔ throws the final error after exhausting attempts (0.6565ms)\n✔ can stop retrying with a predicate and validates attempts (0.2979ms)\n✔ normalizes case, accents, punctuation, and ampersands (1.4693ms)\n✔ collapses separators and keeps digits (7.0858ms)\n✔ truncates at a word boundary (0.2114ms)\n✔ hard-truncates a first word longer than the limit (0.1408ms)\n✔ returns an empty key for punctuation-only input (0.142ms)\n✔ rejects invalid maxLength (0.4794ms)\nℹ tests 18\nℹ suites 0\nℹ pass 18\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 140.6202"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 1011494,
+        "cachedInputTokens": 952064,
+        "outputTokens": 4646,
+        "reasoningOutputTokens": 1307
+      },
+      "delegations": [
+        {
+          "taskId": "t3",
+          "workerThreadId": "01a03585-d1bd-7da0-a246-64479ac0244a",
+          "model": "gpt-5.6-luna",
+          "effort": "medium",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 40,
+          "usage": {
+            "inputTokens": 67141,
+            "cachedInputTokens": 46336,
+            "cacheWriteInputTokens": 0,
+            "outputTokens": 1066,
+            "reasoningOutputTokens": 265
+          }
+        },
+        {
+          "taskId": "t4",
+          "workerThreadId": "01a03585-d17a-7030-835a-4e876732d1be",
+          "model": "gpt-5.6-luna",
+          "effort": "high",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 111,
+          "usage": {
+            "inputTokens": 216888,
+            "cachedInputTokens": 185856,
+            "cacheWriteInputTokens": 0,
+            "outputTokens": 4354,
+            "reasoningOutputTokens": 2469
+          }
+        },
+        {
+          "taskId": "t2",
+          "workerThreadId": "01a03585-d192-7583-b260-8e6aa7fdfcf5",
+          "model": "gpt-5.6-luna",
+          "effort": "high",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 163,
+          "usage": {
+            "inputTokens": 187502,
+            "cachedInputTokens": 155648,
+            "cacheWriteInputTokens": 0,
+            "outputTokens": 7290,
+            "reasoningOutputTokens": 4292
+          }
+        },
+        {
+          "taskId": "t1",
+          "workerThreadId": "01a03585-d1db-7202-b5ad-b187e3830bfe",
+          "model": "gpt-5.6-luna",
+          "effort": "medium",
+          "verdict": "FAILED",
+          "attempt": 1,
+          "durationSeconds": 300,
+          "usage": null
+        },
+        {
+          "taskId": "t1",
+          "workerThreadId": "01a03585-d1db-7202-b5ad-b187e3830bfe",
+          "model": "gpt-5.6-luna",
+          "effort": "medium",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 52,
+          "usage": {
+            "inputTokens": 123306,
+            "cachedInputTokens": 83712,
+            "cacheWriteInputTokens": 0,
+            "outputTokens": 2163,
+            "reasoningOutputTokens": 1002
+          }
+        },
+        {
+          "taskId": "t1",
+          "workerThreadId": "01a0358c-190c-7302-b0c5-5e39fe188c2e",
+          "model": "gpt-5.6-luna",
+          "effort": "high",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 117,
+          "usage": {
+            "inputTokens": 208393,
+            "cachedInputTokens": 177920,
+            "cacheWriteInputTokens": 0,
+            "outputTokens": 3943,
+            "reasoningOutputTokens": 2618
+          }
+        }
+      ],
+      "workerCount": 6,
+      "workerEfforts": [
+        "medium",
+        "high",
+        "medium",
+        "high",
+        "medium",
+        "high"
+      ],
+      "batches": [
+        {
+          "mode": "parallel",
+          "taskCount": 4,
+          "maxParallel": 4
+        },
+        {
+          "mode": "single",
+          "taskCount": 1,
+          "maxParallel": 1
+        },
+        {
+          "mode": "single",
+          "taskCount": 1,
+          "maxParallel": 1
+        }
+      ],
+      "integrationConflicts": 0,
+      "breakdown": {
+        "supervisorBeforeSeconds": 49.1,
+        "worktreeSetupSeconds": 0.9,
+        "workerWindowSeconds": 528.6,
+        "slowestWorkerSeconds": 300.3,
+        "integrationSeconds": 0,
+        "supervisorAfterSeconds": 30.8,
+        "peakConcurrency": 4
+      },
+      "verificationFailed": 1,
+      "verificationRefused": 0,
+      "workerFailures": [],
+      "agentError": null,
+      "creditAccounting": {
+        "pricingProfileId": "benchmark-v2-chatgpt-plus-codex-credits-2026-08-24",
+        "actualCredits": null,
+        "participants": [
+          {
+            "role": "supervisor",
+            "taskId": null,
+            "workerThreadId": null,
+            "model": "gpt-5.6-sol",
+            "effort": "medium",
+            "inputTokens": 1011494,
+            "cachedInputTokens": 952064,
+            "outputTokens": 4646,
+            "reasoningOutputTokens": 1307,
+            "cacheWriteInputTokens": null,
+            "rateCardCredits": 22.81405,
+            "durationSeconds": null
+          },
+          {
+            "role": "worker",
+            "taskId": "t3",
+            "workerThreadId": "01a03585-d1bd-7da0-a246-64479ac0244a",
+            "model": "gpt-5.6-luna",
+            "effort": "medium",
+            "inputTokens": 67141,
+            "cachedInputTokens": 46336,
+            "outputTokens": 1066,
+            "reasoningOutputTokens": 265,
+            "cacheWriteInputTokens": 0,
+            "rateCardCredits": 0.159173,
+            "durationSeconds": 40
+          },
+          {
+            "role": "worker",
+            "taskId": "t4",
+            "workerThreadId": "01a03585-d17a-7030-835a-4e876732d1be",
+            "model": "gpt-5.6-luna",
+            "effort": "high",
+            "inputTokens": 216888,
+            "cachedInputTokens": 185856,
+            "outputTokens": 4354,
+            "reasoningOutputTokens": 2469,
+            "cacheWriteInputTokens": 0,
+            "rateCardCredits": 0.378708,
+            "durationSeconds": 111
+          },
+          {
+            "role": "worker",
+            "taskId": "t2",
+            "workerThreadId": "01a03585-d192-7583-b260-8e6aa7fdfcf5",
+            "model": "gpt-5.6-luna",
+            "effort": "high",
+            "inputTokens": 187502,
+            "cachedInputTokens": 155648,
+            "outputTokens": 7290,
+            "reasoningOutputTokens": 4292,
+            "cacheWriteInputTokens": 0,
+            "rateCardCredits": 0.45579400000000003,
+            "durationSeconds": 163
+          },
+          {
+            "role": "worker",
+            "taskId": "t1",
+            "workerThreadId": "01a03585-d1db-7202-b5ad-b187e3830bfe",
+            "model": "gpt-5.6-luna",
+            "effort": "medium",
+            "inputTokens": null,
+            "cachedInputTokens": null,
+            "outputTokens": null,
+            "reasoningOutputTokens": null,
+            "cacheWriteInputTokens": null,
+            "rateCardCredits": null,
+            "durationSeconds": 300
+          },
+          {
+            "role": "worker",
+            "taskId": "t1",
+            "workerThreadId": "01a03585-d1db-7202-b5ad-b187e3830bfe",
+            "model": "gpt-5.6-luna",
+            "effort": "medium",
+            "inputTokens": 123306,
+            "cachedInputTokens": 83712,
+            "outputTokens": 2163,
+            "reasoningOutputTokens": 1002,
+            "cacheWriteInputTokens": 0,
+            "rateCardCredits": 0.304716,
+            "durationSeconds": 52
+          },
+          {
+            "role": "worker",
+            "taskId": "t1",
+            "workerThreadId": "01a0358c-190c-7302-b0c5-5e39fe188c2e",
+            "model": "gpt-5.6-luna",
+            "effort": "high",
+            "inputTokens": 208393,
+            "cachedInputTokens": 177920,
+            "outputTokens": 3943,
+            "reasoningOutputTokens": 2618,
+            "cacheWriteInputTokens": 0,
+            "rateCardCredits": 0.359615,
+            "durationSeconds": 117
+          }
+        ],
+        "rateCardCredits": {
+          "total": null,
+          "sol": 22.81405,
+          "luna": null
+        }
+      }
+    },
+    {
+      "benchmarkVersion": 2,
+      "suite": "v2",
+      "taskId": "v2-data-contracts",
+      "taskCategory": "delegation-friendly",
+      "workloadClass": "delegation-friendly",
+      "tier": "C",
+      "streams": 3,
+      "maxParallelConfigured": 3,
+      "arm": "forced-delegation",
+      "armLabel": "Forced Delegation",
+      "supervisorEffort": "medium",
+      "repetition": 3,
+      "startedAt": "2026-08-24T20:55:17.243Z",
+      "durationSeconds": 203,
+      "passed": true,
+      "grades": [
+        {
+          "label": "all three data-contract utilities pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ opens after the failure threshold and rejects while open (1.4788ms)\n✔ allows one half-open probe after cooldown and closes on success (0.2677ms)\n✔ a half-open failure reopens the breaker (0.412ms)\n✔ creates stable quoted tags independent of object key insertion order (1.4878ms)\n✔ matches a current tag in a comma-separated If-None-Match header (0.292ms)\n✔ applies add, replace, and remove without mutating the source (2.8479ms)\n✔ supports array append, copy, and move (0.3256ms)\n✔ test operations compare values and invalid operations fail (0.6265ms)\nℹ tests 8\nℹ suites 0\nℹ pass 8\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 114.39"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 284203,
+        "cachedInputTokens": 252416,
+        "outputTokens": 3033,
+        "reasoningOutputTokens": 894
+      },
+      "delegations": [
+        {
+          "taskId": "t2",
+          "workerThreadId": "01a0358e-ccb5-7a80-8a17-f4b2ec935ecf",
+          "model": "gpt-5.6-luna",
+          "effort": "medium",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 59,
+          "usage": {
+            "inputTokens": 110983,
+            "cachedInputTokens": 86784,
+            "cacheWriteInputTokens": 0,
+            "outputTokens": 2103,
+            "reasoningOutputTokens": 873
+          }
+        },
+        {
+          "taskId": "t3",
+          "workerThreadId": "01a0358e-cd02-76c1-ad38-6acc20b3fa72",
+          "model": "gpt-5.6-luna",
+          "effort": "high",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 81,
+          "usage": {
+            "inputTokens": 103039,
+            "cachedInputTokens": 80640,
+            "cacheWriteInputTokens": 0,
+            "outputTokens": 3366,
+            "reasoningOutputTokens": 1931
+          }
+        },
+        {
+          "taskId": "t1",
+          "workerThreadId": "01a0358e-cc7a-78d2-8f37-f45e83b01013",
+          "model": "gpt-5.6-luna",
+          "effort": "high",
+          "verdict": "PASS",
+          "attempt": 1,
+          "durationSeconds": 122,
+          "usage": {
+            "inputTokens": 226910,
+            "cachedInputTokens": 185600,
+            "cacheWriteInputTokens": 0,
+            "outputTokens": 5384,
+            "reasoningOutputTokens": 2625
+          }
+        }
+      ],
+      "workerCount": 3,
+      "workerEfforts": [
+        "high",
+        "medium",
+        "high"
+      ],
+      "batches": [
+        {
+          "mode": "parallel",
+          "taskCount": 3,
+          "maxParallel": 3
+        }
+      ],
+      "integrationConflicts": 0,
+      "breakdown": {
+        "supervisorBeforeSeconds": 27.9,
+        "worktreeSetupSeconds": 0.8,
+        "workerWindowSeconds": 122.4,
+        "slowestWorkerSeconds": 122.4,
+        "integrationSeconds": 0.3,
+        "supervisorAfterSeconds": 51.9,
+        "peakConcurrency": 3
+      },
+      "verificationFailed": 0,
+      "verificationRefused": 0,
+      "workerFailures": [],
+      "agentError": null,
+      "creditAccounting": {
+        "pricingProfileId": "benchmark-v2-chatgpt-plus-codex-credits-2026-08-24",
+        "actualCredits": null,
+        "participants": [
+          {
+            "role": "supervisor",
+            "taskId": null,
+            "workerThreadId": null,
+            "model": "gpt-5.6-sol",
+            "effort": "medium",
+            "inputTokens": 284203,
+            "cachedInputTokens": 252416,
+            "outputTokens": 3033,
+            "reasoningOutputTokens": 894,
+            "cacheWriteInputTokens": null,
+            "rateCardCredits": 9.403324999999999,
+            "durationSeconds": null
+          },
+          {
+            "role": "worker",
+            "taskId": "t2",
+            "workerThreadId": "01a0358e-ccb5-7a80-8a17-f4b2ec935ecf",
+            "model": "gpt-5.6-luna",
+            "effort": "medium",
+            "inputTokens": 110983,
+            "cachedInputTokens": 86784,
+            "outputTokens": 2103,
+            "reasoningOutputTokens": 873,
+            "cacheWriteInputTokens": 0,
+            "rateCardCredits": 0.22747699999999998,
+            "durationSeconds": 59
+          },
+          {
+            "role": "worker",
+            "taskId": "t3",
+            "workerThreadId": "01a0358e-cd02-76c1-ad38-6acc20b3fa72",
+            "model": "gpt-5.6-luna",
+            "effort": "high",
+            "inputTokens": 103039,
+            "cachedInputTokens": 80640,
+            "outputTokens": 3366,
+            "reasoningOutputTokens": 1931,
+            "cacheWriteInputTokens": 0,
+            "rateCardCredits": 0.253295,
+            "durationSeconds": 81
+          },
+          {
+            "role": "worker",
+            "taskId": "t1",
+            "workerThreadId": "01a0358e-cc7a-78d2-8f37-f45e83b01013",
+            "model": "gpt-5.6-luna",
+            "effort": "high",
+            "inputTokens": 226910,
+            "cachedInputTokens": 185600,
+            "outputTokens": 5384,
+            "reasoningOutputTokens": 2625,
+            "cacheWriteInputTokens": 0,
+            "rateCardCredits": 0.46087,
+            "durationSeconds": 122
+          }
+        ],
+        "rateCardCredits": {
+          "total": 10.344966999999999,
+          "sol": 9.403324999999999,
+          "luna": 0.941642
+        }
+      }
+    }
+  ]
+}
