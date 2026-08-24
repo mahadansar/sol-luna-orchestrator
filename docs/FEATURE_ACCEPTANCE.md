@@ -154,6 +154,50 @@ any Strong, live DEEP PASS, or Battle-tested state. The three known cross-module
 abnormal lifecycle handoffs remain deliberately out of scope, as do Adaptive
 Effort and P1.1.
 
+### Focused abnormal-lifecycle findings closure
+
+The 2026-08-24 findings-closure pass added three deterministic end-to-end
+regressions across the previously missing module handoffs. A real parallel
+integration copied one file before a later destination-parent collision failed,
+preserving the applied main-workspace change while reporting 2 attempted / 1
+applied, `integration.partial`, `integrated:false`, the exact copy warning, and a
+retained diagnostic worktree. A promise-barrier fixture started two real
+`executeTask` lifecycles concurrently, completed and integrated one sibling, then
+aborted the other while it was still inside its worker event stream; cancellation
+classification, evidence scanning, events, result counts, retention policy, and
+lease release all completed, and the case passed 10/10 repeated executions. A
+real retained continuation was then consumed through the server handler, its
+persistent lease was observed changing from `retained-continuation` to
+`executing-continuation`, and a controlled post-start failure exercised handler
+classification and `finally` release; replay returned `used`, the lease artifact
+was gone, and orchestrator pruning removed the now-unprotected worktree.
+
+No runtime-semantic defect was found. Partial integration remains intentionally
+non-atomic and is represented at batch/integration level without rewriting the
+worker's independently established verdict or trust evidence. The default
+`onFailure` policy intentionally retains an in-flight-cancelled worktree for
+diagnosis while releasing its lease. The only production change is an internal,
+default-preserving continuation-handler dependency seam needed to inject the
+post-refresh failure and isolate events; the MCP schema, tool contract, and
+normal runtime dependencies are unchanged.
+
+This closes the recorded abnormal-lifecycle blocker for Parallel batches,
+Worktree isolation/integration, and Worker Continuation. Those capabilities now
+meet the ledger's Battle-tested definition because existing live DEEP PASS
+evidence already covers successful integration, conflict retention, and a
+successful retained continuation, while broad deterministic evidence now also
+covers the important partial-application, in-flight cancellation, and consumed
+continuation failure paths. Bounded concurrency remains Strong: its separate
+second-live-configured-limit gap remains. No other capability is promoted by
+this focused pass, and Adaptive Effort and P1.1 remain untouched.
+
+Final validation for this closure passed `npm run verify`: typecheck, **463/463**
+deterministic tests with no failures or skips, and every MCP protocol smoke
+check. The focused parallel/worktree suite passed **76/76**, the in-flight
+cancellation case passed **10/10** repeated executions, formatting and build
+passed, all nine benchmark fixtures discriminated correctly with mutation
+detection, and `git diff --check` was clean.
+
 ### Earlier pre-release live acceptance campaign
 
 The final real-model campaign ran on 2026-08-24 against runtime baseline
@@ -211,27 +255,27 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
 
 ## Top-level feature matrix
 
-| Capability                                              | State at runtime baseline            | Coverage | Deterministic (last run) | Live (last run)        | Confidence |
-| ------------------------------------------------------- | ------------------------------------ | -------- | ------------------------ | ---------------------- | ---------- |
-| Zero-worker/adaptive delegation                         | shipped; guidance refined 2026-08-23 | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong     |
-| Single delegation                                       | shipped                              | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong     |
-| Sequential batches                                      | shipped                              | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong     |
-| Parallel batches                                        | shipped                              | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong     |
-| Worktree isolation/integration                          | shipped                              | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong     |
-| Bounded concurrency                                     | shipped                              | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong     |
-| Adaptive effort                                         | shipped                              | PASS     | PASS (2026-08-24)        | PARTIAL (2026-08-24)   | Basic      |
-| Independent verification                                | shipped                              | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong     |
-| Claimed-vs-observed reconciliation                      | shipped                              | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong     |
-| Context Capsule v2                                      | shipped v0.7.0                       | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong     |
-| Compact Evidence Packets                                | shipped v0.7.0                       | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong     |
-| CLI init/doctor/status/uninstall                        | shipped                              | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong     |
-| Activity, observability, privacy                        | shipped                              | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong     |
-| Natural discovery                                       | shipped v0.8.0                       | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong     |
-| Explicit Change Intent                                  | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong     |
-| Worker Continuation                                     | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong     |
-| Bounded Repair                                          | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong     |
-| P1.0 parent/pricing foundation                          | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | N/A                    | Strong     |
-| `failureCauses` and verification contradiction handling | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong     |
+| Capability                                              | State at runtime baseline            | Coverage | Deterministic (last run) | Live (last run)        | Confidence    |
+| ------------------------------------------------------- | ------------------------------------ | -------- | ------------------------ | ---------------------- | ------------- |
+| Zero-worker/adaptive delegation                         | shipped; guidance refined 2026-08-23 | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong        |
+| Single delegation                                       | shipped                              | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong        |
+| Sequential batches                                      | shipped                              | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong        |
+| Parallel batches                                        | shipped                              | PASS     | DEEP PASS (2026-08-24)   | DEEP PASS (2026-08-24) | Battle-tested |
+| Worktree isolation/integration                          | shipped                              | PASS     | DEEP PASS (2026-08-24)   | DEEP PASS (2026-08-24) | Battle-tested |
+| Bounded concurrency                                     | shipped                              | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong        |
+| Adaptive effort                                         | shipped                              | PASS     | PASS (2026-08-24)        | PARTIAL (2026-08-24)   | Basic         |
+| Independent verification                                | shipped                              | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong        |
+| Claimed-vs-observed reconciliation                      | shipped                              | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong        |
+| Context Capsule v2                                      | shipped v0.7.0                       | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong        |
+| Compact Evidence Packets                                | shipped v0.7.0                       | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong        |
+| CLI init/doctor/status/uninstall                        | shipped                              | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong        |
+| Activity, observability, privacy                        | shipped                              | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong        |
+| Natural discovery                                       | shipped v0.8.0                       | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong        |
+| Explicit Change Intent                                  | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong        |
+| Worker Continuation                                     | shipped v0.9.0                       | PASS     | DEEP PASS (2026-08-24)   | DEEP PASS (2026-08-24) | Battle-tested |
+| Bounded Repair                                          | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | DEEP PASS (2026-08-24) | Strong        |
+| P1.0 parent/pricing foundation                          | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | N/A                    | Strong        |
+| `failureCauses` and verification contradiction handling | shipped v0.9.0                       | PASS     | PASS (2026-08-24)        | PASS (2026-08-24)      | Strong        |
 
 ## System-wide invariants
 
@@ -336,7 +380,11 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
 - **Evidence:** Coverage and deterministic execution **PASS** on 2026-08-24. The
   full parallel suite refreshed setup serialization, bounded scheduling,
   cancellation, worker/setup failures, overlap rejection/override, same-file
-  conflicts, partial integration, cleanup, and risk-review behavior.
+  conflicts, partial integration, cleanup, and risk-review behavior. The focused
+  lifecycle closure advanced deterministic evidence to **DEEP PASS**: an actual
+  integration applied one file before a later filesystem operation failed, and
+  an already-running worker was aborted only after its concurrently started
+  sibling completed; the latter passed 10/10 repeated executions without sleeps.
   Current live acceptance **DEEP PASS**: 3/3 isolated tasks passed at peak
   concurrency 3 in distinct `.sol-luna` worktrees; three disjoint edits
   integrated with 3 attempted, 3 applied, and 0 conflicts. A materially
@@ -346,10 +394,11 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   Older committed benchmark evidence remains **STALE** where it predates
   lifecycle fixes.
 - **Dependencies/retest triggers:** scheduler, worktree metadata, cancellation,
-  overlap, integration, continuation, or verification changes. **Gap:** raw
-  final-campaign artifacts are not committed; an actual in-flight cancellation
-  with a completing sibling was not forced in this live run.
-- **Confidence:** **Strong**.
+  overlap, integration, continuation, or verification changes. Raw
+  final-campaign live artifacts are not committed, but the prior in-flight
+  cancellation and post-application integration blockers now have durable
+  deterministic regressions.
+- **Confidence:** **Battle-tested**.
 
 ### Worktree isolation and integration
 
@@ -370,12 +419,16 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   focused Linux run added native POSIX evidence: the dependency link was an
   actual directory symlink resolving to the source dependency tree, cleanup
   removed the link/worktree without deleting the source, stale pruning left a
-  user worktree intact, and the complete 73-test suite passed with no skips.
+  user worktree intact, and the complete 73-test suite passed with no skips. The
+  focused lifecycle closure advanced deterministic evidence to **DEEP PASS** by
+  combining partial main-workspace integration, in-flight parallel cancellation,
+  retained-worktree policy, exact lease release, consumed-continuation
+  finalization, and orchestrator pruning in end-to-end cases.
 - **Dependencies/retest triggers:** git version/platform, junction/symlink
   handling, lease ownership, cleanup, or copy integration changes. **Gap:** raw
   final-campaign artifacts are not committed and no durable model-backed live
   platform matrix is established.
-- **Confidence:** **Strong**.
+- **Confidence:** **Battle-tested**.
 
 ### Bounded concurrency
 
@@ -590,16 +643,21 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
 - **Evidence:** Coverage and targeted deterministic execution **PASS** on
   2026-08-24 for opaque single-use expiry, exact-thread resume, immutable
   contract, repeat verification, integrated/retained worktree binding, and lease
-  protection. Live acceptance is **DEEP PASS**: an integration-disabled worktree
+  protection. The focused lifecycle closure advanced deterministic evidence to
+  **DEEP PASS**: a real retained continuation crossed store consumption, lease
+  refresh, same-thread/immutable-contract checks, server start/failure events,
+  handler `finally`, replay refusal, lease release, and stale-worktree pruning in
+  one test. Live acceptance is **DEEP PASS**: an integration-disabled worktree
   was retained, the continuation resumed the same Luna thread, completed a real
   follow-up edit, and reconciled both retained files under the unchanged original
   contract. Replay was rejected and lease artifacts were released according to
   policy.
 - **Dependencies/retest triggers:** continuation TTL/reference store, worktree
   leases, final Git reconciliation, contract fields, or worker lifecycle changes.
-  **Gap:** raw final-campaign artifacts are not committed; expiry was not
-  exercised live.
-- **Confidence:** **Strong**.
+  Raw final-campaign artifacts are not committed and expiry was not exercised
+  live, but the abnormal consumed-continuation finalization blocker now has a
+  durable deterministic regression.
+- **Confidence:** **Battle-tested**.
 
 ### Bounded Repair
 

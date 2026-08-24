@@ -15,7 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { renderBatch } from "./server.js";
+import { handleContinueTask, renderBatch } from "./server.js";
 import { BatchRejectedError, runBatch as runProductionBatch } from "./batch.js";
 import { CONTINUATION_TTL_MS, ContinuationStore } from "./continuation.js";
 import {
@@ -29,6 +29,7 @@ import {
   type BatchOutput,
   type DelegateTaskInput,
   type DelegateTaskOutput,
+  type WorkerReport,
 } from "./contract.js";
 import { collectWorktreeChanges, runGit } from "./git.js";
 import {
@@ -44,6 +45,7 @@ import {
   linkSharedDirectories,
   prepareWorktreeBase,
   pruneStaleWorktrees,
+  refreshWorktreeLease,
   releaseWorktreeLease,
   releaseWorktreeOwnership,
   sweepExpiredWorktreeLeases,
@@ -53,6 +55,8 @@ import {
   worktreeMetadataQueue,
   WorktreeUnavailableError,
 } from "./worktree.js";
+import { executeTask, type WorkerCodex } from "./worker.js";
+import type { ThreadEvent } from "@openai/codex-sdk";
 
 /**
  * Deterministic scheduling cases must not inherit the production event sink.
@@ -166,6 +170,19 @@ const cleanupRepo = async (dir: string): Promise<void> => {
     .rm(dir, { recursive: true, force: true, maxRetries: 3 })
     .catch(() => undefined);
 };
+
+async function readLeaseRecords(
+  artifact: string,
+): Promise<Array<{ phase?: string; expiresAt?: number; ownerToken?: string }>> {
+  const entries = await fs.readdir(artifact);
+  return Promise.all(
+    entries
+      .filter((entry) => entry.endsWith(".json"))
+      .map(async (entry) =>
+        JSON.parse(await fs.readFile(path.join(artifact, entry), "utf8")),
+      ),
+  );
+}
 
 /**
  * Render a batch result as per-task evidence.
@@ -1085,6 +1102,152 @@ test("failed retained continuation registration releases protection and ownershi
   }
 });
 
+test("a consumed retained continuation failure finalizes its refreshed lease", async () => {
+  const repo = await makeRepo();
+  const reference = `ctr_${"f".repeat(32)}`;
+  const continuations = new ContinuationStore({ tokenFactory: () => reference });
+  const events: Array<Record<string, unknown>> = [];
+  let retainedPath: string | null = null;
+  let refreshes = 0;
+  let releases = 0;
+  try {
+    const original = makeTask({
+      objective: "Create retained continuation evidence under an immutable contract.",
+      effort: "xhigh",
+      changeIntent: "required",
+      allowedFiles: ["src/continued/**"],
+      forbiddenFiles: ["src/forbidden/**"],
+      acceptanceCriteria: ["The original retained edit remains observable."],
+      verificationCommands: [],
+      timeoutSeconds: 60,
+    });
+    const originalSnapshot = { ...structuredClone(original), contextCapsule: undefined };
+    const batch = await runBatch([original], {
+      mode: "parallel",
+      batchId: "b-retained-continuation-failure",
+      workingDirectory: repo,
+      integrate: false,
+      executor: fakeExecutor({
+        writes: () => ({ "src/continued/first.ts": "export const first = true;\n" }),
+        output: () => ({ workerThreadId: "thread-retained-failure" }),
+      }),
+      continuationRegistrar: (input, result, workingDirectory, reconcile, lease) =>
+        result.workerThreadId
+          ? continuations.issue(
+              input,
+              result.workerThreadId,
+              workingDirectory,
+              reconcile,
+              lease,
+            )
+          : null,
+    });
+
+    const retainedTask = batch.tasks[0]!;
+    retainedPath = retainedTask.worktreePath;
+    assert.ok(retainedPath, describeBatch(batch));
+    assert.equal(retainedTask.result?.continuationReference, reference);
+    const leaseArtifact = continuationLeasePath(retainedPath!);
+    const retainedRecords = await readLeaseRecords(leaseArtifact);
+    assert.ok(
+      retainedRecords.some((record) => record.phase === "retained-continuation"),
+      JSON.stringify(retainedRecords),
+    );
+
+    const response = await handleContinueTask(
+      {
+        continuationReference: reference,
+        instruction: "Attempt the bounded follow-up and fail after execution starts.",
+      },
+      undefined,
+      {
+        store: continuations,
+        emit: (event) => events.push(event),
+        record: () => undefined,
+        makeBatchId: () => "b-consumed-continuation-failure",
+        refreshLease: async (lease, expiresAt, phase) => {
+          refreshes += 1;
+          assert.equal(phase, "executing-continuation");
+          await refreshWorktreeLease(lease, expiresAt, phase);
+        },
+        releaseLease: async (lease) => {
+          releases += 1;
+          await releaseWorktreeLease(lease);
+        },
+        continueTask: async (input, options) => {
+          assert.deepEqual(
+            input,
+            originalSnapshot,
+            "the consumed contract must be immutable",
+          );
+          assert.equal(options.threadId, "thread-retained-failure");
+          assert.equal(options.workingDirectory, retainedPath);
+          assert.match(options.instruction, /fail after execution starts/i);
+          options.hooks?.onStarted?.(options.workingDirectory);
+          const executingRecords = await readLeaseRecords(leaseArtifact);
+          assert.ok(
+            executingRecords.some((record) => record.phase === "executing-continuation"),
+            JSON.stringify(executingRecords),
+          );
+          throw new Error("controlled continuation failure after lease refresh");
+        },
+      },
+    );
+
+    assert.equal(response.isError, true);
+    assert.match(response.content[0]?.text ?? "", /controlled continuation failure/i);
+    assert.equal(refreshes, 1, "consumption must refresh the retained lease once");
+    assert.equal(releases, 1, "the handler finally must release the refreshed lease");
+    assert.equal(continuations.consume(reference).status, "used");
+    assert.deepEqual(continuations.protectedWorkingDirectories(), []);
+    assert.equal(await fs.stat(leaseArtifact).catch(() => null), null);
+    assert.ok(await fs.stat(retainedPath!).catch(() => null));
+    assert.ok(
+      events.some(
+        (event) =>
+          event.type === "worker.started" &&
+          event.batchId === "b-consumed-continuation-failure",
+      ),
+      JSON.stringify(events),
+    );
+    assert.ok(
+      events.some(
+        (event) =>
+          event.type === "worker.failed" &&
+          /controlled continuation failure after lease refresh/.test(
+            String(event.reason),
+          ),
+      ),
+      JSON.stringify(events),
+    );
+    assert.ok(
+      events.some(
+        (event) =>
+          event.type === "batch.completed" && event.passed === 0 && event.failed === 1,
+      ),
+      JSON.stringify(events),
+    );
+
+    assert.deepEqual(await pruneStaleWorktrees(repo), [retainedPath]);
+    assert.equal(await fs.stat(retainedPath!).catch(() => null), null);
+    assert.equal(
+      (await runGit(["worktree", "list", "--porcelain"], repo)).stdout.includes(
+        retainedPath!,
+      ),
+      false,
+    );
+    retainedPath = null;
+  } finally {
+    if (
+      retainedPath &&
+      !(await fs.stat(continuationLeasePath(retainedPath)).catch(() => null))
+    ) {
+      await pruneStaleWorktrees(repo).catch(() => undefined);
+    }
+    await cleanupRepo(repo);
+  }
+});
+
 test("expired orphan lease artifacts are swept without a Git worktree", async () => {
   const repo = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-lease-orphan-"));
   const worktreePath = path.join(repo, ".sol-luna", "worktrees", "missing");
@@ -1622,6 +1785,203 @@ test("a cancelled batch starts nothing and leaves no worktrees behind", async ()
   }
 });
 
+test("an already-running parallel worker cancels while its sibling completes", async () => {
+  const repo = await makeRepo();
+  const controller = new AbortController();
+  const events: Array<Record<string, unknown>> = [];
+  let retainedPath: string | null = null;
+  let started = 0;
+  let active = 0;
+  let abortObserved = false;
+  let releaseBothStarted!: () => void;
+  let releaseSiblingCompleted!: () => void;
+  const bothStarted = new Promise<void>((resolve) => (releaseBothStarted = resolve));
+  const siblingCompleted = new Promise<void>(
+    (resolve) => (releaseSiblingCompleted = resolve),
+  );
+
+  const workerReport = (file: string): WorkerReport => ({
+    status: "PASS",
+    failureCauses: [],
+    summary: "Completed the independent sibling.",
+    filesChanged: [{ path: file, change: "added", why: "fixture output" }],
+    verification: [],
+    notes: "",
+    followUps: [],
+  });
+
+  try {
+    const batchPromise = runProductionBatch(
+      [
+        makeTask({
+          objective: "Complete the independent sibling before cancellation.",
+          allowedFiles: ["src/complete/**"],
+        }),
+        makeTask({
+          objective: "Remain in flight until the batch is cancelled.",
+          allowedFiles: ["src/cancelled/**"],
+        }),
+      ],
+      {
+        mode: "parallel",
+        batchId: "b-inflight-cancellation",
+        workingDirectory: repo,
+        signal: controller.signal,
+        eventEmitter: (event) => events.push(event),
+        executor: async (input, options) => {
+          const completing = input.objective.includes("independent sibling");
+          const threadId = completing ? "thread-complete" : "thread-cancelled";
+          const codex: WorkerCodex = {
+            startThread: () => ({
+              id: threadId,
+              runStreamed: async (_prompt, turnOptions) => {
+                started += 1;
+                active += 1;
+                if (started === 2) releaseBothStarted();
+
+                const eventStream = async function* (): AsyncGenerator<ThreadEvent> {
+                  try {
+                    await bothStarted;
+                    if (completing) {
+                      const target = path.join(
+                        options.workingDirectory,
+                        "src",
+                        "complete",
+                        "value.ts",
+                      );
+                      await fs.mkdir(path.dirname(target), { recursive: true });
+                      await fs.writeFile(
+                        target,
+                        "export const completed = true;\n",
+                        "utf8",
+                      );
+                      yield {
+                        type: "item.completed",
+                        item: {
+                          id: "completed-change",
+                          type: "file_change",
+                          status: "completed",
+                          changes: [{ path: target, kind: "add" }],
+                        },
+                      };
+                      yield {
+                        type: "item.completed",
+                        item: {
+                          id: "completed-report",
+                          type: "agent_message",
+                          text: JSON.stringify(workerReport(target)),
+                        },
+                      };
+                      releaseSiblingCompleted();
+                      return;
+                    }
+
+                    await new Promise<never>((_resolve, reject) => {
+                      const signal = turnOptions?.signal;
+                      const onAbort = (): void => {
+                        abortObserved = true;
+                        reject(new Error("controlled worker abort"));
+                      };
+                      if (signal?.aborted) onAbort();
+                      else signal?.addEventListener("abort", onAbort, { once: true });
+                    });
+                  } finally {
+                    active -= 1;
+                  }
+                };
+                return { events: eventStream() };
+              },
+            }),
+            resumeThread: () => {
+              throw new Error("fresh parallel workers must not resume");
+            },
+          };
+          return executeTask(input, {
+            workingDirectory: options.workingDirectory,
+            signal: options.signal,
+            codex,
+          });
+        },
+      },
+    );
+
+    await bothStarted;
+    await siblingCompleted;
+    assert.equal(started, 2, "both workers must start before cancellation");
+    assert.equal(active, 1, "the cancelled worker must still be in flight");
+    controller.abort();
+    const result = await batchPromise;
+
+    const completed = result.tasks[0]!;
+    const cancelled = result.tasks[1]!;
+    retainedPath = cancelled.worktreePath;
+    assert.equal(abortObserved, true);
+    assert.equal(active, 0, "no controlled worker may remain active");
+    assert.equal(completed.state, "completed", describeBatch(result));
+    assert.equal(completed.result?.verdict, "PASS", describeBatch(result));
+    assert.equal(completed.result?.trustworthy, true, describeBatch(result));
+    assert.equal(cancelled.state, "cancelled", describeBatch(result));
+    assert.equal(cancelled.result?.verdict, "FAILED", describeBatch(result));
+    assert.equal(cancelled.result?.workerClaimedStatus, "FAILED");
+    assert.equal(cancelled.result?.trustworthy, false);
+    assert.ok(
+      cancelled.result?.errors.some((error) =>
+        /cancelled before it finished/i.test(error),
+      ),
+      JSON.stringify(cancelled.result),
+    );
+    assert.deepEqual(cancelled.changedFiles, []);
+    assert.equal(result.passed, 1, describeBatch(result));
+    assert.equal(result.failed, 1, describeBatch(result));
+    assert.equal(result.integrated, true, describeBatch(result));
+    assert.equal(
+      await fs.readFile(path.join(repo, "src", "complete", "value.ts"), "utf8"),
+      "export const completed = true;\n",
+    );
+
+    assert.equal(events.filter((event) => event.type === "worker.started").length, 2);
+    assert.ok(
+      events.some(
+        (event) =>
+          event.type === "worker.completed" &&
+          event.taskId === "t1" &&
+          event.verdict === "PASS",
+      ),
+      JSON.stringify(events),
+    );
+    assert.ok(
+      events.some((event) => event.type === "worker.cancelled" && event.taskId === "t2"),
+      JSON.stringify(events),
+    );
+    assert.equal(events.filter((event) => event.type === "batch.cancelled").length, 1);
+    assert.equal(events.filter((event) => event.type === "batch.completed").length, 0);
+    assert.ok(
+      events.some(
+        (event) =>
+          event.type === "integration.applied" &&
+          event.taskId === "t1" &&
+          event.fileCount === 1,
+      ),
+      JSON.stringify(events),
+    );
+    assert.ok(retainedPath, describeBatch(result));
+    assert.ok(await fs.stat(retainedPath!).catch(() => null));
+    assert.equal(
+      await fs.stat(continuationLeasePath(retainedPath!)).catch(() => null),
+      null,
+    );
+  } finally {
+    if (retainedPath) {
+      await cleanupWorktree(
+        { taskId: "t2", path: retainedPath, repoRoot: repo, warnings: [] },
+        "success",
+        "never",
+      ).catch(() => undefined);
+    }
+    await cleanupRepo(repo);
+  }
+});
+
 test("mid-flight cancellation stops the remaining sequential tasks", async () => {
   const repo = await makeRepo();
   try {
@@ -1989,6 +2349,119 @@ test("successful integration emits applied counts before an explicit completion"
     assert.ok(completedIndex > appliedIndex, JSON.stringify(events));
     assert.equal(events[appliedIndex]?.fileCount, 1);
   } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("partial integration retains truthful evidence after an earlier file applies", async () => {
+  const repo = await makeRepo();
+  const events: Array<Record<string, unknown>> = [];
+  let retainedPath: string | null = null;
+  try {
+    const blocker = path.join(repo, "src", "integration-blocker");
+    await fs.writeFile(blocker, "main-workspace blocker\n", "utf8");
+
+    const result = await runProductionBatch(
+      [
+        makeTask({
+          allowedFiles: [
+            "src/integration-applied.txt",
+            "src/integration-blocker/later.txt",
+          ],
+        }),
+      ],
+      {
+        mode: "parallel",
+        batchId: "b-partial-integration",
+        workingDirectory: repo,
+        eventEmitter: (event) => events.push(event),
+        executor: fakeExecutor({
+          writes: () => ({
+            "src/integration-applied.txt": "applied before failure\n",
+            "src/integration-blocker/later.txt": "cannot replace parent file\n",
+          }),
+        }),
+      },
+    );
+
+    const task = result.tasks[0]!;
+    retainedPath = task.worktreePath;
+    assert.equal(result.passed, 1, describeBatch(result));
+    assert.equal(result.failed, 0, describeBatch(result));
+    assert.equal(task.state, "completed", describeBatch(result));
+    assert.equal(task.result?.verdict, "PASS", describeBatch(result));
+    assert.equal(task.result?.trustworthy, true, describeBatch(result));
+    assert.deepEqual(task.result?.discrepancies, [], describeBatch(result));
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(result.integrationSummary, /incomplete after copying 1 file/i);
+    assert.ok(
+      result.warnings.some((warning) =>
+        /Could not integrate src\/integration-blocker\/later\.txt from t1/.test(warning),
+      ),
+      describeBatch(result),
+    );
+
+    const partial = events.find((event) => event.type === "integration.partial");
+    assert.deepEqual(
+      partial,
+      {
+        type: "integration.partial",
+        batchId: "b-partial-integration",
+        taskId: "t1",
+        attemptedFiles: 2,
+        appliedFiles: 1,
+      },
+      JSON.stringify(events),
+    );
+    assert.equal(
+      events.find((event) => event.type === "integration.applied")?.fileCount,
+      1,
+    );
+    assert.equal(
+      events.some((event) => event.type === "integration.completed"),
+      false,
+    );
+    assert.ok(
+      events.some(
+        (event) =>
+          event.type === "worktree.retained" && event.reason === "integration-partial",
+      ),
+      JSON.stringify(events),
+    );
+
+    assert.equal(
+      await fs.readFile(path.join(repo, "src", "integration-applied.txt"), "utf8"),
+      "applied before failure\n",
+    );
+    assert.equal(await fs.readFile(blocker, "utf8"), "main-workspace blocker\n");
+    assert.equal(await fs.stat(path.join(blocker, "later.txt")).catch(() => null), null);
+    assert.ok(retainedPath, describeBatch(result));
+    assert.equal(
+      await fs.readFile(
+        path.join(retainedPath!, "src", "integration-applied.txt"),
+        "utf8",
+      ),
+      "applied before failure\n",
+    );
+    assert.equal(
+      await fs.readFile(
+        path.join(retainedPath!, "src", "integration-blocker", "later.txt"),
+        "utf8",
+      ),
+      "cannot replace parent file\n",
+    );
+    assert.equal(
+      await fs.stat(continuationLeasePath(retainedPath!)).catch(() => null),
+      null,
+    );
+  } finally {
+    if (retainedPath) {
+      await cleanupWorktree(
+        { taskId: "t1", path: retainedPath, repoRoot: repo, warnings: [] },
+        "success",
+        "never",
+      ).catch(() => undefined);
+    }
     await cleanupRepo(repo);
   }
 });

@@ -38,7 +38,7 @@ import {
 } from "./worker.js";
 import { collectWorktreeChanges, type WorktreeChanges } from "./git.js";
 import { WorkspaceError } from "./workspace.js";
-import { activityFailureReason, emitEvent } from "./events.js";
+import { activityFailureReason, emitEvent, type EventEmitter } from "./events.js";
 import {
   refreshWorktreeLease,
   releaseWorktreeLease,
@@ -177,6 +177,7 @@ function emitSingleCompletion(
   taskId: string,
   timeoutSeconds: number,
   result: DelegateTaskOutput,
+  emit: EventEmitter = emitEvent,
 ): void {
   const cancelled = result.errors.some((error) =>
     /was cancelled before it finished/i.test(error),
@@ -184,8 +185,8 @@ function emitSingleCompletion(
   const timedOut = result.errors.some((error) => /exceeded its .* budget/.test(error));
 
   if (cancelled) {
-    emitEvent({ type: "worker.cancelled", batchId, taskId });
-    emitEvent({
+    emit({ type: "worker.cancelled", batchId, taskId });
+    emit({
       type: "batch.cancelled",
       batchId,
       reason: "worker cancelled",
@@ -195,7 +196,7 @@ function emitSingleCompletion(
       (run) => run.source === "orchestrator",
     );
     if (orchestratorRuns.length > 0) {
-      emitEvent({
+      emit({
         type: "verification.completed",
         batchId,
         taskId,
@@ -209,7 +210,7 @@ function emitSingleCompletion(
       });
     }
     if (timedOut) {
-      emitEvent({
+      emit({
         type: "worker.timedOut",
         batchId,
         taskId,
@@ -218,7 +219,7 @@ function emitSingleCompletion(
     }
     // Keep the existing completion record for compatibility. The activity
     // reducer preserves timedOut when this record follows it.
-    emitEvent({
+    emit({
       type: "worker.completed",
       batchId,
       taskId,
@@ -232,7 +233,7 @@ function emitSingleCompletion(
       failureReason: activityFailureReason(result),
       usage: result.usage,
     });
-    emitEvent({
+    emit({
       type: "batch.completed",
       batchId,
       durationSeconds: result.durationSeconds,
@@ -665,6 +666,171 @@ function registerDelegateTask(): void {
   );
 }
 
+interface ContinuationHandlerDependencies {
+  store: ContinuationStore;
+  continueTask: typeof continueToLuna;
+  reconcile: typeof reconcileRetainedContinuationEvidence;
+  refreshLease: typeof refreshWorktreeLease;
+  releaseLease: typeof releaseWorktreeLease;
+  emit: EventEmitter;
+  record: typeof recordEvent;
+  makeBatchId: () => string;
+}
+
+/** Internal dependency seam for deterministic continuation lifecycle tests. */
+export async function handleContinueTask(
+  request: ContinueTaskInput,
+  signal?: AbortSignal,
+  overrides: Partial<ContinuationHandlerDependencies> = {},
+) {
+  const dependencies: ContinuationHandlerDependencies = {
+    store: continuationStore,
+    continueTask: continueToLuna,
+    reconcile: reconcileRetainedContinuationEvidence,
+    refreshLease: refreshWorktreeLease,
+    releaseLease: releaseWorktreeLease,
+    emit: emitEvent,
+    record: recordEvent,
+    makeBatchId: makeSingleBatchId,
+    ...overrides,
+  };
+  const reserved = dependencies.store.consume(request.continuationReference);
+  if (reserved.status !== "ready") {
+    const message = continuationError(reserved);
+    log(`continue_task rejected: ${message}`);
+    return {
+      content: [{ type: "text" as const, text: message }],
+      isError: true,
+    };
+  }
+
+  const { entry } = reserved;
+  const timeoutSeconds = entry.input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS;
+  if (entry.worktreeLease) {
+    try {
+      await dependencies.refreshLease(
+        entry.worktreeLease,
+        Date.now() + timeoutSeconds * 1000 + WORKTREE_LEASE_GRACE_MS,
+        "executing-continuation",
+      );
+    } catch (error) {
+      dependencies.store.release(request.continuationReference);
+      await dependencies.releaseLease(entry.worktreeLease);
+      const message =
+        `Continuation could not start because its retained worktree lease ` +
+        `could not be refreshed: ${(error as Error).message}`;
+      log(`continue_task rejected: ${message}`);
+      return {
+        content: [{ type: "text" as const, text: message }],
+        isError: true,
+      };
+    }
+  }
+  const batchId = dependencies.makeBatchId();
+  const taskId = "t1";
+  const startedAt = Date.now();
+  let workerStarted = false;
+  log(
+    `continue_task: thread=${entry.threadId} instruction="${request.instruction.slice(0, 80)}..."`,
+  );
+
+  dependencies.emit({
+    type: "batch.started",
+    batchId,
+    mode: "single",
+    taskCount: 1,
+    maxParallel: 1,
+  });
+  dependencies.emit({
+    type: "task.queued",
+    batchId,
+    taskId,
+    effort: entry.input.effort,
+    category: entry.input.taskCategory,
+    activityLabel: entry.input.activityLabel,
+    model: LUNA_MODEL,
+  });
+
+  try {
+    let result = await dependencies.continueTask(entry.input, {
+      workingDirectory: entry.workingDirectory,
+      threadId: entry.threadId,
+      instruction: request.instruction,
+      signal,
+      hooks: {
+        onStarted: (workingDirectory) => {
+          workerStarted = true;
+          dependencies.emit({
+            type: "worker.started",
+            batchId,
+            taskId,
+            effort: entry.input.effort,
+            workingDirectory,
+            model: LUNA_MODEL,
+          });
+        },
+        onVerificationStart: (commandCount) =>
+          dependencies.emit({
+            type: "verification.started",
+            batchId,
+            taskId,
+            commandCount,
+          }),
+      },
+    });
+    if (entry.reconcileFinalGit) {
+      result = await dependencies.reconcile(entry.input, result, entry.workingDirectory);
+    }
+    emitSingleCompletion(batchId, taskId, timeoutSeconds, result, dependencies.emit);
+    dependencies.record(result);
+    return {
+      content: [{ type: "text" as const, text: renderResult(result) }],
+      structuredContent: result,
+    };
+  } catch (error) {
+    const message =
+      error instanceof WorkspaceError
+        ? error.message
+        : `Continuation failed: ${(error as Error).message}`;
+    if (workerStarted) {
+      const durationSeconds = Math.round((Date.now() - startedAt) / 1000);
+      if (signal?.aborted) {
+        dependencies.emit({ type: "worker.cancelled", batchId, taskId });
+        dependencies.emit({
+          type: "batch.cancelled",
+          batchId,
+          reason: "worker cancelled",
+        });
+      } else {
+        dependencies.emit({ type: "worker.failed", batchId, taskId, reason: message });
+        dependencies.emit({
+          type: "batch.completed",
+          batchId,
+          durationSeconds,
+          passed: 0,
+          failed: 1,
+        });
+      }
+    } else if (signal?.aborted) {
+      dependencies.emit({
+        type: "batch.cancelled",
+        batchId,
+        reason: "cancelled before worker start",
+      });
+    } else {
+      dependencies.emit({ type: "batch.rejected", batchId, reason: message });
+    }
+    log(`continue_task error: ${message}`);
+    return {
+      content: [{ type: "text" as const, text: message }],
+      isError: true,
+    };
+  } finally {
+    dependencies.store.release(request.continuationReference);
+    if (entry.worktreeLease) await dependencies.releaseLease(entry.worktreeLease);
+  }
+}
+
 function registerContinueTask(): void {
   server.registerTool(
     "continue_task",
@@ -675,137 +841,7 @@ function registerContinueTask(): void {
       outputSchema: delegateTaskOutputShape,
     },
     async (input, extra) => {
-      const request = input as ContinueTaskInput;
-      const reserved = continuationStore.consume(request.continuationReference);
-      if (reserved.status !== "ready") {
-        const message = continuationError(reserved);
-        log(`continue_task rejected: ${message}`);
-        return {
-          content: [{ type: "text" as const, text: message }],
-          isError: true,
-        };
-      }
-
-      const { entry } = reserved;
-      const timeoutSeconds = entry.input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS;
-      if (entry.worktreeLease) {
-        try {
-          await refreshWorktreeLease(
-            entry.worktreeLease,
-            Date.now() + timeoutSeconds * 1000 + WORKTREE_LEASE_GRACE_MS,
-            "executing-continuation",
-          );
-        } catch (error) {
-          continuationStore.release(request.continuationReference);
-          await releaseWorktreeLease(entry.worktreeLease);
-          const message =
-            `Continuation could not start because its retained worktree lease ` +
-            `could not be refreshed: ${(error as Error).message}`;
-          log(`continue_task rejected: ${message}`);
-          return {
-            content: [{ type: "text" as const, text: message }],
-            isError: true,
-          };
-        }
-      }
-      const batchId = makeSingleBatchId();
-      const taskId = "t1";
-      const startedAt = Date.now();
-      let workerStarted = false;
-      log(
-        `continue_task: thread=${entry.threadId} instruction="${request.instruction.slice(0, 80)}..."`,
-      );
-
-      emitEvent({
-        type: "batch.started",
-        batchId,
-        mode: "single",
-        taskCount: 1,
-        maxParallel: 1,
-      });
-      emitEvent({
-        type: "task.queued",
-        batchId,
-        taskId,
-        effort: entry.input.effort,
-        category: entry.input.taskCategory,
-        activityLabel: entry.input.activityLabel,
-        model: LUNA_MODEL,
-      });
-
-      try {
-        let result = await continueToLuna(entry.input, {
-          workingDirectory: entry.workingDirectory,
-          threadId: entry.threadId,
-          instruction: request.instruction,
-          signal: extra?.signal,
-          hooks: {
-            onStarted: (workingDirectory) => {
-              workerStarted = true;
-              emitEvent({
-                type: "worker.started",
-                batchId,
-                taskId,
-                effort: entry.input.effort,
-                workingDirectory,
-                model: LUNA_MODEL,
-              });
-            },
-            onVerificationStart: (commandCount) =>
-              emitEvent({ type: "verification.started", batchId, taskId, commandCount }),
-          },
-        });
-        if (entry.reconcileFinalGit) {
-          result = await reconcileRetainedContinuationEvidence(
-            entry.input,
-            result,
-            entry.workingDirectory,
-          );
-        }
-        emitSingleCompletion(batchId, taskId, timeoutSeconds, result);
-        recordEvent(result);
-        return {
-          content: [{ type: "text" as const, text: renderResult(result) }],
-          structuredContent: result,
-        };
-      } catch (error) {
-        const message =
-          error instanceof WorkspaceError
-            ? error.message
-            : `Continuation failed: ${(error as Error).message}`;
-        if (workerStarted) {
-          const durationSeconds = Math.round((Date.now() - startedAt) / 1000);
-          if (extra?.signal?.aborted) {
-            emitEvent({ type: "worker.cancelled", batchId, taskId });
-            emitEvent({ type: "batch.cancelled", batchId, reason: "worker cancelled" });
-          } else {
-            emitEvent({ type: "worker.failed", batchId, taskId, reason: message });
-            emitEvent({
-              type: "batch.completed",
-              batchId,
-              durationSeconds,
-              passed: 0,
-              failed: 1,
-            });
-          }
-        } else if (extra?.signal?.aborted) {
-          emitEvent({
-            type: "batch.cancelled",
-            batchId,
-            reason: "cancelled before worker start",
-          });
-        } else {
-          emitEvent({ type: "batch.rejected", batchId, reason: message });
-        }
-        log(`continue_task error: ${message}`);
-        return {
-          content: [{ type: "text" as const, text: message }],
-          isError: true,
-        };
-      } finally {
-        continuationStore.release(request.continuationReference);
-        if (entry.worktreeLease) await releaseWorktreeLease(entry.worktreeLease);
-      }
+      return handleContinueTask(input as ContinueTaskInput, extra?.signal);
     },
   );
 }

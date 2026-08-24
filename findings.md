@@ -699,3 +699,152 @@ runtime implementation changed, and no product defect was found.
 - Production/runtime source, manifests, configuration defaults, and release
   files remain identical to v0.9.0. Only legitimate documentation and test-only
   differences exist, and Git lists only the primary worktree.
+
+## [2026-08-24T06:28:39Z] Resolution update — partial integration after an earlier application
+
+Capability: Parallel integration; evidence; worktree cleanup
+Original finding: Three cross-module failure handoffs remain without end-to-end
+fault injection — target 1
+Status: resolved by deterministic end-to-end evidence
+
+### New regression
+
+`src/parallel.test.ts` now runs `partial integration retains truthful evidence
+after an earlier file applies` through the real `runBatch` parallel lifecycle,
+real Git worktree evidence scan, private `integrateWorktrees`, event emission,
+batch finalization, and managed cleanup. The fixture leaves a main-workspace
+parent file dirty but outside the two exact allowed file paths. The worker
+worktree can therefore create both intended files; integration copies the
+lexically earlier file, then real `mkdir`/copy processing fails when the later
+path encounters the main-workspace parent file.
+
+### Exact evidence
+
+- The worker attempted two observed paths and remained `completed`, `PASS`, and
+  `trustworthy:true` with no discrepancies.
+- `src/integration-applied.txt` was present in the main workspace with exact
+  worker content; `src/integration-blocker` retained its original file content;
+  the blocked child did not exist in the main workspace.
+- `integration.partial` reported 2 attempted / 1 applied;
+  `integration.applied` reported one; no `integration.completed` was emitted.
+- The batch returned 1 passed / 0 failed and `integrated:false`; its summary and
+  warning named the incomplete count and exact failed operation.
+- The retained worktree contained both worker files, proving there was no atomic
+  rollback claim or hidden data loss. Its lease was released, and managed
+  `cleanupWorktree` removed the diagnostic worktree after inspection.
+
+### Product judgment and confidence impact
+
+No product defect was found. Current intended semantics are intentionally
+non-atomic partial integration plus truthful batch-level evidence. Integration
+failure does not retroactively rewrite independently established worker verdict
+or trust evidence. This durable abnormal-path regression removes target 1's
+Battle-tested blocker for Parallel batches and Worktree isolation/integration.
+
+## [2026-08-24T06:28:39Z] Resolution update — already-running parallel cancellation
+
+Capability: Parallel execution; cancellation; evidence; events; worktrees and leases
+Original finding: Three cross-module failure handoffs remain without end-to-end
+fault injection — target 2
+Status: resolved by deterministic end-to-end evidence
+
+### New regression
+
+`src/parallel.test.ts` now runs `an already-running parallel worker cancels while
+its sibling completes`. Promise barriers prove both workers entered real
+`executeTask`/worker event-stream lifecycles before either can finish. The first
+worker writes and reports its file, then signals completion. Only after that
+signal does the test abort the batch while the second worker remains blocked in
+its event stream. No wall-clock sleep or scheduling-order assumption controls
+the transition.
+
+### Exact evidence
+
+- Exactly two workers started concurrently. The successful sibling completed
+  `PASS`/trustworthy, its real Git evidence was scanned, and its one file was
+  integrated into the main workspace with exact content.
+- The in-flight sibling observed the propagated abort, exited its event stream,
+  and returned state `cancelled`, verdict/claim `FAILED`,
+  `trustworthy:false`, no changed files, and the cancellation runtime error.
+- The batch returned 1 passed / 1 failed, emitted truthful started, completed,
+  cancelled, integration, and `batch.cancelled` events, and did not emit
+  `batch.completed`.
+- No controlled worker remained active. Default `onFailure` policy retained the
+  cancelled worktree for diagnosis while releasing its persistent lease; the
+  test then removed it through managed cleanup.
+- The case passed 10/10 repeated executions after its initial targeted PASS.
+
+### Product judgment and confidence impact
+
+No product defect was found. The retained cancelled worktree is explicit policy,
+not a leak; it is returned in evidence and has no live lease. This removes target
+2's cross-module blocker. Bounded concurrency remains Strong because its
+separate second-live-configured-limit gap is unchanged.
+
+## [2026-08-24T06:28:39Z] Resolution update — consumed continuation failure after lease refresh
+
+Capability: Worker Continuation; server finalization; persistent leases; cleanup
+Original finding: Three cross-module failure handoffs remain without end-to-end
+fault injection — target 3
+Status: resolved by deterministic end-to-end evidence
+
+### New regression and narrow production seam
+
+`src/parallel.test.ts` now runs `a consumed retained continuation failure
+finalizes its refreshed lease`. A real integration-disabled parallel batch
+creates the retained worktree, live persistent lease, and opaque reference in a
+dedicated `ContinuationStore`. The test then invokes the same continuation
+handler used by MCP registration. The handler has one new internal dependency
+seam whose defaults are the existing production store, continuation executor,
+lease functions, event sink, reconciliation, event recorder, and batch-id
+factory. Normal behavior, schema, tool contract, security, reconciliation, and
+cleanup defaults are unchanged. Only the post-start worker failure, event sink,
+and deterministic identity are injected.
+
+### Exact evidence
+
+- Before consumption, the lease artifact contained a
+  `retained-continuation` generation. Consumption preserved the exact original
+  contract, working directory, and `thread-retained-failure` binding.
+- The real lease refresh ran once and the continuation callback observed an
+  `executing-continuation` generation before throwing the controlled failure.
+- The handler returned a tool error, emitted `worker.started`, `worker.failed`,
+  and a 0 passed / 1 failed `batch.completed`, then its real `finally` released
+  the consumed store lease and the persistent worktree lease exactly once.
+- Replay returned `used`; the store exposed no protected directory; the lease
+  artifact was absent; the unintegrated retained worktree remained available
+  until orchestrator pruning removed it and its Git registration.
+
+### Product judgment and confidence impact
+
+No product defect was found. Single-use consumption is terminal even when the
+continuation fails after refresh; the worktree becomes unprotected and eligible
+for normal stale pruning after finalization. This removes target 3's
+cross-module blocker and, together with the existing successful live retained
+continuation, supports Battle-tested confidence for Worker Continuation.
+
+## Findings-closure acceptance update
+
+All three targets are resolved. Parallel batches, Worktree isolation/integration,
+and Worker Continuation now satisfy the existing Battle-tested definition by
+combining prior live DEEP PASS happy/failure evidence with varied deterministic
+abnormal lifecycle handoffs. No other feature is promoted. Adaptive Effort and
+P1.1 were not started, and no broad hardening campaign was begun.
+
+## [2026-08-24T06:28:39Z] Findings-closure final validation update
+
+- Targeted partial-integration test: PASS.
+- Targeted in-flight parallel cancellation test: initial PASS plus **10/10**
+  repeated executions, with no sleeps or scheduling-luck dependency.
+- Targeted consumed-continuation finalization test: PASS.
+- Full parallel/worktree suite: **76/76 pass**, 0 fail, 0 skip.
+- `npm run verify`: PASS; typecheck, **463/463 tests**, 0 fail, 0 skip, and all
+  deterministic MCP protocol checks passed.
+- `npm run format:check`: PASS.
+- `npm run bench:validate`: PASS; all nine fixtures discriminated and mutation
+  detection passed.
+- `git diff --check`: PASS.
+- `npm run build`: PASS.
+- No package or lockfile version changed. No push, tag, publish, release, remote
+  mutation, global Git/configuration change, credential operation, P1.1 work,
+  Adaptive Effort work, or broad hardening campaign was performed.
