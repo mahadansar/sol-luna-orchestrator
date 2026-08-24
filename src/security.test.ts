@@ -524,3 +524,97 @@ test("real symlink escape is caught on disk", (t) => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("real directory symlink escape is caught on disk", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-dir-link-"));
+  const workspace = path.join(root, "workspace");
+  const outside = path.join(root, "outside");
+  fs.mkdirSync(workspace);
+  fs.mkdirSync(outside);
+
+  const linkPath = path.join(workspace, "vendor");
+  try {
+    fs.symlinkSync(outside, linkPath, "dir");
+  } catch {
+    t.skip("directory symlink creation not permitted on this machine");
+    fs.rmSync(root, { recursive: true, force: true });
+    return;
+  }
+
+  try {
+    const violations = findScopeViolations(
+      ["vendor/new-file.txt"],
+      ["**"],
+      [],
+      workspace,
+    );
+    assert.equal(violations.length, 1);
+    assert.match(violations[0] ?? "", /outside the workspace/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("POSIX verification timeout kills a spawned process-group descendant", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("POSIX process groups are not available on Windows");
+    return;
+  }
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-process-group-"));
+  const childScript = path.join(root, "child.js");
+  const parentScript = path.join(root, "parent.js");
+  const pidPath = path.join(root, "child.pid");
+  const heartbeatPath = path.join(root, "heartbeat.txt");
+
+  fs.writeFileSync(
+    childScript,
+    `const fs = require("node:fs");\n` +
+      `setInterval(() => fs.appendFileSync(${JSON.stringify(heartbeatPath)}, "x"), 25);\n`,
+    "utf8",
+  );
+  fs.writeFileSync(
+    parentScript,
+    `const fs = require("node:fs");\n` +
+      `const { spawn } = require("node:child_process");\n` +
+      `const child = spawn(process.execPath, [${JSON.stringify(childScript)}], { stdio: "ignore" });\n` +
+      `fs.writeFileSync(${JSON.stringify(pidPath)}, String(child.pid));\n` +
+      `setInterval(() => {}, 10000);\n`,
+    "utf8",
+  );
+
+  try {
+    const result = await runVerificationCommand(`node ${parentScript}`, root, {
+      timeoutSeconds: 1,
+    });
+    assert.equal(result.passed, false);
+    assert.equal(result.exitCode, null);
+    assert.match(result.output, /timed out after 1s/);
+
+    const childPid = Number(fs.readFileSync(pidPath, "utf8"));
+    assert.ok(Number.isInteger(childPid) && childPid > 0);
+
+    const deadline = Date.now() + 3_000;
+    let alive = true;
+    while (Date.now() < deadline) {
+      try {
+        process.kill(childPid, 0);
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      } catch {
+        alive = false;
+        break;
+      }
+    }
+    assert.equal(alive, false, `descendant process ${childPid} survived timeout`);
+
+    const heartbeatSize = fs.statSync(heartbeatPath).size;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(
+      fs.statSync(heartbeatPath).size,
+      heartbeatSize,
+      "descendant kept writing after process-group termination",
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

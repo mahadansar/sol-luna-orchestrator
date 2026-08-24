@@ -61,6 +61,19 @@ filesystem security, worker verdicts and repair, sequential/parallel scheduling,
 worktrees, leases, cancellation, integration, continuation, reconciliation,
 pricing primitives, and verification.
 
+Fresh Linux closure evidence then executed on 2026-08-24 against the same v0.9.0
+runtime baseline on Ubuntu 24.04.4 LTS, kernel 7.0.0-28-generic, Node v24.15.0,
+npm 11.12.1, and Codex CLI 0.149.1. Before Linux-only additions, the full
+deterministic suite reported **458 tests: 458 pass, 0 fail, 0 skipped**, so the
+Windows-skipped real on-disk symlink test executed successfully. Two narrow
+test-only cases were retained for an actual directory-symlink escape and POSIX
+process-group descendant termination; the existing worktree dependency-link
+case gained an assertion that Linux created a real directory symlink to the
+source dependency tree. The affected suites reported **45/45 security**,
+**73/73 parallel/worktree**, and **97/97 CLI plus activity-configuration**
+tests passing. The final full deterministic suite reported **460 tests: 460
+pass, 0 fail, 0 skipped**.
+
 ### v0.9.0 confidence-hardening campaign
 
 Wave 1 completed on 2026-08-24. Every material matrix row now has a fresh
@@ -114,6 +127,32 @@ The campaign did not naturally elicit a sequential or parallel batch from a
 fresh parent after three materially different discovery attempts. Adaptive
 effort has one natural high-effort selection but no second naturally selected
 worker effort level, so it remains PARTIAL rather than PASS.
+
+### Focused Linux platform evidence closure
+
+The 2026-08-24 Linux pass closed the deterministic platform gaps that the
+Windows campaign could not execute, without changing production/runtime source:
+
+- real file and directory symlinks were created on disk; both an existing target
+  and a nonexistent child beneath an escaping directory symlink were rejected as
+  outside the workspace even under allowedFiles: ["**"];
+- a timed-out verification command spawned a descendant, and the POSIX detached
+  process group was terminated with exitCode: null, timeout classification,
+  no surviving descendant, and no continuing heartbeat;
+- the full worktree suite passed on native Git/POSIX filesystems, including
+  isolation, dependency-directory symlinking, unlink-before-cleanup, source
+  dependency survival, stale pruning limited to orchestrator paths, persistent
+  lease acquire/refresh/loss/release/sweep, retained continuation protection,
+  and cancellation leaving no worktrees;
+- the real CLI lifecycle smoke passed all 11 groups using temporary isolated
+  CODEX_HOME directories: init, repeat init, repair, doctor/status, uninstall
+  and repeat uninstall, round trip, empty/malformed config, v0.6.0 migration,
+  discovery opt-out, and active override handling.
+
+These results add the missing Linux/POSIX platform evidence but do not change
+any Strong, live DEEP PASS, or Battle-tested state. The three known cross-module
+abnormal lifecycle handoffs remain deliberately out of scope, as do Adaptive
+Effort and P1.1.
 
 ### Earlier pre-release live acceptance campaign
 
@@ -327,11 +366,15 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   clean disjoint integration, same-file conflict retention, policy cleanup of
   completed worktrees and leases, and a deliberately retained
   integration-disabled worktree used by continuation.
-  Older committed evidence remains **STALE** after lifecycle/lease changes.
+  Older committed evidence remains **STALE** after lifecycle/lease changes. The
+  focused Linux run added native POSIX evidence: the dependency link was an
+  actual directory symlink resolving to the source dependency tree, cleanup
+  removed the link/worktree without deleting the source, stale pruning left a
+  user worktree intact, and the complete 73-test suite passed with no skips.
 - **Dependencies/retest triggers:** git version/platform, junction/symlink
   handling, lease ownership, cleanup, or copy integration changes. **Gap:** raw
-  final-campaign artifacts are not committed and no durable live platform matrix
-  is established.
+  final-campaign artifacts are not committed and no durable model-backed live
+  platform matrix is established.
 - **Confidence:** **Strong**.
 
 ### Bounded concurrency
@@ -382,7 +425,10 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   sequential, parallel, continuation, and repaired tasks ran configured
   authoritative verification; controlled repair exercised an initial
   authoritative failure and successful rerun; and the exact contradiction case
-  preserved a failed worker row beside a passing authoritative row.
+  preserved a failed worker row beside a passing authoritative row. Linux
+  deterministic evidence additionally exercised the real POSIX detached
+  process-group timeout path, verified exitCode: null timeout classification,
+  and established that the spawned descendant exited and stopped writing.
 - **Dependencies/retest triggers:** verification policy/parser, command runner,
   worker output schema, or authoritative evidence rules. **Gap:** raw
   final-campaign verification rows are not committed; command refusal and
@@ -463,8 +509,11 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   backup/uninstall, preserving unrelated TOML and user instruction bytes.
 - **Dependencies/retest triggers:** Codex config format, Node/Codex versions,
   path resolution, discovery-hint ownership, or CLI writes. The packaged/local
-  `smoke:cli` program was also rerun and all 11 lifecycle groups passed in
-  isolated homes. **Gap:** no POSIX lifecycle run was available on this host.
+  smoke:cli program was rerun on both campaign platforms. The focused Linux
+  run passed all 11 lifecycle groups with the real Codex CLI and temporary
+  isolated CODEX_HOME directories; no user Codex home was mutated. This closes
+  the prior missing POSIX lifecycle execution, while a broader live platform
+  matrix remains uncommitted.
 - **Confidence:** **Strong**.
 
 ### Activity, observability, and privacy

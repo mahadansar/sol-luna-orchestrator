@@ -614,3 +614,88 @@ expose a product defect.
 - No push, tag, publish, global configuration write, or remote mutation occurred.
 
 Final recommendation: **PROCEED TO P1.1**. This campaign does not begin P1.1.
+
+## [2026-08-24T05:59:47Z] Linux platform acceptance gaps closed at the v0.9.0 baseline
+
+Capability: Filesystem scope security; POSIX verification cleanup; worktree and
+lease lifecycle; CLI lifecycle
+Attempted maturity transition: focused Linux evidence closure
+Severity: informational
+Type: evidence closure
+Status: resolved for the Windows-blocked deterministic paths; remaining
+cross-module and platform-matrix gaps retained
+
+### Observation
+
+The completed Windows campaign could not create real symlinks or execute POSIX
+process-group and directory-symlink paths. A focused Ubuntu run executed the
+previously skipped file-symlink case, added only the two missing behavior-focused
+tests, strengthened the existing dependency-link assertion, and reran the
+relevant worktree, lease, cancellation, and isolated CLI lifecycle evidence.
+
+### Evidence
+
+- Host: Ubuntu 24.04.4 LTS, Linux 7.0.0-28-generic x86_64; Node v24.15.0;
+  npm 11.12.1; Codex CLI 0.149.1.
+- Initial unchanged Linux suite: **458 tests, 458 pass, 0 fail, 0 skipped**.
+  The exact existing test 'real symlink escape is caught on disk' executed and
+  passed instead of taking the historical Windows skip.
+- Security suite: **45/45 pass**. Real on-disk file and directory symlinks
+  resolving outside the workspace were rejected under a broad all-files
+  allowlist. The directory case used a nonexistent child beneath the symlink,
+  exercising deepest-existing-ancestor realpath resolution.
+- POSIX process cleanup: 'POSIX verification timeout kills a spawned
+  process-group descendant' passed. The authoritative result was failed with
+  exitCode: null and the expected one-second timeout text; the descendant no
+  longer existed and its heartbeat stopped after the process-group kill.
+- Parallel/worktree suite: **73/73 pass**. The native Linux dependency link was
+  an actual directory symlink resolving to the source node_modules; managed
+  cleanup removed the worktree/link while the source dependency survived. Stale
+  pruning removed only orchestrator-owned worktrees and preserved a user
+  worktree. Lease acquisition, refresh, renewal loss, expiry, release, orphan
+  sweep, legacy compatibility, continuation protection, and pre-start
+  cancellation cleanup all passed.
+- CLI plus activity-configuration suites: **97/97 pass**. npm run smoke:cli
+  also passed all 11 real lifecycle groups using temporary isolated CODEX_HOME
+  directories and the installed Codex CLI, with no model calls or real
+  user-home mutation.
+- Final Linux deterministic suite after the two retained tests: **460 tests,
+  460 pass, 0 fail, 0 skipped**.
+
+### Resolution update
+
+The prior Windows limitation remains historically accurate, but it no longer
+blocks deterministic product evidence for real symlink escape, POSIX
+directory-symlink handling, POSIX verification process-group cleanup, Linux
+worktree/dependency-link/lease cleanup, or Linux CLI lifecycle. No production or
+runtime implementation changed, and no product defect was found.
+
+### Remaining gaps and confidence impact
+
+- The three previously recorded cross-module abnormal lifecycle handoffs remain
+  open and were not changed: partial integration after an earlier file applies,
+  actual in-flight parallel cancellation with a completing sibling, and
+  failed/cancelled consumed-continuation finalization after lease refresh.
+- The Linux process test covers authoritative verification timeout and descendant
+  cleanup; it does not claim the still-missing cross-module worker/batch
+  cancellation handoff.
+- A durable model-backed live OS matrix and macOS-specific execution are still
+  absent. The historical Windows CRLF and junction evidence remains intact.
+- Adaptive Effort and P1.1 were not exercised or modified.
+- Strong and existing live DEEP PASS statuses remain unchanged. No feature is
+  promoted to Battle-tested from this focused platform pass.
+- Nothing new should block a later deep-hardening campaign; that campaign should
+  retain the three known lifecycle handoffs as explicit targets.
+
+### Final validation
+
+- `npm run verify`: PASS; typecheck, **460/460** deterministic tests, and
+  protocol smoke all passed.
+- `npm run format:check`: PASS.
+- `npm run bench:validate`: PASS; all nine fixtures discriminated and mutation
+  detection passed.
+- `git diff --check`: PASS.
+- `npm run build`: PASS.
+- Production/runtime source, manifests, configuration defaults, and release
+  files remain identical to v0.9.0. Only legitimate documentation and test-only
+  differences exist, and Git lists only the primary worktree.

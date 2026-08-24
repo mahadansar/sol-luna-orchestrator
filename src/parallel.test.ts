@@ -480,6 +480,14 @@ test("dependency directories are linked in, and unlinking never eats the origina
         "a failure to link must be reported, not silent",
       );
     } else {
+      if (process.platform !== "win32") {
+        const linkedRoot = path.join(worktree.path, "node_modules");
+        assert.equal((await fs.lstat(linkedRoot)).isSymbolicLink(), true);
+        assert.equal(
+          await fs.realpath(linkedRoot),
+          await fs.realpath(path.join(repo, "node_modules")),
+        );
+      }
       assert.equal(await fs.readFile(linked, "utf8"), "module.exports=1;\n");
     }
 
