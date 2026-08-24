@@ -2039,6 +2039,8 @@ test("failed integration and disabled integration retain distinct truthful statu
   ]);
   assert.equal(failed.integration.status, "failed");
   assert.equal(failed.integration.appliedFiles, 0);
+  assert.match(failed.warnings.join("\n"), /changes were not copied/i);
+  assert.doesNotMatch(failed.warnings.join("\n"), /retained/i);
 
   const disabled = reduceEvents([
     {
@@ -2057,6 +2059,8 @@ test("failed integration and disabled integration retain distinct truthful statu
   ]);
   assert.equal(disabled.integration.status, "disabled");
   assert.equal(disabled.integration.attemptedFiles, null);
+  assert.match(disabled.warnings.join("\n"), /changes were not copied/i);
+  assert.doesNotMatch(disabled.warnings.join("\n"), /retained/i);
 });
 
 test("integration totals accumulate across workers without double-counting diagnostics", () => {

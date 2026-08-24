@@ -192,7 +192,7 @@ export const WORKTREE_LINK_DIRS = (process.env.SOL_LUNA_WORKTREE_LINK ?? "node_m
 /**
  * When to keep a worktree after a batch finishes.
  *
- * `onFailure` keeps evidence exactly when someone will want to look at it.
+ * `never` has final precedence over every intentional retention reason.
  */
 export const KEEP_WORKTREES = (
   process.env.SOL_LUNA_KEEP_WORKTREES ?? "onFailure"

@@ -993,9 +993,19 @@ export async function readWorktreeOutcome(
 }
 
 export type CleanupReason = "success" | "failure" | "cancelled" | "evidence-failure";
+export type WorktreeRetentionPolicy = "onfailure" | "always" | "never";
+
+/** Decide intentional retention before any filesystem cleanup is attempted. */
+export function shouldRetainWorktree(
+  reason: CleanupReason,
+  keepPolicy: WorktreeRetentionPolicy,
+): boolean {
+  if (keepPolicy === "never") return false;
+  return keepPolicy === "always" || reason !== "success";
+}
 
 /**
- * Remove a worktree unless it is worth keeping as evidence.
+ * Apply the operator's final retention decision, then remove when required.
  *
  * Linked directories are unlinked first: on Windows a junction that git deletes
  * recursively would take the real `node_modules` with it.
@@ -1035,15 +1045,12 @@ export function releaseWorktreeOwnership(worktree: TaskWorktree): void {
 async function cleanupWorktreeUnsynchronized(
   worktree: TaskWorktree,
   reason: CleanupReason,
-  keepPolicy: typeof KEEP_WORKTREES,
+  keepPolicy: WorktreeRetentionPolicy,
   assertMetadataLeaseHealthy: () => void,
 ): Promise<{ removed: boolean; keptAt?: string; error?: string }> {
-  const keep =
-    reason === "evidence-failure" ||
-    keepPolicy === "always" ||
-    (keepPolicy === "onfailure" && reason !== "success");
-
-  if (keep) return { removed: false, keptAt: worktree.path };
+  if (shouldRetainWorktree(reason, keepPolicy)) {
+    return { removed: false, keptAt: worktree.path };
+  }
 
   assertMetadataLeaseHealthy();
   await unlinkSharedDirectories(worktree.path);

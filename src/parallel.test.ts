@@ -48,6 +48,7 @@ import {
   refreshWorktreeLease,
   releaseWorktreeLease,
   releaseWorktreeOwnership,
+  shouldRetainWorktree,
   sweepExpiredWorktreeLeases,
   WORKTREE_LEASE_GRACE_MS,
   WorktreeLeaseRenewalError,
@@ -166,9 +167,7 @@ async function makeRepo(): Promise<string> {
 }
 
 const cleanupRepo = async (dir: string): Promise<void> => {
-  await fs
-    .rm(dir, { recursive: true, force: true, maxRetries: 3 })
-    .catch(() => undefined);
+  await fs.rm(dir, { recursive: true, force: true, maxRetries: 3 });
 };
 
 async function readLeaseRecords(
@@ -477,6 +476,25 @@ test("a failed worktree is kept for inspection, a successful one is not", async 
   }
 });
 
+test("retention policy precedence covers every cleanup reason", () => {
+  const reasons = ["success", "failure", "cancelled", "evidence-failure"] as const;
+  const expected = {
+    onfailure: [false, true, true, true],
+    always: [true, true, true, true],
+    never: [false, false, false, false],
+  } as const;
+
+  for (const [policy, outcomes] of Object.entries(expected)) {
+    assert.deepEqual(
+      reasons.map((reason) =>
+        shouldRetainWorktree(reason, policy as keyof typeof expected),
+      ),
+      outcomes,
+      policy,
+    );
+  }
+});
+
 test("dependency directories are linked in, and unlinking never eats the original", async () => {
   const repo = await makeRepo();
   try {
@@ -508,7 +526,7 @@ test("dependency directories are linked in, and unlinking never eats the origina
       assert.equal(await fs.readFile(linked, "utf8"), "module.exports=1;\n");
     }
 
-    await cleanupWorktree(worktree, "success", "never");
+    await cleanupWorktree(worktree, "evidence-failure", "never");
 
     // The real dependency tree must survive the worktree being deleted.
     assert.equal(
@@ -517,6 +535,207 @@ test("dependency directories are linked in, and unlinking never eats the origina
     );
   } finally {
     await cleanupRepo(repo);
+  }
+});
+
+test("successful and non-passing verdicts follow each retention mode", async () => {
+  const cases = [
+    { policy: "onfailure", verdict: "PASS", retained: false },
+    { policy: "always", verdict: "PASS", retained: true },
+    { policy: "never", verdict: "PASS", retained: false },
+    { policy: "onfailure", verdict: "FAILED", retained: true },
+    { policy: "always", verdict: "FAILED", retained: true },
+    { policy: "never", verdict: "FAILED", retained: false },
+    { policy: "onfailure", verdict: "BLOCKED", retained: true },
+    { policy: "never", verdict: "BLOCKED", retained: false },
+  ] as const;
+
+  for (const scenario of cases) {
+    const repo = await makeRepo();
+    const events: Array<Record<string, unknown>> = [];
+    try {
+      const result = await runProductionBatch(
+        [makeTask({ allowedFiles: ["src/result/**"] })],
+        {
+          mode: "parallel",
+          workingDirectory: repo,
+          keepWorktrees: scenario.policy,
+          eventEmitter: (event) => events.push(event),
+          executor: fakeExecutor({
+            writes: () => ({ "src/result/value.ts": "changed\n" }),
+            output: () =>
+              scenario.verdict === "PASS"
+                ? {}
+                : {
+                    verdict: scenario.verdict,
+                    workerClaimedStatus: scenario.verdict,
+                  },
+          }),
+          continuationRegistrar: () => `ctr_${"v".repeat(32)}`,
+        },
+      );
+
+      const task = result.tasks[0]!;
+      assert.equal(Boolean(task.worktreePath), scenario.retained, describeBatch(result));
+      assert.equal(
+        task.result?.continuationReference,
+        `ctr_${"v".repeat(32)}`,
+        "integrated results continue in the requested workspace under every policy",
+      );
+      assert.equal(
+        events.some(
+          (event) =>
+            event.type === "worktree.removed" && event.kept === scenario.retained,
+        ),
+        true,
+        JSON.stringify(events),
+      );
+      assert.equal(
+        events.filter((event) => event.type === "worktree.retained").length,
+        scenario.retained ? 1 : 0,
+        JSON.stringify(events),
+      );
+      if (task.worktreePath) {
+        assert.equal(
+          await fs.stat(continuationLeasePath(task.worktreePath)).catch(() => null),
+          null,
+          "a workspace-bound continuation must not lease a diagnostic worktree",
+        );
+        await cleanupWorktree(
+          {
+            taskId: task.taskId,
+            path: task.worktreePath,
+            repoRoot: repo,
+            warnings: [],
+          },
+          "success",
+          "never",
+        );
+      }
+    } finally {
+      await cleanupRepo(repo);
+    }
+  }
+});
+
+test("worktree-required continuations follow retention and leave no stale never lease", async () => {
+  for (const policy of ["onfailure", "always", "never"] as const) {
+    const repo = await makeRepo();
+    const events: Array<Record<string, unknown>> = [];
+    let registrations = 0;
+    try {
+      const result = await runProductionBatch(
+        [makeTask({ allowedFiles: ["src/diagnostic/**"] })],
+        {
+          mode: "parallel",
+          workingDirectory: repo,
+          integrate: false,
+          keepWorktrees: policy,
+          eventEmitter: (event) => events.push(event),
+          executor: fakeExecutor({
+            writes: () => ({ "src/diagnostic/value.ts": "changed\n" }),
+          }),
+          continuationRegistrar: () => {
+            registrations += 1;
+            return `ctr_${"d".repeat(32)}`;
+          },
+        },
+      );
+
+      const task = result.tasks[0]!;
+      const retained = policy !== "never";
+      assert.equal(Boolean(task.worktreePath), retained, describeBatch(result));
+      assert.equal(registrations, retained ? 1 : 0);
+      assert.equal(
+        task.result?.continuationReference,
+        retained ? `ctr_${"d".repeat(32)}` : null,
+      );
+      assert.equal(
+        events.some(
+          (event) => event.type === "worktree.removed" && event.kept === retained,
+        ),
+        true,
+        JSON.stringify(events),
+      );
+      assert.equal(
+        events.filter((event) => event.type === "worktree.retained").length,
+        retained ? 1 : 0,
+      );
+      assert.match(result.integrationSummary, /remains after cleanup/i);
+
+      if (task.worktreePath) {
+        assert.ok(
+          await fs.stat(continuationLeasePath(task.worktreePath)).catch(() => null),
+          "a retained-worktree continuation needs a persistent lease",
+        );
+        await cleanupWorktree(
+          {
+            taskId: task.taskId,
+            path: task.worktreePath,
+            repoRoot: repo,
+            warnings: [],
+          },
+          "success",
+          "never",
+        );
+      } else {
+        assert.deepEqual(await fs.readdir(path.join(repo, WORKTREE_DIR)), []);
+      }
+    } finally {
+      await cleanupRepo(repo);
+    }
+  }
+});
+
+test("integration conflicts preserve evidence but obey retention", async () => {
+  for (const policy of ["onfailure", "always", "never"] as const) {
+    const repo = await makeRepo();
+    try {
+      const result = await runBatch(
+        [
+          makeTask({ allowedFiles: ["src/one/**", "shared/**"] }),
+          makeTask({ allowedFiles: ["src/two/**", "shared/**"] }),
+        ],
+        {
+          mode: "parallel",
+          workingDirectory: repo,
+          allowOverlappingScopes: true,
+          keepWorktrees: policy,
+          executor: fakeExecutor({
+            writes: (task) => ({
+              [`src/${moduleOf(task)}/value.ts`]: "unique\n",
+              "shared/value.ts": `${moduleOf(task)}\n`,
+            }),
+          }),
+        },
+      );
+
+      assert.equal(result.integrationConflicts.length, 1, describeBatch(result));
+      assert.equal(result.integrationConflicts[0]?.path, "shared/value.ts");
+      assert.equal(result.integrated, false);
+      assert.equal(
+        result.tasks.every((task) => Boolean(task.worktreePath) === (policy !== "never")),
+        true,
+        describeBatch(result),
+      );
+      assert.match(result.integrationSummary, /Conflict evidence|after cleanup/i);
+
+      for (const task of result.tasks) {
+        if (!task.worktreePath) continue;
+        await cleanupWorktree(
+          {
+            taskId: task.taskId,
+            path: task.worktreePath,
+            repoRoot: repo,
+            warnings: [],
+          },
+          "success",
+          "never",
+        );
+      }
+    } finally {
+      await cleanupRepo(repo);
+    }
   }
 });
 
@@ -749,6 +968,7 @@ test("a live retained continuation worktree cannot be reused by a replayed batch
   } finally {
     if (worktree.lease) await releaseWorktreeLease(worktree.lease);
     await cleanupWorktree(worktree, "success", "never");
+    await cleanupRepo(repo);
   }
 });
 

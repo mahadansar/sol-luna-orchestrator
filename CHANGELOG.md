@@ -6,6 +6,18 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Defined `SOL_LUNA_KEEP_WORKTREES=never` as absolute for intentional retention,
+  including conflicts, disabled or partial integration, evidence failures, and
+  worktree-bound continuations. Continuation references and leases now agree
+  with the path that survives cleanup, while structured failure and integration
+  evidence remains available.
+- `onFailure` now retains normally completed `FAILED` and `BLOCKED` results
+  instead of treating their completed lifecycle state as cleanup success, and
+  integration/activity wording no longer claims a worktree was retained when
+  configured cleanup removed it.
+
 ## [0.9.0] - 2026-08-24
 
 ### Added

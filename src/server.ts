@@ -918,7 +918,9 @@ changed by earlier sequential tasks.
 Partial outcomes remain visible for the parent orchestrator to judge. A completed
 worker's edits may be integrated even when its verdict is FAILED or BLOCKED. Declared scope
 conflicts can reject a batch; actual same-file edits by parallel workers prevent
-automatic integration and retain worktrees for manual resolution.
+automatic integration. Worktree retention follows the operator's configured
+policy; a continuation reference is omitted whenever its required worktree is
+removed.
 
 Parallel workers are verified in isolation. After integration, run additional
 integration or full-suite verification when changes can meaningfully interact

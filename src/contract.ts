@@ -595,7 +595,8 @@ export const delegateTasksInputShape = {
     .default(true)
     .describe(
       "Parallel only: copy completed worker edits back when observed changed files " +
-        "do not collide. Set false to leave changes in worktrees for review.",
+        "do not collide. Set false to skip copying; worktree retention then follows " +
+        "the operator's SOL_LUNA_KEEP_WORKTREES policy.",
     ),
 };
 
@@ -623,7 +624,9 @@ export const batchTaskResultSchema = z.object({
   worktreePath: z
     .string()
     .nullable()
-    .describe("Set when the worktree was kept for inspection; null when cleaned up."),
+    .describe(
+      "Set only when the worktree remains after configured cleanup; null when cleaned up.",
+    ),
   error: z.string().nullable(),
   warnings: z.array(z.string()),
 });

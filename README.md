@@ -100,6 +100,12 @@ file copy guarded by observed scope and same-file conflict checks. See
 [Configuration](docs/CONFIGURATION.md#discovery-hint-and-adaptive-routing) for
 fresh-session discovery setup.
 
+Parallel worktree retention is operator-controlled. In particular,
+`SOL_LUNA_KEEP_WORKTREES=never` disables all intentional retention, including
+for failures, conflicts, diagnostics, and worktree-bound continuations. See
+[Configuration](docs/CONFIGURATION.md#worktree-retention) for the exact
+precedence and continuation behavior.
+
 ## Safety
 
 These are guardrails, not a sandbox: workers write real files, verification runs

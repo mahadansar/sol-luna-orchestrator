@@ -147,7 +147,7 @@ authoritative presentation of the required keys, values, and failure rationale.
 | `LUNA_NETWORK_ACCESS`             | off                     | `1` allows workers network access                                 |
 | `SOL_LUNA_MAX_PARALLEL`           | `3`                     | Concurrent workers; hard ceiling 8                                |
 | `SOL_LUNA_WORKTREE_LINK`          | `node_modules`          | Directories linked into each worktree                             |
-| `SOL_LUNA_KEEP_WORKTREES`         | `onFailure`             | `always`, `never`, or `onFailure`                                 |
+| `SOL_LUNA_KEEP_WORKTREES`         | `onFailure`             | Parallel-task retention: `always`, `never`, or `onFailure`        |
 | `SOL_LUNA_ALLOW_DIRTY`            | off                     | `1` permits parallel batches over uncommitted in-scope changes    |
 | `SOL_LUNA_VERIFY_MODE`            | `allowlist`             | `allowlist`, `off`, or `shell` — see [Security](../SECURITY.md)   |
 | `SOL_LUNA_VERIFY_ALLOW`           | —                       | Extra permitted executables, comma separated                      |
@@ -178,6 +178,36 @@ and rejected again at runtime. `SOL_LUNA_MAX_PARALLEL` is a different thing:
 sequential mode runs one task at a time whatever the batch size, and parallel
 mode runs at most `SOL_LUNA_MAX_PARALLEL` at once — default 3, hard ceiling 8 —
 and queues the rest. A 12-task batch never means 12 simultaneous workers.
+
+### Worktree retention
+
+`SOL_LUNA_KEEP_WORKTREES` applies only to the isolated worktrees created for
+parallel batches. A single `delegate_task` and a sequential batch run directly
+in the requested workspace and create no orchestrator-managed task worktree.
+
+The configured mode has final precedence over every reason that might make an
+isolated worktree useful:
+
+| Mode        | Finalization behavior                                                                                                                                                                                                                                                                                    |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `onFailure` | Retains a worktree when the final verdict is `FAILED` or `BLOCKED`, the task is cancelled or times out, final evidence cannot be read, or integration is conflicted, partial, failed, disabled, or not attempted. A clean completed `PASS` whose state is integrated or needs no integration is removed. |
+| `always`    | Retains every parallel task worktree at finalization.                                                                                                                                                                                                                                                    |
+| `never`     | Performs no intentional retention. It attempts to remove every parallel task worktree after capturing all obtainable structured result, conflict, integration, and cleanup evidence. This overrides diagnostic, failure, conflict, `integrate:false`, evidence-failure, and continuation retention.      |
+
+`always` and `onFailure` describe finalization, not permanent archival. A
+retained worktree needed by an unused or executing continuation has a bounded
+persistent lease. Other retained worktrees are unleased and may be removed by a
+later batch's stale-worktree pruning. If deletion itself fails, the path may
+physically remain under any mode; that is reported as a cleanup failure, not as
+policy retention.
+
+Continuation eligibility follows the directory that remains truthful after
+cleanup. When completed worker state was copied into the requested workspace,
+an eligible result can receive a workspace-bound continuation under all three
+modes. When a continuation requires an unintegrated isolated worktree, it is
+issued only under `onFailure` or `always`, only if that path survived cleanup,
+and only after its persistent lease was refreshed. Under `never` the worktree is
+removed, the continuation reference is omitted, and its lease is released.
 
 ## Activity and diagnostics logs
 

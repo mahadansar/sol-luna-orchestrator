@@ -144,6 +144,11 @@ When a parallel result remains in an isolated worktree, its continuation is
 bound to that batch-unique worktree. The worktree is protected until the
 reference expires or its one continuation exits, and the continuation result is
 reconciled against a fresh final Git snapshot before the parent sees it.
+Such a reference is issued only when `SOL_LUNA_KEEP_WORKTREES` actually leaves
+the required worktree in place and a persistent lease protects it. `never`
+therefore suppresses worktree-bound continuations. A result whose changes are
+already in the requested workspace may still receive a workspace-bound
+continuation under every retention mode.
 
 ## Bounded automatic repair
 
@@ -232,15 +237,16 @@ escape hatch may accept declared overlap for that batch, but actual same-file
 edits still prevent automatic integration.
 
 Parallel integration is a file copy, not a merge. Actual same-file edits by
-parallel workers prevent automatic integration and retain worktrees for manual
-resolution. Sequential tasks intentionally share the workspace, so a later task
-may consume and modify a file changed by an earlier task without creating an
-integration conflict. Completed
+parallel workers prevent automatic integration. Their structured conflict
+evidence remains visible, while any worktree path is retained or removed under
+the operator's `SOL_LUNA_KEEP_WORKTREES` policy. Sequential tasks intentionally
+share the workspace, so a later task may consume and modify a file changed by an
+earlier task without creating an integration conflict. Completed
 worker edits may be copied back even when that task's verdict is FAILED or
 BLOCKED; judge every task result and the integrated workspace. Partial outcomes
 remain visible rather than being hidden. Partial or failed integration and
-retained worktrees are also surfaced in activity diagnostics without command
-output, objectives, thread ids, or sensitive paths.
+actual retained-worktree state are also surfaced in activity diagnostics without
+command output, objectives, thread ids, or sensitive paths.
 
 Workers are verified in isolation. After integration, run broader verification
 when changes can interact through shared contracts, types, state, or runtime

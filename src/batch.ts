@@ -38,7 +38,9 @@ import {
   releaseWorktreeOwnership,
   WORKTREE_LEASE_GRACE_MS,
   WorktreeUnavailableError,
+  type CleanupReason,
   type WorktreeLease,
+  type WorktreeRetentionPolicy,
   type TaskWorktree,
 } from "./worktree.js";
 import { resolveWorkspace } from "./workspace.js";
@@ -120,7 +122,7 @@ export async function runBatch(
     /** Deterministic lease-maintenance seam; production uses persistent renewal. */
     leaseMaintainer?: typeof maintainWorktreeLease;
     /** Deterministic retention seam; production uses configured policy. */
-    keepWorktrees?: "onfailure" | "always" | "never";
+    keepWorktrees?: WorktreeRetentionPolicy;
   },
 ): Promise<BatchOutput> {
   const batchId = options.batchId ?? makeBatchId();
@@ -280,8 +282,8 @@ export async function runBatch(
   } else if (options.integrate === false) {
     emit({ type: "integration.disabled", batchId });
     integrationSummary =
-      "Integration was disabled. Each worker's changes remain in its worktree; " +
-      "paths are listed per task.";
+      "Integration was disabled, so worker changes were not copied into the requested " +
+      "workspace. Any worktree that remains after cleanup is listed per task.";
   } else if (outcomeFailures.length > 0) {
     integrationIncomplete = true;
     warnings.push(
@@ -290,13 +292,14 @@ export async function runBatch(
     );
     integrationSummary =
       "Integration was not attempted because at least one worker's final worktree " +
-      "evidence scan failed. The affected worktrees were kept for diagnosis.";
+      "evidence scan failed. Structured failure evidence remains available; any " +
+      "worktree that remains after cleanup is listed per task.";
     emit({ type: "integration.notAttempted", batchId, reason: "evidence-failure" });
   } else if (integrationConflicts.length > 0) {
     integrationSummary =
       `Nothing was integrated: ${integrationConflicts.length} file(s) were changed by ` +
-      `more than one worker. Their worktrees were kept so you can inspect and merge ` +
-      `them yourself.`;
+      `more than one worker. Conflict evidence is listed above; any worktree retained ` +
+      `after cleanup is listed per task.`;
   } else if (completed.length === 0) {
     integrationSummary = "No worker produced changes, so there was nothing to integrate.";
   } else {
@@ -306,7 +309,7 @@ export async function runBatch(
     warnings.push(...applied.warnings);
     integrationSummary = integrationIncomplete
       ? `Integration was incomplete after copying ${applied.fileCount} file(s). ` +
-        `Worker worktrees were kept for inspection and continuation.`
+        `Any worktree that remains after cleanup is listed per task.`
       : `Copied ${applied.fileCount} file(s) from ${completed.length} worker(s) into ` +
         `the workspace. No two workers touched the same file.`;
     if (!integrationIncomplete) emit({ type: "integration.completed", batchId });
@@ -331,13 +334,7 @@ export async function runBatch(
       integrationConflicts.length > 0 ||
       options.integrate === false ||
       integrationIncomplete;
-    const reason = task.worktreeOutcomeError
-      ? "evidence-failure"
-      : task.state === "cancelled"
-        ? "cancelled"
-        : task.state === "completed" && !keepForConflict
-          ? "success"
-          : "failure";
+    const reason = worktreeCleanupReason(task, keepForConflict);
 
     let renewalError: unknown = null;
     try {
@@ -494,6 +491,23 @@ export async function runBatch(
     warnings,
     reviewChecklist: buildBatchChecklist(running, integrationConflicts, integrated, mode),
   };
+}
+
+/** Convert task, verdict, evidence, and integration state into one cleanup decision. */
+function worktreeCleanupReason(
+  task: RunningTask,
+  isolatedStateRequired: boolean,
+): CleanupReason {
+  if (task.worktreeOutcomeError) return "evidence-failure";
+  if (task.state === "cancelled") return "cancelled";
+  if (
+    task.state !== "completed" ||
+    task.result.result?.verdict !== "PASS" ||
+    isolatedStateRequired
+  ) {
+    return "failure";
+  }
+  return "success";
 }
 
 /** Tasks share the workspace and run one at a time, so each sees the last one's work. */
@@ -971,7 +985,8 @@ function buildBatchChecklist(
   if (mode === "parallel" && integrationConflicts.length > 0) {
     checklist.push(
       `Resolve ${integrationConflicts.length} integration conflict(s) yourself — ` +
-        `nothing was merged automatically, and each worker's version is in its worktree.`,
+        `nothing was merged automatically. Inspect each task's worktreePath for any ` +
+        `version that remains after cleanup.`,
     );
   }
   if (integrated && mode === "parallel") {

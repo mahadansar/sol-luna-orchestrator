@@ -226,6 +226,21 @@ test("the parent orchestrator retains strategy and final judgment", () => {
   assert.match(TOOL_DESCRIPTION, /cannot see the\s+conversation or[\s\S]*delegate/i);
 });
 
+test("retention guidance makes operator policy and continuation availability agree", async () => {
+  assert.match(BATCH_TOOL_DESCRIPTION, /retention follows the operator/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /continuation reference is omitted/i);
+  assert.doesNotMatch(BATCH_TOOL_DESCRIPTION, /retain worktrees for manual resolution/i);
+
+  const rules = await readDoc("SOL_RULES.md");
+  const configuration = await readDoc("docs/CONFIGURATION.md");
+  for (const text of [rules, configuration]) {
+    assert.match(text, /SOL_LUNA_KEEP_WORKTREES/i);
+    assert.match(text, /never/i);
+    assert.match(text, /continuation/i);
+  }
+  assert.match(configuration, /no intentional retention/i);
+});
+
 test("single-task results drive risk-based review", () => {
   for (const evidence of [
     "verdict",

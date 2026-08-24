@@ -33,6 +33,14 @@ scope conflicts; integration conflicts, applied file counts, and completed,
 not-attempted, partial or failed integration; and bounded repair started and
 completed.
 
+Worktree events describe the outcome after configured cleanup, not merely why a
+worktree might have been useful. `worktree.removed` carries the historical
+`kept` boolean, and `worktree.retained` is emitted only when the path actually
+remains. Integration conflict, partial, failed, disabled, or not-attempted
+events preserve what happened independently of retention. Consequently an
+integration diagnostic can be followed by cleanup with no retained-worktree
+event when `SOL_LUNA_KEEP_WORKTREES=never`.
+
 An explicit `continue_task` turn emits the same ordinary single-task lifecycle
 events and receives a fresh completion record. The opaque continuation reference
 itself is returned only in the tool result; it is not persisted in this event
@@ -147,8 +155,9 @@ reports an `unknown`, `completed`, `notAttempted`, `conflicted`, `partial`,
 `failed`, or `disabled` integration status, file counts when known, retained-worktree count,
 and generic warnings. Historical `integration.applied` records alone remain
 unknown because they did not prove that every attempted copy succeeded. Human
-and watch views render only concise generic warnings; they do not render command
-output, objectives, thread ids, or raw retention paths.
+and watch views render integration facts without claiming a worktree was kept;
+an actual `worktree.retained` event supplies that separate warning. They do not
+render command output, objectives, thread ids, or raw retention paths.
 
 `--watch` folds the existing history silently at startup and renders only that
 latest run, so an old log does not scroll past. It attaches its watcher before

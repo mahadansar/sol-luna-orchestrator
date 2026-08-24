@@ -1043,3 +1043,34 @@ was not P1.1, did not change routing policy, and did not rerun the portfolio.
   wording versus the supported `never` policy remains a policy/documentation
   precedence question. It was not guessed or changed in this triage and needs a
   focused decision before relying on those promises under `never`.
+
+### F — worktree-retention precedence was internally inconsistent
+
+- **Source / exact claim:** finding E left the precedence between explicit
+  `SOL_LUNA_KEEP_WORKTREES=never` and unconditional conflict,
+  integration-disabled, evidence-failure, and continuation retention language
+  unresolved. The runtime already removed ordinary conflict and
+  integration-disabled worktrees under `never`, but evidence-scan failure
+  bypassed the policy; integration summaries, tool guidance, and activity
+  warnings could still say a removed worktree was retained. Separately,
+  `onFailure` classified a normally returned final `FAILED` or `BLOCKED` result
+  as cleanup success because its task lifecycle state was `completed`.
+- **Decision:** `never` is absolute for intentional retention. It overrides
+  every diagnostic and continuation retention reason after all obtainable
+  structured evidence is captured. A continuation that requires isolated state
+  is issued only when cleanup actually retained that path and a lease protects
+  it; workspace-bound continuations remain independent of worktree retention.
+  Cleanup failure can still leave a physical path and is reported as failure,
+  not as a policy exception. `onFailure` follows final verdict plus cancellation,
+  timeout, evidence, and integration state rather than lifecycle completion
+  alone.
+- **Classification:** **CONFIRMED PRODUCT/DOCUMENTATION DEFECT**; medium
+  severity, high confidence. Default users could lose the diagnostic worktree
+  for a returned `FAILED`/`BLOCKED` result, while explicit `never` users could
+  receive misleading retention promises and an evidence-failure worktree.
+- **Resolution:** centralized cleanup precedence, removed the evidence-failure
+  override, aligned verdict-aware batch finalization and continuation/lease
+  admission with the surviving directory, made integration and activity text
+  retention-neutral until an actual retained event exists, and added focused
+  deterministic coverage across all three modes. No MCP schema or configuration
+  surface was added.

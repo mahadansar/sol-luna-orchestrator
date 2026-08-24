@@ -200,6 +200,36 @@ cancellation case passed **10/10** repeated executions, formatting and build
 passed, all nine benchmark fixtures discriminated correctly with mutation
 detection, and `git diff --check` was clean.
 
+### Focused worktree-retention precedence closure
+
+The subsequent 2026-08-24 policy pass resolved the ambiguity recorded in
+`findings.md` between explicit `SOL_LUNA_KEEP_WORKTREES=never` and diagnostic,
+conflict, `integrate:false`, evidence-failure, and continuation retention.
+`never` now has absolute precedence for intentional retention after all
+obtainable structured evidence is captured. Worktree-bound continuations are
+issued only when configured cleanup actually retained their directory and a
+persistent lease protects it; continuations bound to already integrated shared
+workspace state remain eligible under every retention mode. Cleanup failure is
+reported separately and can still leave a physical path because configuration
+cannot make a failed filesystem operation succeed.
+
+The same pass made `onFailure` verdict-aware: a normally returned final
+`FAILED` or `BLOCKED` result is diagnostic failure, not cleanup success merely
+because its worker lifecycle completed. Focused table-driven tests cover all
+cleanup reasons across `onFailure`, `always`, and `never`; successful and failed
+verdict finalization; integration-disabled and conflicted state; continuation
+reference/lease admission; truthful worktree events and paths; and
+unlink-before-cleanup survival of the source dependency tree. Existing
+continuation consumption/failure and partial-integration regressions remain the
+evidence for those lifecycle handoffs. This is a deterministic semantic closure;
+the earlier live default-`onFailure` acceptance facts remain historical evidence
+rather than a claim that every mode was rerun live.
+
+Final validation for this closure passed `npm run verify`: typecheck,
+**470/470** deterministic tests with no failures or skips, and every MCP
+protocol smoke check. Formatting, all nine benchmark fixture validations,
+`git diff --check`, and the explicit final build and smoke reruns also passed.
+
 ### Focused second live configured-concurrency limit
 
 A focused live run on 2026-08-24 closed Bounded Concurrency's remaining

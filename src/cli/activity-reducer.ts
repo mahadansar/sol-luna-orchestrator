@@ -465,7 +465,7 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
           diagnosedIntegrationIds.add(event.taskId);
         }
         addWarning(
-          "Integration was partial; some worker changes may remain in a retained worktree.",
+          "Integration was partial; only the reported applied changes reached the workspace.",
         );
       }
     } else if (event.type === "integration.failed") {
@@ -478,9 +478,7 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
             (snapshot.integration.appliedFiles ?? 0) + (event.appliedFiles ?? 0);
           diagnosedIntegrationIds.add(event.taskId);
         }
-        addWarning(
-          "Integration failed for a worker; its worktree was retained for diagnosis.",
-        );
+        addWarning("Integration failed for a worker; its changes were not copied.");
       }
     } else if (event.type === "integration.disabled") {
       if (snapshot.batchId === event.batchId) {
@@ -489,9 +487,7 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
           attemptedFiles: null,
           appliedFiles: null,
         };
-        addWarning(
-          "Integration was disabled; worker worktrees were retained for review.",
-        );
+        addWarning("Integration was disabled; worker changes were not copied.");
       }
     } else if (event.type === "integration.completed") {
       if (
