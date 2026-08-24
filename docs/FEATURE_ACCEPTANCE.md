@@ -1,9 +1,8 @@
 # Feature Acceptance Ledger
 
 This is the authoritative current capability, evidence, freshness, and
-confidence ledger for the repository. The package version remains `0.9.0`, whose
-release tag is `b38acae33ca8d52740af6e9a0fdc2cf376f08075` (2026-08-23), but the
-current main runtime is not identical to that tag. Main contains unreleased
+confidence ledger for the repository. The package version is `0.9.1`, and the
+current main runtime is its release baseline. This patch incorporates the
 post-v0.9.0 hardening changes to cancellation continuation eligibility,
 retained-continuation dependency-link reconciliation, and worktree retention
 precedence/finalization. Shipped history belongs in `CHANGELOG.md`; future work
@@ -11,8 +10,8 @@ belongs in `ROADMAP.md`.
 
 ## Current baseline
 
-- **Runtime baseline:** commit-relative current main after the post-v0.9.0
-  hardening changes above. Package and lockfile versions remain `0.9.0`.
+- **Runtime baseline:** commit-relative current main for v0.9.1 after the
+  hardening changes above. Package and lockfile versions are `0.9.1`.
 - **Latest full deterministic validation:** `npm run verify` passed on
   2026-08-24 with **472/472 tests**, no failures or skips, plus typecheck and the
   deterministic MCP protocol smoke test.
@@ -63,8 +62,8 @@ that distinction matters.
 - Natural adaptive-effort evidence covers materially different `medium` and
   `high` selections. No natural `xhigh` or `max` selection is claimed, and those
   optional observations are not required for Strong confidence.
-- No fresh whole-system native coverage report was produced after the
-  post-v0.9.0 runtime changes. The latest coverage percentages belong to the
+- No fresh whole-system native coverage report was produced after the v0.9.1
+  runtime changes. The latest coverage percentages belong to the
   earlier v0.9.0 campaign; the current 472-test deterministic suite is green.
 - Raw transcripts, diagnostic logs, event streams, and some structured live
   results are session-local and intentionally uncommitted. The ledger preserves
@@ -77,7 +76,7 @@ that distinction matters.
   These are evidence limits, not known product defects.
 
 **Confirmed current product defects:** none. **Product-validation blockers from
-the completed post-v0.9.0 hardening work:** none. Optional future work remains in
+the completed v0.9.1 hardening work:** none. Optional future work remains in
 `ROADMAP.md`; this ledger does not promote or implement it.
 
 ## How to read this ledger

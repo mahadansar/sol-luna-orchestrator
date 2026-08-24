@@ -6,6 +6,19 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-08-24
+
+A maintenance and hardening patch for worktree retention, cancellation, and
+release evidence.
+
+### Changed
+
+- Expanded deterministic lifecycle, integration, symlink, process-cleanup, and
+  security coverage across the supported worktree and verification paths.
+- Reconciled configuration, troubleshooting, observability, security, release,
+  and acceptance documentation. Removed the temporary `findings.md` after its
+  durable conclusions were incorporated into the feature-acceptance ledger.
+
 ### Fixed
 
 - Cancelled worker results are now terminal for continuation eligibility, so a
@@ -588,7 +601,8 @@ Initial working version, verified end to end.
 development milestones and were never tagged or published, so they have no
 release links.
 
-[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.7.1...v0.8.0

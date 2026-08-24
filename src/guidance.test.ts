@@ -679,10 +679,10 @@ test("current documentation distinguishes diagnostics, activity privacy, and leg
   assert.match(observability, /failure before a normal result[\s\S]*typed/i);
 });
 
-test("acceptance ledger owns the current post-release baseline", async () => {
+test("acceptance ledger owns the current release baseline", async () => {
   const acceptance = await readDoc("docs/FEATURE_ACCEPTANCE.md");
-  assert.match(acceptance, /package version remains `0\.9\.0`/i);
-  assert.match(acceptance, /current main runtime is not identical to that tag/i);
+  assert.match(acceptance, /package version is `0\.9\.1`/i);
+  assert.match(acceptance, /current main runtime is its release baseline/i);
   assert.match(acceptance, /\*\*472\/472 tests\*\*/);
   assert.match(acceptance, /## Current capability matrix/);
   assert.match(acceptance, /Parallel batches[\s\S]*Battle-tested/);
