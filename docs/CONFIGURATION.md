@@ -158,6 +158,15 @@ authoritative presentation of the required keys, values, and failure rationale.
 | `SOL_LUNA_EVENTS`                 | set by `init`           | Structured JSONL activity log, read by `activity`. Unset = no log |
 | `SOL_LUNA_LOG`                    | set by `init`           | Human-readable diagnostics log. Unset in the server env = no log  |
 
+`LUNA_SANDBOX` accepts `read-only`, `workspace-write` and
+`danger-full-access`. Keep the default `workspace-write` for normal use.
+`danger-full-access` disables Codex filesystem sandboxing for Luna and is only
+appropriate as an explicit trusted-machine workaround, such as for a diagnosed
+[Ubuntu AppArmor/bwrap compatibility failure](TROUBLESHOOTING.md#luna-commands-fail-with-bwrap--rtm_newaddr-on-ubuntu).
+The orchestrator's scope and evidence controls remain active, but they do not
+replace filesystem confinement. After changing an MCP environment value, close
+the current Codex session and open a new one so the server reloads it.
+
 Every variable above configures this orchestrator and its workers. None of them
 reaches the parent — the parent model and effort are set in your Codex session,
 as described under [Parent model and effort](#parent-model-and-effort).
