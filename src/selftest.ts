@@ -1053,6 +1053,44 @@ test("verification contradiction promotion requires complete one-to-one evidence
   }
 });
 
+test("verification contradiction matches multiple failed claims one-to-one", () => {
+  const commands = ["npm run typecheck", "npm test"];
+  const authoritative: VerificationRun[] = commands.map((command) => ({
+    command,
+    exitCode: 0,
+    passed: true,
+    output: "passed independently",
+    execution: "argv",
+  }));
+  const report = makeReport({
+    status: "FAILED",
+    failureCauses: ["verification"],
+    verification: commands.map((command) => ({
+      command,
+      exitCode: 1,
+      passed: false,
+      evidence: "worker environment failed",
+    })),
+  });
+
+  assert.equal(
+    analyze(report, authoritative, { verificationCommands: commands }).verdict,
+    "PASS",
+  );
+  assert.equal(
+    analyze(
+      {
+        ...report,
+        verification: [report.verification[0]!, report.verification[0]!],
+      },
+      authoritative,
+      { verificationCommands: commands },
+    ).verdict,
+    "FAILED",
+    "two worker failures may not consume the same authoritative command",
+  );
+});
+
 test("terminal evidence prevents verification contradiction promotion", () => {
   const result = analyze(
     verificationOnlyFailure(),

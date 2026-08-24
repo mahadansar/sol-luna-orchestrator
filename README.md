@@ -61,6 +61,7 @@ sol-luna-orchestrator doctor     Diagnose the installation
 sol-luna-orchestrator status     Show a short runtime summary
 sol-luna-orchestrator activity   Inspect recent batch activity
 sol-luna-orchestrator uninstall  Remove this project's registration
+sol-luna-orchestrator version    Show the installed version
 ```
 
 `init` and `uninstall` also support `--dry-run`. See [Configuration](docs/CONFIGURATION.md)

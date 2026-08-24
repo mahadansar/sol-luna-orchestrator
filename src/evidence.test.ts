@@ -340,6 +340,63 @@ test("retained-worktree continuations reconcile the complete final Git snapshot"
   );
 });
 
+test("retained continuations ignore only unchanged orchestrator dependency links", async () => {
+  const repo = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-retained-link-"));
+  const worktree = path.join(repo, ".sol-luna", "worktrees", "continued");
+  const source = path.join(repo, "node_modules");
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-outside-link-"));
+  const destination = path.join(worktree, "node_modules");
+  await fs.mkdir(source, { recursive: true });
+  await fs.mkdir(worktree, { recursive: true });
+  await fs.symlink(
+    source,
+    destination,
+    process.platform === "win32" ? "junction" : "dir",
+  );
+
+  const input = delegateTaskInputSchema.parse({
+    objective: "Continue the retained read-only review.",
+    effortReason: "The same bounded review needs one follow-up.",
+    acceptanceCriteria: ["Orchestrator setup is not attributed to the worker."],
+    allowedFiles: ["src/**"],
+    changeIntent: "forbidden",
+  });
+  const result = mockResult();
+  result.changeIntent = "forbidden";
+  result.continuationReference = null;
+  result.filesChanged = [];
+
+  try {
+    const unchanged = await reconcileRetainedContinuationEvidence(
+      input,
+      result,
+      worktree,
+      async () => ({ files: [{ path: "node_modules", status: "??" }], diff: "" }),
+    );
+    assert.equal(unchanged.verdict, "PASS");
+    assert.deepEqual(unchanged.filesChanged, []);
+
+    await fs.unlink(destination);
+    await fs.symlink(
+      outside,
+      destination,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const replaced = await reconcileRetainedContinuationEvidence(
+      input,
+      result,
+      worktree,
+      async () => ({ files: [{ path: "node_modules", status: "??" }], diff: "" }),
+    );
+    assert.equal(replaced.verdict, "FAILED");
+    assert.ok(replaced.scopeViolations.length > 0);
+  } finally {
+    await fs.unlink(destination).catch(() => undefined);
+    await fs.rm(repo, { recursive: true, force: true });
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+});
+
 test("evidence packet - integration conflict", () => {
   const batch: BatchOutput = {
     batchId: "b1",

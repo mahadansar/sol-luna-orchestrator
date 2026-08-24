@@ -172,14 +172,16 @@ persistent lease was observed changing from `retained-continuation` to
 classification and `finally` release; replay returned `used`, the lease artifact
 was gone, and orchestrator pruning removed the now-unprotected worktree.
 
-No runtime-semantic defect was found. Partial integration remains intentionally
-non-atomic and is represented at batch/integration level without rewriting the
-worker's independently established verdict or trust evidence. The default
-`onFailure` policy intentionally retains an in-flight-cancelled worktree for
-diagnosis while releasing its lease. The only production change is an internal,
-default-preserving continuation-handler dependency seam needed to inject the
-post-refresh failure and isolate events; the MCP schema, tool contract, and
-normal runtime dependencies are unchanged.
+The closure initially reported no runtime-semantic defect. Later incidental
+triage recovered a production handoff that its fixture omitted: the MCP registrar
+could issue a continuation for the cancelled worker and keep its retained lease.
+Cancellation is now terminal for continuation eligibility, and the same focused
+regression supplies a registrar and proves that only the completed sibling is
+registered. Partial integration remains intentionally non-atomic and is
+represented at batch/integration level without rewriting the worker's
+independently established verdict or trust evidence. The default `onFailure`
+policy intentionally retains an in-flight-cancelled worktree for diagnosis while
+releasing its lease. The MCP schema and tool contract remain unchanged.
 
 This closes the recorded abnormal-lifecycle blocker for Parallel batches,
 Worktree isolation/integration, and Worker Continuation. Those capabilities now
@@ -267,8 +269,11 @@ decision. The three solo attempts are supported by the fresh-parent transcripts
 and dedicated MCP connection logs; delegated attempts additionally have typed
 queued, started, completed, worktree, integration, and batch events. Attempt 4's
 three initial tasks all selected `high`; its explicit same-thread continuation
-preserved `high` and failed closed on a scope violation. Attempt 5 selected one
-`high`. Attempt 6 independently selected `medium` for a mechanical documentation
+preserved `high` but failed on a false-positive scope violation caused by the
+orchestrator-owned shared `node_modules` link. Focused triage now excludes only a
+link that still resolves to the expected dependency source and continues to fail
+closed for a replaced directory or retargeted link. Attempt 5 selected one `high`.
+Attempt 6 independently selected `medium` for a mechanical documentation
 inventory and `high` for cross-file coverage judgment; both started as real
 GPT-5.6 Luna tasks and passed with no observed edits. The effort variation is
 therefore natural and plausible, not inferred from prose or supplied by the

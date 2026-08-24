@@ -667,6 +667,10 @@ export function buildDelegationResult({
   };
 }
 
+/** Cancellation is terminal and therefore ineligible for continuation. */
+export const resultWasCancelled = (result: DelegateTaskOutput): boolean =>
+  result.errors.some((error) => /was cancelled before it finished/i.test(error));
+
 /**
  * Reconcile the final git view of an isolated worktree with the worker result.
  *

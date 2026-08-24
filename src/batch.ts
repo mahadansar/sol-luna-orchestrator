@@ -22,6 +22,7 @@ import {
 import {
   executeTask,
   reconcileParallelWorktreeEvidence,
+  resultWasCancelled,
   UNCLAIMED_FILE,
   workerSlots,
 } from "./worker.js";
@@ -118,6 +119,8 @@ export async function runBatch(
     batchId?: string;
     /** Deterministic lease-maintenance seam; production uses persistent renewal. */
     leaseMaintainer?: typeof maintainWorktreeLease;
+    /** Deterministic retention seam; production uses configured policy. */
+    keepWorktrees?: "onfailure" | "always" | "never";
   },
 ): Promise<BatchOutput> {
   const batchId = options.batchId ?? makeBatchId();
@@ -350,7 +353,7 @@ export async function runBatch(
     }
 
     try {
-      const cleanup = await cleanupWorktree(task.worktree, reason);
+      const cleanup = await cleanupWorktree(task.worktree, reason, options.keepWorktrees);
       emit({
         type: "worktree.removed",
         batchId,
@@ -384,7 +387,12 @@ export async function runBatch(
       }
 
       let retainedLease = false;
-      if (!renewalError && task.result.result && options.continuationRegistrar) {
+      if (
+        !renewalError &&
+        task.result.result &&
+        !resultWasCancelled(task.result.result) &&
+        options.continuationRegistrar
+      ) {
         // Integrated parallel work can safely continue in the requested
         // workspace after its temporary worktree is removed. When integration
         // was disabled or conflicted, the kept worktree is the only honest
@@ -770,7 +778,7 @@ async function runOne(
     // Cancellation only applies when the worker was actually interrupted. A
     // task that ran to completion keeps its result even if the batch was
     // cancelled afterwards — finished work is never thrown away.
-    if (result.errors.some((error) => /was cancelled before it finished/i.test(error))) {
+    if (resultWasCancelled(result)) {
       task.state = "cancelled";
       task.result.state = "cancelled";
       emit({ type: "worker.cancelled", batchId, taskId: task.taskId });

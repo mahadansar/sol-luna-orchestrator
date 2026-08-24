@@ -924,6 +924,42 @@ export async function linkSharedDirectories(
   return warnings;
 }
 
+/**
+ * Remove only dependency-link entries that still match orchestrator setup.
+ *
+ * Git reports an untracked directory symlink as a changed top-level path. That
+ * link is setup state, not worker work, but a worker-replaced directory or link
+ * must remain visible and fail the normal scope checks.
+ */
+export async function filterOrchestratorOwnedSharedLinks(
+  repoRoot: string,
+  worktreePath: string,
+  files: WorktreeChanges["files"],
+  dirs: string[] = WORKTREE_LINK_DIRS,
+): Promise<WorktreeChanges["files"]> {
+  const unchangedLinks = new Set<string>();
+  for (const dir of dirs) {
+    const source = path.resolve(repoRoot, dir);
+    const destination = path.resolve(worktreePath, dir);
+    const stat = await fs.lstat(destination).catch(() => null);
+    if (!stat?.isSymbolicLink()) continue;
+
+    const [sourceTarget, destinationTarget] = await Promise.all([
+      fs.realpath(source).catch(() => null),
+      fs.realpath(destination).catch(() => null),
+    ]);
+    if (
+      sourceTarget &&
+      destinationTarget &&
+      worktreePathKey(sourceTarget) === worktreePathKey(destinationTarget)
+    ) {
+      unchangedLinks.add(dir);
+    }
+  }
+
+  return files.filter((file) => !unchangedLinks.has(file.path.split("/")[0] ?? ""));
+}
+
 export interface WorktreeOutcome {
   changes: WorktreeChanges;
   warnings: string[];
@@ -938,12 +974,14 @@ export async function readWorktreeOutcome(
   const warnings: string[] = [];
   try {
     const changes = await collectWorktreeChanges(worktree.path);
-    // Linked directories are not the worker's work.
-    const linked = new Set(WORKTREE_LINK_DIRS);
     return {
       changes: {
         ...changes,
-        files: changes.files.filter((file) => !linked.has(file.path.split("/")[0] ?? "")),
+        files: await filterOrchestratorOwnedSharedLinks(
+          worktree.repoRoot,
+          worktree.path,
+          changes.files,
+        ),
       },
       warnings,
     };

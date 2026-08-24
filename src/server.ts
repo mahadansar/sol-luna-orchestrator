@@ -15,6 +15,7 @@ import {
   MAX_PARALLEL,
   VERIFY_MODE,
   VERIFY_MODE_INVALID,
+  WORKTREE_DIR,
   WORKER_MARKER_ENV,
 } from "./config.js";
 import {
@@ -35,11 +36,13 @@ import {
   continueToLuna,
   delegateToLuna,
   reconcileParallelWorktreeEvidence,
+  resultWasCancelled,
 } from "./worker.js";
 import { collectWorktreeChanges, type WorktreeChanges } from "./git.js";
 import { WorkspaceError } from "./workspace.js";
 import { activityFailureReason, emitEvent, type EventEmitter } from "./events.js";
 import {
+  filterOrchestratorOwnedSharedLinks,
   refreshWorktreeLease,
   releaseWorktreeLease,
   WORKTREE_LEASE_GRACE_MS,
@@ -77,7 +80,7 @@ function registerContinuation(
   reconcileFinalGit = false,
   worktreeLease: WorktreeLease | null = null,
 ): string | null {
-  if (!result.workerThreadId) return null;
+  if (!result.workerThreadId || resultWasCancelled(result)) return null;
   return continuationStore.issue(
     input,
     result.workerThreadId,
@@ -113,11 +116,20 @@ export async function reconcileRetainedContinuationEvidence(
 ): Promise<DelegateTaskOutput> {
   try {
     const changes = await collect(workingDirectory);
+    const repoRoot = path.resolve(
+      workingDirectory,
+      ...Array.from({ length: WORKTREE_DIR.split("/").length + 1 }, () => ".."),
+    );
+    const files = await filterOrchestratorOwnedSharedLinks(
+      repoRoot,
+      workingDirectory,
+      changes.files,
+    );
     return reconcileParallelWorktreeEvidence(
       input,
       result,
       workingDirectory,
-      changes.files.map((file) => ({ path: file.path, kind: file.status })),
+      files.map((file) => ({ path: file.path, kind: file.status })),
     );
   } catch (error) {
     return reconcileParallelWorktreeEvidence(

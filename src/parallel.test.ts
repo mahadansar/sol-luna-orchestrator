@@ -641,6 +641,7 @@ test("batch continuations bind to the integrated workspace or a retained worktre
           trustworthy: false,
         }),
       }),
+      keepWorktrees: "onfailure",
       continuationRegistrar: (_input, _result, workingDirectory) => {
         retainedDirectories.push(workingDirectory);
         return `ctr_${"r".repeat(32)}`;
@@ -672,6 +673,7 @@ test("retained worktrees have unique identities and protected continuations are 
       mode: "parallel",
       workingDirectory: repo,
       integrate: false,
+      keepWorktrees: "onfailure",
       executor: fakeExecutor({ writes: () => ({ "src/one/value.ts": "one\n" }) }),
       continuationRegistrar: () => `ctr_${"p".repeat(32)}`,
     });
@@ -683,6 +685,7 @@ test("retained worktrees have unique identities and protected continuations are 
       mode: "parallel",
       workingDirectory: repo,
       integrate: false,
+      keepWorktrees: "onfailure",
       executor: fakeExecutor({ writes: () => ({ "src/two/value.ts": "two\n" }) }),
     });
     const secondPath = second.tasks[0]?.worktreePath;
@@ -1008,6 +1011,7 @@ test("batch renewal failure releases local ownership but preserves the bounded l
           mode: "parallel",
           workingDirectory: repo,
           integrate: false,
+          keepWorktrees: "onfailure",
           batchId,
           executor: fakeExecutor({
             writes: () => ({ "src/renewal/value.ts": "x\n" }),
@@ -1087,6 +1091,7 @@ test("failed retained continuation registration releases protection and ownershi
       mode: "parallel",
       workingDirectory: repo,
       integrate: false,
+      keepWorktrees: "onfailure",
       executor: fakeExecutor({ writes: () => ({ "src/failure/value.ts": "x\n" }) }),
       continuationRegistrar: async () => {
         throw new Error("fixture registration failure");
@@ -1127,6 +1132,7 @@ test("a consumed retained continuation failure finalizes its refreshed lease", a
       batchId: "b-retained-continuation-failure",
       workingDirectory: repo,
       integrate: false,
+      keepWorktrees: "onfailure",
       executor: fakeExecutor({
         writes: () => ({ "src/continued/first.ts": "export const first = true;\n" }),
         output: () => ({ workerThreadId: "thread-retained-failure" }),
@@ -1608,6 +1614,7 @@ test("workers that touch the same file block integration instead of overwriting"
         mode: "parallel",
         workingDirectory: repo,
         allowOverlappingScopes: true,
+        keepWorktrees: "onfailure",
         executor: fakeExecutor({
           writes: (task): Record<string, string> =>
             moduleOf(task) === "auth"
@@ -1793,6 +1800,7 @@ test("an already-running parallel worker cancels while its sibling completes", a
   let started = 0;
   let active = 0;
   let abortObserved = false;
+  const registeredThreads: Array<string | null> = [];
   let releaseBothStarted!: () => void;
   let releaseSiblingCompleted!: () => void;
   const bothStarted = new Promise<void>((resolve) => (releaseBothStarted = resolve));
@@ -1828,6 +1836,11 @@ test("an already-running parallel worker cancels while its sibling completes", a
         workingDirectory: repo,
         signal: controller.signal,
         eventEmitter: (event) => events.push(event),
+        keepWorktrees: "onfailure",
+        continuationRegistrar: (_input, result) => {
+          registeredThreads.push(result.workerThreadId);
+          return `ctr_${"c".repeat(32)}`;
+        },
         executor: async (input, options) => {
           const completing = input.objective.includes("independent sibling");
           const threadId = completing ? "thread-complete" : "thread-cancelled";
@@ -1924,6 +1937,9 @@ test("an already-running parallel worker cancels while its sibling completes", a
     assert.equal(cancelled.result?.verdict, "FAILED", describeBatch(result));
     assert.equal(cancelled.result?.workerClaimedStatus, "FAILED");
     assert.equal(cancelled.result?.trustworthy, false);
+    assert.equal(completed.result?.continuationReference, `ctr_${"c".repeat(32)}`);
+    assert.equal(cancelled.result?.continuationReference, null);
+    assert.deepEqual(registeredThreads, ["thread-complete"]);
     assert.ok(
       cancelled.result?.errors.some((error) =>
         /cancelled before it finished/i.test(error),
@@ -2375,6 +2391,7 @@ test("partial integration retains truthful evidence after an earlier file applie
         batchId: "b-partial-integration",
         workingDirectory: repo,
         eventEmitter: (event) => events.push(event),
+        keepWorktrees: "onfailure",
         executor: fakeExecutor({
           writes: () => ({
             "src/integration-applied.txt": "applied before failure\n",

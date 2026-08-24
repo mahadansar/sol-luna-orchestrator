@@ -951,3 +951,95 @@ high selections and advances from PARTIAL/Basic to PASS/Strong under the existin
 ledger definition. The natural-batch evidence gap is closed. No xhigh or max
 selection, unrelated capability promotion, P1.1 work, or broad hardening campaign
 is claimed.
+
+## [2026-08-24T09:14:58Z] Adaptive-routing incidental findings triage
+
+Scope: exact findings raised by retained adaptive-routing attempts 1–4 only. This
+was not P1.1, did not change routing policy, and did not rerun the portfolio.
+
+### A — README omitted the shipped `version` command
+
+- **Source / exact claim:** attempt 1 final response and parent transcript said
+  README's normal-use command list omitted `sol-luna-orchestrator version` while
+  current CLI help exposed it.
+- **Reproduction:** confirmed against `README.md`, `package.json` bins, and
+  current CLI help; the CLI implementation was correct.
+- **Classification:** **CONFIRMED DOCUMENTATION DEFECT**; low severity, high
+  confidence. Canonical owner: `README.md` normal-use commands.
+- **Resolution:** added the one missing command. No CLI/product behavior changed.
+
+### B — multi-command verification contradiction lacked direct coverage
+
+- **Source / exact claim:** attempt 2 final response and parent transcript said
+  the distinct-match `unmatched` set in
+  `verificationFailureIsAuthoritativelyContradicted` was covered only by
+  single-command fixtures, not multiple configured commands or multiple failed
+  worker rows.
+- **Reproduction:** confirmed. Current behavior correctly requires complete,
+  ordered, passing authoritative runs and one distinct authoritative match per
+  failed worker claim; no implementation defect was found.
+- **Classification:** **CONFIRMED COVERAGE GAP**; low severity, high confidence.
+- **Resolution:** added one deterministic two-command regression proving both
+  successful distinct reconciliation and rejection when duplicate worker claims
+  try to consume the same authoritative command.
+
+### C — cancelled parallel tasks could receive production continuations
+
+- **Source / exact claim:** attempt 3 final response and parent transcript said
+  the in-flight cancellation regression omitted the production continuation
+  registrar, asserted the retained cancelled worktree's lease was released, but
+  the MCP path registered any result with a worker thread id and therefore could
+  refresh and retain that lease.
+- **Reproduction:** statically confirmed across `batch.ts`, `server.ts`, the
+  focused cancellation regression, and the acceptance record. The documented
+  intended behavior is terminal cancellation: retain the worktree under default
+  `onFailure` for diagnosis, do not issue a continuation, and release its lease.
+- **Classification:** **CONFIRMED PRODUCT DEFECT** with a residual coverage gap;
+  medium severity, high confidence.
+- **Resolution:** cancellation is now a shared terminal-result predicate used by
+  batch and single-task continuation registration. The existing real in-flight
+  regression now supplies a registrar, proves only the completed sibling is
+  registered, proves the cancelled result has no reference, and retains its
+  lease-release assertion. Integration and terminal event order are unchanged.
+
+### D — retained continuation attributed the shared dependency link to the worker
+
+- **Source / exact claim:** attempt 4 tool result `item_16` for continuation
+  `ctr_lZut4cmEm_2eyLqtnYvxM9ZQg-CytVFB` observed
+  `/home/mahad-ansar/mahad/sol-luna-orchestrator/node_modules` as an unclaimed
+  `add`, then failed forbidden change intent and outside-workspace scope checks.
+- **Reproduction:** confirmed in retained worktree evidence. Normal parallel
+  setup created an untracked worktree `node_modules` symlink to the main checkout.
+  Initial batch evidence removed configured dependency-link entries, while
+  retained-continuation reconciliation passed the raw Git entry directly to
+  scope reconciliation.
+- **Classification:** **CONFIRMED PRODUCT DEFECT**; medium severity and high
+  confidence because a valid continuation failed closed on orchestrator-owned
+  state. This was not an actual worker edit.
+- **Resolution:** initial and retained evidence now exclude a configured link
+  only when it is still a symlink/junction whose canonical target equals the
+  expected source directory. A focused regression proves the untouched link is
+  ignored and a retargeted link remains visible and fails scope checks. Genuine
+  directories or changed link targets are not allowlisted.
+
+### E — parallel lifecycle tests inherited `SOL_LUNA_KEEP_WORKTREES=never`
+
+- **Source / exact claim:** attempt 4 parent transcript ran
+  `SOL_LUNA_KEEP_WORKTREES=never node --test --test-name-pattern="batch continuations bind|workers that touch the same file" dist/parallel.test.js`.
+  It got 0/2: the expected retained continuation reference was `null`, and the
+  expected retained conflict worktree paths were absent.
+- **Reproduction:** confirmed exactly. Both tests passed without the ambient
+  override. A full suite run under `never` exposed five more default-retention
+  fixtures with the same implicit dependency. The runtime correctly applied the
+  configured `never` cleanup policy; these were not tests of that policy.
+- **Classification:** **CONFIRMED TEST-HERMITICITY DEFECT**; medium confidence
+  impact, high diagnostic confidence.
+- **Resolution:** `runBatch` gained an internal per-run retention seam and all
+  fixtures that assert default `onFailure` retention now request it explicitly.
+  The full 76-case parallel suite passes with ambient
+  `SOL_LUNA_KEEP_WORKTREES=never`; production defaults and operator behavior are
+  unchanged.
+- **Separate decision:** unconditional conflict/integration-disabled retention
+  wording versus the supported `never` policy remains a policy/documentation
+  precedence question. It was not guessed or changed in this triage and needs a
+  focused decision before relying on those promises under `never`.
