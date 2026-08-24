@@ -17,6 +17,8 @@ import { PARALLEL_TASKS } from "./parallel-tasks.js";
 import { SCALE_SOLUTIONS } from "./scale-solutions.js";
 import { SCALE_TASKS } from "./scale-tasks.js";
 import { BENCH_TASKS, type BenchTask, type GradeCommand } from "./tasks.js";
+import { V2_SOLUTIONS } from "./v2-solutions.js";
+import { V2_TASKS } from "./v2-tasks.js";
 
 /** Known-good solutions, used only to prove the grader accepts correct work. */
 const REFERENCE_SOLUTIONS: Record<string, Record<string, string>> = {
@@ -197,14 +199,15 @@ async function validateTask(task: BenchTask): Promise<void> {
     REFERENCE_SOLUTIONS[task.id] ??
     PARALLEL_SOLUTIONS[task.id] ??
     SCALE_SOLUTIONS[task.id];
-  if (!solution) {
+  const selectedSolution = solution ?? V2_SOLUTIONS[task.id];
+  if (!selectedSolution) {
     check("has a reference solution", false);
     return;
   }
 
   const solved = materialize(task);
   try {
-    for (const [name, content] of Object.entries(solution)) {
+    for (const [name, content] of Object.entries(selectedSolution)) {
       const target = path.join(solved, ...name.split("/"));
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, content, "utf8");
@@ -236,7 +239,7 @@ async function validateTask(task: BenchTask): Promise<void> {
 
 async function main(): Promise<void> {
   console.log("Validating benchmark fixtures (no model calls)");
-  for (const task of [...BENCH_TASKS, ...PARALLEL_TASKS, ...SCALE_TASKS]) {
+  for (const task of [...BENCH_TASKS, ...PARALLEL_TASKS, ...SCALE_TASKS, ...V2_TASKS]) {
     await validateTask(task);
   }
   console.log(

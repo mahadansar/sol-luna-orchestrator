@@ -115,12 +115,16 @@ using Sol-Luna on untrusted code.
 
 ## Benchmark evidence
 
-The committed benchmarks are directional measurements of specific fixtures,
-models, prompts, and versions. They show that delegation overhead can outweigh
-its benefits and do not establish a universal latency, quality, token, or cost
-crossover. Raw tokens are not billed cost, and no cost saving is claimed. See
-[`bench/RESULTS.md`](bench/RESULTS.md) for the evidence and limitations and
-[Configuration](docs/CONFIGURATION.md#cost) for cost terminology.
+Benchmark V2 asks when Sol Medium should run alone and when adaptive Sol-Luna
+orchestration is preferable, ordered by correctness, credits, then wall-clock.
+Its eight realistic fixtures, fixed-effort arms, dated official credit-rate
+snapshot, selective repetition rules, and future campaign commands are defined
+in [`bench/RESULTS.md`](bench/RESULTS.md). The V2 live campaign has not yet been
+run, so no outcome is claimed. Historical raw JSON remains committed as evidence;
+raw tokens are retained as diagnostics rather than treated as equivalent cost.
+Raw tokens are not billed cost, and no cost saving is claimed before the V2
+campaign provides measured evidence. Production cost terminology remains in
+[Configuration](docs/CONFIGURATION.md#cost).
 
 ## Release status and roadmap
 

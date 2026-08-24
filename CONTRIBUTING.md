@@ -118,28 +118,65 @@ claim-checking rules are cheap to test.
 
 ## Changing the benchmark
 
-`npm run bench:validate` proves the fixtures still discriminate: every task must
-fail in its starting state and pass with the reference solution. Run it after
-touching anything in `src/bench/tasks.ts` or `src/bench/parallel-tasks.ts`, and
-add a reference solution (`src/bench/parallel-solutions.ts`) for any new task.
+`npm run bench:validate` proves every fixture fails in its starting state and
+passes with its hidden reference solution, including mutation detection where
+tests are the deliverable. Run it after changing `src/bench/v2-tasks.ts` or
+`src/bench/v2-solutions.ts`.
 
-There are three suites. `--suite micro` covers small single-file tasks, where
-delegation overhead is expected to hurt; `--suite parallel` covers projects with
-three independent modules; `--suite scale` covers four- and six-stream projects
-plus a coupled control, and exists to test whether orchestration ever overtakes a
-supervisor working alone. Keep all three: the negative results are findings, not
-embarrassments to be tuned away.
+Benchmark V2 has eight realistic task shapes: two small, two medium/ambiguous,
+three delegation-friendly, and one coupled control. Its arms all use
+`gpt-5.6-sol` at Medium: Solo disables orchestration in configuration, Adaptive
+leaves the normal zero/one/many-worker decision to Sol, and Forced uses only the
+four predeclared tasks with a legitimate single or parallel seam. Do not add an
+artificial sequential or tightly coupled forced split.
 
-`npm run bench:analyze` reports the crossover verdict across every committed
-results file and spends nothing. Add a fixture to `src/bench/scale-tasks.ts` with
-a matching entry in `src/bench/scale-solutions.ts`; `src/bench.test.ts` will fail
-if a fixture's stream count, module list, objective and reference solution
-disagree, or if it forgets to mark its own test files immutable.
+The result schema embeds its versioned pricing profile and records nullable
+`actualCredits` separately from calculated `rateCardCredits`. Missing usage is
+unknown, never zero. Preserve old raw JSON unchanged; historical repricing is an
+explicit, labelled report option and does not establish historical billing.
+Schema-4 runs also persist `creditAccounting.participants`: one supervisor row
+and one row per worker with model, selected effort, flat usage meters, individual
+rate-card credits, available telemetry identifiers, and per-worker duration.
+Participant credits must reconcile to the Sol/Luna/run aggregates whenever all
+usage is known; parallel worker durations are never summed into wall-clock.
 
-Orchestrated arms are given `SOL_LUNA_MAX_PARALLEL` equal to the fixture's stream
-count so that stream count, rather than the shipped default of 3, is the variable
-under test. That value is recorded per run. Do not change production defaults to
-improve a benchmark number.
+Benchmark V2 runs at normal/standard Codex speed. The installed SDK has no
+supported per-thread speed or service-tier setting, so disable Fast mode in the
+ChatGPT/Codex account before launch. The live commands must explicitly pass
+`--confirm-standard-speed` to acknowledge that precondition; without it the
+harness exits before a model turn. Schema 4 records the execution profile and
+SDK limitation. The flag does not inspect account settings.
+
+`npm run bench:report -- <file>` summarizes one result file.
+`npm run bench:analyze -- bench/results --campaign <id>` combines schema-4 files
+for one campaign only after checking that their pricing profiles match. Both are
+deterministic. The report
+orders correctness, credits, and latency, includes Pareto trade-off labels, and
+recommends selective third repetitions without launching them.
+After reviewing a completed campaign, add `--output bench/RESULTS.md` to replace
+the pre-campaign methodology page with the combined measured report.
+
+The live campaign requires explicit authorization. After disabling Fast mode,
+`npm run bench:v2 -- --confirm-standard-speed` performs 32 Solo/Adaptive runs
+and `npm run bench:v2:forced -- --confirm-standard-speed` performs eight forced
+runs. Do not change production defaults, prompts, fixtures, rate profiles, or
+stopping rules after reading results to improve a benchmark number.
+
+Campaign cells are identified by campaign ID, task, arm, and repetition. Startup
+validates every existing schema-4 shard for the selected campaign and refuses
+incompatible metadata, duplicate cells, or an accidental ordinary rerun before
+any model call. The non-overlapping Forced phase remains a normal invocation.
+After an interruption, inspect the checkpoint and add `--resume` to the same
+command. Resume treats PASS and FAIL as completed evidence, skips them, and
+checkpoints only missing cells into a new timestamped shard; a fully complete
+resume is a successful no-op. Never delete or edit an earlier shard to force a
+rerun.
+
+Checkpoint replacement writes and flushes a unique temporary file beside the
+target before renaming it over the current shard. Do not replace this with an
+in-place write: on interruption that can expose truncated JSON. Temporary files
+end in `.tmp`, are best-effort cleaned after handled failures, and are not result
+shards.
 
 Do not report benchmark numbers that the committed raw results in
 `bench/results/` do not support.

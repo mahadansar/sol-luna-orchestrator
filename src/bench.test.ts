@@ -10,10 +10,41 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { ARMS, SUITES, peakOverlap, readTelemetry } from "./bench/run.js";
+import {
+  classifyTradeoff,
+  percentageDelta,
+  recommendThirdRepetition,
+  summarizeCell,
+} from "./bench/analysis.js";
+import { loadV2Campaign } from "./bench/analyze.js";
+import {
+  assertCampaignCompatibility,
+  collectCompletedCampaignCells,
+  planCampaignCells,
+  readCampaignShards,
+  type CampaignCell,
+  type LoadedCampaignShard,
+} from "./bench/campaign.js";
+import {
+  ARMS,
+  FORCED_CAMPAIGN_TASK_IDS,
+  SUITES,
+  assertStandardSpeedConfirmed,
+  buildRunCreditAccounting,
+  buildResultsSnapshot,
+  checkpointResultsShard,
+  currentCampaignCompatibility,
+  parseArgs,
+  peakOverlap,
+  readTelemetry,
+  type RunRecord,
+} from "./bench/run.js";
 import { SCALE_SOLUTIONS } from "./bench/scale-solutions.js";
 import { SCALE_TASKS } from "./bench/scale-tasks.js";
 import type { BenchTask } from "./bench/tasks.js";
+import { V2_SOLUTIONS } from "./bench/v2-solutions.js";
+import { V2_TASKS } from "./bench/v2-tasks.js";
+import { repriceHistoricalRecord, renderReport } from "./bench/report.js";
 
 // --- Concurrency measurement ------------------------------------------------
 
@@ -179,6 +210,8 @@ test("modern single lifecycle telemetry supersedes its legacy completion row", (
   const telemetry = readTelemetry(file, 0, 1_000_000, 1_100_000);
   assert.equal(telemetry.delegations.length, 1);
   assert.deepEqual(telemetry.efforts, ["high"]);
+  assert.equal(telemetry.delegations[0]?.taskId, "t1");
+  assert.equal(telemetry.delegations[0]?.workerThreadId, "thread_1");
   assert.equal(telemetry.delegations[0]?.usage?.outputTokens, 4);
 });
 
@@ -524,26 +557,677 @@ test("every module a fixture ships is named in its objective", () => {
   }
 });
 
-// --- Arm fairness -----------------------------------------------------------
+test("V2 has the predeclared workload mix and reference solutions", () => {
+  assert.equal(V2_TASKS.length, 8);
+  const counts = new Map<string, number>();
+  for (const task of V2_TASKS) {
+    counts.set(task.workloadClass, (counts.get(task.workloadClass) ?? 0) + 1);
+    assert.ok(V2_SOLUTIONS[task.id], `${task.id} has no V2 reference solution`);
+  }
+  assert.deepEqual(Object.fromEntries(counts), {
+    small: 2,
+    medium: 2,
+    "delegation-friendly": 3,
+    coupled: 1,
+  });
+});
 
-test("solo arms genuinely cannot delegate", () => {
-  for (const arm of ["solo-high", "solo-xhigh"] as const) {
-    assert.equal(ARMS[arm].delegation, false);
+test("the initial forced campaign contains one natural single and three parallel tasks", () => {
+  assert.equal(FORCED_CAMPAIGN_TASK_IDS.length, 4);
+  const tasks = FORCED_CAMPAIGN_TASK_IDS.map((id) =>
+    V2_TASKS.find((task) => task.id === id),
+  );
+  assert.ok(tasks.every(Boolean));
+  assert.deepEqual(
+    tasks.map((task) => task!.forcedDelegation.mode),
+    ["single", "parallel", "parallel", "parallel"],
+  );
+  assert.equal(
+    V2_TASKS.find((task) => task.workloadClass === "coupled")!.forcedDelegation.mode,
+    "none",
+  );
+});
+
+const metricRecord = (options: {
+  arm: RunRecord["arm"];
+  repetition: number;
+  passed?: boolean;
+  credits?: number | null;
+  duration?: number;
+  workers?: number;
+}): RunRecord => ({
+  benchmarkVersion: 2,
+  suite: "v2",
+  taskId: "fixture",
+  taskCategory: "medium",
+  workloadClass: "medium",
+  tier: "B",
+  streams: 1,
+  maxParallelConfigured: options.workers ? 1 : null,
+  arm: options.arm,
+  armLabel: String(options.arm),
+  supervisorEffort: "medium",
+  repetition: options.repetition,
+  startedAt: at(options.repetition),
+  durationSeconds: options.duration ?? 100,
+  passed: options.passed ?? true,
+  grades: [],
+  immutableViolations: [],
+  mutationCaught: null,
+  supervisorUsage: {
+    inputTokens: 100,
+    cachedInputTokens: 10,
+    outputTokens: 10,
+    reasoningOutputTokens: 2,
+  },
+  delegations: [],
+  workerCount: options.workers ?? 0,
+  workerEfforts: options.workers ? ["medium"] : [],
+  batches: [],
+  integrationConflicts: 0,
+  breakdown: { ...EMPTY_METRIC_BREAKDOWN },
+  verificationFailed: 0,
+  verificationRefused: 0,
+  workerFailures: [],
+  agentError: null,
+  creditAccounting: {
+    pricingProfileId: "benchmark-v2-chatgpt-plus-codex-credits-2026-08-24",
+    actualCredits: null,
+    participants: [
+      {
+        role: "supervisor",
+        taskId: null,
+        workerThreadId: null,
+        model: "gpt-5.6-sol",
+        effort: "medium",
+        inputTokens: 100,
+        cachedInputTokens: 10,
+        outputTokens: 10,
+        reasoningOutputTokens: 2,
+        cacheWriteInputTokens: null,
+        rateCardCredits: options.credits === undefined ? 10 : options.credits,
+        durationSeconds: null,
+      },
+    ],
+    rateCardCredits: {
+      total: options.credits === undefined ? 10 : options.credits,
+      sol: options.credits === undefined ? 10 : options.credits,
+      luna: 0,
+    },
+  },
+});
+
+const EMPTY_METRIC_BREAKDOWN = {
+  supervisorBeforeSeconds: null,
+  worktreeSetupSeconds: null,
+  workerWindowSeconds: null,
+  slowestWorkerSeconds: null,
+  integrationSeconds: null,
+  supervisorAfterSeconds: null,
+  peakConcurrency: null,
+};
+
+test("percentage deltas preserve direction and reject a zero baseline", () => {
+  assert.equal(percentageDelta(10, 7), -30);
+  assert.equal(percentageDelta(10, 12), 20);
+  assert.equal(percentageDelta(0, 1), null);
+  assert.equal(percentageDelta(null, 1), null);
+});
+
+test("supervisor-only accounting persists one participant and zero Luna credits", () => {
+  const accounting = buildRunCreditAccounting({
+    supervisorUsage: {
+      inputTokens: 1_000_000,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningOutputTokens: 0,
+      cacheWriteInputTokens: 40_000,
+    },
+    supervisorEffort: "medium",
+    delegations: [],
+  });
+  assert.equal(accounting.participants.length, 1);
+  assert.deepEqual(accounting.participants[0], {
+    role: "supervisor",
+    taskId: null,
+    workerThreadId: null,
+    model: "gpt-5.6-sol",
+    effort: "medium",
+    inputTokens: 1_000_000,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningOutputTokens: 0,
+    cacheWriteInputTokens: 40_000,
+    rateCardCredits: 125,
+    durationSeconds: null,
+  });
+  assert.deepEqual(accounting.rateCardCredits, { total: 125, sol: 125, luna: 0 });
+});
+
+test("individual Luna workers retain effort, identity, credits, and duration", () => {
+  const accounting = buildRunCreditAccounting({
+    supervisorUsage: {
+      inputTokens: 1_000_000,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+    },
+    supervisorEffort: "medium",
+    delegations: [
+      {
+        taskId: "t1",
+        workerThreadId: "thread-medium",
+        model: "gpt-5.6-luna",
+        effort: "medium",
+        verdict: "PASS",
+        attempt: 1,
+        durationSeconds: 70,
+        usage: {
+          inputTokens: 1_000_000,
+          cachedInputTokens: 0,
+          outputTokens: 0,
+          reasoningOutputTokens: 0,
+        },
+      },
+      {
+        taskId: "t2",
+        workerThreadId: "thread-high",
+        model: "gpt-5.6-luna",
+        effort: "high",
+        verdict: "PASS",
+        attempt: 1,
+        durationSeconds: 90,
+        usage: {
+          inputTokens: 0,
+          cachedInputTokens: 0,
+          outputTokens: 1_000_000,
+          reasoningOutputTokens: 300_000,
+        },
+      },
+    ],
+  });
+  const [, medium, high] = accounting.participants;
+  assert.equal(medium?.effort, "medium");
+  assert.equal(medium?.taskId, "t1");
+  assert.equal(medium?.workerThreadId, "thread-medium");
+  assert.equal(medium?.rateCardCredits, 5);
+  assert.equal(medium?.durationSeconds, 70);
+  assert.equal(high?.effort, "high");
+  assert.equal(high?.rateCardCredits, 30);
+  assert.equal(high?.durationSeconds, 90);
+  assert.deepEqual(accounting.rateCardCredits, { total: 160, sol: 125, luna: 35 });
+  assert.equal(
+    accounting.participants.reduce(
+      (total, participant) => total + (participant.rateCardCredits ?? 0),
+      0,
+    ),
+    accounting.rateCardCredits.total,
+  );
+});
+
+test("missing worker usage makes worker, Luna, and run credits unknown", () => {
+  const accounting = buildRunCreditAccounting({
+    supervisorUsage: {
+      inputTokens: 1_000_000,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+    },
+    supervisorEffort: "medium",
+    delegations: [
+      {
+        taskId: "t1",
+        workerThreadId: null,
+        model: "gpt-5.6-luna",
+        effort: "high",
+        verdict: "FAILED",
+        attempt: 1,
+        durationSeconds: null,
+        usage: null,
+      },
+    ],
+  });
+  assert.equal(accounting.participants[0]?.rateCardCredits, 125);
+  assert.equal(accounting.participants[1]?.rateCardCredits, null);
+  assert.equal(accounting.rateCardCredits.sol, 125);
+  assert.equal(accounting.rateCardCredits.luna, null);
+  assert.equal(accounting.rateCardCredits.total, null);
+});
+
+test("participant report exposes model, effort, credits, and separate durations", () => {
+  const record = metricRecord({
+    arm: "adaptive-medium",
+    repetition: 1,
+    duration: 100,
+    workers: 2,
+  });
+  record.delegations = [
+    {
+      taskId: "t1",
+      workerThreadId: "thread-1",
+      model: "gpt-5.6-luna",
+      effort: "medium",
+      verdict: "PASS",
+      attempt: 1,
+      durationSeconds: 70,
+      usage: { inputTokens: 1_000_000, cachedInputTokens: 0, outputTokens: 0 },
+    },
+    {
+      taskId: "t2",
+      workerThreadId: "thread-2",
+      model: "gpt-5.6-luna",
+      effort: "high",
+      verdict: "PASS",
+      attempt: 1,
+      durationSeconds: 90,
+      usage: { inputTokens: 0, cachedInputTokens: 0, outputTokens: 1_000_000 },
+    },
+  ];
+  record.creditAccounting = buildRunCreditAccounting({
+    supervisorUsage: {
+      inputTokens: 1_000_000,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+    },
+    supervisorEffort: "medium",
+    delegations: record.delegations,
+  });
+  const report = renderReport({ schema: 4, records: [record] });
+  assert.match(report, /gpt-5\.6-sol \/ medium[^\n]*125/);
+  assert.match(report, /task t1[^\n]*gpt-5\.6-luna \/ medium[^\n]*5[^\n]*70s/);
+  assert.match(report, /task t2[^\n]*gpt-5\.6-luna \/ high[^\n]*30[^\n]*90s/);
+  assert.match(report, /Run total[^\n]*160[^\n]*100s/);
+  assert.doesNotMatch(report, /Run total[^\n]*160s/);
+});
+
+test("schema 4 snapshots embed the versioned pricing profile", () => {
+  const record = metricRecord({ arm: "solo-medium", repetition: 1 });
+  const snapshot = buildResultsSnapshot({
+    startedAt: "2026-08-24T00-00-00-000Z",
+    reps: 2,
+    records: [record],
+    standardSpeedConfirmed: true,
+  });
+  assert.equal(snapshot.schema, 4);
+  assert.equal(snapshot.benchmarkVersion, 2);
+  assert.equal(snapshot.supervisorModel, "gpt-5.6-sol");
+  assert.equal(snapshot.supervisorEffort, "medium");
+  assert.deepEqual(snapshot.executionProfile, {
+    speedMode: "standard",
+    fastModeDisabled: true,
+    serviceTier: null,
+    serviceTierStatus: "not-exposed-by-codex-sdk",
+    sdkSpeedPinningSupported: false,
+    enforcement: "operator-confirmed-pre-run",
+  });
+  assert.equal(
+    snapshot.pricingProfile.profileId,
+    record.creditAccounting?.pricingProfileId,
+  );
+  assert.notEqual(snapshot.pricingProfile, snapshot.records[0]?.creditAccounting);
+  assert.match(renderReport(snapshot), /Codex speed: standard/);
+  assert.match(renderReport(snapshot), /SDK pinning: unsupported/);
+});
+
+test("Benchmark V2 refuses to start or snapshot without standard-speed confirmation", () => {
+  assert.throws(() => assertStandardSpeedConfirmed(false), /Disable Fast mode/);
+  assert.doesNotThrow(() => assertStandardSpeedConfirmed(true));
+  assert.throws(
+    () =>
+      buildResultsSnapshot({
+        startedAt: "unconfirmed",
+        reps: 2,
+        records: [],
+        standardSpeedConfirmed: false,
+      }),
+    /confirm-standard-speed/,
+  );
+});
+
+test("campaign arguments default to the 32-run baseline and preserve campaign IDs", () => {
+  assert.deepEqual(parseArgs([]).arms, ["solo-medium", "adaptive-medium"]);
+  assert.equal(parseArgs([]).reps, 2);
+  assert.equal(parseArgs([]).standardSpeedConfirmed, false);
+  assert.equal(parseArgs(["--confirm-standard-speed"]).standardSpeedConfirmed, true);
+  assert.equal(parseArgs([]).resume, false);
+  assert.equal(parseArgs(["--resume"]).resume, true);
+  assert.equal(
+    parseArgs(["--campaign", "benchmark-v2-initial"]).campaignId,
+    "benchmark-v2-initial",
+  );
+  assert.deepEqual(parseArgs(["--arms", "forced-delegation"]).arms, [
+    "forced-delegation",
+  ]);
+});
+
+const campaignCell = (taskId: string, arm: string, repetition: number): CampaignCell => ({
+  campaignId: "campaign-a",
+  taskId,
+  arm,
+  repetition,
+});
+
+const loadedShard = (file: string, records: RunRecord[]): LoadedCampaignShard => ({
+  file,
+  data: JSON.parse(
+    JSON.stringify(
+      buildResultsSnapshot({
+        startedAt: file,
+        campaignId: "campaign-a",
+        reps: 2,
+        records,
+        standardSpeedConfirmed: true,
+      }),
+    ),
+  ) as LoadedCampaignShard["data"],
+});
+
+test("fresh and non-overlapping campaign phases proceed without resume", () => {
+  const freshPlanned = [campaignCell("fixture", "solo-medium", 1)];
+  const fresh = planCampaignCells({
+    planned: freshPlanned,
+    completed: [],
+    resume: false,
+  });
+  assert.equal(fresh.completed.length, 0);
+  assert.deepEqual(fresh.remaining, freshPlanned);
+
+  const existing = [
+    campaignCell("fixture", "solo-medium", 1),
+    campaignCell("fixture", "adaptive-medium", 1),
+  ];
+  const forced = [campaignCell("fixture", "forced-delegation", 1)];
+  const secondPhase = planCampaignCells({
+    planned: forced,
+    completed: existing,
+    resume: false,
+  });
+  assert.deepEqual(secondPhase.remaining, forced);
+  assert.equal(secondPhase.completed.length, 0);
+});
+
+test("ordinary reruns refuse overlap while resume selects only missing cells", () => {
+  const planned = [
+    campaignCell("fixture", "solo-medium", 1),
+    campaignCell("fixture", "solo-medium", 2),
+  ];
+  const completed = [planned[0]!];
+  assert.throws(
+    () => planCampaignCells({ planned, completed, resume: false }),
+    /Re-run with --resume/,
+  );
+  const resumed = planCampaignCells({ planned, completed, resume: true });
+  assert.deepEqual(resumed.completed, [planned[0]]);
+  assert.deepEqual(resumed.remaining, [planned[1]]);
+});
+
+test("failed records are completed evidence and a complete resume is a no-op", () => {
+  const failed = metricRecord({
+    arm: "solo-medium",
+    repetition: 1,
+    passed: false,
+  });
+  const shards = [loadedShard("failed.v2.json", [failed])];
+  const completed = collectCompletedCampaignCells(shards, "campaign-a");
+  assert.deepEqual(completed, [campaignCell("fixture", "solo-medium", 1)]);
+  const resumed = planCampaignCells({
+    planned: completed,
+    completed,
+    resume: true,
+  });
+  assert.equal(resumed.completed.length, 1);
+  assert.equal(resumed.remaining.length, 0);
+});
+
+test("duplicate existing campaign cells are rejected across shards", () => {
+  const record = metricRecord({ arm: "solo-medium", repetition: 1 });
+  const shards = [
+    loadedShard("first.v2.json", [record]),
+    loadedShard("second.v2.json", [record]),
+  ];
+  assert.throws(
+    () => collectCompletedCampaignCells(shards, "campaign-a"),
+    /Duplicate existing benchmark cell/,
+  );
+});
+
+test("campaign startup rejects incompatible pricing and execution profiles", () => {
+  const record = metricRecord({ arm: "solo-medium", repetition: 1 });
+  const pricingMismatch = loadedShard("pricing.v2.json", [record]);
+  (pricingMismatch.data.pricingProfile as { profileId: string }).profileId = "wrong";
+  assert.throws(
+    () => assertCampaignCompatibility([pricingMismatch], currentCampaignCompatibility()),
+    /pricingProfile/,
+  );
+
+  const executionMismatch = loadedShard("execution.v2.json", [record]);
+  (executionMismatch.data.executionProfile as { speedMode: string }).speedMode = "fast";
+  assert.throws(
+    () =>
+      assertCampaignCompatibility([executionMismatch], currentCampaignCompatibility()),
+    /executionProfile/,
+  );
+});
+
+test("checkpointing atomically replaces only the current shard", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bench-checkpoint-"));
+  try {
+    const historical = path.join(directory, "historical.json");
+    const current = path.join(directory, "current.v2.json");
+    fs.writeFileSync(historical, "historical evidence", "utf8");
+    const first = metricRecord({ arm: "solo-medium", repetition: 1 });
+    const second = metricRecord({ arm: "solo-medium", repetition: 2 });
+    checkpointResultsShard(
+      current,
+      buildResultsSnapshot({
+        startedAt: "checkpoint",
+        campaignId: "campaign-a",
+        reps: 2,
+        records: [first],
+        standardSpeedConfirmed: true,
+      }),
+    );
+    assert.equal(JSON.parse(fs.readFileSync(current, "utf8")).records.length, 1);
+    checkpointResultsShard(
+      current,
+      buildResultsSnapshot({
+        startedAt: "checkpoint",
+        campaignId: "campaign-a",
+        reps: 2,
+        records: [first, second],
+        standardSpeedConfirmed: true,
+      }),
+    );
+    const secondCheckpoint = fs.readFileSync(current, "utf8");
+    assert.equal(JSON.parse(secondCheckpoint).records.length, 2);
+    assert.equal(fs.readFileSync(historical, "utf8"), "historical evidence");
+
+    assert.throws(
+      () =>
+        checkpointResultsShard(
+          current,
+          buildResultsSnapshot({
+            startedAt: "failed-checkpoint",
+            campaignId: "campaign-a",
+            reps: 2,
+            records: [first],
+            standardSpeedConfirmed: true,
+          }),
+          {
+            beforeReplace: () => {
+              throw new Error("simulated failure before replacement");
+            },
+          },
+        ),
+      /simulated failure/,
+    );
+    assert.equal(fs.readFileSync(current, "utf8"), secondCheckpoint);
+    assert.equal(
+      fs.readdirSync(directory).filter((name) => name.endsWith(".tmp")).length,
+      0,
+    );
+
+    const unserializable = buildResultsSnapshot({
+      startedAt: "unserializable",
+      campaignId: "campaign-a",
+      reps: 2,
+      records: [first],
+      standardSpeedConfirmed: true,
+    }) as ReturnType<typeof buildResultsSnapshot> & { circular?: unknown };
+    unserializable.circular = unserializable;
+    assert.throws(() => checkpointResultsShard(current, unserializable), /circular/i);
+    assert.equal(fs.readFileSync(current, "utf8"), secondCheckpoint);
+
+    fs.writeFileSync(
+      path.join(directory, ".interrupted.v2.json.123.deadbeef.tmp"),
+      "{partial",
+      "utf8",
+    );
+    const discovered = readCampaignShards(directory, "campaign-a");
+    assert.deepEqual(
+      discovered.map(({ file }) => path.basename(file)),
+      ["current.v2.json"],
+    );
+    assert.equal(fs.readFileSync(historical, "utf8"), "historical evidence");
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
   }
 });
 
+test("campaign analysis combines only matching campaign and pricing profiles", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bench-v2-campaign-"));
+  try {
+    const first = buildResultsSnapshot({
+      startedAt: "first",
+      campaignId: "campaign-a",
+      reps: 2,
+      records: [metricRecord({ arm: "solo-medium", repetition: 1 })],
+      standardSpeedConfirmed: true,
+    });
+    const second = buildResultsSnapshot({
+      startedAt: "second",
+      campaignId: "campaign-a",
+      reps: 2,
+      records: [metricRecord({ arm: "adaptive-medium", repetition: 1 })],
+      standardSpeedConfirmed: true,
+    });
+    fs.writeFileSync(path.join(directory, "a.json"), JSON.stringify(first));
+    fs.writeFileSync(path.join(directory, "b.json"), JSON.stringify(second));
+    assert.equal(loadV2Campaign(directory, "campaign-a").records.length, 2);
+
+    const mismatched = JSON.parse(JSON.stringify(second));
+    mismatched.pricingProfile.profileId = "different-profile";
+    fs.writeFileSync(path.join(directory, "b.json"), JSON.stringify(mismatched));
+    assert.throws(() => loadV2Campaign(directory, "campaign-a"), /pricingProfile/);
+
+    mismatched.pricingProfile.profileId = first.pricingProfile.profileId;
+    mismatched.executionProfile.speedMode = "fast";
+    fs.writeFileSync(path.join(directory, "b.json"), JSON.stringify(mismatched));
+    assert.throws(() => loadV2Campaign(directory, "campaign-a"), /executionProfile/);
+
+    mismatched.executionProfile = first.executionProfile;
+    mismatched.records = first.records;
+    fs.writeFileSync(path.join(directory, "b.json"), JSON.stringify(mismatched));
+    assert.throws(
+      () => loadV2Campaign(directory, "campaign-a"),
+      /Duplicate existing benchmark cell/,
+    );
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("trade-off classification covers all four Pareto quadrants", () => {
+  const baseline = summarizeCell([
+    metricRecord({ arm: "solo-medium", repetition: 1, credits: 10, duration: 100 }),
+  ]);
+  const classify = (credits: number, duration: number) =>
+    classifyTradeoff(
+      baseline,
+      summarizeCell([
+        metricRecord({ arm: "adaptive-medium", repetition: 1, credits, duration }),
+      ]),
+    );
+  assert.equal(classify(9, 90), "cheaper + faster");
+  assert.equal(classify(9, 110), "cheaper + slower");
+  assert.equal(classify(11, 90), "more expensive + faster");
+  assert.equal(classify(11, 110), "more expensive + slower / dominated");
+});
+
+test("correctness outranks cost and latency in classification", () => {
+  const baseline = summarizeCell([
+    metricRecord({ arm: "solo-medium", repetition: 1, passed: true }),
+  ]);
+  const failedCheapFast = summarizeCell([
+    metricRecord({
+      arm: "adaptive-medium",
+      repetition: 1,
+      passed: false,
+      credits: 1,
+      duration: 1,
+    }),
+  ]);
+  assert.equal(classifyTradeoff(baseline, failedCheapFast), "correctness regression");
+});
+
+test("third-repetition rules flag inconsistent routing and close credit deltas", () => {
+  const baseline = [
+    metricRecord({ arm: "solo-medium", repetition: 1, credits: 10 }),
+    metricRecord({ arm: "solo-medium", repetition: 2, credits: 10 }),
+  ];
+  const adaptive = [
+    metricRecord({ arm: "adaptive-medium", repetition: 1, credits: 9.5, workers: 0 }),
+    metricRecord({ arm: "adaptive-medium", repetition: 2, credits: 10, workers: 2 }),
+  ];
+  const result = recommendThirdRepetition(adaptive, baseline);
+  assert.ok(result?.reasons.includes("routing changed between repetitions"));
+  assert.ok(result?.reasons.includes("worker count changed materially"));
+  assert.ok(result?.reasons.includes("credit delta versus Solo is within 10%"));
+});
+
+test("historical repricing preserves unknown Luna usage and report compatibility", () => {
+  const historical = metricRecord({ arm: "solo-high", repetition: 1 });
+  delete historical.creditAccounting;
+  historical.delegations = [
+    {
+      model: "gpt-5.6-luna",
+      effort: "high",
+      verdict: "PASS",
+      attempt: 1,
+      durationSeconds: 1,
+      usage: {
+        inputTokens: 0,
+        cachedInputTokens: 0,
+        outputTokens: 12,
+        reasoningOutputTokens: 0,
+      },
+    },
+  ];
+  const repriced = repriceHistoricalRecord(historical);
+  assert.equal(repriced.creditAccounting?.rateCardCredits.sol !== null, true);
+  assert.equal(repriced.creditAccounting?.rateCardCredits.luna, null);
+  assert.equal(repriced.creditAccounting?.rateCardCredits.total, null);
+  assert.match(
+    renderReport({ schema: 3, records: [historical] }, { repriceHistorical: true }),
+    /Historical backfill/,
+  );
+});
+
+// --- Arm fairness -----------------------------------------------------------
+
+test("solo arms genuinely cannot delegate", () => {
+  assert.equal(ARMS["solo-medium"].delegation, false);
+  assert.equal(ARMS["solo-medium"].effort, "medium");
+});
+
 test("the free-choice arm neither mandates nor forbids delegation", () => {
-  const guidance = ARMS.adaptive.guidance;
-  assert.equal(ARMS.adaptive.delegation, true);
+  const guidance = ARMS["adaptive-medium"].guidance;
+  assert.equal(ARMS["adaptive-medium"].delegation, true);
   assert.ok(!/MUST delegate/i.test(guidance));
   assert.ok(!/do not delegate/i.test(guidance));
+  assert.match(guidance, /Zero workers is valid/i);
 });
 
 test("every arm runs the supervisor at a stated effort", () => {
   for (const [name, spec] of Object.entries(ARMS)) {
-    assert.ok(
-      ["medium", "high", "xhigh", "max"].includes(spec.effort),
-      `${name} has an unexpected effort`,
-    );
+    assert.equal(spec.effort, "medium", `${name} must fix Sol at Medium`);
   }
 });

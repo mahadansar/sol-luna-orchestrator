@@ -1,333 +1,300 @@
-/**
- * Summarise raw benchmark records into a human-readable report.
- *
- * Reports only what was measured. Anything the integration cannot observe is
- * stated as not measurable rather than estimated. Interpretation is kept out of
- * the generated tables entirely — it belongs in `bench/RESULTS.md`, written by a
- * human who can be held to it.
- *
- * Usage: node dist/bench/report.js [results.json]
- */
+/** Generate a correctness -> credits -> latency Benchmark V2 report. */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Arm, Breakdown, RunRecord, SuiteName } from "./run.js";
+import {
+  BENCHMARK_V2_PRICING_PROFILE,
+  type BenchmarkUsage,
+  type CreditPricingProfile,
+} from "./credits.js";
+import {
+  compareWithBaseline,
+  groupCells,
+  recommendThirdRepetition,
+  type CellSummary,
+} from "./analysis.js";
+import {
+  buildRunCreditAccounting,
+  type BenchmarkResultsSnapshot,
+  type ParticipantAccounting,
+  type RunRecord,
+} from "./run.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RESULTS_DIR = path.resolve(HERE, "..", "..", "bench", "results");
 
-interface ResultsFile {
-  schema: number;
-  suite?: SuiteName;
-  supervisorModel: string;
+export interface ResultsFile {
+  schema?: number;
+  benchmarkVersion?: number;
+  suite?: string;
+  supervisorModel?: string;
   supervisorEffort?: string;
-  startedAt: string;
-  platform: string;
-  nodeVersion: string;
-  reps: number;
+  executionProfile?: BenchmarkResultsSnapshot["executionProfile"];
+  startedAt?: string;
+  platform?: string;
+  nodeVersion?: string;
+  reps?: number;
+  pricingProfile?: CreditPricingProfile;
+  campaignId?: string;
   records: RunRecord[];
 }
 
-const median = (values: number[]): number => {
-  if (values.length === 0) return Number.NaN;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!;
-};
+/** Old worker rows with output-only data used zero sentinels for unknown fields. */
+export const legacyIncompleteUsage = (
+  usage: BenchmarkUsage | null | undefined,
+): boolean =>
+  usage !== null &&
+  usage !== undefined &&
+  usage.inputTokens === 0 &&
+  usage.cachedInputTokens === 0 &&
+  (usage.reasoningOutputTokens ?? 0) === 0 &&
+  usage.outputTokens > 0;
 
-const sum = (values: number[]): number => values.reduce((a, b) => a + b, 0);
-const round = (value: number): string =>
-  Number.isNaN(value) ? "-" : String(Math.round(value));
-
-interface ArmSummary {
-  runs: number;
-  passed: number;
-  durations: number[];
-  supervisorOutput: number[];
-  workerOutput: number[];
-  totalOutput: number[];
-  totalInput: number[];
-  workerCounts: number[];
-  efforts: string[];
-  conflicts: number;
-}
-
-function summarize(records: RunRecord[]): ArmSummary {
+/** Explicit opt-in repricing for old immutable JSON; the source file is never changed. */
+export function repriceHistoricalRecord(
+  record: RunRecord,
+  profile: CreditPricingProfile = BENCHMARK_V2_PRICING_PROFILE,
+): RunRecord {
+  if (record.creditAccounting) return record;
+  const delegations = (record.delegations ?? []).map((delegation) => ({
+    ...delegation,
+    usage: legacyIncompleteUsage(delegation.usage) ? null : delegation.usage,
+  }));
   return {
-    runs: records.length,
-    passed: records.filter((record) => record.passed).length,
-    durations: records.map((record) => record.durationSeconds),
-    supervisorOutput: records.map((record) => record.supervisorUsage?.outputTokens ?? 0),
-    workerOutput: records.map((record) =>
-      sum(record.delegations.map((delegation) => delegation.usage?.outputTokens ?? 0)),
-    ),
-    totalOutput: records.map(
-      (record) =>
-        (record.supervisorUsage?.outputTokens ?? 0) +
-        sum(record.delegations.map((delegation) => delegation.usage?.outputTokens ?? 0)),
-    ),
-    totalInput: records.map(
-      (record) =>
-        (record.supervisorUsage?.inputTokens ?? 0) +
-        sum(record.delegations.map((delegation) => delegation.usage?.inputTokens ?? 0)),
-    ),
-    workerCounts: records.map((record) => record.workerCount ?? 0),
-    efforts: records.flatMap((record) => record.workerEfforts ?? []),
-    conflicts: sum(records.map((record) => record.integrationConflicts ?? 0)),
+    ...record,
+    creditAccounting: buildRunCreditAccounting({
+      supervisorUsage: record.supervisorUsage,
+      supervisorEffort: record.supervisorEffort,
+      delegations,
+      pricingProfile: profile,
+    }),
   };
 }
 
+const number = (value: number | null, suffix = ""): string =>
+  value === null ? "unknown" : `${Math.round(value * 100) / 100}${suffix}`;
+const percent = (value: number | null): string =>
+  value === null ? "unknown" : `${value >= 0 ? "+" : ""}${Math.round(value)}%`;
+
+function baselineFor(cells: readonly CellSummary[], taskId: string): CellSummary | null {
+  return (
+    cells.find((cell) => cell.taskId === taskId && cell.arm === "solo-medium") ?? null
+  );
+}
+
+const participantLabel = (participant: ParticipantAccounting): string => {
+  if (participant.role === "supervisor") return "Supervisor";
+  const identifiers = [
+    participant.taskId ? `task ${participant.taskId}` : null,
+    participant.workerThreadId ? `thread ${participant.workerThreadId}` : null,
+  ].filter((value): value is string => value !== null);
+  return identifiers.length > 0
+    ? `Worker (${identifiers.join(", ")})`
+    : "Worker (identifier unavailable)";
+};
+
+export function renderReport(
+  input: ResultsFile,
+  options: { repriceHistorical?: boolean; sourceName?: string } = {},
+): string {
+  const isV2 = input.schema === 4 || input.benchmarkVersion === 2;
+  const records = options.repriceHistorical
+    ? input.records.map((record) => repriceHistoricalRecord(record))
+    : input.records;
+  const cells = groupCells(records);
+  const profile =
+    input.pricingProfile ??
+    (options.repriceHistorical ? BENCHMARK_V2_PRICING_PROFILE : undefined);
+  const lines: string[] = ["# Benchmark results", ""];
+  if (options.sourceName) lines.push(`Source: \`${options.sourceName}\``, "");
+  lines.push(
+    `Schema: ${input.schema ?? "historical"} | suite: ${input.suite ?? "historical"} | ` +
+      `campaign: ${input.campaignId ?? "historical"} | supervisor: ` +
+      `\`${input.supervisorModel ?? "unknown"}\` / ${input.supervisorEffort ?? "historical"}`,
+    "",
+  );
+  if (input.executionProfile) {
+    const execution = input.executionProfile;
+    lines.push(
+      `Codex speed: ${execution.speedMode} (Fast mode disabled: ${execution.fastModeDisabled ? "yes" : "no"}; ` +
+        `service tier: ${execution.serviceTier ?? "unavailable"} (${execution.serviceTierStatus}); ` +
+        `SDK pinning: ${execution.sdkSpeedPinningSupported ? "supported" : "unsupported"}; enforcement: ${execution.enforcement}).`,
+      "",
+    );
+  } else if (isV2) {
+    lines.push("Codex speed: unknown (execution profile missing).", "");
+  }
+  if (profile) {
+    lines.push(
+      `Credit profile: \`${profile.profileId}\` (snapshot ${profile.snapshotDate}; ` +
+        `[official rate card](${profile.sourceUrl})).`,
+      "",
+    );
+  } else {
+    lines.push(
+      "Credit profile: unknown. Historical rows are not silently repriced; pass `--reprice-current` for an explicitly labelled V2-profile estimate.",
+      "",
+    );
+  }
+  if (!isV2 && options.repriceHistorical) {
+    lines.push(
+      "> Historical backfill: credits below are estimates under the displayed V2 snapshot, not actual billed credits and not the rate necessarily applicable when the run occurred.",
+      "",
+    );
+  }
+
+  lines.push("## Primary comparison", "");
+  lines.push(
+    "| Task | Strategy | Pass | Credits | Basis | Time | Credit Δ | Time Δ | Trade-off | Delegated | Workers |",
+    "|---|---|---:|---:|---|---:|---:|---:|---|---:|---:|",
+  );
+  const armOrder = ["solo-medium", "adaptive-medium", "forced-delegation"];
+  const ordered = [...cells].sort(
+    (a, b) =>
+      a.taskId.localeCompare(b.taskId) ||
+      armOrder.indexOf(a.arm) - armOrder.indexOf(b.arm),
+  );
+  for (const cell of ordered) {
+    const baseline = baselineFor(cells, cell.taskId);
+    const comparison =
+      baseline && cell.arm !== "solo-medium" ? compareWithBaseline(baseline, cell) : null;
+    lines.push(
+      `| ${cell.taskId} | ${cell.arm} | ${cell.passed}/${cell.runs} | ` +
+        `${number(cell.medianCredits)} | ${cell.creditBasis} | ${number(cell.medianDurationSeconds, "s")} | ` +
+        `${comparison ? percent(comparison.creditDeltaPercent) : "baseline"} | ` +
+        `${comparison ? percent(comparison.latencyDeltaPercent) : "baseline"} | ` +
+        `${comparison?.classification ?? "baseline"} | ` +
+        `${Math.round(cell.delegationRate * 100)}% | ${number(cell.medianWorkers)} |`,
+    );
+  }
+  lines.push("");
+
+  lines.push("## Credits by run", "");
+  lines.push(
+    "| Task | Strategy | Rep | Actual | Rate-card total | Sol | Luna | Profile |",
+    "|---|---|---:|---:|---:|---:|---:|---|",
+  );
+  for (const record of records) {
+    const accounting = record.creditAccounting;
+    lines.push(
+      `| ${record.taskId} | ${record.arm} | ${record.repetition} | ` +
+        `${number(accounting?.actualCredits ?? null)} | ` +
+        `${number(accounting?.rateCardCredits.total ?? null)} | ` +
+        `${number(accounting?.rateCardCredits.sol ?? null)} | ` +
+        `${number(accounting?.rateCardCredits.luna ?? null)} | ` +
+        `${accounting?.pricingProfileId ?? "unknown"} |`,
+    );
+  }
+  lines.push("");
+
+  lines.push("## Routing and stragglers", "");
+  lines.push(
+    "| Task | Strategy | Worker counts | Efforts | Peak concurrency | Slowest workers |",
+    "|---|---|---|---|---:|---|",
+  );
+  for (const cell of ordered) {
+    const rows = records.filter(
+      (record) => record.taskId === cell.taskId && record.arm === cell.arm,
+    );
+    const slowest = rows.map((record) => record.breakdown?.slowestWorkerSeconds ?? null);
+    lines.push(
+      `| ${cell.taskId} | ${cell.arm} | ${cell.workerCounts.join(", ")} | ` +
+        `${cell.workerEfforts.length ? cell.workerEfforts.join(", ") : "-"} | ` +
+        `${number(cell.peakConcurrency)} | ${slowest.map((value) => number(value, "s")).join(", ")} |`,
+    );
+  }
+  lines.push("");
+
+  lines.push("## Participant accounting by run", "");
+  lines.push(
+    "| Task | Strategy | Rep | Participant | Role | Model / effort | Input | Cached | Output | Reasoning | Cache write | Credits | Worker duration | End-to-end |",
+    "|---|---|---:|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+  );
+  for (const record of records) {
+    const accounting = record.creditAccounting;
+    for (const participant of accounting?.participants ?? []) {
+      lines.push(
+        `| ${record.taskId} | ${record.arm} | ${record.repetition} | ${participantLabel(participant)} | ` +
+          `${participant.role} | ${participant.model} / ${participant.effort} | ` +
+          `${number(participant.inputTokens)} | ${number(participant.cachedInputTokens)} | ` +
+          `${number(participant.outputTokens)} | ${number(participant.reasoningOutputTokens)} | ` +
+          `${number(participant.cacheWriteInputTokens)} | ${number(participant.rateCardCredits)} | ` +
+          `${number(participant.durationSeconds, "s")} | - |`,
+      );
+    }
+    lines.push(
+      `| ${record.taskId} | ${record.arm} | ${record.repetition} | Sol total | total | - | - | - | - | - | - | ` +
+        `${number(accounting?.rateCardCredits.sol ?? null)} | - | - |`,
+      `| ${record.taskId} | ${record.arm} | ${record.repetition} | Luna total | total | - | - | - | - | - | - | ` +
+        `${number(accounting?.rateCardCredits.luna ?? null)} | - | - |`,
+      `| ${record.taskId} | ${record.arm} | ${record.repetition} | Run total | total | - | - | - | - | - | - | ` +
+        `${number(accounting?.rateCardCredits.total ?? null)} | - | ${number(record.durationSeconds, "s")} |`,
+    );
+  }
+  lines.push("");
+
+  lines.push("## Third-repetition recommendations", "");
+  const recommendations = ordered
+    .map((cell) => {
+      const rows = records.filter(
+        (record) => record.taskId === cell.taskId && record.arm === cell.arm,
+      );
+      const baseline = records.filter(
+        (record) => record.taskId === cell.taskId && record.arm === "solo-medium",
+      );
+      return recommendThirdRepetition(rows, baseline);
+    })
+    .filter((value) => value !== null);
+  if (recommendations.length === 0) {
+    lines.push("None under the predeclared rules.", "");
+  } else {
+    for (const recommendation of recommendations) {
+      lines.push(
+        `- \`${recommendation.taskId}\` / ${recommendation.arm}: ${recommendation.reasons.join("; ")}`,
+      );
+    }
+    lines.push("");
+  }
+
+  lines.push("## Measurement notes", "");
+  lines.push(
+    "- Correctness is determined after the model turn by deterministic grade commands, immutable-file checks, and mutation checks where applicable.",
+    "- `rateCardCredits` is calculated from the snapshotted official rate card. `actualCredits` remains null unless an authoritative per-run value becomes available.",
+    "- Codex SDK `inputTokens` includes cached input, so cached tokens are removed from the full-rate input portion and charged once at the cached-input rate. Cache writes are uncharged.",
+    "- Output tokens already include reasoning output; reasoning tokens are retained as diagnostics and are not charged twice.",
+    "- Wall-clock covers the full supervisor turn, including delegation setup, workers, integration, review, and verification.",
+    "- Participant worker durations remain individual execution times. They are never summed or substituted for end-to-end wall-clock; supervisor participant duration stays unavailable because the harness does not observe a single authoritative supervisor-only duration.",
+    "- Raw tokens, worker effort, concurrency, duration, and straggler fields are supporting diagnostics rather than the headline economic metric.",
+    "- Two repetitions are directional evidence. A third is recommended only for the conditions listed above; no statistical significance is claimed.",
+  );
+  return lines.join("\n");
+}
+
 function findLatestResults(): string {
-  const files = fs
+  const latest = fs
     .readdirSync(RESULTS_DIR)
     .filter((name) => name.endsWith(".json"))
-    .sort();
-  const latest = files.at(-1);
+    .sort()
+    .at(-1);
   if (!latest) throw new Error(`No results found in ${RESULTS_DIR}`);
   return path.join(RESULTS_DIR, latest);
 }
 
 function main(): void {
   const argv = process.argv.slice(2);
-  const explicit = argv.find((arg) => !arg.startsWith("--"));
+  const explicit = argv.find((argument) => !argument.startsWith("--"));
   const file = explicit ? path.resolve(explicit) : findLatestResults();
   const data = JSON.parse(fs.readFileSync(file, "utf8")) as ResultsFile;
-
-  // Arm order is fixed so tables stay comparable between runs.
-  const armOrder = [
-    "solo-high",
-    "solo-xhigh",
-    "adaptive",
-    "seq",
-    "par",
-    "seq-forced",
-    "par-forced",
-    "solo",
-    "orchestrated",
-  ];
-  const armsPresent = [
-    ...new Set(data.records.map((record) => record.arm as string)),
-  ].sort((a, b) => armOrder.indexOf(a) - armOrder.indexOf(b));
-
-  const labelFor = (arm: string): string =>
-    data.records.find((record) => record.arm === arm)?.armLabel ?? arm;
-
-  const lines: string[] = [];
-  lines.push("# Benchmark results");
-  lines.push("");
-  lines.push(`Source: \`${path.basename(file)}\``);
-  lines.push(
-    `Suite: ${data.suite ?? "micro"} | supervisor \`${data.supervisorModel}\` | ` +
-      `${data.reps} repetition(s) per cell | Node ${data.nodeVersion} on ${data.platform}`,
-  );
-  lines.push("");
-
-  lines.push("## Overall");
-  lines.push("");
-  lines.push(
-    "| Arm | Sol effort | Runs | Passed | Delegated | Median wall-clock | Range | Median output tokens | Median input tokens | Median workers | Peak concurrency |",
-  );
-  lines.push("|---|---|---|---|---|---|---|---|---|---|---|");
-
-  for (const arm of armsPresent) {
-    const records = data.records.filter((record) => record.arm === arm);
-    if (records.length === 0) continue;
-    const stats = summarize(records);
-    // How often the supervisor actually delegated. In the non-mandated arms it
-    // sometimes decides the work is not worth handing off, which makes the arm
-    // measure something other than delegation — worth stating, not hiding.
-    const delegated = records.filter((record) => (record.workerCount ?? 0) > 0).length;
-    const peaks = records
-      .map((record) => record.breakdown?.peakConcurrency)
-      .filter((value): value is number => typeof value === "number");
-
-    lines.push(
-      `| ${labelFor(arm)} | ${records[0]!.supervisorEffort ?? "-"} | ${stats.runs} | ` +
-        `${stats.passed}/${stats.runs} | ${delegated}/${stats.runs} | ` +
-        `${round(median(stats.durations))}s | ` +
-        `${Math.min(...stats.durations)}-${Math.max(...stats.durations)}s | ` +
-        `${round(median(stats.totalOutput))} | ${round(median(stats.totalInput))} | ` +
-        `${round(median(stats.workerCounts))} | ` +
-        `${peaks.length > 0 ? round(median(peaks)) : "n/a"} |`,
-    );
-  }
-  lines.push("");
-
-  // --- Where the wall-clock went -------------------------------------------
-  const withBreakdown = data.records.filter(
-    (record) =>
-      record.breakdown?.workerWindowSeconds !== null &&
-      record.breakdown?.workerWindowSeconds !== undefined,
-  );
-  if (withBreakdown.length > 0) {
-    lines.push("## Where orchestrated time went");
-    lines.push("");
-    lines.push(
-      "| Task | Arm | Rep | Total | Sol before | Worktree setup | Worker window | Slowest worker | Integration | Sol after | Peak |",
-    );
-    lines.push("|---|---|---|---|---|---|---|---|---|---|---|");
-    const cell = (value: number | null | undefined): string =>
-      value === null || value === undefined ? "unknown" : `${value}s`;
-    for (const record of withBreakdown) {
-      const b: Breakdown = record.breakdown;
-      lines.push(
-        `| ${record.taskId} | ${record.arm} | ${record.repetition} | ${record.durationSeconds}s | ` +
-          `${cell(b.supervisorBeforeSeconds)} | ${cell(b.worktreeSetupSeconds)} | ` +
-          `${cell(b.workerWindowSeconds)} | ${cell(b.slowestWorkerSeconds)} | ` +
-          `${cell(b.integrationSeconds)} | ${cell(b.supervisorAfterSeconds)} | ` +
-          `${b.peakConcurrency ?? "unknown"} |`,
-      );
-    }
-    lines.push("");
-  }
-
-  lines.push("## By task");
-  lines.push("");
-  lines.push(
-    "| Task | Arm | Passed | Median wall-clock | Workers | Efforts chosen | Conflicts |",
-  );
-  lines.push("|---|---|---|---|---|---|---|");
-
-  for (const taskId of [...new Set(data.records.map((record) => record.taskId))]) {
-    for (const arm of armsPresent) {
-      const records = data.records.filter(
-        (record) => record.taskId === taskId && record.arm === arm,
-      );
-      if (records.length === 0) continue;
-      const stats = summarize(records);
-      const efforts =
-        stats.efforts.length > 0 ? [...new Set(stats.efforts)].join(", ") : "-";
-      lines.push(
-        `| ${taskId} | ${arm} | ${stats.passed}/${stats.runs} | ` +
-          `${round(median(stats.durations))}s | ${round(median(stats.workerCounts))} | ` +
-          `${efforts} | ${stats.conflicts} |`,
-      );
-    }
-  }
-  lines.push("");
-
-  const failures = data.records.filter((record) => !record.passed);
-  lines.push("## Failures");
-  lines.push("");
-  if (failures.length === 0) {
-    lines.push("None.");
-  } else {
-    for (const failure of failures) {
-      const reasons: string[] = [];
-      for (const grade of failure.grades) {
-        if (!grade.passed) reasons.push(`${grade.label} (exit ${grade.exitCode})`);
-      }
-      if (failure.immutableViolations.length > 0) {
-        reasons.push(
-          `modified protected file(s): ${failure.immutableViolations.join(", ")}`,
-        );
-      }
-      if (failure.mutationCaught === false) {
-        reasons.push("tests did not catch a broken implementation");
-      }
-      if (failure.agentError) reasons.push(`agent error: ${failure.agentError}`);
-      lines.push(
-        `- \`${failure.taskId}\` / ${failure.arm} / rep ${failure.repetition}: ` +
-          (reasons.join("; ") || "unknown"),
-      );
-    }
-  }
-  lines.push("");
-
-  const allEfforts = data.records.flatMap((record) => record.workerEfforts ?? []);
-  lines.push("## Worker effort selection");
-  lines.push("");
-  if (allEfforts.length === 0) {
-    lines.push("No delegations recorded.");
-  } else {
-    const counts = new Map<string, number>();
-    for (const effort of allEfforts) counts.set(effort, (counts.get(effort) ?? 0) + 1);
-    lines.push("| Effort | Times chosen |");
-    lines.push("|---|---|");
-    for (const effort of ["medium", "high", "xhigh", "max"]) {
-      if (counts.has(effort)) lines.push(`| ${effort} | ${counts.get(effort)} |`);
-    }
-  }
-  lines.push("");
-
-  // --- Per-run usage breakdown ---------------------------------------------
-  lines.push("## Usage by run");
-  lines.push("");
-  lines.push(
-    "| Task | Arm | Rep | Wall-clock | Sol in | Sol cached | Sol out | Luna in | Luna out | Workers |",
-  );
-  lines.push("|---|---|---|---|---|---|---|---|---|---|");
-
-  for (const record of data.records) {
-    const sol = record.supervisorUsage;
-    const lunaIn = sum(
-      record.delegations.map((delegation) => delegation.usage?.inputTokens ?? 0),
-    );
-    const lunaOut = sum(
-      record.delegations.map((delegation) => delegation.usage?.outputTokens ?? 0),
-    );
-    const cell = (value: number | undefined): string =>
-      value === undefined ? "n/a" : String(value);
-
-    lines.push(
-      `| ${record.taskId} | ${record.arm} | ${record.repetition} | ` +
-        `${record.durationSeconds}s | ${cell(sol?.inputTokens)} | ` +
-        `${cell(sol?.cachedInputTokens)} | ${cell(sol?.outputTokens)} | ` +
-        `${lunaIn || "-"} | ${lunaOut || "-"} | ${record.workerCount ?? 0} |`,
-    );
-  }
-  lines.push("");
-
-  lines.push("## Measurement notes");
-  lines.push("");
-  lines.push(
-    "- Wall-clock is measured by the harness around the whole supervisor turn, so " +
-      "it includes delegation and integration overhead.",
-  );
-  lines.push(
-    "- All token counts come from the Codex SDK's `turn.completed` event: the " +
-      "supervisor's directly, each worker's via the orchestrator's telemetry. " +
-      "Input, cached input, output and reasoning tokens are recorded for both.",
-  );
-  lines.push(
-    "- Rows showing `n/a` had no usage reported for that turn (a cancelled or " +
-      "failed run). Runs recorded before v0.4.0 captured worker output tokens " +
-      "only, so their Luna input column reads `-`.",
-  );
-  lines.push(
-    "- Pass/fail is decided by the harness after the agent stops: task checks must " +
-      "exit 0 and files marked immutable must be byte-identical. The agent never " +
-      "grades itself.",
-  );
-  lines.push(
-    "- **Cost in currency is not reported.** Token counts are measured; prices are " +
-      "not exposed by the API, and these models are used through a Codex " +
-      "subscription whose billing is not a function of token counts. Multiplying " +
-      "these numbers by a price list would produce a figure that looks precise and " +
-      "means nothing.",
-  );
-  lines.push(
-    "- Sample sizes are small. Treat these as directional, not statistically " +
-      "significant.",
-  );
-  lines.push(
-    "- `Peak concurrency` is the highest number of workers alive at one instant, " +
-      "computed from worker start and completion timestamps rather than assumed " +
-      "from the worker count.",
-  );
-  lines.push(
-    "- Orchestrated arms are given `SOL_LUNA_MAX_PARALLEL` equal to the fixture's " +
-      "independent stream count, which is above the shipped default of 3. That " +
-      "value is recorded per run as `maxParallelConfigured`. The solo arms have " +
-      "no workers, so the setting does not affect them.",
-  );
-
-  const report = lines.join("\n");
+  const report = renderReport(data, {
+    repriceHistorical: argv.includes("--reprice-current"),
+    sourceName: path.basename(file),
+  });
   console.log(report);
-
-  const outputPath = file.replace(/\.json$/, ".md");
-  fs.writeFileSync(outputPath, `${report}\n`, "utf8");
-  console.error(`\nWrote ${outputPath}`);
+  const output = file.replace(/\.json$/, ".md");
+  fs.writeFileSync(output, `${report}\n`, "utf8");
+  console.error(`\nWrote ${output}`);
 }
 
-main();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
+}

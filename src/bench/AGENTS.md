@@ -12,27 +12,27 @@ not production orchestration behavior.
 - The harness grades after the agent stops. Never use an agent's self-report as the
   score. A grading command must exit zero, and immutable specification files must remain
   byte-identical.
-- All arms receive the same fixture and objective. Differences belong only in the stated
-  arm policy (supervisor effort and delegation availability/mandate). Solo arms must
+- All arms receive the same fixture and objective. V2 fixes GPT-5.6 Sol at Medium;
+  differences belong only in delegation availability/policy. Solo arms must
   disable the orchestrator at the Codex config level, not merely ask the model not to
   delegate.
 - Keep negative results. Do not tune fixtures, production defaults, prompts, stopping
   rules, or concurrency after seeing outcomes to make delegation look better.
-- For orchestrated scale arms, configured maximum parallelism matches the fixture's
-  declared stream count and is recorded. Do not change the shipped concurrency default
-  to improve a benchmark result.
-- Missing measurements are `null`/unknown, never zero. Report currency cost as
-  unmeasured; do not infer it from token counts.
+- Configured maximum parallelism matches the V2 fixture's declared natural stream count
+  and is recorded. Do not change the shipped concurrency default to improve a result.
+- Missing measurements are `null`/unknown, never zero. V2 may calculate credits only
+  from its embedded official rate-card snapshot and complete usage; calculated
+  `rateCardCredits` must never be labelled actual billing.
 
 ## Fixture changes
 
-- `tasks.ts` defines micro fixtures; `parallel-tasks.ts` defines independent three-stream
-  fixtures; `scale-tasks.ts` defines four-/six-stream fixtures and the coupled control.
+- `v2-tasks.ts` defines the current eight-task suite and `v2-solutions.ts` its hidden
+  references. Older fixture files remain for historical validation only.
 - Keep each fixture's tests/specification immutable and include at least one grading
   command. Scale fixture metadata, objective, module list, stream count, and reference
   solution must agree.
-- Add or update the matching reference solution in `parallel-solutions.ts` or
-  `scale-solutions.ts`. Reference solutions exist only to validate graders and must never
+- Add or update the matching V2 reference solution. Reference solutions exist only to
+  validate graders and must never
   be shown to the model.
 - Run `npm run bench:validate` after fixture or grader changes. It must prove that every
   starting state fails, every reference solution passes, and mutation detection works.

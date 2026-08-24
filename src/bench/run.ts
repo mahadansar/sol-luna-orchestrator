@@ -1,22 +1,17 @@
 /**
  * Benchmark harness.
  *
- * Compares a supervisor working alone against a supervisor that delegates,
- * across three suites:
- *
- *   micro     - small single-file tasks, where delegation overhead is expected
- *               to hurt. Kept because that negative result is the point.
- *   parallel  - projects containing three independent modules, where
- *               orchestration has something to actually overlap.
- *   scale     - four- and six-stream projects plus a coupled control, built to
- *               look for a solo/orchestrated crossover at larger task sizes.
+ * Benchmark V2 compares fixed-effort Sol Medium working alone with adaptive
+ * orchestration and, on selected fixtures, a legitimate forced-delegation
+ * counterfactual. Correctness is graded externally; credits and latency are
+ * the primary measured trade-off.
  *
  * Every arm gets the same fixtures and the same objective text. Only the
  * supervisor's effort, and whether delegation is available, differ. Grading is
  * always performed by this harness after the agent stops.
  *
  * Usage:
- *   node dist/bench/run.js --suite parallel --arms solo-high,par --reps 2
+ *   node dist/bench/run.js --arms solo-medium,adaptive-medium --reps 2 --confirm-standard-speed
  */
 import { Codex, type ThreadEvent } from "@openai/codex-sdk";
 import { execFile } from "node:child_process";
@@ -26,113 +21,103 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runGit } from "../git.js";
-import { PARALLEL_TASKS } from "./parallel-tasks.js";
-import { SCALE_TASKS } from "./scale-tasks.js";
-import { BENCH_TASKS, type BenchTask, type GradeCommand } from "./tasks.js";
+import {
+  assertCampaignCompatibility,
+  collectCompletedCampaignCells,
+  planCampaignCells,
+  readCampaignShards,
+  type CampaignCell,
+  type CampaignCompatibility,
+} from "./campaign.js";
+import {
+  BENCHMARK_V2_PRICING_PROFILE,
+  calculateBenchmarkCredits,
+  copyPricingProfile,
+  type BenchmarkCreditSummary,
+  type BenchmarkUsage,
+  type CreditPricingProfile,
+} from "./credits.js";
+import type { BenchTask, GradeCommand } from "./tasks.js";
+import { V2_TASKS, type V2BenchTask } from "./v2-tasks.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RESULTS_DIR = path.resolve(HERE, "..", "..", "bench", "results");
 
-const SUPERVISOR_MODEL = process.env.BENCH_SUPERVISOR_MODEL ?? "gpt-5.6-sol";
+export const SUPERVISOR_MODEL = "gpt-5.6-sol" as const;
 const ORCHESTRATOR_NAME = process.env.SOL_LUNA_SERVER_NAME ?? "sol-luna-orchestrator";
 const TASK_TIMEOUT_SECONDS = Number(process.env.BENCH_TASK_TIMEOUT ?? 1500);
 
+/**
+ * Codex SDK 0.147.0 exposes no supported speed/service-tier thread option.
+ * Live entry points therefore require an operator acknowledgement that Fast
+ * mode is disabled for the ChatGPT/Codex account before any turn starts.
+ */
+export const BENCHMARK_V2_EXECUTION_PROFILE = Object.freeze({
+  speedMode: "standard" as const,
+  fastModeDisabled: true as const,
+  serviceTier: null,
+  serviceTierStatus: "not-exposed-by-codex-sdk" as const,
+  sdkSpeedPinningSupported: false as const,
+  enforcement: "operator-confirmed-pre-run" as const,
+});
+
+export function currentCampaignCompatibility(): CampaignCompatibility {
+  return {
+    schema: 4,
+    benchmarkVersion: 2,
+    suite: "v2",
+    supervisorModel: SUPERVISOR_MODEL,
+    supervisorEffort: "medium",
+    pricingProfile: copyPricingProfile(BENCHMARK_V2_PRICING_PROFILE),
+    executionProfile: { ...BENCHMARK_V2_EXECUTION_PROFILE },
+  };
+}
+
 export const SUITES = {
-  micro: BENCH_TASKS,
-  parallel: PARALLEL_TASKS,
-  scale: SCALE_TASKS,
+  v2: V2_TASKS,
 } as const;
 export type SuiteName = keyof typeof SUITES;
 
 /**
- * The four comparison arms.
+ * Benchmark V2 arms. Supervisor model and effort are intentionally identical.
  *
  * `delegation` decides whether the orchestrator MCP server is reachable at all,
  * so the solo arms genuinely cannot delegate rather than merely being asked not
  * to.
  */
 export const ARMS = {
-  "solo-high": {
-    label: "Sol high, solo",
-    effort: "high",
+  "solo-medium": {
+    label: "Solo Medium",
+    effort: "medium",
     delegation: false,
     guidance: `Implement this yourself, directly in the current directory.
-Do not delegate any part of it. Make sure the required checks pass before you finish.`,
+The orchestration server is disabled. Make sure the required checks pass before you finish.`,
   },
-  "solo-xhigh": {
-    label: "Sol xhigh, solo",
-    effort: "xhigh",
-    delegation: false,
-    guidance: `Implement this yourself, directly in the current directory.
-Do not delegate any part of it. Make sure the required checks pass before you finish.`,
-  },
-  seq: {
-    label: "Sol high + sequential Luna",
-    effort: "high",
-    delegation: true,
-    guidance: `You are a supervising architect. Decompose this work and delegate the
-implementation to Luna workers using the delegate_tasks tool with mode:"sequential".
-Choose each worker's effort from that subtask's own difficulty. Give each task a
-real file scope, acceptance criteria and verification commands. Review what comes
-back and re-delegate anything that is wrong. Only implement something yourself if
-delegation is genuinely not workable.`,
-  },
-  par: {
-    label: "Sol high + parallel Luna",
-    effort: "high",
-    delegation: true,
-    guidance: `You are a supervising architect. Decompose this work into independent
-subtasks and delegate them with the delegate_tasks tool using mode:"parallel", so
-the workers run at the same time. Give each task a DISJOINT allowedFiles scope.
-Choose each worker's effort from that subtask's own difficulty — they need not be
-the same. Review what comes back, integrate it, and confirm the whole suite passes.
-Only implement something yourself if delegation is genuinely not workable.`,
-  },
-
-  /**
-   * Free choice. The guidance states the delegation tools exist and says
-   * nothing about whether to use them, so what this arm measures is the
-   * supervisor's own policy — including deciding to do the work itself. `par`
-   * above nudges towards parallel; this one deliberately does not.
-   */
-  adaptive: {
-    label: "Sol high, free choice",
-    effort: "high",
+  "adaptive-medium": {
+    label: "Adaptive Medium",
+    effort: "medium",
     delegation: true,
     guidance: `You have delegation tools available (delegate_task and delegate_tasks).
-Use them or do the work yourself, whichever you judge will finish this correctly and
-soonest. Make sure the required checks pass before you finish.`,
+Decide normally whether zero, one, or multiple workers are appropriate. Balance
+correctness, credits, latency, and coordination risk. Zero workers is valid. Make
+sure the required checks pass before you finish.`,
   },
-
-  // The two arms above leave the decision to the supervisor, which is realistic
-  // but means they sometimes measure "Sol declined to delegate" rather than
-  // delegation. These mandate the mechanism so the orchestration paths are
-  // actually exercised and can be compared like for like.
-  "seq-forced": {
-    label: "Sol high + sequential Luna (mandated)",
-    effort: "high",
+  "forced-delegation": {
+    label: "Forced Delegation",
+    effort: "medium",
     delegation: true,
-    guidance: `You are a supervising architect and you MUST delegate this work.
-Do not implement any module yourself. Call the delegate_tasks tool exactly once with
-mode:"sequential" and one task per module. Choose each worker's effort from that
-subtask's own difficulty. Give each task its own allowedFiles scope, acceptance
-criteria and verification command. Afterwards, review the results and confirm the
-whole suite passes.`,
-  },
-  "par-forced": {
-    label: "Sol high + parallel Luna (mandated)",
-    effort: "high",
-    delegation: true,
-    guidance: `You are a supervising architect and you MUST delegate this work.
-Do not implement any module yourself. Call the delegate_tasks tool exactly once with
-mode:"parallel" and one task per module, so the workers run at the same time. Give
-each task a DISJOINT allowedFiles scope covering only its own module. Choose each
-worker's effort from that subtask's own difficulty — they need not be the same.
-Afterwards, review the results and confirm the whole suite passes.`,
+    guidance: "",
   },
 } as const;
 
 export type Arm = keyof typeof ARMS;
+
+export const FORCED_CAMPAIGN_TASK_IDS = [
+  "v2-frontmatter-parser",
+  "v2-integration-toolkit",
+  "v2-data-contracts",
+  "v2-repository-tools",
+] as const;
 
 export interface GradeOutcome {
   label: string;
@@ -142,16 +127,40 @@ export interface GradeOutcome {
 }
 
 export interface DelegationRecord {
+  taskId?: string | null;
+  workerThreadId?: string | null;
+  model: string;
   effort: string;
   verdict: string;
   attempt: number;
-  durationSeconds: number;
-  usage: {
-    inputTokens: number;
-    cachedInputTokens: number;
-    outputTokens: number;
-    reasoningOutputTokens: number;
-  } | null;
+  durationSeconds: number | null;
+  usage: BenchmarkUsage | null;
+}
+
+export interface ParticipantAccounting {
+  role: "supervisor" | "worker";
+  taskId: string | null;
+  workerThreadId: string | null;
+  model: string;
+  effort: string;
+  inputTokens: number | null;
+  cachedInputTokens: number | null;
+  outputTokens: number | null;
+  reasoningOutputTokens: number | null;
+  cacheWriteInputTokens: number | null;
+  rateCardCredits: number | null;
+  durationSeconds: number | null;
+}
+
+export interface RunCreditAccounting {
+  pricingProfileId: string;
+  actualCredits: number | null;
+  participants: ParticipantAccounting[];
+  rateCardCredits: {
+    total: number | null;
+    sol: number | null;
+    luna: number | null;
+  };
 }
 
 /**
@@ -175,6 +184,9 @@ interface ReconcilableRow {
 const threadIdOf = (value: unknown): string | null =>
   typeof value === "string" && value.trim() ? value : null;
 
+const optionalSeconds = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+
 /**
  * Where a run's wall-clock went.
  *
@@ -195,14 +207,16 @@ export interface Breakdown {
 }
 
 export interface RunRecord {
-  suite: SuiteName;
+  benchmarkVersion?: 2;
+  suite: SuiteName | string;
   taskId: string;
   taskCategory: string;
+  workloadClass?: V2BenchTask["workloadClass"];
   tier: string | null;
   streams: number | null;
   /** SOL_LUNA_MAX_PARALLEL given to the orchestrator, or null when solo. */
   maxParallelConfigured: number | null;
-  arm: Arm;
+  arm: Arm | string;
   armLabel: string;
   supervisorEffort: string;
   repetition: number;
@@ -223,6 +237,173 @@ export interface RunRecord {
   verificationRefused: number;
   workerFailures: string[];
   agentError: string | null;
+  creditAccounting?: RunCreditAccounting;
+}
+
+export interface BenchmarkResultsSnapshot {
+  schema: 4;
+  benchmarkVersion: 2;
+  suite: "v2";
+  supervisorModel: typeof SUPERVISOR_MODEL;
+  supervisorEffort: "medium";
+  executionProfile: typeof BENCHMARK_V2_EXECUTION_PROFILE;
+  pricingProfile: ReturnType<typeof copyPricingProfile>;
+  campaignId: string;
+  startedAt: string;
+  platform: string;
+  nodeVersion: string;
+  reps: number;
+  records: RunRecord[];
+}
+
+export function assertStandardSpeedConfirmed(confirmed: boolean): void {
+  if (!confirmed) {
+    throw new Error(
+      "Benchmark V2 requires normal/standard Codex speed. Disable Fast mode for the ChatGPT/Codex account, then pass --confirm-standard-speed.",
+    );
+  }
+}
+
+export function buildResultsSnapshot(options: {
+  startedAt: string;
+  campaignId?: string;
+  reps: number;
+  records: RunRecord[];
+  standardSpeedConfirmed: boolean;
+}): BenchmarkResultsSnapshot {
+  assertStandardSpeedConfirmed(options.standardSpeedConfirmed);
+  return {
+    schema: 4,
+    benchmarkVersion: 2,
+    suite: "v2",
+    supervisorModel: SUPERVISOR_MODEL,
+    supervisorEffort: "medium",
+    executionProfile: { ...BENCHMARK_V2_EXECUTION_PROFILE },
+    pricingProfile: copyPricingProfile(BENCHMARK_V2_PRICING_PROFILE),
+    campaignId: options.campaignId ?? options.startedAt,
+    startedAt: options.startedAt,
+    platform: `${process.platform} ${process.arch}`,
+    nodeVersion: process.version,
+    reps: options.reps,
+    records: options.records,
+  };
+}
+
+/**
+ * Atomically replace only the current invocation's shard after a completed run.
+ * The sibling temp file keeps the move on one filesystem. On Windows, Node's
+ * libuv rename uses MoveFileExW with MOVEFILE_REPLACE_EXISTING; never unlink the
+ * destination first, because a failed replacement must preserve the last good
+ * checkpoint.
+ */
+export function checkpointResultsShard(
+  file: string,
+  snapshot: BenchmarkResultsSnapshot,
+  options: { beforeReplace?: (temporaryFile: string) => void } = {},
+): void {
+  // Serialize before creating a temp file so serialization failure cannot leave
+  // an artifact or affect the previous checkpoint.
+  const serialized = JSON.stringify(snapshot, null, 2);
+  const temporaryFile = path.join(
+    path.dirname(file),
+    `.${path.basename(file)}.${process.pid}.${crypto.randomUUID()}.tmp`,
+  );
+  try {
+    fs.writeFileSync(temporaryFile, serialized, {
+      encoding: "utf8",
+      flag: "wx",
+      flush: true,
+    });
+    options.beforeReplace?.(temporaryFile);
+    fs.renameSync(temporaryFile, file);
+  } finally {
+    // After a successful rename the temp path no longer exists. On any handled
+    // failure, remove a partial or complete temp without masking the real error.
+    try {
+      fs.unlinkSync(temporaryFile);
+    } catch {
+      // Best effort: a crash or external file lock can leave an ignored .tmp.
+    }
+  }
+}
+
+const participantUsage = (
+  usage: Partial<BenchmarkUsage> | null | undefined,
+): Pick<
+  ParticipantAccounting,
+  | "inputTokens"
+  | "cachedInputTokens"
+  | "outputTokens"
+  | "reasoningOutputTokens"
+  | "cacheWriteInputTokens"
+> => ({
+  inputTokens: usage?.inputTokens ?? null,
+  cachedInputTokens: usage?.cachedInputTokens ?? null,
+  outputTokens: usage?.outputTokens ?? null,
+  reasoningOutputTokens: usage?.reasoningOutputTokens ?? null,
+  cacheWriteInputTokens: usage?.cacheWriteInputTokens ?? null,
+});
+
+/** Build participant rows and aggregates from one shared rate-card calculation. */
+export function buildRunCreditAccounting(options: {
+  supervisorUsage: BenchmarkUsage | null;
+  supervisorEffort: string;
+  delegations: readonly DelegationRecord[];
+  actualCredits?: number | null;
+  pricingProfile?: CreditPricingProfile;
+}): RunCreditAccounting {
+  const pricingProfile = options.pricingProfile ?? BENCHMARK_V2_PRICING_PROFILE;
+  const credits: BenchmarkCreditSummary = calculateBenchmarkCredits(
+    [
+      { model: SUPERVISOR_MODEL, usage: options.supervisorUsage },
+      ...options.delegations.map((delegation) => ({
+        model: delegation.model,
+        usage: delegation.usage,
+      })),
+    ],
+    { actualCredits: options.actualCredits ?? null, pricingProfile },
+  );
+  const supervisorCredit = credits.records[0]?.rateCardCredits ?? null;
+  const workerCredits = credits.records.slice(1).map((record) => record.rateCardCredits);
+  const lunaCredits =
+    workerCredits.length === 0
+      ? 0
+      : (credits.perModel.find((entry) => entry.model === "gpt-5.6-luna")
+          ?.rateCardCredits ?? null);
+  const participants: ParticipantAccounting[] = [
+    {
+      role: "supervisor",
+      taskId: null,
+      workerThreadId: null,
+      model: SUPERVISOR_MODEL,
+      effort: options.supervisorEffort,
+      ...participantUsage(options.supervisorUsage),
+      rateCardCredits: supervisorCredit,
+      // End-to-end duration includes grading and cannot be attributed to Sol alone.
+      durationSeconds: null,
+    },
+    ...options.delegations.map((delegation, index) => ({
+      role: "worker" as const,
+      taskId: delegation.taskId ?? null,
+      workerThreadId: delegation.workerThreadId ?? null,
+      model: delegation.model,
+      effort: delegation.effort,
+      ...participantUsage(delegation.usage),
+      rateCardCredits: workerCredits[index] ?? null,
+      durationSeconds: delegation.durationSeconds,
+    })),
+  ];
+
+  return {
+    pricingProfileId: pricingProfile.profileId,
+    actualCredits: credits.actualCredits,
+    participants,
+    rateCardCredits: {
+      total: credits.totalRateCardCredits,
+      sol: supervisorCredit,
+      luna: lunaCredits,
+    },
+  };
 }
 
 const sha256 = (data: Buffer): string =>
@@ -277,8 +458,28 @@ async function materialize(task: BenchTask): Promise<string> {
   return workspace;
 }
 
-const buildPrompt = (task: BenchTask, arm: Arm): string =>
-  `${task.objective}\n\n${ARMS[arm].guidance}`;
+function forcedGuidance(task: V2BenchTask): string {
+  const forced = task.forcedDelegation;
+  if (forced.mode === "single") {
+    return `You MUST delegate one substantial bounded unit with delegate_task. Do not
+implement it yourself. Use this natural contract, choosing the worker effort from the
+subtask's difficulty, then review and grade the result:\n${JSON.stringify(forced.task, null, 2)}`;
+  }
+  if (forced.mode === "parallel") {
+    return `You MUST call delegate_tasks exactly once with mode:"parallel" for these
+genuinely independent, disjoint workstreams. Do not implement them yourself. Choose
+each worker effort from its subtask difficulty, review the integrated result, and run
+the whole-project checks:\n${JSON.stringify(forced.tasks, null, 2)}`;
+  }
+  throw new Error(
+    `Forced delegation is not appropriate for ${task.id}: ${forced.reason}`,
+  );
+}
+
+const buildPrompt = (task: V2BenchTask, arm: Arm): string =>
+  `${task.objective}\n\n${
+    arm === "forced-delegation" ? forcedGuidance(task) : ARMS[arm].guidance
+  }`;
 
 interface Telemetry {
   delegations: DelegationRecord[];
@@ -386,10 +587,13 @@ export function readTelemetry(
     if (parsed.type === undefined && typeof parsed.effort === "string") {
       legacyRows.push({
         record: {
+          taskId: threadIdOf(parsed.taskId),
+          workerThreadId: threadIdOf(parsed.workerThreadId),
+          model: String(parsed.model ?? "gpt-5.6-luna"),
           effort: parsed.effort,
           verdict: String(parsed.verdict ?? ""),
           attempt: Number(parsed.attempt ?? 1),
-          durationSeconds: Number(parsed.durationSeconds ?? 0),
+          durationSeconds: optionalSeconds(parsed.durationSeconds),
           usage: (parsed.usage as DelegationRecord["usage"]) ?? null,
         },
         threadId: threadIdOf(parsed.workerThreadId),
@@ -448,10 +652,13 @@ export function readTelemetry(
           spans.push({ start: started, end: stamp });
         }
         const record: DelegationRecord = {
+          taskId: threadIdOf(parsed.taskId),
+          workerThreadId: threadIdOf(parsed.threadId),
+          model: String(parsed.model ?? "gpt-5.6-luna"),
           effort: String(parsed.effort ?? ""),
           verdict: String(parsed.verdict ?? ""),
           attempt: 1,
-          durationSeconds: Number(parsed.durationSeconds ?? 0),
+          durationSeconds: optionalSeconds(parsed.durationSeconds),
           // Batch workers now report full usage. Older event files only carried
           // `outputTokens`, so fall back rather than dropping historical runs.
           usage:
@@ -589,7 +796,7 @@ export function readTelemetry(
 
 async function runArm(
   suite: SuiteName,
-  task: BenchTask,
+  task: V2BenchTask,
   arm: Arm,
   repetition: number,
   eventsFile: string,
@@ -613,7 +820,7 @@ async function runArm(
   // results file so no reader has to assume otherwise. It changes nothing for
   // the solo arms, which have no workers.
   const maxParallel = armSpec.delegation
-    ? Math.min(Math.max(task.streams ?? 3, 1), 8)
+    ? Math.min(Math.max(task.streams ?? 1, 1), 8)
     : null;
 
   const config = armSpec.delegation
@@ -632,7 +839,7 @@ async function runArm(
   const codex = new Codex({ config });
   const thread = codex.startThread({
     model: SUPERVISOR_MODEL,
-    modelReasoningEffort: armSpec.effort as "high",
+    modelReasoningEffort: "medium",
     sandboxMode: "workspace-write",
     workingDirectory: workspace,
     skipGitRepoCheck: true,
@@ -710,15 +917,22 @@ async function runArm(
     : EMPTY_TELEMETRY;
 
   const workerEfforts = telemetry.efforts;
+  const creditAccounting = buildRunCreditAccounting({
+    supervisorUsage,
+    supervisorEffort: armSpec.effort,
+    delegations: telemetry.delegations,
+  });
 
   await fs.promises
     .rm(workspace, { recursive: true, force: true, maxRetries: 3 })
     .catch(() => undefined);
 
   return {
+    benchmarkVersion: 2,
     suite,
     taskId: task.id,
     taskCategory: task.category,
+    workloadClass: task.workloadClass,
     tier: task.tier ?? null,
     streams: task.streams ?? null,
     maxParallelConfigured: maxParallel,
@@ -743,14 +957,18 @@ async function runArm(
     verificationRefused: telemetry.verificationRefused,
     workerFailures: telemetry.workerFailures,
     agentError,
+    creditAccounting,
   };
 }
 
-function parseArgs(argv: string[]): {
+export function parseArgs(argv: string[]): {
   reps: number;
   suite: SuiteName;
   tasks: string[];
   arms: Arm[];
+  campaignId: string | undefined;
+  standardSpeedConfirmed: boolean;
+  resume: boolean;
 } {
   const get = (flag: string): string | undefined => {
     const index = argv.indexOf(flag);
@@ -764,26 +982,32 @@ function parseArgs(argv: string[]): {
           .filter(Boolean)
       : [];
 
-  const suite = (get("--suite") ?? "micro") as SuiteName;
+  const suite = (get("--suite") ?? "v2") as SuiteName;
   const arms = list(get("--arms")) as Arm[];
 
   return {
     reps: Number(get("--reps") ?? 2),
     suite,
+    campaignId: get("--campaign"),
+    standardSpeedConfirmed: argv.includes("--confirm-standard-speed"),
+    resume: argv.includes("--resume"),
     tasks: list(get("--tasks")),
-    arms:
-      arms.length > 0
-        ? arms
-        : suite === "parallel"
-          ? ["solo-high", "solo-xhigh", "seq", "par"]
-          : suite === "scale"
-            ? ["solo-high", "adaptive", "par-forced"]
-            : ["solo-high", "seq"],
+    arms: arms.length > 0 ? arms : ["solo-medium", "adaptive-medium"],
   };
 }
 
 async function main(): Promise<void> {
-  const { reps, suite, tasks: taskIds, arms } = parseArgs(process.argv.slice(2));
+  const {
+    reps,
+    suite,
+    tasks: taskIds,
+    arms,
+    campaignId: requestedCampaignId,
+    standardSpeedConfirmed,
+    resume,
+  } = parseArgs(process.argv.slice(2));
+
+  assertStandardSpeedConfirmed(standardSpeedConfirmed);
 
   const available = SUITES[suite];
   if (!available) {
@@ -792,70 +1016,106 @@ async function main(): Promise<void> {
     );
     process.exit(1);
   }
+  const selectedTaskIds =
+    taskIds.length === 0 && arms.length === 1 && arms[0] === "forced-delegation"
+      ? [...FORCED_CAMPAIGN_TASK_IDS]
+      : taskIds;
   const tasks =
-    taskIds.length === 0
-      ? available
-      : available.filter((task) => taskIds.includes(task.id));
+    selectedTaskIds.length === 0
+      ? [...available]
+      : available.filter((task) => selectedTaskIds.includes(task.id));
   if (tasks.length === 0) {
     console.error(
       `No matching tasks in ${suite}: ${available.map((t) => t.id).join(", ")}`,
     );
     process.exit(1);
   }
+  const unknownArms = arms.filter((arm) => !Object.hasOwn(ARMS, arm));
+  if (unknownArms.length > 0) {
+    throw new Error(`Unknown arm(s): ${unknownArms.join(", ")}`);
+  }
+  if (arms.includes("forced-delegation")) {
+    const invalid = tasks.filter((task) => task.forcedDelegation.mode === "none");
+    if (invalid.length > 0) {
+      throw new Error(
+        `Forced delegation is not appropriate for: ${invalid.map((task) => task.id).join(", ")}`,
+      );
+    }
+  }
 
   fs.mkdirSync(RESULTS_DIR, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const campaignId = requestedCampaignId ?? stamp;
+  const plannedCells: CampaignCell[] = [];
+  for (let repetition = 1; repetition <= reps; repetition += 1) {
+    for (const task of tasks) {
+      for (const arm of arms) {
+        plannedCells.push({ campaignId, taskId: task.id, arm, repetition });
+      }
+    }
+  }
+  const existingShards = readCampaignShards(RESULTS_DIR, campaignId);
+  assertCampaignCompatibility(existingShards, currentCampaignCompatibility());
+  const completedCells = collectCompletedCampaignCells(existingShards, campaignId);
+  const plan = planCampaignCells({
+    planned: plannedCells,
+    completed: completedCells,
+    resume,
+  });
+
+  console.log(`Campaign: ${campaignId}`);
+  console.log(`Planned cells: ${plan.planned.length}`);
+  console.log(`Already completed: ${plan.completed.length}`);
+  console.log(`Remaining: ${plan.remaining.length}`);
+  console.log(`Resume mode: ${plan.resume ? "yes" : "no"}`);
+  if (plan.remaining.length === 0) {
+    console.log("All requested cells are already complete; no model calls are needed.");
+    return;
+  }
+
   const eventsFile = path.join(RESULTS_DIR, `${stamp}.events.jsonl`);
   const resultsFile = path.join(RESULTS_DIR, `${stamp}.${suite}.json`);
+  if (fs.existsSync(resultsFile)) {
+    throw new Error(`Refusing to overwrite existing result shard ${resultsFile}`);
+  }
 
-  const total = tasks.length * arms.length * reps;
-  console.log(
-    `Suite: ${suite} | ${tasks.length} task(s) x ${arms.length} arm(s) x ${reps} rep(s) = ${total} runs`,
-  );
+  const total = plan.remaining.length;
+  console.log(`Suite: ${suite} | executing ${total} missing run(s)`);
   console.log(`Supervisor model: ${SUPERVISOR_MODEL}`);
+  console.log("Codex speed: standard (Fast mode disabled; operator confirmed)");
   console.log(`Results: ${resultsFile}\n`);
 
   const records: RunRecord[] = [];
   let index = 0;
 
-  for (let repetition = 1; repetition <= reps; repetition += 1) {
-    for (const task of tasks) {
-      for (const arm of arms) {
-        index += 1;
-        process.stdout.write(
-          `[${index}/${total}] ${task.id} / ${arm} / rep ${repetition} ... `,
-        );
-        const record = await runArm(suite, task, arm, repetition, eventsFile);
-        records.push(record);
+  for (const cell of plan.remaining) {
+    const task = tasks.find((candidate) => candidate.id === cell.taskId)!;
+    const arm = cell.arm as Arm;
+    index += 1;
+    process.stdout.write(
+      `[${index}/${total}] ${task.id} / ${arm} / rep ${cell.repetition} ... `,
+    );
+    const record = await runArm(suite, task, arm, cell.repetition, eventsFile);
+    records.push(record);
 
-        const detail =
-          record.workerCount > 0
-            ? ` (${record.workerCount} worker(s): ${record.workerEfforts.join(", ") || "?"})`
-            : "";
-        console.log(
-          `${record.passed ? "PASS" : "FAIL"} in ${record.durationSeconds}s${detail}`,
-        );
+    const detail =
+      record.workerCount > 0
+        ? ` (${record.workerCount} worker(s): ${record.workerEfforts.join(", ") || "?"})`
+        : "";
+    console.log(
+      `${record.passed ? "PASS" : "FAIL"} in ${record.durationSeconds}s${detail}`,
+    );
 
-        fs.writeFileSync(
-          resultsFile,
-          JSON.stringify(
-            {
-              schema: 3,
-              suite,
-              supervisorModel: SUPERVISOR_MODEL,
-              startedAt: stamp,
-              platform: `${process.platform} ${process.arch}`,
-              nodeVersion: process.version,
-              reps,
-              records,
-            },
-            null,
-            2,
-          ),
-          "utf8",
-        );
-      }
-    }
+    checkpointResultsShard(
+      resultsFile,
+      buildResultsSnapshot({
+        startedAt: stamp,
+        campaignId,
+        reps,
+        records,
+        standardSpeedConfirmed: true,
+      }),
+    );
   }
 
   console.log(`\nWrote ${records.length} records to ${resultsFile}`);

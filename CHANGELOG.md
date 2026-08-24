@@ -6,6 +6,22 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- Prepared Benchmark V2 with eight realistic externally graded fixtures,
+  fixed-effort Solo/Adaptive/Forced arms, schema-4 credit telemetry, a dated
+  ChatGPT Plus Codex credit-rate snapshot, standard-speed campaign metadata and
+  a required Fast-mode-disabled pre-run acknowledgement, Pareto reporting, and
+  selective third-repetition recommendations. Schema-4 run records and reports
+  now retain per-participant model, effort, usage, credit, identity, and duration
+  attribution alongside reconciled Sol/Luna/run totals. Campaign execution now
+  validates compatible, duplicate-free existing shards before model calls and
+  supports explicit idempotent `--resume` of only missing cells while preserving
+  after-each-run checkpoints. Checkpoint replacement now writes and flushes a
+  same-directory temporary file before Windows-safe rename replacement, keeping
+  the prior valid shard intact on handled pre-replacement failures. The live
+  campaign remains intentionally unrun pending review.
+
 ## [0.9.1] - 2026-08-24
 
 A maintenance and hardening patch for worktree retention, cancellation, and

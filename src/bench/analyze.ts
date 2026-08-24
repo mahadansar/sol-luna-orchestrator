@@ -1,267 +1,92 @@
-/**
- * Cross-file analysis for the crossover investigation.
- *
- * `report.ts` summarises one results file. This answers the question the scale
- * suite was built for, across every results file at once: for each fixture, did
- * the orchestrated arm's median wall-clock reach the solo arm's, and where did
- * the difference come from?
- *
- * Reads only committed raw records. Spends nothing.
- *
- * Usage: node dist/bench/analyze.js [resultsDir]
- */
+/** Combine committed Benchmark V2 result files without making model calls. */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { RunRecord } from "./run.js";
+import {
+  assertCampaignCompatibility,
+  campaignCompatibilityFromShard,
+  collectCompletedCampaignCells,
+  type LoadedCampaignShard,
+} from "./campaign.js";
+import { renderReport, type ResultsFile } from "./report.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_DIR = path.resolve(HERE, "..", "..", "bench", "results");
 
-const median = (values: number[]): number | null => {
-  if (values.length === 0) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!;
-};
-
-const sum = (values: number[]): number => values.reduce((a, b) => a + b, 0);
-const show = (value: number | null): string =>
-  value === null ? "unknown" : String(Math.round(value * 10) / 10);
-
-interface Loaded {
-  file: string;
-  suite: string;
-  records: RunRecord[];
-}
-
-function load(dir: string): Loaded[] {
-  return fs
-    .readdirSync(dir)
+export function loadV2Campaign(directory: string, campaignId?: string): ResultsFile {
+  const files = fs
+    .readdirSync(directory)
     .filter((name) => name.endsWith(".json"))
-    .sort()
-    .map((name) => {
-      const parsed = JSON.parse(fs.readFileSync(path.join(dir, name), "utf8")) as {
-        suite?: string;
-        records: RunRecord[];
-      };
-      return { file: name, suite: parsed.suite ?? "micro", records: parsed.records };
-    });
-}
-
-/**
- * Runs recorded before v0.4.0 captured worker output tokens only, and the
- * reader fills the rest with zeros. Summing those would understate Luna usage
- * while looking precise, so they are reported as unknown instead.
- */
-const legacyUsage = (usage: NonNullable<RunRecord["supervisorUsage"]>): boolean =>
-  usage.inputTokens === 0 &&
-  usage.cachedInputTokens === 0 &&
-  usage.reasoningOutputTokens === 0 &&
-  usage.outputTokens > 0;
-
-function tokensFor(record: RunRecord): { sol: number | null; luna: number | null } {
-  const sol = record.supervisorUsage
-    ? record.supervisorUsage.inputTokens + record.supervisorUsage.outputTokens
-    : null;
-
-  if (record.delegations.length === 0) return { sol, luna: 0 };
-
-  const usable = record.delegations.filter((d) => d.usage !== null);
-  if (usable.length === 0 || usable.some((d) => legacyUsage(d.usage!))) {
-    return { sol, luna: null };
+    .sort();
+  const v2 = files
+    .map((name) => ({
+      file: name,
+      data: JSON.parse(
+        fs.readFileSync(path.join(directory, name), "utf8"),
+      ) as ResultsFile,
+    }))
+    .filter(({ data }) =>
+      campaignId === undefined
+        ? data.schema === 4 || data.benchmarkVersion === 2
+        : data.campaignId === campaignId,
+    );
+  if (v2.length === 0) throw new Error(`No Benchmark V2 result files in ${directory}`);
+  const campaignIds = new Set(v2.map(({ data }) => data.campaignId ?? "missing"));
+  if (campaignIds.size !== 1 || campaignIds.has("missing")) {
+    throw new Error(
+      `Select one campaign with --campaign; found: ${[...campaignIds].join(", ")}`,
+    );
   }
+  const shards = v2 as LoadedCampaignShard[];
+  const compatibility = campaignCompatibilityFromShard(shards[0]!);
+  assertCampaignCompatibility(shards, compatibility);
+  collectCompletedCampaignCells(shards, [...campaignIds][0]!);
   return {
-    sol,
-    luna: sum(usable.map((d) => d.usage!.inputTokens + d.usage!.outputTokens)),
+    schema: 4,
+    benchmarkVersion: 2,
+    suite: "v2-campaign",
+    supervisorModel: v2[0]!.data.supervisorModel,
+    supervisorEffort: v2[0]!.data.supervisorEffort,
+    executionProfile: v2[0]!.data.executionProfile,
+    pricingProfile: v2[0]!.data.pricingProfile,
+    campaignId: v2[0]!.data.campaignId,
+    reps: 2,
+    records: v2.flatMap(({ data }) => data.records),
   };
 }
 
 function main(): void {
-  const dir = path.resolve(process.argv[2] ?? DEFAULT_DIR);
-  const all = load(dir).flatMap((entry) =>
-    entry.records.map((record) => ({ ...record, suite: record.suite ?? entry.suite })),
-  );
-
-  const byTask = new Map<string, RunRecord[]>();
-  for (const record of all) {
-    const list = byTask.get(record.taskId) ?? [];
-    list.push(record);
-    byTask.set(record.taskId, list);
+  const argv = process.argv.slice(2);
+  const outputIndex = argv.indexOf("--output");
+  const campaignIndex = argv.indexOf("--campaign");
+  const output = outputIndex >= 0 ? argv[outputIndex + 1] : undefined;
+  if (outputIndex >= 0 && !output) throw new Error("--output requires a path");
+  if (campaignIndex >= 0 && !argv[campaignIndex + 1]) {
+    throw new Error("--campaign requires an id");
   }
-
-  // Deliberately not the absolute path: this output is committed, and a
-  // developer's directory layout is nobody else's business.
-  console.log("# Crossover analysis\n");
-  console.log(
-    `${all.length} runs across ${byTask.size} fixtures, from \`bench/results/\`.\n`,
+  const directoryArgument = argv.find(
+    (argument, index) =>
+      !argument.startsWith("--") &&
+      index !== outputIndex + 1 &&
+      index !== campaignIndex + 1,
   );
-  console.log("Generated by `npm run bench:analyze`. Spends no model usage.\n");
-
-  console.log(
-    "| Fixture | Tier | Streams | Arm | Runs | Passed | Median | Range | Sol tokens | Luna tokens | Total known | Workers | Peak |",
+  const directory = path.resolve(directoryArgument ?? DEFAULT_DIR);
+  const campaign = loadV2Campaign(
+    directory,
+    campaignIndex >= 0 ? argv[campaignIndex + 1] : undefined,
   );
-  console.log("|---|---|---|---|---|---|---|---|---|---|---|---|---|");
-
-  for (const [taskId, records] of byTask) {
-    const arms = [...new Set(records.map((r) => r.arm))];
-    for (const arm of arms) {
-      const rows = records.filter((r) => r.arm === arm);
-      const durations = rows.map((r) => r.durationSeconds);
-      const tokens = rows.map(tokensFor);
-      const sol = tokens.map((t) => t.sol).filter((v): v is number => v !== null);
-      const luna = tokens.map((t) => t.luna).filter((v): v is number => v !== null);
-      const peaks = rows
-        .map((r) => r.breakdown?.peakConcurrency)
-        .filter((v): v is number => typeof v === "number");
-      const total =
-        sol.length === rows.length && luna.length === rows.length
-          ? median(rows.map((_, i) => (tokens[i]!.sol ?? 0) + (tokens[i]!.luna ?? 0)))
-          : null;
-
-      console.log(
-        `| ${taskId} | ${rows[0]!.tier ?? "A"} | ${rows[0]!.streams ?? "-"} | ${arm} | ` +
-          `${rows.length} | ${rows.filter((r) => r.passed).length}/${rows.length} | ` +
-          `${show(median(durations))}s | ${Math.min(...durations)}-${Math.max(...durations)}s | ` +
-          `${show(median(sol))} | ${luna.length === 0 ? "unknown" : show(median(luna))} | ` +
-          `${show(total)} | ${show(median(rows.map((r) => r.workerCount ?? 0)))} | ` +
-          `${peaks.length === 0 ? "n/a" : show(median(peaks))} |`,
-      );
-    }
-  }
-
-  // --- The question the suite exists to answer ------------------------------
-  console.log("\n## Crossover verdict\n");
-  console.log(
-    "| Fixture | Streams | Solo median | Best orchestrated median | Arm | Delta | Latency crossover | Token crossover |",
-  );
-  console.log("|---|---|---|---|---|---|---|---|");
-
-  for (const [taskId, records] of byTask) {
-    const solo = records.filter((r) => r.arm === "solo-high");
-    if (solo.length === 0) continue;
-    const soloMedian = median(solo.map((r) => r.durationSeconds));
-    if (soloMedian === null) continue;
-
-    const orchestratedArms = ["par-forced", "par", "adaptive", "seq-forced", "seq"];
-    let best: { arm: string; value: number } | null = null;
-    for (const arm of orchestratedArms) {
-      const rows = records.filter((r) => r.arm === arm && (r.workerCount ?? 0) > 0);
-      const value = median(rows.map((r) => r.durationSeconds));
-      if (value !== null && (best === null || value < best.value)) best = { arm, value };
-    }
-    if (best === null) {
-      console.log(
-        `| ${taskId} | ${solo[0]!.streams ?? "-"} | ${show(soloMedian)}s | never delegated | - | - | NO | NO |`,
-      );
-      continue;
-    }
-
-    const soloPass = solo.every((r) => r.passed);
-    const orchRows = records.filter(
-      (r) => r.arm === best!.arm && (r.workerCount ?? 0) > 0,
-    );
-    const orchPass = orchRows.every((r) => r.passed);
-    const latency = best.value <= soloMedian && soloPass && orchPass;
-
-    const soloTokens = median(
-      solo.map((r) => (tokensFor(r).sol ?? 0) + (tokensFor(r).luna ?? 0)),
-    );
-    const orchTokens = median(
-      orchRows.map((r) => (tokensFor(r).sol ?? 0) + (tokensFor(r).luna ?? 0)),
-    );
-    const tokenCross =
-      soloTokens !== null && orchTokens !== null && orchTokens <= soloTokens;
-
-    const delta = ((best.value - soloMedian) / soloMedian) * 100;
-    console.log(
-      `| ${taskId} | ${solo[0]!.streams ?? "-"} | ${show(soloMedian)}s | ${show(best.value)}s | ` +
-        `${best.arm} | ${delta >= 0 ? "+" : ""}${Math.round(delta)}% | ` +
-        `${latency ? "**YES**" : "NO"} | ${tokenCross ? "YES" : "NO"} |`,
-    );
-  }
-
-  // --- Where orchestration spends its time ----------------------------------
-  const orchestrated = all.filter(
-    (r) => (r.workerCount ?? 0) > 0 && r.breakdown?.slowestWorkerSeconds != null,
-  );
-  if (orchestrated.length > 0) {
-    console.log("\n## Overhead, orchestrated runs only\n");
-    const pick = (fn: (r: RunRecord) => number | null | undefined): number | null =>
-      median(orchestrated.map(fn).filter((v): v is number => typeof v === "number"));
-    const overhead = median(
-      orchestrated.map(
-        (r) => r.durationSeconds - (r.breakdown!.slowestWorkerSeconds ?? 0),
-      ),
-    );
-    console.log(`- runs measured: ${orchestrated.length}`);
-    console.log(
-      `- median supervisor before batch: ${show(pick((r) => r.breakdown!.supervisorBeforeSeconds))}s`,
-    );
-    console.log(
-      `- median worktree setup: ${show(pick((r) => r.breakdown!.worktreeSetupSeconds))}s`,
-    );
-    console.log(
-      `- median slowest worker: ${show(pick((r) => r.breakdown!.slowestWorkerSeconds))}s`,
-    );
-    console.log(
-      `- median integration: ${show(pick((r) => r.breakdown!.integrationSeconds))}s`,
-    );
-    console.log(
-      `- median supervisor after batch: ${show(pick((r) => r.breakdown!.supervisorAfterSeconds))}s`,
-    );
-    console.log(`- median total minus slowest worker: ${show(overhead)}s`);
-    console.log(
-      `- median peak concurrency: ${show(pick((r) => r.breakdown!.peakConcurrency))}`,
-    );
-  }
-
-  // --- Reliability ----------------------------------------------------------
-  const delegating = all.filter((r) => (r.workerCount ?? 0) > 0);
-  console.log("\n## Reliability across every delegating run\n");
-  console.log(`- delegating runs: ${delegating.length}`);
-  console.log(
-    `- integration conflicts: ${sum(delegating.map((r) => r.integrationConflicts ?? 0))}`,
-  );
-  console.log(
-    `- worker failures: ${sum(delegating.map((r) => (r.workerFailures ?? []).length))}`,
-  );
-  console.log(
-    `- verification failures: ${sum(delegating.map((r) => r.verificationFailed ?? 0))}`,
-  );
-  console.log(
-    `- verification refusals: ${sum(delegating.map((r) => r.verificationRefused ?? 0))}`,
-  );
-  console.log(
-    `- runs with an agent error: ${delegating.filter((r) => r.agentError).length}`,
-  );
-
-  // --- Free-choice behaviour -------------------------------------------------
-  const adaptive = all.filter((r) => r.arm === "adaptive");
-  if (adaptive.length > 0) {
-    const delegated = adaptive.filter((r) => (r.workerCount ?? 0) > 0);
-    console.log("\n## Free-choice supervisor behaviour\n");
-    console.log(`- free-choice runs: ${adaptive.length}`);
-    console.log(`- delegated: ${delegated.length}/${adaptive.length}`);
-    for (const record of adaptive) {
-      console.log(
-        `  - ${record.taskId} rep ${record.repetition}: ` +
-          `${(record.workerCount ?? 0) > 0 ? `delegated ${record.workerCount}` : "stayed solo"}` +
-          ` (${record.durationSeconds}s, ${record.passed ? "passed" : "FAILED"})`,
-      );
-    }
-  }
-
-  const efforts = new Map<string, number>();
-  for (const record of all) {
-    for (const effort of record.workerEfforts ?? []) {
-      efforts.set(effort, (efforts.get(effort) ?? 0) + 1);
-    }
-  }
-  console.log("\n## Worker effort selection\n");
-  for (const effort of ["medium", "high", "xhigh", "max"]) {
-    console.log(`- ${effort}: ${efforts.get(effort) ?? 0}`);
+  const report = renderReport(campaign, {
+    sourceName: "combined Benchmark V2 JSON",
+  });
+  if (output) {
+    const target = path.resolve(output);
+    fs.writeFileSync(target, `${report}\n`, "utf8");
+    console.error(`Wrote ${target}`);
+  } else {
+    console.log(report);
   }
 }
 
-main();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
+}

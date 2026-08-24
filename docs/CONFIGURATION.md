@@ -263,6 +263,12 @@ reports the registered server's value rather than only this shell's.
   stable reason code.
 - Nothing in this project claims a cost saving, because none has been measured.
 
+Benchmark V2 is a separate, reproducible experiment: each schema-4 result embeds
+the dated official Codex credit-rate snapshot used to calculate
+`rateCardCredits`, while `actualCredits` stays unknown unless authoritative
+per-run billing is available. That benchmark snapshot is not a production
+default or account lookup. See [`bench/RESULTS.md`](../bench/RESULTS.md).
+
 #### Dated Sol-Luna unit-rate example
 
 As of **2026-08-24**, the official API model pages listed Sol at $4/$0.40/$20
@@ -276,6 +282,13 @@ Codex credit rates are a separate billing context and cannot be derived from
 those API prices. They depend on the plan and rate card applicable to the
 account; operators must consult that current official rate card rather than
 reusing this API ratio.
+
+Benchmark V2 specifically snapshots the ChatGPT Plus Codex rate card linked in
+[`bench/RESULTS.md`](../bench/RESULTS.md); it must not reuse the separate
+Business/Enterprise purchased-credit promotional schedule. Its live campaign
+also requires normal/standard Codex speed with Fast mode disabled. The installed
+SDK cannot pin or observe a service tier, so this remains an operator-confirmed
+pre-run account condition recorded in schema-4 campaign metadata.
 
 This is a dated human reference only, not a bundled runtime rate card. It does
 not make Sol the required parent or convert a per-token ratio into a task
