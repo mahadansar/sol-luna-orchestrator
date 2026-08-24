@@ -289,11 +289,11 @@ affected canonical document in the same change.
 6. npm attaches provenance automatically — the repository and package are both
    public, so `--provenance` is neither passed nor needed.
 7. Only after the tag-triggered publish succeeds and the remote tag exists,
-   create the GitHub Release as a draft against that existing tag. CLI automation
-   must use `gh release create vX.Y.Z --draft --verify-tag ...` so it cannot
-   implicitly create or retarget a tag. Supply the reviewed body transiently;
-   do not add a tracked release-notes file.
-8. Review the draft once more, then publish it.
+   create the GitHub Release against that existing tag. Do not create it as a
+   draft. CLI automation must use
+   `gh release create vX.Y.Z --verify-tag ...` so it cannot implicitly create or
+   retarget a tag. Supply the reviewed body transiently; do not add a tracked
+   release-notes file.
 
 Only tags matching `vX.Y.Z` trigger a publish. Branches and pull requests never
 can. Pre-release tags such as `v1.0.0-rc.1` deliberately do not match; publishing
