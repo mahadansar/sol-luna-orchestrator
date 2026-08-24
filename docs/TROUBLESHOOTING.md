@@ -25,7 +25,32 @@ low-effort model will cheerfully claim it has a tool it does not have.
 | A worker appears able to delegate                      | Don't trust the model's answer. Run `npm run smoke:isolation`.                                                                                                                                                                                                                                                                                                               |
 | Fresh chat does not find this MCP                      | See [Configuration: discovery hint and adaptive routing](CONFIGURATION.md#discovery-hint-and-adaptive-routing) and [adaptive delegation rules](../SOL_RULES.md#roles-and-adaptive-delegation). Codex may defer MCP discovery; check `sol-luna-orchestrator status` for the managed hint.                                                                                     |
 | Discovery hint is missing or modified                  | Run `sol-luna-orchestrator init`, or keep it absent with `init --no-discovery-hint`. User-edited marker content is preserved; see [Configuration: discovery hint and adaptive routing](CONFIGURATION.md#discovery-hint-and-adaptive-routing).                                                                                                                                |
-| Rebuilt `dist/` but behaviour is unchanged             | Codex spawned the server and keeps the old build until that session ends. Close the session and open a new one; a rebuild alone reloads nothing.                                                                                                                                                                                                                             |
+| Changed and rebuilt source but behaviour is unchanged  | Codex may still be configured for the installed package, or the current session may own an older MCP process. Verify the effective local MCP `args`, run `npm run build`, then close the session and open a new one.                                                                                                                                                         |
+
+## Luna commands fail with `bwrap` / `RTM_NEWADDR` on Ubuntu
+
+If a Luna worker fails before ordinary commands run with an error such as
+`bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`, check the host
+before blaming the orchestrator. Ubuntu AppArmor policy can restrict
+unprivileged user namespaces that Codex's `workspace-write` sandbox needs. Look
+for kernel audit denials involving `bwrap`, the `unprivileged_userns` profile,
+and capabilities such as `net_admin` or `setpcap`; reproduce with a standalone
+Codex `workspace-write` run where practical. A parent started with `--yolo` can
+still work because it is not using the nested worker's sandbox.
+
+On a machine you trust, a supported host-specific workaround is to set
+`LUNA_SANDBOX = "danger-full-access"` in the MCP server's `env` table; see
+[environment variables](CONFIGURATION.md#environment-variables). Close the
+current Codex session and open a new one after changing the MCP environment so
+the server reloads it.
+
+This disables Codex filesystem sandboxing for Luna. Scope detection,
+`changeIntent`, reconciliation, verification and recursion prevention still
+operate, but they are detective controls rather than filesystem confinement.
+Do not disable AppArmor globally or broadly weaken host namespace policy. A
+narrowly designed, administrator-managed AppArmor policy may be an advanced
+alternative, but the orchestrator does not install or modify host security
+policy.
 
 ## Recovering a broken configuration
 
@@ -64,9 +89,10 @@ came from the configuration or from a `SOL_LUNA_EVENTS` override in your shell. 
 
 ## Testing a change to the server
 
-Rebuilding `dist/` does not restart a running server. Codex launched that
-process and will keep talking to the old build — including its old tool
-descriptions and server instructions — until the session that owns it ends. To
-test a change: `npm run build`, then close the Codex session or client and open a
-new one. See [Live model-backed acceptance](../CONTRIBUTING.md#live-model-backed-acceptance)
+First confirm the effective MCP `args` point at this checkout's
+`dist/server.js`, not the installed package; see
+[Developing the MCP locally](../CONTRIBUTING.md#developing-the-mcp-locally).
+Then run `npm run build` and open a fresh Codex session. Rebuilding `dist/` does
+not restart the MCP process owned by the current session. See
+[Live model-backed acceptance](../CONTRIBUTING.md#live-model-backed-acceptance)
 for the complete deterministic and fresh-client procedure.
