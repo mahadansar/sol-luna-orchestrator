@@ -602,20 +602,23 @@ test("human pricing example is dated and distinct from durable runtime policy", 
   );
 });
 
-test("release guidance creates drafts only after the validated tag exists", async () => {
-  const [contributing, agents] = await Promise.all([
-    readDoc("CONTRIBUTING.md"),
-    readDoc("AGENTS.md"),
-  ]);
-  const commit = contributing.indexOf("Commit and push the release candidate");
+test("release guidance creates a verified non-draft release after publishing", async () => {
+  const contributing = await readDoc("CONTRIBUTING.md");
+  const version = contributing.indexOf("npm version <x.y.z> --no-git-tag-version");
   const tag = contributing.indexOf("Create the annotated release tag");
   const publish = contributing.indexOf("tag-triggered publish succeeds");
-  const draft = contributing.indexOf("create the GitHub Release as a draft");
-  assert.ok(commit >= 0 && commit < tag && tag < publish && publish < draft);
+  const release = contributing.indexOf(
+    "create the GitHub Release against that existing tag",
+  );
+  assert.ok(version >= 0 && version < tag && tag < publish && publish < release);
   assert.match(
     contributing,
-    /gh release create vX\.Y\.Z --draft --verify-tag[\s\S]*cannot[\s\S]*implicitly create or retarget a tag/i,
+    /gh release create vX\.Y\.Z --verify-tag[\s\S]*cannot[\s\S]*implicitly create or[\s\S]*retarget a tag/i,
+  );
+  assert.doesNotMatch(contributing, /\b--draft\b/);
+  assert.match(
+    contributing,
+    /Prepare and review the intended GitHub Release body[\s\S]*transiently[\s\S]*do not commit a second release-body source/i,
   );
   assert.doesNotMatch(contributing, /RELEASE_NOTES\.md/);
-  assert.match(agents, /Only then create[\s\S]*existing[\s\S]*tag[\s\S]*--verify-tag/i);
 });
