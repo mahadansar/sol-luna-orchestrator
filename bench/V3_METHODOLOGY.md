@@ -2,19 +2,19 @@
 
 ## Freeze status
 
-This document is the pre-results specification for Benchmark V3. It must be
-frozen before the first live V3 result is collected. It contains no V3 result,
+This document is the pre-results specification for Benchmark V3. It was frozen
+before the first live V3 result was collected. It contains no V3 result,
 pass rate, cost, latency, routing, or model-performance claim.
 
-- Content-freeze commit: `FREEZE_SHA_PENDING`
+- Content-freeze commit: `544d217967646e5f48b9aa73e936567e87d87c8b`
 - Initial normal campaign: nine tasks, two arms, and exactly two repetitions per
   task/arm cell (36 live runs).
 - Any post-freeze correction follows the correction policy below and cannot
   silently change a task, arm, prompt, grader, repetition rule, or result.
 
-The supervisor replaces `FREEZE_SHA_PENDING` with the content-freeze commit SHA
-after this file and the V3 fixture contract have been reviewed. That replacement
-is administrative; it is not a V3 result.
+The content-freeze SHA above identifies the reviewed workload and methodology.
+This administrative record was added immediately afterward and is not a V3
+result.
 
 ## Question and interpretation boundary
 

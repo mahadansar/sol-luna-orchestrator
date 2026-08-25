@@ -7,8 +7,8 @@
  */
 import type { BenchTask, GradeCommand } from "./tasks.js";
 
-/** Replaced with the content-freeze commit by the final metadata-only commit. */
-export const BENCHMARK_V3_FREEZE_SHA = "FREEZE_SHA_PENDING";
+/** Exact commit containing the frozen V3 workload and methodology. */
+export const BENCHMARK_V3_FREEZE_SHA = "544d217967646e5f48b9aa73e936567e87d87c8b";
 export const BENCHMARK_V3_PRODUCTION_BASELINE_SHA =
   "83f024355c8c7caa21b488a6ea7aaa7b73a3be9e";
 
