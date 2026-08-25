@@ -16,7 +16,7 @@ import {
   recommendThirdRepetition,
   summarizeCell,
 } from "./bench/analysis.js";
-import { loadV2Campaign } from "./bench/analyze.js";
+import { loadV2Campaign, loadV3Campaign } from "./bench/analyze.js";
 import {
   assertCampaignCompatibility,
   collectCompletedCampaignCells,
@@ -30,6 +30,8 @@ import {
   FORCED_CAMPAIGN_TASK_IDS,
   SUITES,
   assertStandardSpeedConfirmed,
+  assertV3CampaignPolicy,
+  assertV3PricingProfileConfirmed,
   buildRunCreditAccounting,
   buildResultsSnapshot,
   checkpointResultsShard,
@@ -44,6 +46,12 @@ import { SCALE_TASKS } from "./bench/scale-tasks.js";
 import type { BenchTask } from "./bench/tasks.js";
 import { V2_SOLUTIONS } from "./bench/v2-solutions.js";
 import { V2_TASKS } from "./bench/v2-tasks.js";
+import { V3_SOLUTIONS } from "./bench/v3-solutions.js";
+import {
+  BENCHMARK_V3_FREEZE_SHA,
+  BENCHMARK_V3_PRODUCTION_BASELINE_SHA,
+  V3_TASKS,
+} from "./bench/v3-tasks.js";
 import { repriceHistoricalRecord, renderReport } from "./bench/report.js";
 
 // --- Concurrency measurement ------------------------------------------------
@@ -572,6 +580,46 @@ test("V2 has the predeclared workload mix and reference solutions", () => {
   });
 });
 
+test("V3 has the frozen routing mix, hidden references, and no model-facing routing hints", () => {
+  assert.equal(V3_TASKS.length, 9);
+  const counts = new Map<string, number>();
+  for (const task of V3_TASKS) {
+    counts.set(task.routingCategory, (counts.get(task.routingCategory) ?? 0) + 1);
+    assert.ok(V3_SOLUTIONS[task.id], `${task.id} has no V3 reference solution`);
+    assert.doesNotMatch(
+      task.objective,
+      /expected-solo|likely-solo|delegation-candidate|routing category|\bworkers?\b|\bdelegat/i,
+      `${task.id} leaks evaluator routing guidance into its objective`,
+    );
+  }
+  assert.deepEqual(Object.fromEntries(counts), {
+    "expected-solo": 2,
+    "likely-solo": 2,
+    "strong-delegation-candidate": 2,
+    "delegation-candidate": 1,
+    ambiguous: 2,
+  });
+});
+
+test("V3 coupled controls stay architecturally central and candidates expose real seams", () => {
+  const coupled = V3_TASKS.filter((task) => task.workloadClass === "coupled-control");
+  assert.equal(coupled.length, 2);
+  assert.ok(coupled.every((task) => task.streams === 1));
+  const candidates = V3_TASKS.filter(
+    (task) => task.workloadClass === "delegation-candidate",
+  );
+  assert.equal(candidates.length, 3);
+  for (const task of candidates) {
+    const modules = Object.keys(task.files).filter((name) => name.startsWith("src/"));
+    assert.ok(task.requiresGit, `${task.id} must support isolated worker worktrees`);
+    assert.ok(
+      modules.length >= 3,
+      `${task.id} lacks substantial independent module seams`,
+    );
+    assert.equal(task.streams, modules.length);
+  }
+});
+
 test("the initial forced campaign contains one natural single and three parallel tasks", () => {
   assert.equal(FORCED_CAMPAIGN_TASK_IDS.length, 4);
   const tasks = FORCED_CAMPAIGN_TASK_IDS.map((id) =>
@@ -882,11 +930,69 @@ test("Benchmark V2 refuses to start or snapshot without standard-speed confirmat
   );
 });
 
+test("Benchmark V3 requires an explicit pre-campaign pricing revalidation", () => {
+  assert.throws(() => assertV3PricingProfileConfirmed(false), /credit-rate profile/);
+  assert.doesNotThrow(() => assertV3PricingProfileConfirmed(true));
+  assert.throws(
+    () =>
+      buildResultsSnapshot({
+        startedAt: "v3-unconfirmed",
+        reps: 2,
+        records: [],
+        suite: "v3",
+        standardSpeedConfirmed: true,
+      }),
+    /confirm-pricing-profile/,
+  );
+  const snapshot = buildResultsSnapshot({
+    startedAt: "v3-confirmed",
+    reps: 2,
+    records: [],
+    suite: "v3",
+    standardSpeedConfirmed: true,
+    pricingProfileConfirmed: true,
+  });
+  assert.equal(snapshot.benchmarkVersion, 3);
+  assert.equal(snapshot.suite, "v3");
+  assert.equal(snapshot.holdoutFreezeSha, BENCHMARK_V3_FREEZE_SHA);
+  assert.deepEqual(snapshot.productionBaseline, {
+    version: "0.10.0",
+    sha: BENCHMARK_V3_PRODUCTION_BASELINE_SHA,
+  });
+});
+
+test("Benchmark V3 enforces the frozen normal-arm repetition policy", () => {
+  assert.doesNotThrow(() =>
+    assertV3CampaignPolicy({
+      reps: 2,
+      arms: ["solo-medium", "adaptive-medium"],
+      resume: false,
+    }),
+  );
+  assert.doesNotThrow(() =>
+    assertV3CampaignPolicy({ reps: 3, arms: ["adaptive-medium"], resume: true }),
+  );
+  assert.throws(
+    () => assertV3CampaignPolicy({ reps: 1, arms: ["solo-medium"], resume: false }),
+    /exactly 2 initial repetitions/,
+  );
+  assert.throws(
+    () => assertV3CampaignPolicy({ reps: 3, arms: ["adaptive-medium"], resume: false }),
+    /reviewed recommendation.*--resume/,
+  );
+  assert.throws(
+    () => assertV3CampaignPolicy({ reps: 2, arms: ["forced-delegation"], resume: false }),
+    /not a Benchmark V3 campaign arm/,
+  );
+});
+
 test("campaign arguments default to the 32-run baseline and preserve campaign IDs", () => {
   assert.deepEqual(parseArgs([]).arms, ["solo-medium", "adaptive-medium"]);
   assert.equal(parseArgs([]).reps, 2);
   assert.equal(parseArgs([]).standardSpeedConfirmed, false);
   assert.equal(parseArgs(["--confirm-standard-speed"]).standardSpeedConfirmed, true);
+  assert.equal(parseArgs([]).pricingProfileConfirmed, false);
+  assert.equal(parseArgs(["--confirm-pricing-profile"]).pricingProfileConfirmed, true);
   assert.equal(parseArgs([]).resume, false);
   assert.equal(parseArgs(["--resume"]).resume, true);
   assert.equal(
@@ -1130,6 +1236,48 @@ test("campaign analysis combines only matching campaign and pricing profiles", (
       () => loadV2Campaign(directory, "campaign-a"),
       /Duplicate existing benchmark cell/,
     );
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("V3 campaign analysis and report generation work with synthetic evidence", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bench-v3-campaign-"));
+  try {
+    const solo = {
+      ...metricRecord({ arm: "solo-medium", repetition: 1, credits: 12, workers: 0 }),
+      benchmarkVersion: 3 as const,
+      suite: "v3",
+      taskId: "v3-static-site-pipeline",
+      routingCategory: "strong-delegation-candidate" as const,
+      workloadClass: "delegation-candidate",
+    };
+    const adaptive = {
+      ...metricRecord({ arm: "adaptive-medium", repetition: 1, credits: 10, workers: 2 }),
+      benchmarkVersion: 3 as const,
+      suite: "v3",
+      taskId: "v3-static-site-pipeline",
+      routingCategory: "strong-delegation-candidate" as const,
+      workloadClass: "delegation-candidate",
+    };
+    const snapshot = buildResultsSnapshot({
+      startedAt: "synthetic",
+      campaignId: "v3-synthetic",
+      reps: 2,
+      records: [solo, adaptive],
+      suite: "v3",
+      standardSpeedConfirmed: true,
+      pricingProfileConfirmed: true,
+    });
+    fs.writeFileSync(path.join(directory, "synthetic.v3.json"), JSON.stringify(snapshot));
+    const loaded = loadV3Campaign(directory, "v3-synthetic");
+    const report = renderReport(loaded);
+    assert.equal(loaded.records.length, 2);
+    assert.match(report, /V3 routing analysis/);
+    assert.match(report, /strong-delegation-candidate/);
+    assert.match(report, /Delegation rate by workload shape/);
+    assert.match(report, /beneficial delegation/);
+    assert.match(report, /Operational incidence/);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

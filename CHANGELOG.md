@@ -6,6 +6,13 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- Added the frozen Benchmark V3 routing holdout: nine new deterministic
+  engineering fixtures, hidden references, evaluator-only routing categories,
+  Solo/Adaptive campaign support, pricing revalidation, checkpoint-compatible
+  evidence, and routing/economic analysis. No model-backed V3 campaign was run.
+
 ## [0.10.0] - 2026-08-25
 
 This release introduces the Thin Supervisor execution model. It intentionally

@@ -1,4 +1,4 @@
-/** Interruption-safe planning for schema-4 Benchmark V2 campaign shards. */
+/** Interruption-safe planning for schema-4 benchmark campaign shards. */
 import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -6,12 +6,14 @@ import type { CreditPricingProfile } from "./credits.js";
 
 export interface CampaignCompatibility {
   schema: 4;
-  benchmarkVersion: 2;
-  suite: "v2";
+  benchmarkVersion: 2 | 3;
+  suite: "v2" | "v3";
   supervisorModel: string;
   supervisorEffort: "medium";
   pricingProfile: CreditPricingProfile;
   executionProfile: Readonly<Record<string, unknown>>;
+  holdoutFreezeSha?: string;
+  productionBaseline?: Readonly<{ version: string; sha: string }>;
 }
 
 export interface CampaignCell {
@@ -54,14 +56,18 @@ export function campaignCompatibilityFromShard(
   const data = shard.data;
   if (
     data.schema !== 4 ||
-    data.benchmarkVersion !== 2 ||
-    data.suite !== "v2" ||
+    (data.benchmarkVersion !== 2 && data.benchmarkVersion !== 3) ||
+    (data.suite !== "v2" && data.suite !== "v3") ||
     typeof data.supervisorModel !== "string" ||
     data.supervisorEffort !== "medium" ||
     !data.pricingProfile ||
     typeof data.pricingProfile !== "object" ||
     !data.executionProfile ||
-    typeof data.executionProfile !== "object"
+    typeof data.executionProfile !== "object" ||
+    (data.benchmarkVersion === 3 &&
+      (typeof data.holdoutFreezeSha !== "string" ||
+        !data.productionBaseline ||
+        typeof data.productionBaseline !== "object"))
   ) {
     throw new Error(
       `Campaign shard ${path.basename(shard.file)} has incomplete schema-4 compatibility metadata`,
@@ -75,6 +81,12 @@ export function campaignCompatibilityFromShard(
     supervisorEffort: data.supervisorEffort,
     pricingProfile: data.pricingProfile,
     executionProfile: data.executionProfile,
+    ...(data.benchmarkVersion === 3
+      ? {
+          holdoutFreezeSha: data.holdoutFreezeSha,
+          productionBaseline: data.productionBaseline,
+        }
+      : {}),
   };
 }
 
@@ -93,9 +105,9 @@ export function readCampaignShards(
     try {
       data = JSON.parse(fs.readFileSync(file, "utf8")) as CampaignShard;
     } catch (error) {
-      if (name.endsWith(".v2.json")) {
+      if (/\.v[23]\.json$/.test(name)) {
         throw new Error(
-          `Cannot inspect Benchmark V2 shard ${name}: ${(error as Error).message}`,
+          `Cannot inspect benchmark shard ${name}: ${(error as Error).message}`,
         );
       }
       continue;
@@ -117,6 +129,8 @@ export function assertCampaignCompatibility(
     "supervisorEffort",
     "pricingProfile",
     "executionProfile",
+    "holdoutFreezeSha",
+    "productionBaseline",
   ];
   for (const shard of shards) {
     for (const field of fields) {

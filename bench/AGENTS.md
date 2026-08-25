@@ -21,7 +21,8 @@ fixtures and harness code live in `src/bench/` and follow that directory's instr
 - Do not claim statistical significance, universal superiority, currency cost, or a
   latency/token crossover that the data does not establish. Negative and inconclusive
   findings are results, not defects to hide.
-- `npm run bench:analyze` reads schema-4 records, checks pricing-profile compatibility,
+- `npm run bench:analyze` reads schema-4 V2 records and `npm run bench:v3:analyze`
+  reads schema-4 V3 records. Both check pricing-profile compatibility,
   and reports correctness/credit/latency trade-offs without model calls. A new live run
   is a deliberate experiment and requires the same
   predeclared arms, repetitions/stopping rules, environment metadata, and honest

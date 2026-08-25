@@ -39,6 +39,12 @@ import {
 } from "./credits.js";
 import type { BenchTask, GradeCommand } from "./tasks.js";
 import { V2_TASKS, type V2BenchTask } from "./v2-tasks.js";
+import {
+  BENCHMARK_V3_FREEZE_SHA,
+  BENCHMARK_V3_PRODUCTION_BASELINE_SHA,
+  V3_TASKS,
+  type V3BenchTask,
+} from "./v3-tasks.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RESULTS_DIR = path.resolve(HERE, "..", "..", "bench", "results");
@@ -60,21 +66,34 @@ export const BENCHMARK_V2_EXECUTION_PROFILE = Object.freeze({
   sdkSpeedPinningSupported: false as const,
   enforcement: "operator-confirmed-pre-run" as const,
 });
+export const BENCHMARK_V3_EXECUTION_PROFILE = BENCHMARK_V2_EXECUTION_PROFILE;
 
-export function currentCampaignCompatibility(): CampaignCompatibility {
+export function currentCampaignCompatibility(
+  suite: SuiteName = "v2",
+): CampaignCompatibility {
   return {
     schema: 4,
-    benchmarkVersion: 2,
-    suite: "v2",
+    benchmarkVersion: suite === "v3" ? 3 : 2,
+    suite,
     supervisorModel: SUPERVISOR_MODEL,
     supervisorEffort: "medium",
     pricingProfile: copyPricingProfile(BENCHMARK_V2_PRICING_PROFILE),
     executionProfile: { ...BENCHMARK_V2_EXECUTION_PROFILE },
+    ...(suite === "v3"
+      ? {
+          holdoutFreezeSha: BENCHMARK_V3_FREEZE_SHA,
+          productionBaseline: {
+            version: "0.10.0",
+            sha: BENCHMARK_V3_PRODUCTION_BASELINE_SHA,
+          },
+        }
+      : {}),
   };
 }
 
 export const SUITES = {
   v2: V2_TASKS,
+  v3: V3_TASKS,
 } as const;
 export type SuiteName = keyof typeof SUITES;
 
@@ -209,11 +228,16 @@ export interface Breakdown {
 }
 
 export interface RunRecord {
-  benchmarkVersion?: 2;
+  benchmarkVersion?: 2 | 3;
   suite: SuiteName | string;
   taskId: string;
   taskCategory: string;
-  workloadClass?: V2BenchTask["workloadClass"];
+  workloadClass?: string;
+  /** Evaluator-only V3 metadata. Never included in the model-facing prompt. */
+  routingCategory?: V3BenchTask["routingCategory"];
+  /** Per-run identity and deterministic fixture hash for V3 evidence. */
+  runId?: string;
+  fixtureRevision?: string;
   tier: string | null;
   streams: number | null;
   /** SOL_LUNA_MAX_PARALLEL given to the orchestrator, or null when solo. */
@@ -244,8 +268,8 @@ export interface RunRecord {
 
 export interface BenchmarkResultsSnapshot {
   schema: 4;
-  benchmarkVersion: 2;
-  suite: "v2";
+  benchmarkVersion: 2 | 3;
+  suite: SuiteName;
   supervisorModel: typeof SUPERVISOR_MODEL;
   supervisorEffort: "medium";
   executionProfile: typeof BENCHMARK_V2_EXECUTION_PROFILE;
@@ -256,6 +280,8 @@ export interface BenchmarkResultsSnapshot {
   nodeVersion: string;
   reps: number;
   records: RunRecord[];
+  holdoutFreezeSha?: string;
+  productionBaseline?: { version: "0.10.0"; sha: string };
 }
 
 export function assertStandardSpeedConfirmed(confirmed: boolean): void {
@@ -266,18 +292,50 @@ export function assertStandardSpeedConfirmed(confirmed: boolean): void {
   }
 }
 
+export function assertV3PricingProfileConfirmed(confirmed: boolean): void {
+  if (!confirmed) {
+    throw new Error(
+      "Benchmark V3 requires revalidating the applicable Codex credit-rate profile immediately before execution, then passing --confirm-pricing-profile.",
+    );
+  }
+}
+
+export function assertV3CampaignPolicy(options: {
+  reps: number;
+  arms: readonly Arm[];
+  resume: boolean;
+}): void {
+  if (options.arms.includes("forced-delegation")) {
+    throw new Error("Forced Delegation is not a Benchmark V3 campaign arm");
+  }
+  if (options.reps !== 2 && options.reps !== 3) {
+    throw new Error("Benchmark V3 campaigns require exactly 2 initial repetitions");
+  }
+  if (options.reps === 3 && !options.resume) {
+    throw new Error(
+      "A Benchmark V3 third repetition requires a reviewed recommendation and --resume",
+    );
+  }
+}
+
 export function buildResultsSnapshot(options: {
   startedAt: string;
   campaignId?: string;
   reps: number;
   records: RunRecord[];
   standardSpeedConfirmed: boolean;
+  suite?: SuiteName;
+  pricingProfileConfirmed?: boolean;
 }): BenchmarkResultsSnapshot {
   assertStandardSpeedConfirmed(options.standardSpeedConfirmed);
+  const suite = options.suite ?? "v2";
+  if (suite === "v3") {
+    assertV3PricingProfileConfirmed(options.pricingProfileConfirmed === true);
+  }
   return {
     schema: 4,
-    benchmarkVersion: 2,
-    suite: "v2",
+    benchmarkVersion: suite === "v3" ? 3 : 2,
+    suite,
     supervisorModel: SUPERVISOR_MODEL,
     supervisorEffort: "medium",
     executionProfile: { ...BENCHMARK_V2_EXECUTION_PROFILE },
@@ -288,6 +346,15 @@ export function buildResultsSnapshot(options: {
     nodeVersion: process.version,
     reps: options.reps,
     records: options.records,
+    ...(suite === "v3"
+      ? {
+          holdoutFreezeSha: BENCHMARK_V3_FREEZE_SHA,
+          productionBaseline: {
+            version: "0.10.0" as const,
+            sha: BENCHMARK_V3_PRODUCTION_BASELINE_SHA,
+          },
+        }
+      : {}),
   };
 }
 
@@ -478,9 +545,9 @@ the whole-project checks:\n${JSON.stringify(forced.tasks, null, 2)}`;
   );
 }
 
-const buildPrompt = (task: V2BenchTask, arm: Arm): string =>
+const buildPrompt = (task: BenchTask, arm: Arm): string =>
   `${task.objective}\n\n${
-    arm === "forced-delegation" ? forcedGuidance(task) : ARMS[arm].guidance
+    arm === "forced-delegation" ? forcedGuidance(task as V2BenchTask) : ARMS[arm].guidance
   }`;
 
 interface Telemetry {
@@ -812,12 +879,35 @@ export function readTelemetry(
 
 async function runArm(
   suite: SuiteName,
-  task: V2BenchTask,
+  task: V2BenchTask | V3BenchTask,
   arm: Arm,
   repetition: number,
   eventsFile: string,
 ): Promise<RunRecord> {
   const workspace = await materialize(task);
+  const runId = crypto.randomUUID();
+  const fixtureRevision = crypto
+    .createHash("sha256")
+    .update(
+      JSON.stringify({
+        id: task.id,
+        objective: task.objective,
+        files: task.files,
+        immutable: task.immutable,
+        grade: task.grade.map(({ args, label }) => ({ args, label })),
+        mutation: task.mutation
+          ? {
+              file: task.mutation.file,
+              content: task.mutation.content,
+              command: {
+                args: task.mutation.command.args,
+                label: task.mutation.command.label,
+              },
+            }
+          : null,
+      }),
+    )
+    .digest("hex");
   const startedAt = new Date().toISOString();
   const start = Date.now();
   const armSpec = ARMS[arm];
@@ -944,11 +1034,13 @@ async function runArm(
     .catch(() => undefined);
 
   return {
-    benchmarkVersion: 2,
+    benchmarkVersion: suite === "v3" ? 3 : 2,
     suite,
     taskId: task.id,
     taskCategory: task.category,
     workloadClass: task.workloadClass,
+    ...(suite === "v3" ? { routingCategory: (task as V3BenchTask).routingCategory } : {}),
+    ...(suite === "v3" ? { runId, fixtureRevision } : {}),
     tier: task.tier ?? null,
     streams: task.streams ?? null,
     maxParallelConfigured: maxParallel,
@@ -984,6 +1076,7 @@ export function parseArgs(argv: string[]): {
   arms: Arm[];
   campaignId: string | undefined;
   standardSpeedConfirmed: boolean;
+  pricingProfileConfirmed: boolean;
   resume: boolean;
 } {
   const get = (flag: string): string | undefined => {
@@ -1006,6 +1099,7 @@ export function parseArgs(argv: string[]): {
     suite,
     campaignId: get("--campaign"),
     standardSpeedConfirmed: argv.includes("--confirm-standard-speed"),
+    pricingProfileConfirmed: argv.includes("--confirm-pricing-profile"),
     resume: argv.includes("--resume"),
     tasks: list(get("--tasks")),
     arms: arms.length > 0 ? arms : ["solo-medium", "adaptive-medium"],
@@ -1020,10 +1114,15 @@ async function main(): Promise<void> {
     arms,
     campaignId: requestedCampaignId,
     standardSpeedConfirmed,
+    pricingProfileConfirmed,
     resume,
   } = parseArgs(process.argv.slice(2));
 
   assertStandardSpeedConfirmed(standardSpeedConfirmed);
+  if (suite === "v3") {
+    assertV3PricingProfileConfirmed(pricingProfileConfirmed);
+    assertV3CampaignPolicy({ reps, arms, resume });
+  }
 
   const available = SUITES[suite];
   if (!available) {
@@ -1050,8 +1149,10 @@ async function main(): Promise<void> {
   if (unknownArms.length > 0) {
     throw new Error(`Unknown arm(s): ${unknownArms.join(", ")}`);
   }
-  if (arms.includes("forced-delegation")) {
-    const invalid = tasks.filter((task) => task.forcedDelegation.mode === "none");
+  if (suite === "v2" && arms.includes("forced-delegation")) {
+    const invalid = (tasks as V2BenchTask[]).filter(
+      (task) => task.forcedDelegation.mode === "none",
+    );
     if (invalid.length > 0) {
       throw new Error(
         `Forced delegation is not appropriate for: ${invalid.map((task) => task.id).join(", ")}`,
@@ -1071,7 +1172,7 @@ async function main(): Promise<void> {
     }
   }
   const existingShards = readCampaignShards(RESULTS_DIR, campaignId);
-  assertCampaignCompatibility(existingShards, currentCampaignCompatibility());
+  assertCampaignCompatibility(existingShards, currentCampaignCompatibility(suite));
   const completedCells = collectCompletedCampaignCells(existingShards, campaignId);
   const plan = planCampaignCells({
     planned: plannedCells,
@@ -1130,6 +1231,8 @@ async function main(): Promise<void> {
         reps,
         records,
         standardSpeedConfirmed: true,
+        suite,
+        pricingProfileConfirmed,
       }),
     );
   }

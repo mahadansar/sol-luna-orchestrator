@@ -139,16 +139,27 @@ using Sol-Luna on untrusted code.
 
 ## Benchmark evidence
 
-Benchmark V2 asks when Sol Medium should run alone and when adaptive Sol-Luna
-orchestration is preferable, ordered by correctness, credits, then wall-clock.
-Its eight realistic fixtures, fixed-effort arms, dated official credit-rate
-snapshot, selective repetition rules, committed live campaigns, and measured
-limitations are documented in [`bench/RESULTS.md`](bench/RESULTS.md). All final
-cells passed external grading. The exact final Adaptive credit total is unknown
-because one failed worker attempt has unavailable usage, but the measured lower
-bound proves Adaptive was at least approximately 6.5% more expensive than Solo
-overall. Raw tokens remain diagnostics rather than equivalent cost. Production
-cost terminology remains in [Configuration](docs/CONFIGURATION.md#cost).
+Benchmark V2 is frozen historical architecture evidence. Its eight fixtures and
+BEFORE/AFTER Thin Supervisor findings are documented in
+[`bench/RESULTS.md`](bench/RESULTS.md), including unfavorable and unknown-cost
+runs. Because those results influenced the architecture, V2 is no longer an
+unbiased routing target.
+
+All final V2 cells passed external grading.
+
+The exact final Adaptive credit total is unknown because one failed worker
+attempt has unavailable usage, but
+the measured lower bound proves Adaptive was at least approximately 6.5% more
+expensive than Solo overall.
+
+Benchmark V3 is the fresh, frozen routing holdout for future Solo Medium versus
+Adaptive Medium campaigns. Its nine unseen engineering fixtures, evaluator-only
+routing categories, deterministic graders, campaign arms, credit-first economic
+analysis, and predeclared repetition policy are specified in
+[`bench/V3_METHODOLOGY.md`](bench/V3_METHODOLOGY.md). No live V3 cells were run
+while creating the suite. Raw tokens remain diagnostics rather than equivalent
+cost. Production cost terminology remains in
+[Configuration](docs/CONFIGURATION.md#cost).
 
 ## Release status and roadmap
 
@@ -159,18 +170,19 @@ constraints, and non-goals are maintained in [ROADMAP.md](ROADMAP.md).
 
 ## Documentation
 
-| Document                                         | Purpose                                               |
-| ------------------------------------------------ | ----------------------------------------------------- |
-| [Configuration](docs/CONFIGURATION.md)           | Settings, environment variables, and platform support |
-| [Troubleshooting](docs/TROUBLESHOOTING.md)       | Diagnosis and recovery                                |
-| [Observability](docs/OBSERVABILITY.md)           | Event shapes and activity projections                 |
-| [Feature Acceptance](docs/FEATURE_ACCEPTANCE.md) | Evidence, freshness, confidence, and retest gaps      |
-| [`SOL_RULES.md`](SOL_RULES.md)                   | Supervisor delegation, effort, and review policy      |
-| [`SECURITY.md`](SECURITY.md)                     | Threat model and log sensitivity                      |
-| [`bench/RESULTS.md`](bench/RESULTS.md)           | Benchmark evidence, interpretation, and limitations   |
-| [ROADMAP.md](ROADMAP.md)                         | Prioritised future work and constraints               |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md)             | Development, live acceptance, and release workflow    |
-| [`CHANGELOG.md`](CHANGELOG.md)                   | Release history and the Unreleased queue              |
+| Document                                             | Purpose                                               |
+| ---------------------------------------------------- | ----------------------------------------------------- |
+| [Configuration](docs/CONFIGURATION.md)               | Settings, environment variables, and platform support |
+| [Troubleshooting](docs/TROUBLESHOOTING.md)           | Diagnosis and recovery                                |
+| [Observability](docs/OBSERVABILITY.md)               | Event shapes and activity projections                 |
+| [Feature Acceptance](docs/FEATURE_ACCEPTANCE.md)     | Evidence, freshness, confidence, and retest gaps      |
+| [`SOL_RULES.md`](SOL_RULES.md)                       | Supervisor delegation, effort, and review policy      |
+| [`bench/V3_METHODOLOGY.md`](bench/V3_METHODOLOGY.md) | Frozen V3 routing-holdout methodology                 |
+| [`SECURITY.md`](SECURITY.md)                         | Threat model and log sensitivity                      |
+| [`bench/RESULTS.md`](bench/RESULTS.md)               | Benchmark evidence, interpretation, and limitations   |
+| [ROADMAP.md](ROADMAP.md)                             | Prioritised future work and constraints               |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md)                 | Development, live acceptance, and release workflow    |
+| [`CHANGELOG.md`](CHANGELOG.md)                       | Release history and the Unreleased queue              |
 
 ## Contributing
 

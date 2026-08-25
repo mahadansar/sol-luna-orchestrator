@@ -19,6 +19,8 @@ import { SCALE_TASKS } from "./scale-tasks.js";
 import { BENCH_TASKS, type BenchTask, type GradeCommand } from "./tasks.js";
 import { V2_SOLUTIONS } from "./v2-solutions.js";
 import { V2_TASKS } from "./v2-tasks.js";
+import { V3_SOLUTIONS } from "./v3-solutions.js";
+import { V3_TASKS } from "./v3-tasks.js";
 
 /** Known-good solutions, used only to prove the grader accepts correct work. */
 const REFERENCE_SOLUTIONS: Record<string, Record<string, string>> = {
@@ -200,14 +202,15 @@ async function validateTask(task: BenchTask): Promise<void> {
     PARALLEL_SOLUTIONS[task.id] ??
     SCALE_SOLUTIONS[task.id];
   const selectedSolution = solution ?? V2_SOLUTIONS[task.id];
-  if (!selectedSolution) {
+  const referenceSolution = selectedSolution ?? V3_SOLUTIONS[task.id];
+  if (!referenceSolution) {
     check("has a reference solution", false);
     return;
   }
 
   const solved = materialize(task);
   try {
-    for (const [name, content] of Object.entries(selectedSolution)) {
+    for (const [name, content] of Object.entries(referenceSolution)) {
       const target = path.join(solved, ...name.split("/"));
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, content, "utf8");
@@ -232,6 +235,18 @@ async function validateTask(task: BenchTask): Promise<void> {
         `exit code: ${mutatedCode}`,
       );
     }
+
+    const protectedFile = task.immutable[0];
+    if (protectedFile) {
+      const target = path.join(solved, ...protectedFile.split("/"));
+      const original = fs.readFileSync(target);
+      fs.appendFileSync(target, "\nbenchmark immutable probe\n");
+      const changed = !fs.readFileSync(target).equals(original);
+      fs.writeFileSync(target, original);
+      check("immutable protection detects a specification change", changed);
+    } else {
+      check("has an immutable specification", false);
+    }
   } finally {
     fs.rmSync(solved, { recursive: true, force: true });
   }
@@ -239,7 +254,16 @@ async function validateTask(task: BenchTask): Promise<void> {
 
 async function main(): Promise<void> {
   console.log("Validating benchmark fixtures (no model calls)");
-  for (const task of [...BENCH_TASKS, ...PARALLEL_TASKS, ...SCALE_TASKS, ...V2_TASKS]) {
+  const suiteIndex = process.argv.indexOf("--suite");
+  const suite = suiteIndex >= 0 ? process.argv[suiteIndex + 1] : undefined;
+  if (suiteIndex >= 0 && suite !== "v3") {
+    throw new Error("--suite currently accepts only v3");
+  }
+  const tasks =
+    suite === "v3"
+      ? V3_TASKS
+      : [...BENCH_TASKS, ...PARALLEL_TASKS, ...SCALE_TASKS, ...V2_TASKS, ...V3_TASKS];
+  for (const task of tasks) {
     await validateTask(task);
   }
   console.log(

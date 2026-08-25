@@ -4,6 +4,12 @@ Benchmark V2 now has a frozen initial campaign and a post-redesign acceptance
 campaign. This document preserves the question, method, workload, reporting
 rules, measured evidence, and the limits on interpreting those results.
 
+V2 is frozen historical architecture evidence. Its BEFORE/AFTER campaigns
+directly informed the Thin Supervisor design, so it is no longer the primary
+unbiased optimization target for routing work. The fresh routing holdout is
+[Benchmark V3](V3_METHODOLOGY.md). No model-backed V3 campaign has been run at
+freeze time.
+
 Historical V1 JSON and generated reports remain in `bench/results/` as evidence.
 They are not the primary product story for V2; Git history preserves the old
 curated interpretation.

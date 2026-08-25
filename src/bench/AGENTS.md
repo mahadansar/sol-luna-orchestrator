@@ -26,15 +26,18 @@ not production orchestration behavior.
 
 ## Fixture changes
 
-- `v2-tasks.ts` defines the current eight-task suite and `v2-solutions.ts` its hidden
-  references. Older fixture files remain for historical validation only.
+- `v2-tasks.ts` and `v2-solutions.ts` preserve the frozen historical
+  architecture suite. `v3-tasks.ts` defines the fresh nine-task routing holdout
+  and `v3-solutions.ts` its hidden references. Older fixture files remain for
+  historical validation only.
 - Keep each fixture's tests/specification immutable and include at least one grading
   command. Scale fixture metadata, objective, module list, stream count, and reference
   solution must agree.
-- Add or update the matching V2 reference solution. Reference solutions exist only to
+- Add or update the matching suite reference solution. Reference solutions exist only to
   validate graders and must never
   be shown to the model.
-- Run `npm run bench:validate` after fixture or grader changes. It must prove that every
+- Run `npm run bench:validate` after fixture or grader changes; use
+  `npm run bench:v3:validate` for the isolated V3 gate. Validation must prove that every
   starting state fails, every reference solution passes, and mutation detection works.
   Run `npm test` as well; `src/bench.test.ts` pins harness and fixture invariants.
 

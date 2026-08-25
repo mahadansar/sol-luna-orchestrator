@@ -1,4 +1,4 @@
-/** Combine committed Benchmark V2 result files without making model calls. */
+/** Combine committed benchmark result files without making model calls. */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,12 +13,16 @@ import { renderReport, type ResultsFile } from "./report.js";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_DIR = path.resolve(HERE, "..", "..", "bench", "results");
 
-export function loadV2Campaign(directory: string, campaignId?: string): ResultsFile {
+export function loadCampaign(
+  directory: string,
+  benchmarkVersion: 2 | 3,
+  campaignId?: string,
+): ResultsFile {
   const files = fs
     .readdirSync(directory)
     .filter((name) => name.endsWith(".json"))
     .sort();
-  const v2 = files
+  const matching = files
     .map((name) => ({
       file: name,
       data: JSON.parse(
@@ -27,56 +31,77 @@ export function loadV2Campaign(directory: string, campaignId?: string): ResultsF
     }))
     .filter(({ data }) =>
       campaignId === undefined
-        ? data.schema === 4 || data.benchmarkVersion === 2
+        ? data.benchmarkVersion === benchmarkVersion
         : data.campaignId === campaignId,
-    );
-  if (v2.length === 0) throw new Error(`No Benchmark V2 result files in ${directory}`);
-  const campaignIds = new Set(v2.map(({ data }) => data.campaignId ?? "missing"));
+    )
+    .filter(({ data }) => data.benchmarkVersion === benchmarkVersion);
+  if (matching.length === 0) {
+    throw new Error(`No Benchmark V${benchmarkVersion} result files in ${directory}`);
+  }
+  const campaignIds = new Set(matching.map(({ data }) => data.campaignId ?? "missing"));
   if (campaignIds.size !== 1 || campaignIds.has("missing")) {
     throw new Error(
       `Select one campaign with --campaign; found: ${[...campaignIds].join(", ")}`,
     );
   }
-  const shards = v2 as LoadedCampaignShard[];
+  const shards = matching as LoadedCampaignShard[];
   const compatibility = campaignCompatibilityFromShard(shards[0]!);
   assertCampaignCompatibility(shards, compatibility);
   collectCompletedCampaignCells(shards, [...campaignIds][0]!);
   return {
     schema: 4,
-    benchmarkVersion: 2,
-    suite: "v2-campaign",
-    supervisorModel: v2[0]!.data.supervisorModel,
-    supervisorEffort: v2[0]!.data.supervisorEffort,
-    executionProfile: v2[0]!.data.executionProfile,
-    pricingProfile: v2[0]!.data.pricingProfile,
-    campaignId: v2[0]!.data.campaignId,
-    reps: 2,
-    records: v2.flatMap(({ data }) => data.records),
+    benchmarkVersion,
+    suite: `v${benchmarkVersion}-campaign`,
+    supervisorModel: matching[0]!.data.supervisorModel,
+    supervisorEffort: matching[0]!.data.supervisorEffort,
+    executionProfile: matching[0]!.data.executionProfile,
+    pricingProfile: matching[0]!.data.pricingProfile,
+    campaignId: matching[0]!.data.campaignId,
+    holdoutFreezeSha: matching[0]!.data.holdoutFreezeSha,
+    productionBaseline: matching[0]!.data.productionBaseline,
+    reps: Math.max(
+      ...matching.flatMap(({ data }) => data.records.map((record) => record.repetition)),
+    ),
+    records: matching.flatMap(({ data }) => data.records),
   };
 }
+
+export const loadV2Campaign = (directory: string, campaignId?: string): ResultsFile =>
+  loadCampaign(directory, 2, campaignId);
+
+export const loadV3Campaign = (directory: string, campaignId?: string): ResultsFile =>
+  loadCampaign(directory, 3, campaignId);
 
 function main(): void {
   const argv = process.argv.slice(2);
   const outputIndex = argv.indexOf("--output");
   const campaignIndex = argv.indexOf("--campaign");
+  const versionIndex = argv.indexOf("--version");
   const output = outputIndex >= 0 ? argv[outputIndex + 1] : undefined;
   if (outputIndex >= 0 && !output) throw new Error("--output requires a path");
   if (campaignIndex >= 0 && !argv[campaignIndex + 1]) {
     throw new Error("--campaign requires an id");
   }
+  const versionValue = versionIndex >= 0 ? argv[versionIndex + 1] : "2";
+  if (versionValue !== "2" && versionValue !== "3") {
+    throw new Error("--version requires 2 or 3");
+  }
+  const benchmarkVersion = Number(versionValue) as 2 | 3;
   const directoryArgument = argv.find(
     (argument, index) =>
       !argument.startsWith("--") &&
       index !== outputIndex + 1 &&
-      index !== campaignIndex + 1,
+      index !== campaignIndex + 1 &&
+      index !== versionIndex + 1,
   );
   const directory = path.resolve(directoryArgument ?? DEFAULT_DIR);
-  const campaign = loadV2Campaign(
+  const campaign = loadCampaign(
     directory,
+    benchmarkVersion,
     campaignIndex >= 0 ? argv[campaignIndex + 1] : undefined,
   );
   const report = renderReport(campaign, {
-    sourceName: "combined Benchmark V2 JSON",
+    sourceName: `combined Benchmark V${benchmarkVersion} JSON`,
   });
   if (output) {
     const target = path.resolve(output);

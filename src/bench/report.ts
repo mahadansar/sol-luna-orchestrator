@@ -19,6 +19,12 @@ import {
   type ParticipantAccounting,
   type RunRecord,
 } from "./run.js";
+import {
+  analyzeV3,
+  recommendV3ThirdRepetition,
+  type V3EvaluatorMetadata,
+} from "./v3-analysis.js";
+import { V3_TASKS } from "./v3-tasks.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RESULTS_DIR = path.resolve(HERE, "..", "..", "bench", "results");
@@ -36,6 +42,8 @@ export interface ResultsFile {
   reps?: number;
   pricingProfile?: CreditPricingProfile;
   campaignId?: string;
+  holdoutFreezeSha?: string;
+  productionBaseline?: { version: string; sha: string };
   records: RunRecord[];
 }
 
@@ -97,7 +105,9 @@ export function renderReport(
   input: ResultsFile,
   options: { repriceHistorical?: boolean; sourceName?: string } = {},
 ): string {
-  const isV2 = input.schema === 4 || input.benchmarkVersion === 2;
+  const isV2 = input.benchmarkVersion === 2;
+  const isV3 = input.benchmarkVersion === 3;
+  const isVersioned = isV2 || isV3;
   const records = options.repriceHistorical
     ? input.records.map((record) => repriceHistoricalRecord(record))
     : input.records;
@@ -113,6 +123,13 @@ export function renderReport(
       `\`${input.supervisorModel ?? "unknown"}\` / ${input.supervisorEffort ?? "historical"}`,
     "",
   );
+  if (isV3) {
+    lines.push(
+      `Holdout freeze: \`${input.holdoutFreezeSha ?? "unknown"}\` | production baseline: ` +
+        `\`${input.productionBaseline ? `${input.productionBaseline.version}@${input.productionBaseline.sha}` : "unknown"}\``,
+      "",
+    );
+  }
   if (input.executionProfile) {
     const execution = input.executionProfile;
     lines.push(
@@ -121,7 +138,7 @@ export function renderReport(
         `SDK pinning: ${execution.sdkSpeedPinningSupported ? "supported" : "unsupported"}; enforcement: ${execution.enforcement}).`,
       "",
     );
-  } else if (isV2) {
+  } else if (isVersioned) {
     lines.push("Codex speed: unknown (execution profile missing).", "");
   }
   if (profile) {
@@ -205,6 +222,112 @@ export function renderReport(
   }
   lines.push("");
 
+  if (isV3) {
+    const evaluatorMetadata = Object.fromEntries(
+      V3_TASKS.map((task) => [
+        task.id,
+        {
+          routingCategory: task.routingCategory,
+          workloadClass: task.workloadClass,
+          coupled: task.workloadClass === "coupled-control",
+          control:
+            task.routingCategory === "expected-solo" ||
+            task.routingCategory === "likely-solo",
+          obviousSolo: task.routingCategory === "expected-solo",
+          delegationCandidate:
+            task.routingCategory === "delegation-candidate" ||
+            task.routingCategory === "strong-delegation-candidate",
+        } satisfies V3EvaluatorMetadata,
+      ]),
+    );
+    const routing = analyzeV3(records, evaluatorMetadata);
+    lines.push("## V3 routing analysis", "");
+    lines.push(
+      "Evaluator routing categories below are descriptive and never affect correctness.",
+      "",
+      "| Task | Strategy | Routing category | Delegated | Zero-worker | Worker counts | Stable | Routing changes | Routing outcome | Sol | Luna | Total | End-to-end | Worker window | Slowest worker |",
+      "|---|---|---|---:|---:|---|---|---:|---|---:|---:|---:|---:|---:|---:|",
+    );
+    for (const cell of routing.cells) {
+      lines.push(
+        `| ${cell.taskId} | ${cell.arm} | ${cell.routingCategory ?? "unknown"} | ` +
+          `${number(cell.delegationRate === null ? null : cell.delegationRate * 100, "%")} | ` +
+          `${number(cell.zeroWorkerRate === null ? null : cell.zeroWorkerRate * 100, "%")} | ` +
+          `${number(cell.workerCounts.min)}-${number(cell.workerCounts.max)} (median ${number(cell.workerCounts.median)}) | ` +
+          `${cell.workerCountStable === null ? "unknown" : cell.workerCountStable ? "yes" : "no"} | ` +
+          `${number(cell.routingChanges)} | ${cell.routingOutcome} | ` +
+          `${number(cell.solCredits.median)} | ${number(cell.lunaCredits.median)} | ${number(cell.totalCredits.median)} | ` +
+          `${number(cell.endToEndLatencySeconds.median, "s")} | ${number(cell.workerWindowSeconds.median, "s")} | ` +
+          `${number(cell.slowestWorkerSeconds.median, "s")} |`,
+      );
+    }
+    lines.push("", "### Delegation rate by evaluator category", "");
+    lines.push(
+      "| Routing category | Runs | Delegation rate | Zero-worker rate |",
+      "|---|---:|---:|---:|",
+    );
+    for (const group of routing.byRoutingCategory) {
+      lines.push(
+        `| ${group.key} | ${group.runs} | ${number(group.delegationRate === null ? null : group.delegationRate * 100, "%")} | ` +
+          `${number(group.zeroWorkerRate === null ? null : group.zeroWorkerRate * 100, "%")} |`,
+      );
+    }
+    lines.push("", "### Delegation rate by workload shape", "");
+    lines.push(
+      "| Workload shape | Runs | Delegation rate | Zero-worker rate |",
+      "|---|---:|---:|---:|",
+    );
+    for (const group of routing.byWorkload) {
+      lines.push(
+        `| ${group.key} | ${group.runs} | ${number(group.delegationRate === null ? null : group.delegationRate * 100, "%")} | ` +
+          `${number(group.zeroWorkerRate === null ? null : group.zeroWorkerRate * 100, "%")} |`,
+      );
+    }
+    lines.push("", "### Routing review flags", "");
+    const flag = (label: string, values: readonly string[]): void => {
+      lines.push(
+        `- ${label}: ${values.length > 0 ? values.map((value) => `\`${value.replace("\0", " / ")}\``).join(", ") : "none"}`,
+      );
+    };
+    flag("Coupled/control tasks delegated", routing.coupledOrControlDelegated);
+    flag("Obvious-Solo tasks delegated", routing.obviousSoloDelegated);
+    flag("Delegation candidates where Adaptive stayed Solo", routing.adaptiveStayedSolo);
+    flag("Cells whose routing changed between repetitions", routing.routingChanges);
+    lines.push("", "### Delegation economics", "");
+    if (routing.economicComparisons.length === 0) {
+      lines.push(
+        "No Adaptive cell with observed delegation and a matching Solo cell.",
+        "",
+      );
+    } else {
+      lines.push(
+        "| Task | Correctness | Credit basis | Solo median | Adaptive median | Interpretation |",
+        "|---|---|---|---:|---:|---|",
+      );
+      for (const comparison of routing.economicComparisons) {
+        lines.push(
+          `| ${comparison.taskId} | ${comparison.correctness} | ${comparison.creditBasis} | ` +
+            `${number(comparison.soloMedianTotalCredits)} | ${number(comparison.adaptiveMedianTotalCredits)} | ${comparison.label} |`,
+        );
+      }
+      lines.push("");
+    }
+    lines.push("### Operational incidence", "");
+    lines.push(
+      "| Task | Strategy | Timeout | Recovery | Straggler | Verification failure | Integration conflict |",
+      "|---|---|---:|---:|---:|---:|---:|",
+    );
+    for (const cell of routing.cells) {
+      const pct = (value: number | null): string =>
+        number(value === null ? null : value * 100, "%");
+      lines.push(
+        `| ${cell.taskId} | ${cell.arm} | ${pct(cell.timeoutIncidence)} | ${pct(cell.recoveryIncidence)} | ` +
+          `${pct(cell.stragglerIncidence)} | ${pct(cell.verificationFailureIncidence)} | ${pct(cell.integrationConflictIncidence)} |`,
+      );
+    }
+    lines.push("");
+  }
+
   lines.push("## Participant accounting by run", "");
   lines.push(
     "| Task | Strategy | Rep | Participant | Role | Model / effort | Input | Cached | Output | Reasoning | Cache write | Credits | Worker duration | End-to-end |",
@@ -242,7 +365,9 @@ export function renderReport(
       const baseline = records.filter(
         (record) => record.taskId === cell.taskId && record.arm === "solo-medium",
       );
-      return recommendThirdRepetition(rows, baseline);
+      return isV3
+        ? recommendV3ThirdRepetition(rows, baseline)
+        : recommendThirdRepetition(rows, baseline);
     })
     .filter((value) => value !== null);
   if (recommendations.length === 0) {
