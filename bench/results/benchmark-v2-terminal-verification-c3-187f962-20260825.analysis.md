@@ -1,0 +1,104 @@
+# Benchmark results
+
+Source: `combined Benchmark V2 JSON`
+
+Schema: 4 | suite: v2-campaign | campaign: benchmark-v2-terminal-verification-c3-187f962-20260825 | supervisor: `gpt-5.6-sol` / medium
+
+Codex speed: standard (Fast mode disabled: yes; service tier: unavailable (not-exposed-by-codex-sdk); SDK pinning: unsupported; enforcement: operator-confirmed-pre-run).
+
+Credit profile: `benchmark-v2-chatgpt-plus-codex-credits-2026-08-24` (snapshot 2026-08-24; [official rate card](https://help.openai.com/en/articles/20001106)).
+
+## Primary comparison
+
+| Task | Strategy | Pass | Credits | Basis | Time | Credit Δ | Time Δ | Trade-off | Delegated | Workers |
+|---|---|---:|---:|---|---:|---:|---:|---|---:|---:|
+| v2-config-overlay | solo-medium | 1/1 | 7.41 | rate-card | 159s | baseline | baseline | baseline | 0% | 0 |
+| v2-config-overlay | adaptive-medium | 1/1 | 6.75 | rate-card | 107s | -9% | -33% | cheaper + faster | 0% | 0 |
+| v2-data-contracts | solo-medium | 1/1 | 7.97 | rate-card | 159s | baseline | baseline | baseline | 0% | 0 |
+| v2-data-contracts | adaptive-medium | 1/1 | 7.55 | rate-card | 229s | -5% | +44% | cheaper + slower | 100% | 3 |
+| v2-integration-toolkit | solo-medium | 1/1 | 8.57 | rate-card | 128s | baseline | baseline | baseline | 0% | 0 |
+| v2-integration-toolkit | adaptive-medium | 1/1 | 5.8 | rate-card | 135s | -32% | +5% | cheaper + slower | 100% | 4 |
+| v2-integration-toolkit | forced-delegation | 1/1 | 12.92 | rate-card | 268s | +51% | +109% | more expensive + slower / dominated | 100% | 4 |
+
+## Credits by run
+
+| Task | Strategy | Rep | Actual | Rate-card total | Sol | Luna | Profile |
+|---|---|---:|---:|---:|---:|---:|---|
+| v2-config-overlay | solo-medium | 1 | unknown | 7.41 | 7.41 | 0 | benchmark-v2-chatgpt-plus-codex-credits-2026-08-24 |
+| v2-config-overlay | adaptive-medium | 1 | unknown | 6.75 | 6.75 | 0 | benchmark-v2-chatgpt-plus-codex-credits-2026-08-24 |
+| v2-integration-toolkit | solo-medium | 1 | unknown | 8.57 | 8.57 | 0 | benchmark-v2-chatgpt-plus-codex-credits-2026-08-24 |
+| v2-integration-toolkit | adaptive-medium | 1 | unknown | 5.8 | 4.83 | 0.96 | benchmark-v2-chatgpt-plus-codex-credits-2026-08-24 |
+| v2-data-contracts | solo-medium | 1 | unknown | 7.97 | 7.97 | 0 | benchmark-v2-chatgpt-plus-codex-credits-2026-08-24 |
+| v2-data-contracts | adaptive-medium | 1 | unknown | 7.55 | 6.15 | 1.4 | benchmark-v2-chatgpt-plus-codex-credits-2026-08-24 |
+| v2-integration-toolkit | forced-delegation | 1 | unknown | 12.92 | 11.56 | 1.36 | benchmark-v2-chatgpt-plus-codex-credits-2026-08-24 |
+
+## Routing and stragglers
+
+| Task | Strategy | Worker counts | Efforts | Peak concurrency | Slowest workers |
+|---|---|---|---|---:|---|
+| v2-config-overlay | solo-medium | 0 | - | unknown | unknown |
+| v2-config-overlay | adaptive-medium | 0 | - | unknown | unknown |
+| v2-data-contracts | solo-medium | 0 | - | unknown | unknown |
+| v2-data-contracts | adaptive-medium | 3 | high, medium, high | 3 | 169.8s |
+| v2-integration-toolkit | solo-medium | 0 | - | unknown | unknown |
+| v2-integration-toolkit | adaptive-medium | 4 | medium, medium, medium, medium | 4 | 77s |
+| v2-integration-toolkit | forced-delegation | 4 | medium, high, medium, medium | 4 | 196.5s |
+
+## Participant accounting by run
+
+| Task | Strategy | Rep | Participant | Role | Model / effort | Input | Cached | Output | Reasoning | Cache write | Credits | Worker duration | End-to-end |
+|---|---|---:|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| v2-config-overlay | solo-medium | 1 | Supervisor | supervisor | gpt-5.6-sol / medium | 147123 | 128256 | 4599 | 2031 | unknown | 7.41 | unknown | - |
+| v2-config-overlay | solo-medium | 1 | Sol total | total | - | - | - | - | - | - | 7.41 | - | - |
+| v2-config-overlay | solo-medium | 1 | Luna total | total | - | - | - | - | - | - | 0 | - | - |
+| v2-config-overlay | solo-medium | 1 | Run total | total | - | - | - | - | - | - | 7.41 | - | 159s |
+| v2-config-overlay | adaptive-medium | 1 | Supervisor | supervisor | gpt-5.6-sol / medium | 162620 | 144384 | 3558 | 1203 | unknown | 6.75 | unknown | - |
+| v2-config-overlay | adaptive-medium | 1 | Sol total | total | - | - | - | - | - | - | 6.75 | - | - |
+| v2-config-overlay | adaptive-medium | 1 | Luna total | total | - | - | - | - | - | - | 0 | - | - |
+| v2-config-overlay | adaptive-medium | 1 | Run total | total | - | - | - | - | - | - | 6.75 | - | 107s |
+| v2-integration-toolkit | solo-medium | 1 | Supervisor | supervisor | gpt-5.6-sol / medium | 193872 | 171776 | 4886 | 1568 | unknown | 8.57 | unknown | - |
+| v2-integration-toolkit | solo-medium | 1 | Sol total | total | - | - | - | - | - | - | 8.57 | - | - |
+| v2-integration-toolkit | solo-medium | 1 | Luna total | total | - | - | - | - | - | - | 0 | - | - |
+| v2-integration-toolkit | solo-medium | 1 | Run total | total | - | - | - | - | - | - | 8.57 | - | 128s |
+| v2-integration-toolkit | adaptive-medium | 1 | Supervisor | supervisor | gpt-5.6-sol / medium | 137807 | 123136 | 1947 | 252 | unknown | 4.83 | unknown | - |
+| v2-integration-toolkit | adaptive-medium | 1 | Worker (task t3, thread 01a036e5-d09d-73b2-b8d3-7b6a3fee5511) | worker | gpt-5.6-luna / medium | 117980 | 93696 | 1509 | 432 | 0 | 0.21 | 50s | - |
+| v2-integration-toolkit | adaptive-medium | 1 | Worker (task t1, thread 01a036e5-d01e-7651-a4f2-c0740118fbf2) | worker | gpt-5.6-luna / medium | 119329 | 94720 | 2151 | 986 | 0 | 0.23 | 68s | - |
+| v2-integration-toolkit | adaptive-medium | 1 | Worker (task t2, thread 01a036e5-d07d-74f1-a160-0e971fbf5872) | worker | gpt-5.6-luna / medium | 87441 | 63488 | 2747 | 1336 | 0 | 0.23 | 71s | - |
+| v2-integration-toolkit | adaptive-medium | 1 | Worker (task t4, thread 01a036e5-d003-7f62-9a53-d5afd91db242) | worker | gpt-5.6-luna / medium | 160439 | 133120 | 2549 | 733 | 0 | 0.28 | 77s | - |
+| v2-integration-toolkit | adaptive-medium | 1 | Sol total | total | - | - | - | - | - | - | 4.83 | - | - |
+| v2-integration-toolkit | adaptive-medium | 1 | Luna total | total | - | - | - | - | - | - | 0.96 | - | - |
+| v2-integration-toolkit | adaptive-medium | 1 | Run total | total | - | - | - | - | - | - | 5.8 | - | 135s |
+| v2-data-contracts | solo-medium | 1 | Supervisor | supervisor | gpt-5.6-sol / medium | 139710 | 124160 | 5968 | 1241 | unknown | 7.97 | unknown | - |
+| v2-data-contracts | solo-medium | 1 | Sol total | total | - | - | - | - | - | - | 7.97 | - | - |
+| v2-data-contracts | solo-medium | 1 | Luna total | total | - | - | - | - | - | - | 0 | - | - |
+| v2-data-contracts | solo-medium | 1 | Run total | total | - | - | - | - | - | - | 7.97 | - | 159s |
+| v2-data-contracts | adaptive-medium | 1 | Supervisor | supervisor | gpt-5.6-sol / medium | 220897 | 204032 | 1983 | 246 | unknown | 6.15 | unknown | - |
+| v2-data-contracts | adaptive-medium | 1 | Worker (task t2, thread 01a036ea-56d2-7680-ba10-edf37a972169) | worker | gpt-5.6-luna / medium | 302410 | 264448 | 3160 | 1167 | 0 | 0.42 | 100s | - |
+| v2-data-contracts | adaptive-medium | 1 | Worker (task t3, thread 01a036ea-573e-7a41-8916-2edb89a682a9) | worker | gpt-5.6-luna / high | 221297 | 184320 | 5377 | 3196 | 0 | 0.44 | 132s | - |
+| v2-data-contracts | adaptive-medium | 1 | Worker (task t1, thread 01a036ea-56de-7de1-8ba2-af376b332819) | worker | gpt-5.6-luna / high | 293315 | 252416 | 7179 | 2337 | 0 | 0.55 | 170s | - |
+| v2-data-contracts | adaptive-medium | 1 | Sol total | total | - | - | - | - | - | - | 6.15 | - | - |
+| v2-data-contracts | adaptive-medium | 1 | Luna total | total | - | - | - | - | - | - | 1.4 | - | - |
+| v2-data-contracts | adaptive-medium | 1 | Run total | total | - | - | - | - | - | - | 7.55 | - | 229s |
+| v2-integration-toolkit | forced-delegation | 1 | Supervisor | supervisor | gpt-5.6-sol / medium | 459103 | 427520 | 3029 | 561 | unknown | 11.56 | unknown | - |
+| v2-integration-toolkit | forced-delegation | 1 | Worker (task t3, thread 01a036ed-c36a-75b1-b4ec-6fee0907c31a) | worker | gpt-5.6-luna / medium | 138065 | 99840 | 1620 | 413 | 0 | 0.29 | 54s | - |
+| v2-integration-toolkit | forced-delegation | 1 | Worker (task t1, thread 01a036ed-c3e4-70f2-90f0-6158eead090f) | worker | gpt-5.6-luna / medium | 165398 | 138240 | 2137 | 627 | 0 | 0.27 | 71s | - |
+| v2-integration-toolkit | forced-delegation | 1 | Worker (task t4, thread 01a036ed-c3a6-7550-b9e7-de42954cff5f) | worker | gpt-5.6-luna / medium | 136513 | 111872 | 2273 | 687 | 0 | 0.25 | 73s | - |
+| v2-integration-toolkit | forced-delegation | 1 | Worker (task t2, thread 01a036ed-c3cd-7a50-b1a1-3935fe22e039) | worker | gpt-5.6-luna / high | 290838 | 256768 | 8368 | 4912 | 0 | 0.55 | 196s | - |
+| v2-integration-toolkit | forced-delegation | 1 | Sol total | total | - | - | - | - | - | - | 11.56 | - | - |
+| v2-integration-toolkit | forced-delegation | 1 | Luna total | total | - | - | - | - | - | - | 1.36 | - | - |
+| v2-integration-toolkit | forced-delegation | 1 | Run total | total | - | - | - | - | - | - | 12.92 | - | 268s |
+
+## Third-repetition recommendations
+
+None under the predeclared rules.
+
+## Measurement notes
+
+- Correctness is determined after the model turn by deterministic grade commands, immutable-file checks, and mutation checks where applicable.
+- `rateCardCredits` is calculated from the snapshotted official rate card. `actualCredits` remains null unless an authoritative per-run value becomes available.
+- Codex SDK `inputTokens` includes cached input, so cached tokens are removed from the full-rate input portion and charged once at the cached-input rate. Cache writes are uncharged.
+- Output tokens already include reasoning output; reasoning tokens are retained as diagnostics and are not charged twice.
+- Wall-clock covers the full supervisor turn, including delegation setup, workers, integration, review, and verification.
+- Participant worker durations remain individual execution times. They are never summed or substituted for end-to-end wall-clock; supervisor participant duration stays unavailable because the harness does not observe a single authoritative supervisor-only duration.
+- Raw tokens, worker effort, concurrency, duration, and straggler fields are supporting diagnostics rather than the headline economic metric.
+- Two repetitions are directional evidence. A third is recommended only for the conditions listed above; no statistical significance is claimed.
