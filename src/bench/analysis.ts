@@ -175,7 +175,8 @@ export function recommendThirdRepetition(
   );
   if (cellCredits.every((value): value is number => value !== null)) {
     if (relativeRange(cellCredits) >= 0.25) reasons.push("credit range is at least 25%");
-    if (baselineRecords.length === 2) {
+    const isSoloArm = records[0]!.arm.startsWith("solo-");
+    if (!isSoloArm && baselineRecords.length === 2) {
       const cell = knownMedian(cellCredits);
       const base = knownMedian(
         baselineRecords.map(

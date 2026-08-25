@@ -1183,6 +1183,40 @@ test("third-repetition rules flag inconsistent routing and close credit deltas",
   assert.ok(result?.reasons.includes("credit delta versus Solo is within 10%"));
 });
 
+test("Solo third-repetition rules do not compare credits against themselves", () => {
+  const solo = [
+    metricRecord({ arm: "solo-medium", repetition: 1, credits: 10 }),
+    metricRecord({ arm: "solo-medium", repetition: 2, credits: 10 }),
+  ];
+
+  assert.equal(recommendThirdRepetition(solo, solo), null);
+});
+
+test("Solo third-repetition rules preserve pass/fail and variance signals", () => {
+  const solo = [
+    metricRecord({
+      arm: "solo-medium",
+      repetition: 1,
+      credits: 10,
+      duration: 100,
+      passed: true,
+    }),
+    metricRecord({
+      arm: "solo-medium",
+      repetition: 2,
+      credits: 13,
+      duration: 130,
+      passed: false,
+    }),
+  ];
+
+  assert.deepEqual(recommendThirdRepetition(solo, solo)?.reasons, [
+    "inconsistent pass/fail",
+    "latency range is at least 25%",
+    "credit range is at least 25%",
+  ]);
+});
+
 test("historical repricing preserves unknown Luna usage and report compatibility", () => {
   const historical = metricRecord({ arm: "solo-high", repetition: 1 });
   delete historical.creditAccounting;

@@ -142,13 +142,13 @@ using Sol-Luna on untrusted code.
 Benchmark V2 asks when Sol Medium should run alone and when adaptive Sol-Luna
 orchestration is preferable, ordered by correctness, credits, then wall-clock.
 Its eight realistic fixtures, fixed-effort arms, dated official credit-rate
-snapshot, selective repetition rules, and future campaign commands are defined
-in [`bench/RESULTS.md`](bench/RESULTS.md). The V2 live campaign has not yet been
-run, so no outcome is claimed. Historical raw JSON remains committed as evidence;
-raw tokens are retained as diagnostics rather than treated as equivalent cost.
-Raw tokens are not billed cost, and no cost saving is claimed before the V2
-campaign provides measured evidence. Production cost terminology remains in
-[Configuration](docs/CONFIGURATION.md#cost).
+snapshot, selective repetition rules, committed live campaigns, and measured
+limitations are documented in [`bench/RESULTS.md`](bench/RESULTS.md). All final
+cells passed external grading. The exact final Adaptive credit total is unknown
+because one failed worker attempt has unavailable usage, but the measured lower
+bound proves Adaptive was at least approximately 6.5% more expensive than Solo
+overall. Raw tokens remain diagnostics rather than equivalent cost. Production
+cost terminology remains in [Configuration](docs/CONFIGURATION.md#cost).
 
 ## Release status and roadmap
 

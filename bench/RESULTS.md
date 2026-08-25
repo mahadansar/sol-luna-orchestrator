@@ -155,8 +155,8 @@ The initial campaign is 40 model-backed runs:
 Start with two repetitions. The analyzer recommends a third only when it could
 materially clarify a cell: inconsistent pass/fail, at least 25% latency or
 credit range, Adaptive routing changes, a worker-count change of at least two,
-or a credit delta within 10% of Solo. A recommendation is review input, not an
-automatic model call.
+or a non-Solo arm's credit delta within 10% of Solo. A recommendation is review
+input, not an automatic model call.
 
 ## Reporting
 
@@ -440,16 +440,16 @@ runs.
 
 ### What changed and how the eight priorities were addressed
 
-| Priority                                     | Implemented behavior                                                                                                                                                                           | Evidence and limit                                                                                                                                         |
-| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1. Reduce supervisor work after delegation   | Clean PASS returns a terminal text-only handoff; successful batch finalization is runtime code.                                                                                                | Final Adaptive delegated runs spent 5.5-8.9s in observed supervisor-after time, versus 26.8-113.1s in delegated BEFORE Adaptive runs.                      |
-| 2. Stop duplicate understanding/verification | The runtime, not Sol, reruns the final command union and tells Sol to finish without rereading files or rerunning passed checks.                                                               | Deterministic tests cover terminal closure, final PASS, failure expansion, and partial streams. A parent can still ignore guidance.                        |
-| 3. Make gating cheap                         | Tool descriptions became routing cards; validators/defaults remain while redundant prose and output schemas are absent. Metadata fell from 37,839 to 10,218 characters.                        | Aggregate zero-worker overhead fell from 20% to 3%; config-overlay alone remained +13%.                                                                    |
-| 4. Strengthen ownership                      | Existing required/optional/forbidden change intent, allowed/forbidden files, immutable contracts, context capsules, isolated worktrees, and overlap/conflict rules remain authoritative.       | No scope, immutable-file, or integration-conflict failure occurred in the final campaign. File scopes remain detective, not a write sandbox.               |
-| 5. Directly consumable handoffs              | `handoff` is the default. Clean verified PASS is text-only; compact/full are explicit compatibility modes; failures progressively disclose evidence.                                           | Final fresh sessions exercised real handoff mode; all delegated externally graded tasks passed.                                                            |
-| 6. Reduce repeated ingestion                 | Clean successes omit structured evidence and worker reasoning; schema descriptions and repeated guidance were removed; narrow context capsules and ownership contracts remain worker-specific. | Metadata is 73% smaller. Sol's final median-task credit sum is 25% below BEFORE Adaptive, although initial Sol exploration remains.                        |
-| 7. Target failure recovery                   | One eligible timeout continues the same thread/worktree; a no-result process failure gets one fresh-process attempt in the same owned worktree. Successful siblings and identities survive.    | Final Adaptive data rep 2 preserved two successes, retried only `t2` after a 300s failure, and passed. Missing failed-attempt usage makes credits unknown. |
-| 8. Change the execution pattern              | Batch execution now has explicit integration verification and `verified-complete`/`needs-supervisor` states, with typed activity events.                                                       | The 921s Forced integration failure mode fell to two clean 199s/202s final runs, but worker stragglers still dominate some tasks.                          |
+| Priority                                     | Implemented behavior                                                                                                                                                                           | Evidence and limit                                                                                                                                                                                                              |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. Reduce supervisor work after delegation   | Clean PASS returns a terminal text-only handoff; successful batch finalization is runtime code.                                                                                                | Final Adaptive delegated runs spent 5.5-8.9s in observed supervisor-after time, versus 26.8-113.1s in delegated BEFORE Adaptive runs.                                                                                           |
+| 2. Stop duplicate understanding/verification | The runtime, not Sol, reruns the final command union and tells Sol to finish without rereading files or rerunning passed checks.                                                               | Deterministic tests cover terminal closure, final PASS, failure expansion, and partial streams. A parent can still ignore guidance.                                                                                             |
+| 3. Make gating cheap                         | Tool descriptions became routing cards; validators/defaults remain while redundant prose and output schemas are absent. Metadata fell from 37,839 to 10,218 characters.                        | Aggregate zero-worker overhead fell from 20% to 3%; config-overlay alone remained +13%.                                                                                                                                         |
+| 4. Strengthen ownership                      | Existing required/optional/forbidden change intent, allowed/forbidden files, immutable contracts, context capsules, isolated worktrees, and overlap/conflict rules remain authoritative.       | No scope, immutable-file, or integration-conflict failure occurred in the final campaign. File scopes remain detective, not a write sandbox.                                                                                    |
+| 5. Directly consumable handoffs              | `handoff` is the default. Clean verified PASS is text-only; compact/full are explicit compatibility modes; failures progressively disclose evidence.                                           | Final fresh sessions exercised real handoff mode; all delegated externally graded tasks passed.                                                                                                                                 |
+| 6. Reduce repeated ingestion                 | Clean successes omit structured evidence and worker reasoning; schema descriptions and repeated guidance were removed; narrow context capsules and ownership contracts remain worker-specific. | Metadata is 73% smaller. Sol's final median-task credit sum is 25% below BEFORE Adaptive, although initial Sol exploration remains.                                                                                             |
+| 7. Target failure recovery                   | One eligible timeout continues the same thread/worktree; a no-result process failure gets one fresh-process attempt in the same owned worktree. Successful siblings and identities survive.    | Final Adaptive data rep 2 preserved two successes, retried only `t2` after a 300s failure, and passed. Missing failed-attempt usage makes credits unknown.                                                                      |
+| 8. Change the execution pattern              | Batch execution now has explicit integration verification and `verified-complete`/`needs-supervisor` states, with typed activity events.                                                       | Final Forced integration-toolkit runs were clean at about 199s and 202s; they did not reproduce the prior 921s worker failure, so they do not prove recovery reduced 921s to 202s. Worker stragglers still dominate some tasks. |
 
 The implementation is concentrated in `src/batch.ts`, `src/server.ts`,
 `src/contract.ts`, and `src/events.ts`; the CLI reducer/rendering projects the
@@ -536,11 +536,20 @@ Forced AFTER medians were:
   versus a 30% Sol premium BEFORE. This is the clearest successful architecture
   outcome.
 - **Luna credits:** BEFORE Adaptive's median Luna sum was 3.18. AFTER has 2.31
-  known credits across seven fully priced task cells plus unknown data-contracts
-  Luna credits. The missing timeout usage prevents a valid total comparison.
-- **Overall Adaptive:** the AFTER total is unknown. On the seven fully priced
-  tasks, Adaptive sums to 48.20 versus 47.36 Solo, about 2% more expensive.
-  Therefore neither the 15-20% nor 25-30% overall saving threshold was reached.
+  known credits across seven complete task medians. Final data-contracts
+  repetition 2 has 1.62 known credits from the successful siblings and retry,
+  but its 300-second failed attempt is unpriced, so the exact total remains
+  unknown.
+- **Overall Adaptive:** the exact AFTER total is unknown because of that
+  unpriced failed 300-second Luna attempt. Direct recalculation from the raw
+  shards gives a lower bound of 60.375 credits: 48.2036 from the seven
+  complete Adaptive task medians plus a minimum 12.17164 data-contracts median.
+  Data-contracts repetition 2 is at least 12.17164 (10.551325 Sol + 1.620315
+  priced Luna work); with repetitions 1 and 3 at 13.370561 and 7.655893, its
+  three-repetition stopping-rule median is therefore at least 12.17164. Solo
+  sums to 56.6879 credits. Thus Adaptive is already at least approximately 6.5%
+  more expensive (60.375 / 56.6879 - 1), proving it did not beat Solo overall;
+  the unknown failed-attempt usage can only increase the exact total.
 - **Delegated savings:** final Adaptive saved 13% on integration-toolkit and
   21% on repository-tools, cost 40% more on checkout-engine, and is unknown on
   data-contracts. No final Adaptive median reached the 25%, 35%, or roughly 50%
@@ -559,20 +568,21 @@ superiority is claimed.
 
 ### Failure recovery and the 921-second mode
 
-The specific catastrophic Forced integration pattern materially improved. Its
-BEFORE attempts were 213s, 921s, and 609s; the latter two each contained one or
-two 300-second failed workers and replacement work. AFTER Forced integration
-passed in 199s and 202s with four workers, no failed attempt, peak concurrency
-4, and final integration verification. Maximum observed latency fell 78% from
-921s to 202s.
+The specific catastrophic Forced integration pattern was not reproduced in the
+final campaign. Its BEFORE attempts were 213s, 921s, and 609s; the latter two
+each contained one or two 300-second failed workers and replacement work. Final
+Forced integration-toolkit runs passed in about 199s and 202s with four
+workers, no failed attempt, peak concurrency 4, and final integration
+verification. These clean runs do not prove that recovery reduced the prior
+921s failure to 202s.
 
-The broader timeout problem is mitigated, not eliminated. AFTER Adaptive
-data-contracts rep 2 timed out `t2` at 300s, preserved the two successful
-siblings, retried only `t2` in the same owned worktree, passed in 120s, then
-passed final integration verification. The whole run took 475s. This proves
-targeted recovery and successful-stream preservation, while also proving that
-one retry can still be slow and economically unmeasurable when the failed
-attempt exposes no usage.
+The broader timeout problem is mitigated, not eliminated. Final Adaptive
+data-contracts rep 2 preserved two successful siblings, timed out `t2` at
+300s, then continued and retried only that task in the same owned worktree.
+The retry passed in 120s, final integration verification passed, and the
+overall run passed in 475s. This proves targeted recovery and successful-stream
+preservation, while also proving that one retry can still be slow and
+economically unmeasurable when the failed attempt exposes no usage.
 
 ### Remaining bottlenecks and ideas not worth pursuing
 
@@ -686,13 +696,14 @@ npm run bench -- --suite v2 --arms forced-delegation --reps 2 --campaign $finalC
 npm run bench:analyze -- bench/results --campaign $finalCampaign --output "bench/results/$finalCampaign.analysis.md"
 ```
 
-Review the analyzer after two repetitions. Ignore only the known Solo-vs-Solo
-self-comparison. For every genuine pass mismatch, routing or worker-count
-change, >=25% latency/credit range, or non-Solo near-tie, run exactly rep 3 for
-that task/arm with the same campaign, `--reps 3 --resume`, and
+Review the analyzer after two repetitions. For every pass mismatch, routing or
+worker-count change, >=25% latency/credit range, or non-Solo near-tie, run
+exactly rep 3 for that task/arm with the same campaign, `--reps 3 --resume`, and
 `--confirm-standard-speed`; then regenerate per-shard reports and the combined
-analysis. Preserve passes, failures, timeouts, missing usage, JSON shards, and
-matching ignored event/diagnostic logs.
+analysis. The frozen final-campaign analysis predates the analyzer fix and
+retains its historical Solo-vs-Solo recommendations; future analysis no longer
+emits those meaningless self-comparisons. Preserve passes, failures, timeouts,
+missing usage, JSON shards, and matching ignored event/diagnostic logs.
 
 The measured final campaign used these exact selective commands after analyzer
 review:

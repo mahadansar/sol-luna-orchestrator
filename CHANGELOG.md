@@ -49,8 +49,9 @@ All notable changes to this project are documented here. Format follows
   supports explicit idempotent `--resume` of only missing cells while preserving
   after-each-run checkpoints. Checkpoint replacement now writes and flushes a
   same-directory temporary file before Windows-safe rename replacement, keeping
-  the prior valid shard intact on handled pre-replacement failures. The live
-  campaign remains intentionally unrun pending review.
+  the prior valid shard intact on handled pre-replacement failures. The completed
+  live campaigns, stopping-rule repetitions, and evidence-qualified conclusions
+  are committed under `bench/results/` and interpreted in `bench/RESULTS.md`.
 
 ## [0.9.1] - 2026-08-24
 

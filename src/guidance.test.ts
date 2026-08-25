@@ -509,7 +509,11 @@ test("parent model and effort guidance stays example-only across surfaces", asyn
     /only when[\s\S]*(?:selected parent(?: model)?|parent you picked)[\s\S]*priced above[\s\S]*worker[\s\S]*(?:current|applicable)[\s\S]*(?:pricing )?schedule/i,
   );
   assert.match(rulesCost, /no (?:cost )?saving has been\s+measured/i);
-  assert.match(readme, /Raw tokens are not billed[\s\S]*no cost saving is claimed/i);
+  assert.match(
+    readme,
+    /exact final Adaptive credit total is unknown[\s\S]*lower\s+bound[\s\S]*at least approximately 6\.5% more expensive than Solo/i,
+  );
+  assert.match(readme, /Raw tokens remain diagnostics rather than equivalent cost/i);
   assert.match(readme, /docs\/CONFIGURATION\.md#cost/i);
 });
 
