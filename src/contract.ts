@@ -738,6 +738,16 @@ export const delegateTasksOutputShape = {
       "Whether completed worker edits are now present in the requested workspace.",
     ),
   integrationSummary: z.string(),
+  integrationVerification: delegateTaskOutputShape.verification.describe(
+    "Final authoritative verification rerun in the integrated/shared workspace. " +
+      "This is distinct from each worker's isolated scoped verification.",
+  ),
+  completionState: z
+    .enum(["verified-complete", "needs-supervisor"])
+    .describe(
+      "verified-complete only when ownership evidence, integration, and final " +
+        "workspace verification all pass; otherwise the parent must inspect the rich evidence.",
+    ),
   warnings: z.array(z.string()),
   automaticRecovery: z
     .boolean()

@@ -27,7 +27,8 @@ informs the choice; it does not require delegation.
 The runtime advertises a compact routing/ownership card. The parent owns
 objective decomposition, scope, change intent, acceptance, verification choice,
 integration, and final judgement; Luna owns implementation and scoped
-verification. Clean verified PASS results are a text-only fast-path handoff.
+verification. Clean verified PASS results are a text-only fast-path handoff. A
+batch is terminal only after deterministic final-workspace verification.
 Progressive evidence remains required for suspicious, failed, blocked,
 discrepant, scope, refused/skipped-verification, runtime-error, and conflict
 results. Pending calls with no meaningful new state are silent.
@@ -117,11 +118,12 @@ so the retry does not repeat failed approaches.
   intent is a contract violation and fails the orchestrator verdict; a claimed-only
   edit remains governed by claimed-versus-observed reconciliation.
 - Supply targeted deterministic `verificationCommands` that prove the bounded
-  task. The orchestrator independently re-runs them under the configured policy;
-  normally leave broader final validation to the parent. Use a full suite when
-  the delegated task genuinely requires it. In default allowlist mode, commands
-  run without a shell and shell syntax is refused. Refused or skipped commands
-  prove nothing.
+  task. The orchestrator independently re-runs them under the configured policy.
+  A batch also reruns their deduplicated union after successful integration or
+  sequential execution, so choose checks that remain valid in the requested
+  workspace. Use a full suite only when the delegated work genuinely requires
+  it. In default allowlist mode, commands run without a shell and shell syntax is
+  refused. Refused or skipped commands prove nothing.
 - Use legacy plain `context` only for task background. Prefer
   `contextCapsule` for structured background the repository cannot supply.
   If both are present, both reach the worker; avoid duplication. Never copy the
@@ -266,11 +268,15 @@ remain visible rather than being hidden. Partial or failed integration and
 actual retained-worktree state are also surfaced in activity diagnostics without
 command output, objectives, thread ids, or sensitive paths.
 
-Workers are verified in isolation. After integration, run broader verification
-when changes can interact through shared contracts, types, state, or runtime
-behavior. Do not automatically rerun a full suite solely because execution was
-parallel when scopes are genuinely disjoint, required isolated checks passed,
-and there is no interaction or conflict risk.
+Workers are verified in isolation, then the runtime reruns the deduplicated union
+of declared checks in the final shared workspace. A batch receives
+`completionState: "verified-complete"` only when every worker seam, integration,
+and every final check pass. Treat its `TERMINAL: VERIFIED_COMPLETE` handoff as a
+closed execution state: do not routinely reread worker-owned files or rerun
+passed checks. Reopen reasoning only for an architectural risk or an actionable
+risk listed in the handoff. A missing, failed, refused, or skipped final check
+produces `needs-supervisor`; use its rich evidence for targeted diagnosis rather
+than blindly repeating the whole batch or full suite.
 
 ## Hard constraints
 

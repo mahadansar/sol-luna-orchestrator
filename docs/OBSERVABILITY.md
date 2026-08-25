@@ -40,14 +40,21 @@ non-clean results expand automatically. Explicit `compact` retains the
 compatibility structure but removes successful verification output, while
 `full` returns the complete structure.
 
+A clean batch additionally reports `completionState: "verified-complete"` and
+`TERMINAL: VERIFIED_COMPLETE` only after final-workspace verification of the
+deduplicated declared checks. The handoff directs the parent to finish without
+routine file rereads or duplicate checks. `needs-supervisor` retains the final
+failure, refusal, skip, or incompleteness evidence for targeted diagnosis.
+
 ## What the event stream contains
 
 Records are appended as the run progresses: batch started, completed, cancelled
 or rejected; task queued; worker started, completed, failed, cancelled or timed
 out; worktree created, removed or retained; verification started and completed;
 scope conflicts; integration conflicts, applied file counts, and completed,
-not-attempted, partial or failed integration; and bounded repair started and
-completed; and bounded recovery skipped, started, and completed.
+not-attempted, partial or failed integration; final-workspace verification
+started and completed; bounded repair started and completed; and bounded
+recovery skipped, started, and completed.
 
 Parallel recovery keeps the original batchId/taskId and emits an explicit attempt
 ordinal. Its classification and concise evidence identify a timeout continuation
@@ -191,6 +198,12 @@ unknown because they did not prove that every attempted copy succeeded. Human
 and watch views render integration facts without claiming a worktree was kept;
 an actual `worktree.retained` event supplies that separate warning. They do not
 render command output, objectives, thread ids, or raw retention paths.
+
+Typed `integration.verification.started` and
+`integration.verification.completed` events are reduced into a separate final
+workspace verification summary. Human and JSON views expose passed, failed, and
+refused counts without inventing another worker; the raw command strings and
+their output remain outside the activity stream.
 
 `--watch` folds the existing history silently at startup and renders only that
 latest run, so an old log does not scroll past. It attaches its watcher before

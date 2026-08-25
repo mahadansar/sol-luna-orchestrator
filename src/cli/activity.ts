@@ -320,6 +320,25 @@ export function renderHumanLines(
     }
   }
 
+  if (snapshot.integration.verification) {
+    if (lines.at(-1) !== "") lines.push("");
+    const verification = snapshot.integration.verification;
+    const status =
+      verification.completed &&
+      verification.total !== null &&
+      verification.total > 0 &&
+      verification.passed === verification.total &&
+      verification.failed === 0 &&
+      verification.refused === 0
+        ? green("PASS")
+        : red("NEEDS SUPERVISOR");
+    lines.push(bold("FINAL WORKSPACE VERIFICATION"));
+    lines.push(
+      `${status}  ${verification.passed} passed ${symbols.divider} ` +
+        `${verification.failed} failed ${symbols.divider} ${verification.refused} refused`,
+    );
+  }
+
   if (snapshot.warnings.length > 0) {
     if (lines.at(-1) !== "") lines.push("");
     lines.push(bold(yellow("WARNINGS")));

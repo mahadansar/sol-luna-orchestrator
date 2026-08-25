@@ -2302,6 +2302,78 @@ test("legacy applied-only integration evidence remains unknown", () => {
   assert.equal(current.integration.appliedFiles, 1);
 });
 
+test("final workspace verification is visible without fabricating a worker", () => {
+  const snapshot = reduceEvents([
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "b-final-verification",
+      mode: "parallel",
+      taskCount: 0,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "integration.verification.started",
+      batchId: "b-final-verification",
+      commandCount: 2,
+    },
+    {
+      timestamp: "2024-01-01T10:00:02Z",
+      type: "integration.verification.completed",
+      batchId: "b-final-verification",
+      passed: 1,
+      failed: 1,
+      refused: 0,
+    },
+  ]);
+
+  assert.deepEqual(snapshot.integration.verification, {
+    started: true,
+    completed: true,
+    total: 2,
+    passed: 1,
+    failed: 1,
+    refused: 0,
+  });
+  assert.equal(snapshot.workers.length, 0);
+  assert.match(snapshot.warnings.join("\n"), /targeted diagnosis/i);
+  assert.match(renderHumanLines(snapshot).join("\n"), /FINAL WORKSPACE VERIFICATION/);
+});
+
+test("incomplete final workspace verification never renders as PASS", () => {
+  const snapshot = reduceEvents([
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "b-incomplete-final-verification",
+      mode: "parallel",
+      taskCount: 0,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "integration.verification.started",
+      batchId: "b-incomplete-final-verification",
+      commandCount: 2,
+    },
+    {
+      timestamp: "2024-01-01T10:00:02Z",
+      type: "integration.verification.completed",
+      batchId: "b-incomplete-final-verification",
+      passed: 0,
+      failed: 0,
+      refused: 0,
+    },
+  ]);
+
+  assert.equal(snapshot.integration.verification?.completed, false);
+  assert.match(snapshot.warnings.join("\n"), /targeted diagnosis/i);
+  const rendered = renderHumanLines(snapshot).join("\n");
+  assert.match(rendered, /NEEDS SUPERVISOR/);
+  assert.doesNotMatch(rendered, /PASS/);
+});
+
 test("evidence failure records integration as not attempted without fabricated counts", () => {
   const snapshot = reduceEvents([
     {

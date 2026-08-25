@@ -58,6 +58,15 @@ config that launches the server.
 to a system shell. It exists for people who need it and is logged loudly at
 startup. **Do not enable it against a repository you do not trust.**
 
+Each task's commands are independently rerun after its worker exits. A batch
+also reruns the deduplicated union after sequential execution or successful
+parallel integration, in the requested workspace. Both passes use the same
+operator-configured execution policy, timeout, environment filtering, and user
+permissions. This is independent evidence, not a sandbox: a permitted command
+can modify anything the operating-system account permits. An empty, refused,
+skipped, failed, or incomplete final set cannot produce the terminal verified
+batch state.
+
 ### Workspace boundaries
 
 - `workingDirectory` must be an absolute path to an existing directory.

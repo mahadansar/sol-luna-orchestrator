@@ -125,6 +125,15 @@ automatically. These are context and routing controls; no measured cost or
 latency saving is claimed. Same-thread continuation prompts carry only the
 bounded follow-up and an immutable-contract reminder.
 
+After a batch is integrated (or a sequential batch finishes in its shared
+workspace), the runtime reruns the deduplicated union of all declared
+`verificationCommands` there. Only complete executed passes produce
+`completionState: "verified-complete"` and `TERMINAL: VERIFIED_COMPLETE`.
+No declared commands, policy refusal, disabled verification, a failed command,
+or incomplete execution produces `needs-supervisor` and keeps diagnostic
+evidence. This final pass uses the same verification mode, allowlist, timeout,
+credential filtering, and operator permissions shown below.
+
 ### Why init edits the file directly
 
 `init` does not use `codex mcp add`. That command round-trips the whole config:

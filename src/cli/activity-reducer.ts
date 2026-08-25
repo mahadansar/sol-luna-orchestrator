@@ -201,6 +201,18 @@ const timestampedEventSchema = z.discriminatedUnion("type", [
   z.object({ ...eventBase, type: z.literal("integration.completed") }),
   z.object({
     ...eventBase,
+    type: z.literal("integration.verification.started"),
+    commandCount: optionalEventNumber,
+  }),
+  z.object({
+    ...eventBase,
+    type: z.literal("integration.verification.completed"),
+    passed: z.number().finite().catch(0),
+    failed: z.number().finite().catch(0),
+    refused: z.number().finite().catch(0),
+  }),
+  z.object({
+    ...eventBase,
     type: z.literal("integration.notAttempted"),
     reason: z.literal("evidence-failure"),
   }),
@@ -353,6 +365,14 @@ export interface ActivitySnapshot {
       | "notAttempted";
     attemptedFiles: number | null;
     appliedFiles: number | null;
+    verification: {
+      started: boolean;
+      completed: boolean;
+      total: number | null;
+      passed: number;
+      failed: number;
+      refused: number;
+    } | null;
   };
   retainedWorktrees: number;
   warnings: string[];
@@ -391,6 +411,7 @@ export function createEmptySnapshot(
       status: "unknown",
       attemptedFiles: null,
       appliedFiles: null,
+      verification: null,
     },
     retainedWorktrees: 0,
     warnings: [],
@@ -561,6 +582,7 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
           status: "disabled",
           attemptedFiles: null,
           appliedFiles: null,
+          verification: snapshot.integration.verification,
         };
         addWarning("Integration was disabled; worker changes were not copied.");
       }
@@ -571,12 +593,51 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
       ) {
         snapshot.integration.status = "completed";
       }
+    } else if (event.type === "integration.verification.started") {
+      if (snapshot.batchId === event.batchId) {
+        snapshot.integration.verification = {
+          started: true,
+          completed: false,
+          total: event.commandCount ?? null,
+          passed: 0,
+          failed: 0,
+          refused: 0,
+        };
+      }
+    } else if (event.type === "integration.verification.completed") {
+      if (snapshot.batchId === event.batchId) {
+        snapshot.integration.verification ??= {
+          started: true,
+          completed: false,
+          total: event.passed + event.failed + event.refused,
+          passed: 0,
+          failed: 0,
+          refused: 0,
+        };
+        snapshot.integration.verification.passed = event.passed;
+        snapshot.integration.verification.failed = event.failed;
+        snapshot.integration.verification.refused = event.refused;
+        const observed = event.passed + event.failed + event.refused;
+        snapshot.integration.verification.completed =
+          snapshot.integration.verification.total !== null &&
+          observed === snapshot.integration.verification.total;
+        if (
+          !snapshot.integration.verification.completed ||
+          event.failed > 0 ||
+          event.refused > 0
+        ) {
+          addWarning(
+            "Final workspace verification did not pass completely; targeted diagnosis is required.",
+          );
+        }
+      }
     } else if (event.type === "integration.notAttempted") {
       if (snapshot.batchId === event.batchId) {
         snapshot.integration = {
           status: "notAttempted",
           attemptedFiles: null,
           appliedFiles: null,
+          verification: snapshot.integration.verification,
         };
         addWarning(
           "Integration was not attempted because final worker evidence was unavailable.",

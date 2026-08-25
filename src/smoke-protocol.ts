@@ -75,7 +75,8 @@ async function main(): Promise<void> {
     const instructions = client.getInstructions() ?? "";
     assert.match(instructions, /compatible parent Codex model/);
     assert.match(instructions, /Sol-Luna Orchestrator/);
-    assert.match(instructions, /claims are not orchestrator evidence/);
+    assert.match(instructions, /runtime evidence outranks worker claims/i);
+    assert.match(instructions, /VERIFIED_COMPLETE[\s\S]*without rereading/i);
     assert.match(instructions, /has no meaningful new state, remain silent/i);
     assert.match(instructions, /result, error, cancellation, timeout/i);
   });
@@ -171,7 +172,7 @@ async function main(): Promise<void> {
       };
       assert.equal(effort.description, undefined);
       assert.equal(verification.description, undefined);
-      assert.match(tool?.description ?? "", /worker ownership/i);
+      assert.match(tool?.description ?? "", /Luna owns[\s\S]*implementation/i);
       assert.match(tool?.description ?? "", /verification/i);
     },
   );

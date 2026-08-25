@@ -160,33 +160,23 @@ test("server instructions keep roles, evidence authority, and proportional revie
   assert.doesNotMatch(SERVER_INSTRUCTIONS, /Sol supervises/i);
   assert.match(SERVER_INSTRUCTIONS, /Sol-Luna Orchestrator/i);
   assert.match(SERVER_INSTRUCTIONS, /compatible parent Codex model/i);
-  assert.match(SERVER_INSTRUCTIONS, /parent supervisor owns/i);
-  assert.match(SERVER_INSTRUCTIONS, /workers execute bounded tasks/i);
-  assert.match(SERVER_INSTRUCTIONS, /delegation is adaptive/i);
-  assert.match(SERVER_INSTRUCTIONS, /zero workers is valid/i);
+  assert.match(SERVER_INSTRUCTIONS, /parent owns architecture[\s\S]*decomposition/i);
+  assert.match(SERVER_INSTRUCTIONS, /Luna owns[\s\S]*implementation[\s\S]*verification/i);
+  assert.match(SERVER_INSTRUCTIONS, /adaptive zero-worker use is valid/i);
   assert.match(SERVER_INSTRUCTIONS, /raw tokens are not credit cost/i);
-  assert.match(SERVER_INSTRUCTIONS, /selected parent model is priced above/i);
-  assert.match(SERVER_INSTRUCTIONS, /current[\s\S]*pricing schedule/i);
+  assert.match(SERVER_INSTRUCTIONS, /savings are parent-conditional/i);
   assert.match(
     SERVER_INSTRUCTIONS,
     /more workers are not automatically better or cheaper/i,
   );
-  assert.match(SERVER_INSTRUCTIONS, /claims are not orchestrator evidence/i);
-  assert.match(SERVER_INSTRUCTIONS, /proportion/i);
+  assert.match(SERVER_INSTRUCTIONS, /Runtime evidence outranks worker claims/i);
+  assert.match(SERVER_INSTRUCTIONS, /VERIFIED_COMPLETE[\s\S]*finish without rereading/i);
   assertSilentWaitGuidance(SERVER_INSTRUCTIONS);
-  assert.match(
-    SERVER_INSTRUCTIONS,
-    /do not narrate polling, waiting, elapsed time, or that it is still running/i,
-  );
-  assert.match(
-    SERVER_INSTRUCTIONS,
-    /result, error, cancellation, timeout, or actionable state change/i,
-  );
 });
 
 test("one substantial bounded task may be delegated without another seam", () => {
   assert.match(TOOL_DESCRIPTION, /ONE substantial, bounded/i);
-  assert.match(TOOL_DESCRIPTION, /does not need a second independent seam/i);
+  assert.match(TOOL_DESCRIPTION, /no second seam is required/i);
   assert.match(TOOL_DESCRIPTION, /small,[\s\S]*simple,[\s\S]*tightly coupled/i);
   assert.match(TOOL_DESCRIPTION, /overhead/i);
   assert.match(TOOL_DESCRIPTION, /concise[\s\S]*activityLabel/i);
@@ -196,22 +186,10 @@ test("single-task guidance is cost-aware without treating pricing as permanent",
   assert.doesNotMatch(TOOL_DESCRIPTION, /\b\d+(?:\.\d+)?x\s+cheaper\b/i);
   assert.doesNotMatch(TOOL_DESCRIPTION, /gpt-5\.6-sol/i);
   assert.doesNotMatch(TOOL_DESCRIPTION, /Sol tokens/i);
-  assert.match(TOOL_DESCRIPTION, /raw token count is not credit cost/i);
-  assert.match(
-    TOOL_DESCRIPTION,
-    new RegExp(
-      `selected parent model is priced above\\s+${escapeRegExp(LUNA_MODEL)}` +
-        `[\\s\\S]*current pricing\\s+schedule`,
-      "i",
-    ),
-  );
-  assert.match(TOOL_DESCRIPTION, /fewer total credits/i);
-  assert.match(TOOL_DESCRIPTION, /depends on which parent model is in use/i);
-  assert.match(TOOL_DESCRIPTION, /not an architectural guarantee/i);
-  assert.match(TOOL_DESCRIPTION, /not a measured saving/i);
-  assert.match(TOOL_DESCRIPTION, /More workers is not\s+automatically\s+cheaper/i);
+  assert.match(TOOL_DESCRIPTION, /raw tokens are not credit cost/i);
+  assert.match(TOOL_DESCRIPTION, /parent-conditional credit economics/i);
+  assert.match(TOOL_DESCRIPTION, /no saving is guaranteed/i);
   for (const factor of [
-    "credit cost",
     "latency",
     "context",
     "overhead",
@@ -243,14 +221,13 @@ test("continuation guidance keeps the contract fixed and bounded", () => {
     CONTINUE_TOOL_DESCRIPTION,
     /verification[\s\S]*scope checks[\s\S]*evidence reconciliation/i,
   );
-  assert.match(CONTINUE_TOOL_DESCRIPTION, /never starts an automatic repair/i);
+  assert.match(CONTINUE_TOOL_DESCRIPTION, /continuation never starts automatic repair/i);
 });
 
 test("bounded repair guidance and schemas keep parent control and the one-turn limit", async () => {
   assert.match(TOOL_DESCRIPTION, /automaticRepair/i);
-  assert.match(TOOL_DESCRIPTION, /at most one repair/i);
+  assert.match(TOOL_DESCRIPTION, /at most one conservative same-thread repair/i);
   assert.match(BATCH_TOOL_DESCRIPTION, /automaticRepair/i);
-  assert.match(SERVER_INSTRUCTIONS, /same-thread automatic repair/i);
   assert.match(
     delegateTaskInputShape.automaticRepair.description ?? "",
     /same worker thread and immutable task contract/i,
@@ -298,8 +275,10 @@ test("the parent orchestrator retains strategy and final judgment", () => {
 });
 
 test("retention guidance makes operator policy and continuation availability agree", async () => {
-  assert.match(BATCH_TOOL_DESCRIPTION, /retention follows the operator/i);
-  assert.match(BATCH_TOOL_DESCRIPTION, /continuation reference is omitted/i);
+  assert.match(
+    BATCH_TOOL_DESCRIPTION,
+    /integrate=false[\s\S]*retention follows operator policy/i,
+  );
   assert.doesNotMatch(BATCH_TOOL_DESCRIPTION, /retain worktrees for manual resolution/i);
 
   const rules = await readDoc("SOL_RULES.md");
@@ -314,47 +293,35 @@ test("retention guidance makes operator policy and continuation availability agr
 
 test("single-task results drive risk-based review", () => {
   for (const evidence of [
-    "verdict",
     "verification",
-    "observed files",
-    "discrepancies",
-    "scope\\s+violations",
-    "review checklist",
+    "observed edits",
+    "discrepant",
+    "scope-violating",
   ]) {
     assert.match(TOOL_DESCRIPTION, new RegExp(evidence, "i"));
   }
-  assert.match(TOOL_DESCRIPTION, /clean\s+verified PASS/i);
-  assert.match(TOOL_DESCRIPTION, /proportionate\s+review/i);
-  assert.match(TOOL_DESCRIPTION, /Choose review depth after seeing that evidence/i);
-  assert.match(TOOL_DESCRIPTION, /do not pre-commit to rereading[\s\S]*every file/i);
+  assert.match(TOOL_DESCRIPTION, /clean PASS[\s\S]*VERIFIED_COMPLETE/i);
+  assert.match(TOOL_DESCRIPTION, /finish without rereading worker-owned files/i);
   assert.match(TOOL_DESCRIPTION, /Worker claims are not authoritative/i);
-  assert.match(
-    TOOL_DESCRIPTION,
-    /verification-only[\s\S]*worker FAILED can become PASS only[\s\S]*matches a distinct passing authoritative/i,
-  );
   for (const suspicious of [
     "FAILED",
     "BLOCKED",
-    "trustworthy: false",
-    "discrepancies",
-    "scope\\s+violations",
+    "untrustworthy",
+    "discrepant",
+    "scope-violating",
   ]) {
     assert.match(TOOL_DESCRIPTION, new RegExp(suspicious, "i"));
   }
 });
 
 test("batch guidance distinguishes sequential and parallel semantics", () => {
-  assert.match(BATCH_TOOL_DESCRIPTION, /intended for two or more tasks/i);
-  assert.match(
-    BATCH_TOOL_DESCRIPTION,
-    /one-task batch remains accepted for[\s\S]*compatibility/i,
-  );
-  assert.match(BATCH_TOOL_DESCRIPTION, /prefer delegate_task for a single task/i);
-  assert.match(BATCH_TOOL_DESCRIPTION, /sequential[\s\S]*depend/i);
-  assert.match(BATCH_TOOL_DESCRIPTION, /share\s+workspace\s+state/i);
-  assert.match(BATCH_TOOL_DESCRIPTION, /parallel[\s\S]*genuinely independent/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /batch intended for two or more owned seams/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /one task remains accepted for compatibility/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /prefer delegate_task/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /sequential[\s\S]*dependencies/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /shared workspace state/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /parallel only for genuinely independent/i);
   assert.match(BATCH_TOOL_DESCRIPTION, /disjoint declared scopes/i);
-  assert.match(BATCH_TOOL_DESCRIPTION, /does not guarantee/i);
   assert.match(BATCH_TOOL_DESCRIPTION, /Do not create artificial seams/i);
   assert.match(
     BATCH_TOOL_DESCRIPTION,
@@ -362,61 +329,28 @@ test("batch guidance distinguishes sequential and parallel semantics", () => {
   );
   assert.match(
     BATCH_TOOL_DESCRIPTION,
-    new RegExp(`at most ${MAX_PARALLEL} at once`, "i"),
+    new RegExp(`at most ${MAX_PARALLEL} run concurrently`, "i"),
   );
-  assert.match(
-    BATCH_TOOL_DESCRIPTION,
-    /batch size is not the number of[\s\S]*simultaneous workers/i,
-  );
-  assert.match(BATCH_TOOL_DESCRIPTION, /queues the rest/i);
-  assert.match(BATCH_TOOL_DESCRIPTION, /remainder as a second batch/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /the rest queue/i);
   assert.match(BATCH_TOOL_DESCRIPTION, /raw tokens are not credit cost/i);
-  assert.match(BATCH_TOOL_DESCRIPTION, /selected parent model is priced above/i);
-  assert.match(BATCH_TOOL_DESCRIPTION, /current[\s\S]*pricing[\s\S]*schedule/i);
-  assert.match(BATCH_TOOL_DESCRIPTION, /fewer total credits/i);
-  assert.match(BATCH_TOOL_DESCRIPTION, /parent-conditional/i);
-  assert.match(BATCH_TOOL_DESCRIPTION, /not guaranteed or measured/i);
-  assert.match(BATCH_TOOL_DESCRIPTION, /batch size and task mix affect the economics/i);
-  assert.match(BATCH_TOOL_DESCRIPTION, /coordination and review[\s\S]*increase/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /More workers are not automatically cheaper/i);
   assert.match(
     BATCH_TOOL_DESCRIPTION,
-    /parallel execution may reduce latency[\s\S]*not automatically cheaper than sequential/i,
+    /allowOverlappingScopes:true[\s\S]*accepts the declared overlap/i,
   );
   assert.match(
     BATCH_TOOL_DESCRIPTION,
-    /more workers[\s\S]*not[\s\S]*automatically cheaper/i,
-  );
-  assert.match(
-    BATCH_TOOL_DESCRIPTION,
-    /allowOverlappingScopes:true[\s\S]*call-level escape hatch/i,
-  );
-  assert.match(
-    BATCH_TOOL_DESCRIPTION,
-    /does not turn scopes into a write sandbox[\s\S]*same-file edits still[\s\S]*prevent automatic parallel integration/i,
-  );
-  assert.match(
-    BATCH_TOOL_DESCRIPTION,
-    /integrationConflicts is a parallel-only[\s\S]*sequential tasks share the workspace[\s\S]*intentionally edit files/i,
-  );
-  assert.doesNotMatch(
-    BATCH_TOOL_DESCRIPTION,
-    new RegExp(
-      `${MAX_BATCH_SIZE}[^.]{0,40}(?:simultaneous|concurrent|workers at once)`,
-      "i",
-    ),
+    /not a write sandbox[\s\S]*does not permit same-file integration/i,
   );
 });
 
 test("batch guidance states integration and partial-outcome behavior", () => {
-  assert.match(
-    BATCH_TOOL_DESCRIPTION,
-    /same-file edits by parallel workers prevent[\s\S]*automatic integration/i,
-  );
+  assert.match(BATCH_TOOL_DESCRIPTION, /same-file edits prevent automatic integration/i);
   assert.match(BATCH_TOOL_DESCRIPTION, /Partial outcomes remain visible/i);
-  assert.match(BATCH_TOOL_DESCRIPTION, /FAILED or BLOCKED/i);
-  assert.match(BATCH_TOOL_DESCRIPTION, /verified in isolation/i);
-  assert.match(BATCH_TOOL_DESCRIPTION, /when changes can meaningfully interact/i);
-  assert.match(BATCH_TOOL_DESCRIPTION, /merely because[\s\S]*parallel/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /Successful streams survive sibling failure/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /deduplicated union[\s\S]*final workspace/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /completionState=verified-complete/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /failure\/refusal\/conflict[\s\S]*rich evidence/i);
 });
 
 test("resultDetail makes the thin handoff default and preserves compatibility modes", () => {
@@ -526,9 +460,14 @@ test("batch input descriptions qualify overlap and integration", () => {
     delegateTasksInputSchema.parse({ mode: "sequential", tasks: tooManyTasks }),
   );
   assert.match(BATCH_TOOL_DESCRIPTION, /concise[\s\S]*activityLabel[\s\S]*safe label/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /same-file edits prevent automatic integration/i);
   assert.match(
-    BATCH_TOOL_DESCRIPTION,
-    /integrationConflicts is a parallel-only[\s\S]*result; sequential tasks/i,
+    delegateTasksOutputShape.integrationVerification.description ?? "",
+    /Final authoritative verification[\s\S]*integrated\/shared workspace/i,
+  );
+  assert.match(
+    delegateTasksOutputShape.completionState.description ?? "",
+    /verified-complete[\s\S]*final workspace verification/i,
   );
 });
 
@@ -584,10 +523,11 @@ test("SOL_RULES carries the runtime's operational distinctions without benchmark
     /more workers are not[\s\S]*automatically[\s\S]*cheaper/i,
     /default `resultDetail: "handoff"`[\s\S]*compact[\s\S]*full/i,
     /trustworthy: false/i,
-    /Do not automatically rerun a full suite/i,
+    /do not routinely reread[\s\S]*rerun[\s\S]*passed checks/i,
+    /needs-supervisor[\s\S]*targeted diagnosis/i,
     /has no meaningful new state,[\s\S]*remain silent/i,
     /do not narrate polling,[\s\S]*waiting,[\s\S]*elapsed time/i,
-    /normally leave broader final validation to the parent/i,
+    /deduplicated union[\s\S]*final shared workspace/i,
     /do not pre-commit to rereading[\s\S]*every changed file/i,
     /empty `allowedFiles` means no in-workspace allowlist/i,
     /does not[\s\S]*declare read-only intent/i,
@@ -753,9 +693,12 @@ test("acceptance ledger owns the current release baseline", async () => {
   const acceptance = await readDoc("docs/FEATURE_ACCEPTANCE.md");
   assert.match(acceptance, /package version is `0\.9\.1`/i);
   assert.match(acceptance, /current main runtime is its release baseline/i);
-  assert.match(acceptance, /\*\*508\/511 tests passed and 3 expected platform skips\*\*/);
+  assert.match(acceptance, /\*\*513\/516 tests passed and 3 expected platform skips\*\*/);
   assert.match(acceptance, /## Current capability matrix/);
-  assert.match(acceptance, /Thin handoff protocol boundary[\s\S]*NOT TESTED/);
+  assert.match(
+    acceptance,
+    /Terminal verification and thin handoff boundary[\s\S]*NOT TESTED/,
+  );
   assert.match(acceptance, /Parallel batches[\s\S]*Battle-tested/);
   assert.match(acceptance, /Worker Continuation[\s\S]*Battle-tested/);
   assert.match(acceptance, /no fresh parent[\s\S]*sequential batch/i);

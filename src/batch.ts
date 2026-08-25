@@ -48,6 +48,10 @@ import {
 } from "./worktree.js";
 import { resolveWorkspace } from "./workspace.js";
 import { CONTINUATION_TTL_MS } from "./continuation.js";
+import {
+  runVerifications,
+  type VerificationRun as FinalVerificationRun,
+} from "./verify.js";
 
 export class BatchRejectedError extends Error {
   constructor(message: string) {
@@ -101,6 +105,10 @@ interface RecoveryDecision {
  *                run one at a time, so a later task sees the earlier one's work.
  */
 export type TaskExecutor = typeof executeTask;
+export type IntegrationVerifier = (
+  commands: string[],
+  workingDirectory: string,
+) => Promise<FinalVerificationRun[]>;
 
 export async function runBatch(
   tasks: DelegateTaskInput[],
@@ -117,6 +125,8 @@ export async function runBatch(
      * tested without spending model calls. Production always uses the default.
      */
     executor?: TaskExecutor;
+    /** Final verifier for the integrated/shared workspace. */
+    integrationVerifier?: IntegrationVerifier;
     /**
      * Per-run event sink. Production uses the append-only configured emitter;
      * deterministic callers inject an isolated sink without mutating process env.
@@ -360,6 +370,74 @@ export async function runBatch(
     if (!integrationIncomplete) emit({ type: "integration.completed", batchId });
   }
 
+  // Workers prove their owned seams in isolation. Once those seams share the
+  // requested workspace, deterministic code (not another Sol reasoning loop)
+  // reruns the union of their declared checks exactly once.
+  const declaredFinalCommands = [
+    ...new Set(
+      running
+        .filter((task) => task.state === "completed")
+        .flatMap((task) => task.input.verificationCommands),
+    ),
+  ];
+  const finalCommands = declaredFinalCommands;
+  const integrationVerification: BatchOutput["integrationVerification"] = [];
+  if (integrated && finalCommands.length > 0 && !options.signal?.aborted) {
+    emit({
+      type: "integration.verification.started",
+      batchId,
+      commandCount: finalCommands.length,
+    });
+    try {
+      const runs = await (options.integrationVerifier ?? runVerifications)(
+        finalCommands,
+        workspace,
+      );
+      integrationVerification.push(
+        ...runs.map((run) => ({ ...run, source: "orchestrator" as const })),
+      );
+    } catch (error) {
+      warnings.push(
+        `Final integrated verification could not run: ${(error as Error).message}`,
+      );
+    }
+    const passed = integrationVerification.filter((run) => run.passed).length;
+    const refused = integrationVerification.filter(
+      (run) => run.execution === "rejected" || run.execution === "skipped",
+    ).length;
+    emit({
+      type: "integration.verification.completed",
+      batchId,
+      passed,
+      failed: integrationVerification.length - passed - refused,
+      refused,
+    });
+  }
+
+  const finalVerificationPassed =
+    finalCommands.length > 0 &&
+    integrationVerification.length === finalCommands.length &&
+    integrationVerification.every(
+      (run) => (run.execution === "argv" || run.execution === "shell") && run.passed,
+    );
+  const completionState: BatchOutput["completionState"] =
+    integrated && running.every(isCleanTask) && finalVerificationPassed
+      ? "verified-complete"
+      : "needs-supervisor";
+  if (integrated && finalCommands.length === 0) {
+    warnings.push(
+      "No final workspace verification commands were declared; the batch cannot use the terminal verified fast path.",
+    );
+  } else if (integrated && finalCommands.length > 0 && !finalVerificationPassed) {
+    warnings.push(
+      "Final integrated verification did not pass completely; use the returned evidence for targeted diagnosis.",
+    );
+  } else if (completionState === "verified-complete") {
+    integrationSummary +=
+      ` Final workspace verification passed ` +
+      `${integrationVerification.length}/${integrationVerification.length} declared check(s).`;
+  }
+
   // --- Cleanup -------------------------------------------------------------
   let lifecycleError: unknown = null;
   for (const task of running) {
@@ -533,9 +611,18 @@ export async function runBatch(
     })),
     integrated,
     integrationSummary,
+    integrationVerification,
+    completionState,
     warnings,
     automaticRecovery: options.automaticRecovery ?? true,
-    reviewChecklist: buildBatchChecklist(running, integrationConflicts, integrated, mode),
+    reviewChecklist: buildBatchChecklist(
+      running,
+      integrationConflicts,
+      integrated,
+      mode,
+      integrationVerification,
+      completionState,
+    ),
   };
 }
 
@@ -1409,6 +1496,8 @@ function buildBatchChecklist(
   integrationConflicts: IntegrationConflict[],
   integrated: boolean,
   mode: string,
+  integrationVerification: BatchOutput["integrationVerification"],
+  completionState: BatchOutput["completionState"],
 ): string[] {
   const checklist: string[] = [];
 
@@ -1419,11 +1508,15 @@ function buildBatchChecklist(
         `version that remains after cleanup.`,
     );
   }
-  if (integrated && mode === "parallel") {
+  if (integrated && completionState === "verified-complete") {
     checklist.push(
-      "Workers were verified in isolation. Run an integration or full-suite check " +
-        "if the changes can interact (shared contracts, types, or runtime behavior) — " +
-        "passing separately does not mean passing together.",
+      `Final workspace verification passed ${integrationVerification.length} declared check(s). ` +
+        "Do not routinely reread worker-owned files or rerun those checks; reopen reasoning only for an architectural or listed risk.",
+    );
+  } else if (integrated && mode === "parallel") {
+    checklist.push(
+      "Worker seams were checked in isolation, but final workspace verification is not complete. " +
+        "Use the returned failure/refusal evidence for targeted diagnosis before accepting.",
     );
   }
 
@@ -1447,7 +1540,10 @@ function buildBatchChecklist(
   }
 
   const isCleanBatch =
-    integrationConflicts.length === 0 && running.length > 0 && running.every(isCleanTask);
+    completionState === "verified-complete" &&
+    integrationConflicts.length === 0 &&
+    running.length > 0 &&
+    running.every(isCleanTask);
 
   if (isCleanBatch) {
     checklist.push(

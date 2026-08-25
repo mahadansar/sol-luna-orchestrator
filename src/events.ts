@@ -180,6 +180,18 @@ export type OrchestratorEvent =
   | { type: "integration.applied"; batchId: string; taskId: string; fileCount: number }
   | { type: "integration.completed"; batchId: string }
   | {
+      type: "integration.verification.started";
+      batchId: string;
+      commandCount: number;
+    }
+  | {
+      type: "integration.verification.completed";
+      batchId: string;
+      passed: number;
+      failed: number;
+      refused: number;
+    }
+  | {
       type: "integration.notAttempted";
       batchId: string;
       reason: "evidence-failure";

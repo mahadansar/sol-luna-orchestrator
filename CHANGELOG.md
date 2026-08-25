@@ -8,6 +8,15 @@ All notable changes to this project are documented here. Format follows
 
 ### Added
 
+- Added a terminal batch-verification state machine. After sequential work or
+  successful parallel integration, the runtime reruns the deduplicated union of
+  every task's declared verification commands in the requested workspace.
+  `completionState: "verified-complete"` and the text-only
+  `TERMINAL: VERIFIED_COMPLETE` handoff are emitted only when every task, the
+  integration, and every executed final check pass. Missing, failed, refused, or
+  skipped final checks retain rich evidence and require targeted supervisor
+  judgement. Typed final-verification activity events expose this phase without
+  adding a fictional worker.
 - Added bounded parallel automatic recovery, enabled by default with a batch-level
   opt-out. After the initial worker window, one eligible timeout may resume its
   same thread/worktree and one no-result worker-process failure may use a fresh
@@ -24,6 +33,10 @@ All notable changes to this project are documented here. Format follows
   results expand automatically, while `compact` and `full` remain explicit
   compatibility modes. Advertised schemas reuse the exact runtime validators
   without duplicating field prose. No live cost or latency saving is claimed.
+- Replaced repeated long-form tool policy with concise routing cards. The cards
+  preserve ownership, security, recovery, evidence, and cost qualifications and
+  direct a supervisor to close a verified terminal handoff without routine file
+  rereads or duplicate verification.
 
 - Prepared Benchmark V2 with eight realistic externally graded fixtures,
   fixed-effort Solo/Adaptive/Forced arms, schema-4 credit telemetry, a dated

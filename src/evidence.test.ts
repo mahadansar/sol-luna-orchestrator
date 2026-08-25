@@ -233,6 +233,17 @@ test("evidence packet - parallel/batch per-task result", () => {
     integrationConflicts: [],
     integrated: true,
     integrationSummary: "all merged",
+    integrationVerification: [
+      {
+        command: "npm test",
+        source: "orchestrator",
+        execution: "argv",
+        exitCode: 0,
+        passed: true,
+        output: PASSING_STDOUT,
+      },
+    ],
+    completionState: "verified-complete",
     warnings: [],
     reviewChecklist: [],
   };
@@ -303,6 +314,8 @@ test("batch text rendering keeps compact operational and review parity", () => {
     integrationConflicts: [],
     integrated: false,
     integrationSummary: "partial",
+    integrationVerification: [],
+    completionState: "needs-supervisor",
     warnings: ["integration warning"],
     reviewChecklist: ["Review the integrated workspace."],
   };
@@ -433,6 +446,8 @@ test("evidence packet - integration conflict", () => {
     integrationConflicts: [{ path: "src/file.ts", tasks: ["t1", "t2"] }],
     integrated: false,
     integrationSummary: "collided",
+    integrationVerification: [],
+    completionState: "needs-supervisor",
     warnings: [],
     reviewChecklist: [],
   };
@@ -558,6 +573,17 @@ test("compacting a batch removes passing stdout from every task", () => {
     integrationConflicts: [],
     integrated: true,
     integrationSummary: "copied 1 file",
+    integrationVerification: [
+      {
+        command: "npm test",
+        source: "orchestrator",
+        execution: "argv",
+        exitCode: 0,
+        passed: true,
+        output: PASSING_STDOUT,
+      },
+    ],
+    completionState: "verified-complete",
     warnings: [],
     reviewChecklist: [],
   };
@@ -597,6 +623,8 @@ test("compacting a batch tolerates a task with no result", () => {
     integrationConflicts: [],
     integrated: false,
     integrationSummary: "nothing to integrate",
+    integrationVerification: [],
+    completionState: "needs-supervisor",
     warnings: [],
     reviewChecklist: [],
   };
@@ -790,6 +818,17 @@ test("batch handoff omits structured content only when every task is clean", () 
     integrationConflicts: [],
     integrated: true,
     integrationSummary: "integrated",
+    integrationVerification: [
+      {
+        command: "npm test",
+        source: "orchestrator",
+        execution: "argv",
+        exitCode: 0,
+        passed: true,
+        output: PASSING_STDOUT,
+      },
+    ],
+    completionState: "verified-complete",
     warnings: [],
     reviewChecklist: [],
   };

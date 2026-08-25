@@ -27,6 +27,13 @@ default: a clean PASS returns only this text handoff. Request `compact` or `full
 when a programmatic consumer needs the structured compatibility result; failures
 still expand automatically.
 
+For a batch, the runtime reruns the deduplicated union of the tasks' declared
+checks after sequential execution or successful parallel integration. Only a
+completely clean batch receives `TERMINAL: VERIFIED_COMPLETE`; that handoff is
+the supervisor's signal to finish without routinely rereading worker-owned files
+or rerunning checks that already passed. Missing, failed, refused, or skipped
+final checks return `needs-supervisor` with evidence for targeted diagnosis.
+
 Parallel batches enable bounded automatic recovery by default. After the initial
 worker window, an eligible timeout resumes its same Luna thread in the same owned
 worktree, while a worker-process failure with no result gets one fresh thread in
@@ -91,7 +98,7 @@ for options and [Troubleshooting](docs/TROUBLESHOOTING.md) for recovery.
 | Adaptive delegation             | Lets the supervisor choose solo work, one worker, or sequential or parallel batches, with worker effort chosen per task.                                   |
 | Bounded task contracts          | Constrains delegated work with file scopes, acceptance criteria, verification commands, and explicit `forbidden`, `optional`, or `required` change intent. |
 | Isolated parallel execution     | Uses separate worktrees, bounded concurrency, leases, and conservative conflict-aware integration for independent tasks.                                   |
-| Independent evidence            | Reruns declared verification, reconciles worker claims with observed Git changes, and surfaces discrepancies instead of trusting worker status.            |
+| Independent evidence            | Reruns declared verification, reconciles claims with observed Git changes, and verifies the combined batch workspace before terminal acceptance.           |
 | Continuation and bounded repair | Can resume an eligible worker under the original contract and optionally perform one conservatively classified repair attempt.                             |
 | Context and review controls     | Uses structured Context Capsules and Compact Evidence Packets to limit unnecessary context while preserving review evidence.                               |
 | Activity and observability      | Exposes human-readable and JSON batch and worker activity while keeping prompts and sensitive task context out of the activity stream.                     |

@@ -64,7 +64,20 @@ import type { ThreadEvent } from "@openai/codex-sdk";
  * Event-emission cases below use a child process and their own temporary file.
  */
 const runBatch: typeof runProductionBatch = (tasks, options) =>
-  runProductionBatch(tasks, { ...options, eventEmitter: () => undefined });
+  runProductionBatch(tasks, {
+    ...options,
+    eventEmitter: () => undefined,
+    integrationVerifier:
+      options.integrationVerifier ??
+      (async (commands) =>
+        commands.map((command) => ({
+          command,
+          exitCode: 0,
+          passed: true,
+          output: "deterministic final verification passed",
+          execution: "argv",
+        }))),
+  });
 
 // --- Scope overlap ----------------------------------------------------------
 
@@ -1872,20 +1885,24 @@ test("workers that touch the same file block integration instead of overwriting"
 
 test("one worker failing does not discard the others", async () => {
   const repo = await makeRepo();
+  const finalCommands: string[][] = [];
   try {
     const result = await runBatch(
       [
         makeTask({
           objective: "Implement the first independent module.",
           allowedFiles: ["src/one/**"],
+          verificationCommands: ["node --version one"],
         }),
         makeTask({
           objective: "Implement the second independent module.",
           allowedFiles: ["src/two/**"],
+          verificationCommands: ["node --version two"],
         }),
         makeTask({
           objective: "Implement the third independent module.",
           allowedFiles: ["src/three/**"],
+          verificationCommands: ["node --version three"],
         }),
       ],
       {
@@ -1896,7 +1913,27 @@ test("one worker failing does not discard the others", async () => {
           // always the `two` task that fails and always `one` that succeeds.
           fail: (task) => moduleOf(task) === "two",
           writes: (task) => ({ [`src/${moduleOf(task)}/mod.ts`]: "x\n" }),
+          output: (task) => ({
+            verification: task.verificationCommands.map((command) => ({
+              command,
+              exitCode: 0,
+              passed: true,
+              output: "scoped pass",
+              source: "orchestrator" as const,
+              execution: "argv" as const,
+            })),
+          }),
         }),
+        integrationVerifier: async (commands) => {
+          finalCommands.push(commands);
+          return commands.map((command) => ({
+            command,
+            exitCode: 0,
+            passed: true,
+            output: "final pass",
+            execution: "argv" as const,
+          }));
+        },
       },
     );
 
@@ -1915,6 +1952,7 @@ test("one worker failing does not discard the others", async () => {
       result.tasks.find((task) => task.state === "failed")?.error ?? "",
       /exploded/,
     );
+    assert.deepEqual(finalCommands, [["node --version one", "node --version three"]]);
 
     // The successful work is still integrated.
     assert.ok(
@@ -3096,7 +3134,7 @@ test("invalid batch workspace emits a reducer-visible rejected lifecycle", async
   }
 });
 
-test("clean parallel batch returns risk-based review checklist without unconditional full-suite or diff reread", async () => {
+test("clean parallel batch returns a terminal verified checklist without duplicate Sol work", async () => {
   const repo = await makeRepo();
   try {
     const result = await runBatch(
@@ -3104,10 +3142,12 @@ test("clean parallel batch returns risk-based review checklist without unconditi
         makeTask({
           objective: "Implement first module.",
           allowedFiles: ["src/one/**"],
+          verificationCommands: ["node --version"],
         }),
         makeTask({
           objective: "Implement second module.",
           allowedFiles: ["src/two/**"],
+          verificationCommands: ["node --version"],
         }),
       ],
       {
@@ -3118,6 +3158,16 @@ test("clean parallel batch returns risk-based review checklist without unconditi
             moduleOf(task) === "one"
               ? ({ "src/one/mod.ts": "export const a = 1;\n" } as Record<string, string>)
               : ({ "src/two/mod.ts": "export const b = 2;\n" } as Record<string, string>),
+          output: (task) => ({
+            verification: task.verificationCommands.map((command) => ({
+              command,
+              exitCode: 0,
+              passed: true,
+              output: "scoped pass",
+              source: "orchestrator" as const,
+              execution: "argv" as const,
+            })),
+          }),
         }),
       },
     );
@@ -3129,8 +3179,14 @@ test("clean parallel batch returns risk-based review checklist without unconditi
       "clean batch should instruct risk-based diff review",
     );
     assert.ok(
-      result.reviewChecklist.some((item) => /if the changes can interact/i.test(item)),
-      "clean batch should instruct risk-based interaction check",
+      result.reviewChecklist.some((item) =>
+        /Final workspace verification passed/i.test(item),
+      ),
+      "clean batch should expose terminal integrated evidence",
+    );
+    assert.ok(
+      result.reviewChecklist.some((item) => /Do not routinely reread/i.test(item)),
+      "clean batch should prevent duplicate supervisor implementation review",
     );
     assert.ok(
       !result.reviewChecklist.some((item) => /Run the full test suite once/i.test(item)),
@@ -3142,6 +3198,139 @@ test("clean parallel batch returns risk-based review checklist without unconditi
       ),
       "clean batch must not demand unconditional diff reread",
     );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("final workspace verification deduplicates declared checks and closes the batch", async () => {
+  const repo = await makeRepo();
+  const events: Array<Record<string, unknown>> = [];
+  const calls: Array<{ commands: string[]; workingDirectory: string }> = [];
+  try {
+    const commands = ["node --test test/one.test.js", "node --test test/shared.test.js"];
+    const tasks = [
+      makeTask({
+        allowedFiles: ["src/one/**"],
+        verificationCommands: commands,
+      }),
+      makeTask({
+        allowedFiles: ["src/two/**"],
+        verificationCommands: [commands[1]!, "node --test test/two.test.js"],
+      }),
+    ];
+    const result = await runProductionBatch(tasks, {
+      mode: "parallel",
+      workingDirectory: repo,
+      eventEmitter: (event) => events.push(event),
+      executor: fakeExecutor({
+        writes: (task) => ({ [`src/${moduleOf(task)}/mod.ts`]: "export {}\n" }),
+        output: (task) => ({
+          verification: task.verificationCommands.map((command) => ({
+            command,
+            source: "orchestrator" as const,
+            execution: "argv" as const,
+            exitCode: 0,
+            passed: true,
+            output: "scoped pass",
+          })),
+        }),
+      }),
+      integrationVerifier: async (finalCommands, workingDirectory) => {
+        calls.push({ commands: finalCommands, workingDirectory });
+        return finalCommands.map((command) => ({
+          command,
+          exitCode: 0,
+          passed: true,
+          output: "final pass",
+          execution: "argv" as const,
+        }));
+      },
+    });
+
+    assert.deepEqual(calls, [
+      {
+        commands: [commands[0], commands[1], "node --test test/two.test.js"],
+        workingDirectory: repo,
+      },
+    ]);
+    assert.equal(result.completionState, "verified-complete");
+    assert.equal(result.integrationVerification.length, 3);
+    assert.deepEqual(
+      events
+        .filter((event) => String(event.type).startsWith("integration.verification"))
+        .map((event) => event.type),
+      ["integration.verification.started", "integration.verification.completed"],
+    );
+    assert.ok(
+      events.findIndex((event) => event.type === "integration.verification.completed") <
+        events.findIndex((event) => event.type === "batch.completed"),
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("failed final workspace verification expands evidence for targeted diagnosis", async () => {
+  const repo = await makeRepo();
+  try {
+    const task = makeTask({
+      allowedFiles: ["src/one/**"],
+      verificationCommands: ["node --test test/final.test.js"],
+    });
+    const result = await runBatch([task], {
+      mode: "parallel",
+      workingDirectory: repo,
+      executor: fakeExecutor({
+        writes: () => ({ "src/one/mod.ts": "export {}\n" }),
+        output: () => ({
+          verification: [
+            {
+              command: task.verificationCommands[0]!,
+              source: "orchestrator",
+              execution: "argv",
+              exitCode: 0,
+              passed: true,
+              output: "scoped pass",
+            },
+          ],
+        }),
+      }),
+      integrationVerifier: async (commands) =>
+        commands.map((command) => ({
+          command,
+          exitCode: 1,
+          passed: false,
+          output: "FINAL_INTEGRATION_FAILURE",
+          execution: "argv" as const,
+        })),
+    });
+
+    assert.equal(result.completionState, "needs-supervisor");
+    assert.match(result.warnings.join("\n"), /did not pass completely/i);
+    assert.match(renderBatch(result), /FINAL_INTEGRATION_FAILURE/);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("a batch without declared checks cannot claim terminal verification", async () => {
+  const repo = await makeRepo();
+  try {
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/one/**"] })],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        eventEmitter: () => undefined,
+        executor: fakeExecutor({
+          writes: () => ({ "src/one/mod.ts": "export {}\n" }),
+        }),
+      },
+    );
+    assert.equal(result.completionState, "needs-supervisor");
+    assert.equal(result.integrationVerification.length, 0);
+    assert.match(result.warnings.join("\n"), /No final workspace verification/i);
   } finally {
     await cleanupRepo(repo);
   }
