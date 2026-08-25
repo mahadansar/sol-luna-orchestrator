@@ -1,20 +1,19 @@
 # Feature Acceptance Ledger
 
 This is the authoritative current capability, evidence, freshness, and
-confidence ledger for the repository. The package version is `0.9.1`, and the
-current main runtime is its release baseline. This patch incorporates the
-post-v0.9.0 hardening changes to cancellation continuation eligibility,
-retained-continuation dependency-link reconciliation, and worktree retention
-precedence/finalization. Shipped history belongs in `CHANGELOG.md`; future work
+confidence ledger for the repository. The package version is `0.10.0`, and the
+current main runtime is its release baseline. This release incorporates the Thin
+Supervisor handoff, terminal batch verification, and bounded parallel recovery
+work described below. Shipped history belongs in `CHANGELOG.md`; future work
 belongs in `ROADMAP.md`.
 
 ## Current baseline
 
-- **Runtime baseline:** commit-relative current main for v0.9.1 after the
-  hardening changes above. Package and lockfile versions are `0.9.1`.
+- **Runtime baseline:** commit-relative current main for v0.10.0 after the Thin
+  Supervisor work above. Package and lockfile versions are `0.10.0`.
 - **Latest full deterministic validation:** `npm run verify` passed on
-  2026-08-25 with **513/516 tests passed and 3 expected platform skips**, no
-  failures, plus typecheck and the deterministic MCP protocol smoke test.
+  2026-08-25 with **518/518 tests passed**, no failures or skips, plus typecheck
+  and the deterministic MCP protocol smoke test.
 - **Current native platform evidence:** deterministic CI covers Windows, Linux,
   and macOS. Focused Linux/POSIX symlink, dependency-link, and process-group
   paths passed natively. Live Codex delegation has representative Windows and
@@ -95,8 +94,7 @@ universal savings.
   optional observations are not required for Strong confidence.
 - No fresh whole-system native coverage report was produced after the v0.9.1
   runtime changes. The latest coverage percentages belong to the earlier v0.9.0
-  campaign; the current 516-test deterministic suite is green with 3 expected
-  platform skips.
+  campaign; the current 518-test deterministic suite is green.
 - Raw transcripts, diagnostic logs, event streams, and some structured live
   results are session-local and intentionally uncommitted. The ledger preserves
   their reviewed conclusions, not durable raw artifacts.

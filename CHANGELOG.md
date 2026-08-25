@@ -6,52 +6,53 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-25
+
+This release introduces the Thin Supervisor execution model. It intentionally
+changes the successful-response default: callers omitting `resultDetail` now
+receive the thin verified handoff for a clean PASS instead of the full structured
+successful response.
+
 ### Added
 
-- Added a terminal batch-verification state machine. After sequential work or
-  successful parallel integration, the runtime reruns the deduplicated union of
-  every task's declared verification commands in the requested workspace.
-  `completionState: "verified-complete"` and the text-only
-  `TERMINAL: VERIFIED_COMPLETE` handoff are emitted only when every task, the
-  integration, and every executed final check pass. Missing, failed, refused, or
-  skipped final checks retain rich evidence and require targeted supervisor
-  judgement. Typed final-verification activity events expose this phase without
-  adding a fictional worker.
-- Added bounded parallel automatic recovery, enabled by default with a batch-level
-  opt-out. After the initial worker window, one eligible timeout may resume its
-  same thread/worktree and one no-result worker-process failure may use a fresh
-  thread in the same worktree. Stable identities, attempt ordinals, recovery
-  evidence, final verification, and separate usage/duration are recorded; no
-  economic or latency success is claimed.
+- Added deterministic final-workspace verification for delegated batches. The
+  runtime reruns the deduplicated union of declared verification commands after
+  sequential work or successful parallel integration and reports explicit
+  `verified-complete` or `needs-supervisor` completion states.
+- Added bounded, targeted parallel recovery with a batch-level opt-out. One
+  eligible timeout may resume in its task's thread/worktree, or one no-result
+  worker-process failure may retry in a fresh thread in the same worktree.
+  Successful sibling work is preserved, and recovery decisions, attempt
+  ordinals, duration, usage, final verification, and activity events remain
+  observable.
+- Added Benchmark V2 with eight externally graded fixtures, fixed-effort
+  Solo/Adaptive/Forced arms, schema-4 credit telemetry, resumable campaign
+  checkpoints, Pareto reporting, selective third-repetition recommendations,
+  and committed evidence-qualified campaign results.
 
-- Added a thin supervisor fast path: compact routing/ownership metadata,
-  deterministic metadata-size budgets, clean PASS result handoffs, and compact
-  same-thread continuation prompts. Rich diagnostics, strict worker output,
-  explicit structured-content compatibility, and verification semantics remain
-  available. `resultDetail: "handoff"` is now the default and omits
-  `structuredContent` only for a clean verified PASS; suspicious or failed
-  results expand automatically, while `compact` and `full` remain explicit
-  compatibility modes. Advertised schemas reuse the exact runtime validators
-  without duplicating field prose. No live cost or latency saving is claimed.
-- Replaced repeated long-form tool policy with concise routing cards. The cards
-  preserve ownership, security, recovery, evidence, and cost qualifications and
-  direct a supervisor to close a verified terminal handoff without routine file
-  rereads or duplicate verification.
+### Changed
 
-- Prepared Benchmark V2 with eight realistic externally graded fixtures,
-  fixed-effort Solo/Adaptive/Forced arms, schema-4 credit telemetry, a dated
-  ChatGPT Plus Codex credit-rate snapshot, standard-speed campaign metadata and
-  a required Fast-mode-disabled pre-run acknowledgement, Pareto reporting, and
-  selective third-repetition recommendations. Schema-4 run records and reports
-  now retain per-participant model, effort, usage, credit, identity, and duration
-  attribution alongside reconciled Sol/Luna/run totals. Campaign execution now
-  validates compatible, duplicate-free existing shards before model calls and
-  supports explicit idempotent `--resume` of only missing cells while preserving
-  after-each-run checkpoints. Checkpoint replacement now writes and flushes a
-  same-directory temporary file before Windows-safe rename replacement, keeping
-  the prior valid shard intact on handled pre-replacement failures. The completed
-  live campaigns, stopping-rule repetitions, and evidence-qualified conclusions
-  are committed under `bench/results/` and interpreted in `bench/RESULTS.md`.
+- Made `resultDetail: "handoff"` the default. Clean verified PASS responses are
+  text-only and omit `structuredContent`; failures and suspicious states expand
+  to rich evidence progressively. Callers requiring structured success output
+  can explicitly request `compact` or `full`.
+- Reduced repeated MCP instruction, tool-schema, and successful-result metadata
+  while preserving runtime validators, ownership, security, verification,
+  recovery, evidence, and cost qualifications. Benchmark V2 showed substantially
+  less supervisor duplication and overhead, but final Adaptive did not beat Solo
+  overall on the frozen campaign.
+
+### Fixed
+
+- Corrected future Benchmark V2 third-repetition analysis so Solo cells no
+  longer receive meaningless Solo-versus-Solo near-tie recommendations. Frozen
+  historical campaign evidence remains unchanged.
+
+### Migration
+
+- Callers that relied on omitted `resultDetail` returning `structuredContent` on
+  clean successful responses should explicitly request `resultDetail="compact"`
+  or `resultDetail="full"`.
 
 ## [0.9.1] - 2026-08-24
 
@@ -648,7 +649,8 @@ Initial working version, verified end to end.
 development milestones and were never tagged or published, so they have no
 release links.
 
-[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.8.0...v0.8.1

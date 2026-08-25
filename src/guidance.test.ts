@@ -695,9 +695,9 @@ test("current documentation distinguishes diagnostics, activity privacy, and leg
 
 test("acceptance ledger owns the current release baseline", async () => {
   const acceptance = await readDoc("docs/FEATURE_ACCEPTANCE.md");
-  assert.match(acceptance, /package version is `0\.9\.1`/i);
+  assert.match(acceptance, /package version is `0\.10\.0`/i);
   assert.match(acceptance, /current main runtime is its release baseline/i);
-  assert.match(acceptance, /\*\*513\/516 tests passed and 3 expected platform skips\*\*/);
+  assert.match(acceptance, /\*\*518\/518 tests passed\*\*/);
   assert.match(acceptance, /## Current capability matrix/);
   assert.match(
     acceptance,
