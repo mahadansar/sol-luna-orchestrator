@@ -40,14 +40,14 @@ belongs in `ROADMAP.md`.
 | Claimed-vs-observed reconciliation                      | PASS     | PASS          | DEEP PASS     | Strong        |
 | Context Capsule v2                                      | PASS     | PASS          | PASS          | Strong        |
 | Compact Evidence Packets                                | PASS     | PASS          | DEEP PASS     | Strong        |
-| Terminal verification and thin handoff boundary         | PASS     | PASS          | NOT TESTED    | Basic         |
+| Terminal verification and thin handoff boundary         | PASS     | PASS          | PASS          | Strong        |
 | CLI lifecycle                                           | PASS     | PASS          | PASS          | Strong        |
 | Activity, observability, and privacy                    | PASS     | PASS          | DEEP PASS     | Strong        |
 | Natural discovery                                       | PASS     | PASS          | PASS          | Strong        |
 | Explicit Change Intent                                  | PASS     | PASS          | DEEP PASS     | Strong        |
 | Worker Continuation                                     | PASS     | DEEP PASS     | DEEP PASS     | Battle-tested |
 | Bounded Repair                                          | PASS     | PASS          | DEEP PASS     | Strong        |
-| Bounded parallel automatic recovery                     | PASS     | PASS          | N/A           | Strong        |
+| Bounded parallel automatic recovery                     | PASS     | PASS          | PASS          | Strong        |
 | P1.0 parent/pricing foundation                          | PASS     | PASS          | N/A           | Strong        |
 | `failureCauses` and verification contradiction handling | PASS     | PASS          | PASS          | Strong        |
 
@@ -63,7 +63,11 @@ uses the same thread/worktree, while a no-result worker-process failure uses a
 fresh thread in the same owned worktree. Recovery preserves partial successes,
 reruns verification, reconciles final worktree evidence before integration, and
 records stable identities, attempt ordinals, classifications, and separate usage
-and duration. This ledger makes no claim of live economic or latency success.
+and duration. Fresh Benchmark V2 evidence exercised one real 300-second timeout:
+the runtime preserved two successful parallel streams, retried only the failed
+task in its owned worktree, passed final verification, and exposed the missing
+failed-attempt usage as unknown. The 475-second run is evidence that recovery
+works and that timeout latency and accounting remain open problems.
 
 The terminal handoff protocol defaults clean verified PASS responses to compact
 text without `structuredContent`. A batch reruns the deduplicated declared checks
@@ -73,8 +77,13 @@ modes retain structured compatibility; non-clean results expand to full
 evidence. Advertised schemas retain canonical validators/defaults while omitting
 descriptive prose. Deterministic tests prove parser equivalence, final-check
 deduplication, terminal closure, no-command refusal, failure expansion, activity
-projection, and the protocol surface. Live economic evidence is not yet claimed
-for this seam.
+projection, and the protocol surface. Fresh local-runtime targeted and full
+Benchmark V2 campaigns exercised the handoff from isolated Codex sessions. All
+48 final records passed; natural Adaptive delegated runs spent 5.5-8.9 seconds
+in observed supervisor-after time, compared with 26.8-113.1 seconds in the
+delegated frozen baseline. The canonical economics and limitations are in
+`bench/RESULTS.md`; this is representative live acceptance, not a claim of
+universal savings.
 
 ## Current known evidence gaps and non-claims
 
@@ -142,6 +151,35 @@ execution date is **unknown** when the repository does not establish it.
 The following sections preserve concise campaign chronology and historical test
 counts. They describe the state at each checkpoint and are superseded wherever
 the current baseline, matrix, gaps, or detailed records above say otherwise.
+
+### Thin-supervisor terminal-verification campaign
+
+The 2026-08-25 Candidate 3 runtime at
+`187f962be18998a6a4e0b5d9e717d62001ffbe41`, with targeted evidence committed
+at `62d9e00f9e44b51ca9bae4941c50f332bfe93585`, passed the full deterministic
+gate: 513/516 tests passed with three expected Windows skips and no failures,
+plus typecheck, protocol smoke, fixture validation, formatting, and build. The
+local development checkout was rebuilt and registered with
+`init --allow-ephemeral`; status, doctor, and `codex mcp get` all resolved
+`D:\code\gpt-test\sol-luna-orchestrator\dist\server.js`.
+
+Fresh Codex sessions then ran the frozen V2 contract with `gpt-5.6-sol` Medium,
+`gpt-5.6-luna`, standard speed, and Fast disabled. The targeted campaign was
+`benchmark-v2-terminal-verification-c3-187f962-20260825`; the full campaign was
+`benchmark-v2-final-terminal-verification-62d9e00-20260825`. All 48 final
+records passed external grading. The campaign repeatedly exercised terminal
+integration verification, text-only successful handoffs, zero-worker routing,
+single workers, parallel peaks 3 and 4, mixed Medium/High effort, and one
+targeted timeout recovery. The recovery preserved completed siblings and
+retried only the failed ownership seam, while truthfully leaving total credits
+unknown because failed-attempt usage was unavailable.
+
+The campaign establishes live functional acceptance and a materially thinner
+post-delegation Sol lifecycle. It does not establish overall Adaptive savings:
+the seven fully priced task medians were about 2% more expensive than Solo and
+the full Adaptive total is unknown. `bench/RESULTS.md` owns the complete
+candidate mapping, BEFORE/AFTER economics, failure analysis, thresholds, and
+reproduction sequence.
 
 The initial deterministic campaign executed against the released v0.9.0 tree on
 2026-08-24. `npm ci` and `npm run build` passed. An initial native Node coverage

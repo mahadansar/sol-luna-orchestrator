@@ -1,0 +1,120 @@
+{
+  "schema": 4,
+  "benchmarkVersion": 2,
+  "suite": "v2",
+  "supervisorModel": "gpt-5.6-sol",
+  "supervisorEffort": "medium",
+  "executionProfile": {
+    "speedMode": "standard",
+    "fastModeDisabled": true,
+    "serviceTier": null,
+    "serviceTierStatus": "not-exposed-by-codex-sdk",
+    "sdkSpeedPinningSupported": false,
+    "enforcement": "operator-confirmed-pre-run"
+  },
+  "pricingProfile": {
+    "profileId": "benchmark-v2-chatgpt-plus-codex-credits-2026-08-24",
+    "sourceUrl": "https://help.openai.com/en/articles/20001106",
+    "snapshotDate": "2026-08-24",
+    "units": "credits-per-1m-tokens",
+    "applicability": "Token-based Codex credit rates for the ChatGPT Plus account used by Benchmark V2",
+    "promotionalTerms": null,
+    "rates": {
+      "gpt-5.6-sol": {
+        "input": 125,
+        "cachedInput": 12.5,
+        "output": 750,
+        "cacheWrite": 0
+      },
+      "gpt-5.6-luna": {
+        "input": 5,
+        "cachedInput": 0.5,
+        "output": 30,
+        "cacheWrite": 0
+      }
+    }
+  },
+  "campaignId": "benchmark-v2-final-terminal-verification-62d9e00-20260825",
+  "startedAt": "2026-08-25T05-09-20-440Z",
+  "platform": "win32 x64",
+  "nodeVersion": "v26.7.0",
+  "reps": 3,
+  "records": [
+    {
+      "benchmarkVersion": 2,
+      "suite": "v2",
+      "taskId": "v2-config-overlay",
+      "taskCategory": "small",
+      "workloadClass": "small",
+      "tier": "A",
+      "streams": 1,
+      "maxParallelConfigured": null,
+      "arm": "solo-medium",
+      "armLabel": "Solo Medium",
+      "supervisorEffort": "medium",
+      "repetition": 3,
+      "startedAt": "2026-08-25T05:09:20.453Z",
+      "durationSeconds": 108,
+      "passed": true,
+      "grades": [
+        {
+          "label": "configuration overlay tests pass",
+          "exitCode": 0,
+          "passed": true,
+          "output": "✔ deep-merges plain objects without mutating either input (1.7244ms)\n✔ undefined patch values leave an inherited setting unchanged (0.2601ms)\n✔ environment entries become typed nested overrides (0.4685ms)\n✔ ignores malformed entries and is case-insensitive for the prefix (0.173ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 89.1683"
+        }
+      ],
+      "immutableViolations": [],
+      "mutationCaught": null,
+      "supervisorUsage": {
+        "inputTokens": 115030,
+        "cachedInputTokens": 90624,
+        "outputTokens": 3467,
+        "reasoningOutputTokens": 1350
+      },
+      "delegations": [],
+      "workerCount": 0,
+      "workerEfforts": [],
+      "batches": [],
+      "integrationConflicts": 0,
+      "breakdown": {
+        "supervisorBeforeSeconds": null,
+        "worktreeSetupSeconds": null,
+        "workerWindowSeconds": null,
+        "slowestWorkerSeconds": null,
+        "integrationSeconds": null,
+        "supervisorAfterSeconds": null,
+        "peakConcurrency": null
+      },
+      "verificationFailed": 0,
+      "verificationRefused": 0,
+      "workerFailures": [],
+      "agentError": null,
+      "creditAccounting": {
+        "pricingProfileId": "benchmark-v2-chatgpt-plus-codex-credits-2026-08-24",
+        "actualCredits": null,
+        "participants": [
+          {
+            "role": "supervisor",
+            "taskId": null,
+            "workerThreadId": null,
+            "model": "gpt-5.6-sol",
+            "effort": "medium",
+            "inputTokens": 115030,
+            "cachedInputTokens": 90624,
+            "outputTokens": 3467,
+            "reasoningOutputTokens": 1350,
+            "cacheWriteInputTokens": null,
+            "rateCardCredits": 6.7838,
+            "durationSeconds": null
+          }
+        ],
+        "rateCardCredits": {
+          "total": 6.7838,
+          "sol": 6.7838,
+          "luna": 0
+        }
+      }
+    }
+  ]
+}
