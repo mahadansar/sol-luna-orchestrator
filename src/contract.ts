@@ -203,7 +203,7 @@ export const routingPreflightShape = {
   seamSize: z
     .enum(SEAM_SIZES)
     .default("unknown")
-    .describe("Per-seam work volume, not difficulty and never an effort input."),
+    .describe("Per-seam work volume, not difficulty; the one starting-effort input."),
   sharedState: z
     .enum(SHARED_STATES)
     .default("unknown")

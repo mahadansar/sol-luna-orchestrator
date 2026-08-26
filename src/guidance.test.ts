@@ -42,6 +42,7 @@ import {
 import {
   CORE_OVERLAPS,
   evaluateRouting,
+  EXECUTION_MECHANISMS,
   INTEGRATIONS,
   SEAM_SIZES,
   SHARED_STATES,
@@ -1134,8 +1135,16 @@ test("the preflight tool advertises advisory, no-side-effect, parent-owned seman
     ROUTING_PREFLIGHT_TOOL_DESCRIPTION,
     /either means fixed delegation overhead needs explicit justification/i,
   );
-  // Routing must not appear to touch compute policy.
+  // The description must not read as though the tool decides compute for the
+  // parent. It answers with a bounded recommendation; it grants nothing, and the
+  // advertised input schema stays free of any compute field.
   assert.doesNotMatch(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /how many workers/i);
+  assert.deepEqual(
+    Object.keys(routingPreflightMcpInputShape).filter((field) =>
+      /policy|effort|model|worker|concurren/i.test(field),
+    ),
+    [],
+  );
 });
 
 test("SOL_RULES and the runtime agree on refuse, recommend, and parent judgement", async () => {
@@ -1168,6 +1177,18 @@ test("SOL_RULES and the runtime agree on refuse, recommend, and parent judgement
   );
   assert.match(rules, /not a worker count/i);
   assert.match(rules, /zero workers remains first-class/i);
+
+  // The execution shape: that it follows the route, that its numbers are bounds
+  // rather than grants, and that the effort ladder is still someone else's.
+  assert.match(rules, /execution shape/i);
+  assert.match(
+    rules,
+    /`solo` route always yields the `solo` mechanism[\s\S]{0,120}never names a\s*\n?delegation tool/i,
+  );
+  assert.match(rules, /undeclared hazard is staggered rather than raced/i);
+  assert.match(rules, /bounds, not permissions/i);
+  assert.match(rules, /never the\s+ceiling it permits/i);
+  assert.match(rules, /retry ladder's decision, not the\s*\n?preflight's/i);
   assert.match(rules, /Never persisted in telemetry/i);
 });
 
@@ -1186,6 +1207,7 @@ test("the routing docs agree with the runtime vocabulary", async () => {
     ...CORE_OVERLAPS,
     ...INTEGRATIONS,
     ...VERIFICATIONS,
+    ...EXECUTION_MECHANISMS,
   ]) {
     assert.match(rules, new RegExp(escapeRegExp(value)), `${value} is undocumented`);
   }
@@ -1209,7 +1231,17 @@ test("the routing docs agree with the runtime vocabulary", async () => {
 
   assert.match(configuration, /routing_preflight/);
   assert.match(configuration, /before any worktree is created/i);
-  assert.match(configuration, /never reads, outputs, or selects\s*\n?worker effort/i);
+  assert.match(configuration, /Routing cannot widen compute policy/i);
+  assert.match(
+    configuration,
+    /receives as an argument rather\s*\n?than\s*\n?reading for itself/i,
+  );
+  assert.match(configuration, /selects no model[\s\S]{0,120}cannot raise a bound/i);
+  assert.match(configuration, /never the highest it permits/i);
+  assert.match(
+    configuration,
+    /raising effort after\s*\n?failure stays with the failure ladder/i,
+  );
   // The accounting the docs describe must be the honest one: budgets bound the
   // registered schemas, and the attribution diagnostics never stand in for the
   // total.

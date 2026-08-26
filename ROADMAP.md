@@ -124,16 +124,23 @@ Two slices are now implemented:
    both the initial worker window and the bounded recovery pass; and on the
    failure ladder, which a narrowed envelope can only shorten toward parent
    takeover. Each batch records the envelope it ran under.
+3. **Adaptive Route Planning**: The same cheap preflight now also recommends one
+   bounded execution shape for work the parent has already declared: solo versus
+   delegate, the mechanism (single, sequential, parallel), a conservative starting
+   effort, and the worker and concurrency counts the active compute policy
+   permits. The shape follows the route — a `solo` route yields the `solo`
+   mechanism and zero workers — and sequential versus parallel is decided from
+   cautiously resolved values, so an undeclared hazard is staggered rather than
+   raced. It stays advisory, refuses nothing, expands no permission, and the
+   evaluator still reaches nothing outside its arguments: the envelope is passed
+   in, and the policy module is not imported.
 
 Future P1.2 work still includes:
 
-- Solo vs delegation decisions
 - decomposition/seam decisions
-- sequential vs parallel choice
-- worker count selection
 - authorised worker/model selection
-- effort selection
-- concurrency decisions within the enforced envelope
+- effort selection from execution evidence rather than a declared seam size
+- recording the recommended shape in routing telemetry
 - full adaptive routing algorithm
 
 **Constraints.** The supervisor cannot expand permissions. Routing must preserve

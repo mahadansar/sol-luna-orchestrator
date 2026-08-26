@@ -171,7 +171,9 @@ operator warning.
 `routing.preflight` records one advisory `routing_preflight` call. It carries a
 `preflightId`, the route, seam count, unknown count, gates, signals, and
 `parallelEligible`, plus the five raw declared values. It has **no** `batchId`,
-because no batch exists at that point.
+because no batch exists at that point. The recommended execution shape is not
+part of the record: it is derived from those same declared values and the
+operator's own envelope, and persisting it is future work.
 
 `routing.declared` records what a real delegation call declared. It always
 carries `batchId`, `declaration` (`attached` or `absent`), `mode`, and

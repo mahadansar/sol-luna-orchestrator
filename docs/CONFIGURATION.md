@@ -132,10 +132,17 @@ shared-core gate to a warning and never downgrades mutable shared state.
 Everything else is advice the parent may override; see
 [SOL_RULES.md](../SOL_RULES.md#cheap-routing-preflight) for the full route table.
 
-Routing is independent of compute policy. It never reads, outputs, or selects
-worker effort, never recommends a worker count, and never changes `maxParallel`
-or any concurrency behavior. `parallelEligible` is a structural boolean only, and
-`seams.length` describes separability rather than a worker target.
+Routing cannot widen compute policy. Alongside the route, the preflight reports a
+bounded execution shape — a mechanism, a starting worker effort, a worker count,
+and how many workers would run at once — and every number in it comes from the
+active policy envelope, which the evaluator receives as an argument rather than
+reading for itself. It selects no model, changes no `maxParallel`, grants nothing,
+and cannot raise a bound; the recommended effort is the effort this installation
+already defaults to, never the highest it permits, and raising effort after
+failure stays with the failure ladder. A `solo` route always yields the `solo`
+mechanism and zero workers, so the shape never argues with the route.
+`parallelEligible` remains a structural boolean only, and `seams.length` describes
+separability rather than a worker target.
 
 ### Metadata and thin result fast path
 

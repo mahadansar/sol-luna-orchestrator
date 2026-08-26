@@ -73,7 +73,7 @@ semantics itself:
 | Field          | Values                                    | Meaning                                                                   |
 | -------------- | ----------------------------------------- | ------------------------------------------------------------------------- |
 | `seams`        | short non-sensitive labels, 0..12         | Independent ownership seams. Never persisted in telemetry.                |
-| `seamSize`     | `small`, `substantial`, `unknown`         | Work volume per seam. Not difficulty, and never an effort input.          |
+| `seamSize`     | `small`, `substantial`, `unknown`         | Work volume per seam. Not difficulty; the one starting-effort input.      |
 | `sharedState`  | `none`, `read-only`, `mutable`, `unknown` | State shared with another seam or the parent's remaining work.            |
 | `coreOverlap`  | `disjoint`, `shared-core`, `unknown`      | Whether the work is isolated from what siblings or the parent still need. |
 | `integration`  | `mechanical`, `architectural`, `unknown`  | Whether recombining finished seams needs judgement.                       |
@@ -129,10 +129,31 @@ parent declared.
 `parallelEligible` is reported separately and answers only a structural question:
 two or more seams, no explicitly declared mutable shared state, and no explicitly
 declared shared core. Unknown values do not make it false. It is not a
-recommendation to use parallel mode, not a worker count, and unrelated to the
-configured concurrency cap — `seams.length` describes separability, not a worker
-target. It can be `true` while the route is `solo`, which simply means a split is
+recommendation to use parallel mode and not a worker count — `seams.length`
+describes separability, not a worker target. It can be `true` while the route is
+`solo`, and while the recommended shape is `solo`, which simply means a split is
 possible but not obviously worth its overhead.
+
+Alongside the route, the preflight reports one bounded **execution shape**: a
+`mechanism` (`solo`, `delegate_task`, `delegate_tasks_sequential`,
+`delegate_tasks_parallel`), a starting `effort`, the `workerCount` it would enlist,
+and how many of those would run at once. It follows the route rather than arguing
+with it: a `solo` route always yields the `solo` mechanism, zero workers, and no
+effort, so a recommendation against delegating never names a delegation tool. On
+an `either` route the shape is marked conditional, because the overhead still
+needs justifying.
+
+Sequential versus parallel is decided from the same cautiously resolved values the
+route reads, so an undeclared hazard is staggered rather than raced, and a card
+that declares nothing is never recommended concurrent workers. Parallel is named
+only when two workers would really run at once, nothing resolved is shared or
+mutable between them, and each seam can be proven on its own; anything else is
+sequential. Shape numbers are bounds, not permissions: every one of them comes
+from the active compute policy, the starting `effort` is at most the effort this
+installation already defaults to — lower again for a small seam — and never the
+ceiling it permits, and seams beyond what one call may enlist are reported as
+staying with you rather than silently dropped. Raising effort after failure
+remains the retry ladder's decision, not the preflight's.
 
 Calling `routing_preflight` and then delegating nothing is a normal successful
 outcome; zero workers remains first-class. An empty seam list is a valid

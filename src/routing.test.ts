@@ -20,6 +20,7 @@ import {
   evaluateParallelEligibility,
   evaluateRouting,
   INTEGRATIONS,
+  recommendExecutionShape,
   renderRoutingAdvisory,
   renderRoutingPreflight,
   resolveRoutingValues,
@@ -27,6 +28,7 @@ import {
   SEAM_SIZES,
   SHARED_STATES,
   VERIFICATIONS,
+  type ComputeEnvelope,
   type CoreOverlap,
   type Integration,
   type RoutingMode,
@@ -35,6 +37,8 @@ import {
   type SharedState,
   type Verification,
 } from "./routing.js";
+import { DEFAULT_COMPUTE_POLICY } from "./policy.js";
+import { EFFORTS, type Effort } from "./config.js";
 
 /**
  * Source-tree paths, resolved from the compiled test's own location: the checks
@@ -87,6 +91,16 @@ const ALL_MODES: RoutingMode[] = ["preflight", "single", "sequential", "parallel
 
 /** The largest batch the contract accepts, so shape advisories all fire at once. */
 const MAX_ADVISORY_TASK_COUNT = 12;
+
+/**
+ * Ceiling on the whole preflight answer, in characters.
+ *
+ * A routing advisory that prevents one unnecessary delegation has to stay
+ * materially cheaper than the delegation, so the text is metered rather than
+ * merely reviewed. The shape line is measured inside this same total and did not
+ * require raising it.
+ */
+const PREFLIGHT_TEXT_BUDGET = 400;
 
 // --- Unknown resolution -----------------------------------------------------
 
@@ -468,34 +482,6 @@ test("routing - parallel eligibility depends on nothing but the three raw inputs
   }
 });
 
-test("routing - eligibility carries no worker count, concurrency, or effort", () => {
-  const evaluation = evaluateRouting(clean({ seams: ["a", "b", "c", "d"] }), {
-    mode: "parallel",
-    taskCount: 4,
-  });
-  assert.equal(evaluation.parallelEligible, true);
-  // A boolean cannot become a worker count, and nothing else in the result can
-  // be mistaken for one: the seam count is a description of separability.
-  assert.equal(typeof evaluation.parallelEligible, "boolean");
-  const serialized = JSON.stringify(evaluation);
-  for (const forbidden of [
-    "effort",
-    "medium",
-    "high",
-    "xhigh",
-    "max",
-    "maxParallel",
-    "workers",
-    "concurrency",
-  ]) {
-    assert.doesNotMatch(
-      serialized,
-      new RegExp(forbidden, "i"),
-      `routing must not mention ${forbidden}`,
-    );
-  }
-});
-
 // --- Cross-product invariants ----------------------------------------------
 
 test("routing - the whole vocabulary upholds the design's invariants", () => {
@@ -559,7 +545,14 @@ test("routing - evaluation is synchronous and returns no promise", () => {
   }
 });
 
-/** Follow relative imports from an entry module, returning every module reached. */
+/**
+ * Follow relative *runtime* imports from an entry module.
+ *
+ * Type-only statements are stripped first: they are erased at build time, so they
+ * cannot reach a module, read an environment variable, or cost anything at run
+ * time. Keeping them out of this graph is what lets the evaluator name a shared
+ * vocabulary type while still depending on nothing when it actually runs.
+ */
 function transitiveImports(entry: string): { modules: string[]; external: string[] } {
   const seen = new Set<string>();
   const external = new Set<string>();
@@ -568,7 +561,9 @@ function transitiveImports(entry: string): { modules: string[]; external: string
     const current = queue.pop()!;
     if (seen.has(current)) continue;
     seen.add(current);
-    const source = fs.readFileSync(current, "utf8");
+    const source = fs
+      .readFileSync(current, "utf8")
+      .replace(/^\s*(?:import|export)\s+type\s[^;]*;/gm, "");
     const specifiers = [...source.matchAll(/from\s+"([^"]+)"|import\("([^"]+)"\)/g)].map(
       (match) => match[1] ?? match[2]!,
     );
@@ -599,18 +594,22 @@ test("routing - the evaluator reaches no filesystem, process, socket, or model c
       `routing must not reach ${forbidden}, found: ${external.join(", ")}`,
     );
   }
-  assert.deepEqual(external, [], "the evaluator needs no imports at all");
+  assert.deepEqual(external, [], "the evaluator needs no runtime imports at all");
 });
 
 test("routing - preflight text stays inside its budget for every possible card", () => {
+  // Every envelope, including none at all, because the shape line is the only
+  // part of this text whose presence and width the caller can change.
   for (const card of everyCardShape()) {
-    const rendered = renderRoutingPreflight(
-      evaluateRouting(card, { mode: "preflight", taskCount: 12 }),
-    );
-    assert.ok(
-      rendered.length <= 400,
-      `rendered preflight text was ${rendered.length} chars:\n${rendered}`,
-    );
+    for (const envelope of [undefined, ...SHAPE_ENVELOPES]) {
+      const rendered = renderRoutingPreflight(
+        evaluateRouting(card, { mode: "preflight", taskCount: 12, envelope }),
+      );
+      assert.ok(
+        rendered.length <= PREFLIGHT_TEXT_BUDGET,
+        `rendered preflight text was ${rendered.length} chars:\n${rendered}`,
+      );
+    }
   }
 });
 
@@ -764,11 +763,18 @@ function runtimeModules(): string[] {
 
 test("routing - the evaluator imports nothing from the benchmark", () => {
   const source = fs.readFileSync(path.join(SRC_DIR, "routing.ts"), "utf8");
-  const importSpecifiers = [
-    ...source.matchAll(/^\s*(?:import|export)\s[^;]*?from\s+"([^"]+)"/gm),
-  ].map((match) => match[1]!);
-  assert.deepEqual(importSpecifiers, [], "the evaluator imports nothing at all");
-  for (const specifier of importSpecifiers) {
+  const statements = [
+    ...source.matchAll(/^\s*((?:import|export)\s[^;]*?from\s+"([^"]+)");/gm),
+  ].map((match) => ({ statement: match[1]!.trim(), specifier: match[2]! }));
+
+  // One import, and it must be type-only. A value import would put a module —
+  // and everything that module reads at load time — behind every preflight.
+  assert.deepEqual(
+    statements.map((entry) => entry.statement),
+    ['import type { Effort } from "./config.js"'],
+    "the evaluator's only import is the type-only effort vocabulary",
+  );
+  for (const { specifier } of statements) {
     assert.doesNotMatch(specifier, /bench/i);
   }
 });
@@ -879,4 +885,398 @@ test("routing - every declared vocabulary keeps its unknown escape value", () =>
   assert.ok(
     [seamSize, sharedState, coreOverlap, integration, verification].every(Boolean),
   );
+});
+
+// --- Recommended execution shape -------------------------------------------
+
+/**
+ * Wide enough that a shape reflects the card rather than a cap, so a narrower
+ * envelope's effect is always attributable to the envelope.
+ */
+const WIDE_ENVELOPE: ComputeEnvelope = {
+  allowedEfforts: [...EFFORTS],
+  maxConcurrency: 8,
+  maxWorkersPerBatch: 12,
+};
+
+/** Envelopes that between them bind every bound a shape reads. */
+const SHAPE_ENVELOPES: ComputeEnvelope[] = [
+  WIDE_ENVELOPE,
+  // One worker, one at a time, one effort: the narrowest envelope policy allows.
+  { allowedEfforts: ["medium"], maxConcurrency: 1, maxWorkersPerBatch: 1 },
+  // Concurrency narrowed below the seam count, so parallel becomes sequential.
+  { allowedEfforts: ["medium", "high"], maxConcurrency: 1, maxWorkersPerBatch: 12 },
+  // Workers narrowed below the seam count, so seams are left with the parent.
+  { allowedEfforts: ["high", "xhigh"], maxConcurrency: 8, maxWorkersPerBatch: 2 },
+  // An envelope whose floor is above the effort routing would prefer.
+  { allowedEfforts: ["xhigh", "max"], maxConcurrency: 3, maxWorkersPerBatch: 3 },
+];
+
+/** Ascending, mirroring the evaluator's own ranking without importing it. */
+const EFFORT_ORDER: readonly Effort[] = ["medium", "high", "xhigh", "max"];
+const lowestEffort = (allowed: readonly Effort[]): Effort =>
+  [...allowed].sort((a, b) => EFFORT_ORDER.indexOf(a) - EFFORT_ORDER.indexOf(b))[0]!;
+
+/**
+ * The effort `config.ts` itself would default to for a given permitted list.
+ *
+ * Restated here rather than imported, so the assertion is that routing agrees
+ * with the installation's own default rather than that two modules share a
+ * function.
+ */
+const installationDefaultEffort = (allowed: readonly Effort[]): Effort =>
+  allowed.includes("high") ? "high" : lowestEffort(allowed);
+
+test("routing - no envelope means no shape, and no mention of one", () => {
+  for (const mode of ALL_MODES) {
+    const evaluation = evaluateRouting(clean(), { mode, taskCount: 2 });
+    assert.equal(evaluation.shape, null);
+    // The guarantee the pre-shape evaluator made, kept for every caller that
+    // still declines to name an envelope: no effort, worker count, or
+    // concurrency value appears anywhere in the result.
+    const serialized = JSON.stringify(evaluation);
+    for (const forbidden of [...EFFORTS, "effort", "worker", "concurrency"]) {
+      assert.doesNotMatch(
+        serialized,
+        new RegExp(forbidden, "i"),
+        `an envelope-free evaluation must not mention ${forbidden}`,
+      );
+    }
+    assert.doesNotMatch(renderRoutingPreflight(evaluation), /SHAPE/);
+  }
+});
+
+test("routing - a solo route never advertises a delegation mechanism", () => {
+  for (const card of everyCardShape()) {
+    for (const envelope of SHAPE_ENVELOPES) {
+      for (const mode of ALL_MODES) {
+        const evaluation = evaluateRouting(card, { mode, taskCount: 2, envelope });
+        const shape = evaluation.shape!;
+        if (evaluation.route === "solo") {
+          assert.deepEqual(
+            shape,
+            {
+              mechanism: "solo",
+              effort: null,
+              workerCount: 0,
+              concurrency: 0,
+              seamsOverCap: 0,
+            },
+            "a solo recommendation must name no mechanism and no compute",
+          );
+        } else {
+          // The converse, so the two can never drift apart: every envelope here
+          // permits at least one worker, so a non-solo route always has a shape.
+          assert.notEqual(shape.mechanism, "solo");
+          assert.ok(shape.workerCount >= 1);
+        }
+        assert.equal(shape.mechanism === "solo", shape.workerCount === 0);
+      }
+    }
+  }
+});
+
+test("routing - the rendered shape line never contradicts the rendered route", () => {
+  for (const card of everyCardShape()) {
+    for (const envelope of SHAPE_ENVELOPES) {
+      const rendered = renderRoutingPreflight(
+        evaluateRouting(card, { mode: "preflight", envelope }),
+      );
+      if (/^ROUTE: solo/m.test(rendered)) {
+        assert.match(rendered, /^SHAPE: solo; zero workers$/m);
+        assert.doesNotMatch(rendered, /delegate_/);
+      } else {
+        assert.match(rendered, /^SHAPE: delegate_/m);
+      }
+      // An unjustified overhead must read as conditional, never as an order.
+      if (/^ROUTE: either/m.test(rendered)) {
+        assert.match(rendered, /^SHAPE: .*; only if justified$/m);
+      }
+    }
+  }
+});
+
+test("routing - seam count alone decides nothing about delegating", () => {
+  // Same seam count, same envelope; only the coupling declaration differs.
+  const coupled = evaluateRouting(clean({ sharedState: "mutable" }), {
+    mode: "preflight",
+    envelope: WIDE_ENVELOPE,
+  });
+  const clean2 = evaluateRouting(clean(), {
+    mode: "preflight",
+    envelope: WIDE_ENVELOPE,
+  });
+  assert.equal(coupled.seamCount, clean2.seamCount);
+  assert.equal(coupled.shape?.mechanism, "solo");
+  assert.equal(clean2.shape?.mechanism, "delegate_tasks_parallel");
+});
+
+test("routing - one clean substantial seam starts at high, not at the ceiling", () => {
+  const evaluation = evaluateRouting(clean({ seams: ["only"] }), {
+    mode: "preflight",
+    envelope: WIDE_ENVELOPE,
+  });
+  assert.equal(evaluation.route, "delegation-plausible");
+  assert.deepEqual(evaluation.shape, {
+    mechanism: "delegate_task",
+    effort: "high",
+    workerCount: 1,
+    concurrency: 1,
+    seamsOverCap: 0,
+  });
+});
+
+test("routing - independent disjoint seams with per-seam proof go parallel", () => {
+  const evaluation = evaluateRouting(clean({ seams: ["a", "b", "c"] }), {
+    mode: "preflight",
+    envelope: WIDE_ENVELOPE,
+  });
+  assert.equal(evaluation.route, "delegation-plausible");
+  assert.deepEqual(evaluation.shape, {
+    mechanism: "delegate_tasks_parallel",
+    effort: "high",
+    workerCount: 3,
+    concurrency: 3,
+    seamsOverCap: 0,
+  });
+});
+
+test("routing - seams that cannot be proven apart are staggered, not raced", () => {
+  const evaluation = evaluateRouting(
+    clean({ seams: ["a", "b", "c"], verification: "shared-only" }),
+    { mode: "preflight", envelope: WIDE_ENVELOPE },
+  );
+  assert.equal(evaluation.route, "either");
+  assert.deepEqual(evaluation.shape, {
+    mechanism: "delegate_tasks_sequential",
+    effort: "high",
+    workerCount: 3,
+    concurrency: 1,
+    seamsOverCap: 0,
+  });
+});
+
+test("routing - dependent seams recommend solo rather than a delegated shape", () => {
+  for (const coupling of [
+    { sharedState: "mutable" } as const,
+    { coreOverlap: "shared-core" } as const,
+    { integration: "architectural" } as const,
+  ]) {
+    const evaluation = evaluateRouting(clean({ seams: ["a", "b"], ...coupling }), {
+      mode: "preflight",
+      envelope: WIDE_ENVELOPE,
+    });
+    assert.equal(evaluation.route, "solo");
+    assert.equal(evaluation.shape?.mechanism, "solo");
+  }
+});
+
+test("routing - an entirely undeclared card is never recommended concurrency", () => {
+  const card = clean({
+    seams: ["a", "b", "c"],
+    seamSize: "unknown",
+    sharedState: "unknown",
+    coreOverlap: "unknown",
+    integration: "unknown",
+    verification: "unknown",
+  });
+  const evaluation = evaluateRouting(card, {
+    mode: "preflight",
+    envelope: WIDE_ENVELOPE,
+  });
+  // The whole raw/resolved asymmetry in one card: structurally separable, and
+  // still not recommended, because the recommendation reads resolved values.
+  assert.equal(evaluation.parallelEligible, true);
+  assert.equal(evaluation.route, "solo");
+  assert.equal(evaluation.shape?.mechanism, "solo");
+  assert.equal(evaluation.refusedGate, null);
+});
+
+test("routing - concurrency is never recommended over a resolved hazard", () => {
+  for (const card of everyCardShape()) {
+    for (const envelope of SHAPE_ENVELOPES) {
+      const evaluation = evaluateRouting(card, { mode: "preflight", envelope });
+      const shape = evaluation.shape!;
+      if (shape.mechanism !== "delegate_tasks_parallel") continue;
+      assert.notEqual(evaluation.resolved.sharedState, "mutable");
+      assert.notEqual(evaluation.resolved.coreOverlap, "shared-core");
+      assert.equal(evaluation.resolved.verification, "per-seam");
+      assert.ok(shape.workerCount >= 2);
+      assert.ok(shape.concurrency >= 2);
+    }
+  }
+});
+
+test("routing - an envelope that runs one worker at a time is a sequential shape", () => {
+  const evaluation = evaluateRouting(clean({ seams: ["a", "b", "c"] }), {
+    mode: "preflight",
+    envelope: { allowedEfforts: [...EFFORTS], maxConcurrency: 1, maxWorkersPerBatch: 12 },
+  });
+  assert.deepEqual(evaluation.shape, {
+    mechanism: "delegate_tasks_sequential",
+    effort: "high",
+    workerCount: 3,
+    concurrency: 1,
+    seamsOverCap: 0,
+  });
+});
+
+test("routing - seams beyond the worker cap stay with the parent and are named", () => {
+  const evaluation = evaluateRouting(clean({ seams: ["a", "b", "c", "d"] }), {
+    mode: "preflight",
+    envelope: {
+      allowedEfforts: ["medium", "high"],
+      maxConcurrency: 8,
+      maxWorkersPerBatch: 2,
+    },
+  });
+  assert.deepEqual(evaluation.shape, {
+    mechanism: "delegate_tasks_parallel",
+    effort: "high",
+    workerCount: 2,
+    concurrency: 2,
+    seamsOverCap: 2,
+  });
+  // Silently shrinking the batch would read as though the work had shrunk too.
+  assert.match(renderRoutingPreflight(evaluation), /2 seams stay with you/);
+});
+
+test("routing - a cap of one worker is a single delegation, not a batch", () => {
+  const evaluation = evaluateRouting(clean({ seams: ["a", "b", "c"] }), {
+    mode: "preflight",
+    envelope: { allowedEfforts: ["medium"], maxConcurrency: 1, maxWorkersPerBatch: 1 },
+  });
+  assert.deepEqual(evaluation.shape, {
+    mechanism: "delegate_task",
+    effort: "medium",
+    workerCount: 1,
+    concurrency: 1,
+    seamsOverCap: 2,
+  });
+});
+
+test("routing - an envelope permitting no worker recommends solo", () => {
+  for (const degenerate of [
+    { allowedEfforts: [...EFFORTS], maxConcurrency: 0, maxWorkersPerBatch: 0 },
+    { allowedEfforts: [...EFFORTS], maxConcurrency: 4, maxWorkersPerBatch: 0.5 },
+    { allowedEfforts: [...EFFORTS], maxConcurrency: 4, maxWorkersPerBatch: Number.NaN },
+    { allowedEfforts: [...EFFORTS], maxConcurrency: 4, maxWorkersPerBatch: -3 },
+  ] satisfies ComputeEnvelope[]) {
+    const evaluation = evaluateRouting(clean(), {
+      mode: "preflight",
+      envelope: degenerate,
+    });
+    assert.equal(evaluation.shape?.mechanism, "solo");
+    assert.equal(evaluation.shape?.workerCount, 0);
+  }
+});
+
+test("routing - effort is the installation's own default, never the ceiling", () => {
+  for (const card of everyCardShape()) {
+    for (const envelope of SHAPE_ENVELOPES) {
+      const evaluation = evaluateRouting(card, { mode: "preflight", envelope });
+      const shape = evaluation.shape!;
+      if (shape.effort === null) {
+        assert.equal(shape.mechanism, "solo");
+        continue;
+      }
+      assert.ok(
+        envelope.allowedEfforts.includes(shape.effort),
+        "a recommended effort must be permitted",
+      );
+      const expected =
+        evaluation.resolved.seamSize === "substantial"
+          ? installationDefaultEffort(envelope.allowedEfforts)
+          : lowestEffort(envelope.allowedEfforts);
+      assert.equal(shape.effort, expected);
+      // The ladder above `high` belongs to failure evidence, so routing may only
+      // reach it when the operator has left nothing lower permitted.
+      if (EFFORT_ORDER.indexOf(shape.effort) > EFFORT_ORDER.indexOf("high")) {
+        assert.ok(
+          envelope.allowedEfforts.every(
+            (effort) =>
+              EFFORT_ORDER.indexOf(effort) >= EFFORT_ORDER.indexOf(shape.effort!),
+          ),
+          "xhigh or max may only be recommended when nothing lower is permitted",
+        );
+      }
+    }
+  }
+});
+
+test("routing - a substantial seam under the widest envelope still starts at high", () => {
+  for (const seams of [["a"], ["a", "b"], ["a", "b", "c"]]) {
+    const evaluation = evaluateRouting(clean({ seams }), {
+      mode: "preflight",
+      envelope: WIDE_ENVELOPE,
+    });
+    assert.equal(evaluation.shape?.effort, "high");
+  }
+});
+
+test("routing - nothing in a recommended shape exceeds its envelope", () => {
+  for (const card of everyCardShape()) {
+    for (const envelope of SHAPE_ENVELOPES) {
+      const shape = evaluateRouting(card, { mode: "preflight", envelope }).shape!;
+      assert.ok(shape.workerCount <= envelope.maxWorkersPerBatch);
+      assert.ok(shape.workerCount <= card.seams.length);
+      assert.ok(shape.concurrency <= envelope.maxConcurrency);
+      assert.ok(shape.concurrency <= shape.workerCount);
+      assert.ok(shape.seamsOverCap >= 0);
+      if (shape.mechanism === "solo") {
+        assert.equal(shape.seamsOverCap, 0);
+      } else {
+        assert.equal(shape.seamsOverCap, card.seams.length - shape.workerCount);
+      }
+      if (shape.mechanism === "delegate_task") assert.equal(shape.workerCount, 1);
+      if (shape.mechanism === "delegate_tasks_sequential") {
+        assert.equal(shape.concurrency, 1);
+        assert.ok(shape.workerCount >= 2);
+      }
+    }
+  }
+});
+
+test("routing - the resolved compute policy is a usable envelope as it stands", () => {
+  // Pinned because routing deliberately does not import the policy module: the
+  // structural type must keep matching the envelope the runtime really resolves.
+  const envelope: ComputeEnvelope = DEFAULT_COMPUTE_POLICY;
+  const shape = evaluateRouting(clean(), { mode: "preflight", envelope }).shape!;
+  assert.ok(envelope.allowedEfforts.includes(shape.effort!));
+  assert.ok(shape.workerCount <= DEFAULT_COMPUTE_POLICY.maxWorkersPerBatch);
+  assert.ok(shape.concurrency <= DEFAULT_COMPUTE_POLICY.maxConcurrency);
+});
+
+test("routing - shape recommendation is deterministic and freshly owned", () => {
+  const resolved = resolveRoutingValues(clean());
+  const first = recommendExecutionShape(
+    "delegation-plausible",
+    3,
+    resolved,
+    WIDE_ENVELOPE,
+  );
+  const second = recommendExecutionShape(
+    "delegation-plausible",
+    3,
+    resolved,
+    WIDE_ENVELOPE,
+  );
+  assert.deepEqual(first, second);
+  assert.notEqual(first, second, "each evaluation owns its own shape object");
+  first.workerCount = 99;
+  assert.equal(
+    recommendExecutionShape("delegation-plausible", 3, resolved, WIDE_ENVELOPE)
+      .workerCount,
+    3,
+  );
+  assert.notEqual(recommendExecutionShape.constructor.name, "AsyncFunction");
+});
+
+test("routing - a shape names no seam label", () => {
+  const evaluation = evaluateRouting(
+    clean({ seams: ["SHAPE_LABEL_SENTINEL", "SECOND_SENTINEL"] }),
+    { mode: "preflight", envelope: WIDE_ENVELOPE },
+  );
+  assert.doesNotMatch(JSON.stringify(evaluation.shape), /SENTINEL/);
+  assert.doesNotMatch(renderRoutingPreflight(evaluation), /SENTINEL/);
 });

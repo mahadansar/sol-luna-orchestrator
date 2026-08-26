@@ -20,12 +20,16 @@
  * recommend Solo and nothing more; the parent keeps the decision.
  *
  * Deliberately absent: filesystem access, child processes, network, model calls,
- * repo-wide analysis, weighted scores, numeric thresholds, effort, and worker
- * counts. This file must stay trivially cheap to run and trivially easy to
- * reason about, and it must never import benchmark code.
+ * repo-wide analysis, weighted scores, and benchmark-tuned thresholds. The single
+ * import is type-only, so at runtime this module still depends on nothing at all
+ * and still reads nothing but its arguments: the compute envelope a recommended
+ * shape is bounded by is passed in, never read from the process. This file must
+ * stay trivially cheap to run and trivially easy to reason about, and it must
+ * never import benchmark code.
  */
+import type { Effort } from "./config.js";
 
-/** Per-seam work volume. Not difficulty, and never an effort input. */
+/** Per-seam work volume. Not difficulty; the one input to a starting effort. */
 export const SEAM_SIZES = ["small", "substantial", "unknown"] as const;
 export type SeamSize = (typeof SEAM_SIZES)[number];
 
@@ -54,6 +58,58 @@ export type Verification = (typeof VERIFICATIONS)[number];
 /** Advisory outcomes. Only `solo` is a recommendation against delegating. */
 export const ROUTING_ROUTES = ["solo", "either", "delegation-plausible"] as const;
 export type RoutingRoute = (typeof ROUTING_ROUTES)[number];
+
+/**
+ * The policy facts a recommended shape is bounded by.
+ *
+ * Declared structurally rather than imported, which is what lets this module keep
+ * its runtime independence: `ComputePolicy` satisfies it as it stands, and the
+ * caller passes the envelope it has already resolved. Routing therefore cannot
+ * reach for a process-wide baseline and recommend a shape against an envelope the
+ * call was never going to run under.
+ */
+export interface ComputeEnvelope {
+  readonly allowedEfforts: readonly Effort[];
+  readonly maxConcurrency: number;
+  readonly maxWorkersPerBatch: number;
+}
+
+/**
+ * The mechanism a recommendation names, in the runtime's own tool vocabulary.
+ *
+ * `solo` is a real member rather than an absence, so a solo recommendation says
+ * "no mechanism" in the very field the delegated shapes use. No consumer can read
+ * a delegation tool out of a recommendation against delegating.
+ */
+export const EXECUTION_MECHANISMS = [
+  "solo",
+  "delegate_task",
+  "delegate_tasks_sequential",
+  "delegate_tasks_parallel",
+] as const;
+export type ExecutionMechanism = (typeof EXECUTION_MECHANISMS)[number];
+
+/**
+ * One bounded recommendation. Never a permission, and never above the envelope.
+ *
+ * `effort` is a *starting* effort rather than a ceiling to aim for: raising effort
+ * on failure evidence is the retry ladder's decision, and a five-field card
+ * declared before any exploration is not evidence. `workerCount` is what the
+ * envelope actually permits, so a card declaring more seams than one call may
+ * enlist reports the remainder in `seamsOverCap` instead of quietly shrinking the
+ * work to fit.
+ */
+export interface ExecutionShape {
+  mechanism: ExecutionMechanism;
+  /** Starting effort inside the envelope; null when nothing is delegated. */
+  effort: Effort | null;
+  /** Workers this shape enlists. Zero exactly when the mechanism is solo. */
+  workerCount: number;
+  /** How many of those run at once. One when staggered, zero when solo. */
+  concurrency: number;
+  /** Declared seams beyond what one call may enlist here. Usually zero. */
+  seamsOverCap: number;
+}
 
 /**
  * Surface the card is being evaluated against.
@@ -163,6 +219,14 @@ export interface RoutingEvaluation {
    * May be true while `route` is `"solo"`.
    */
   parallelEligible: boolean;
+  /**
+   * The bounded shape recommendation, or null when no envelope was supplied.
+   *
+   * Null rather than a guess: every number in a shape belongs to the operator, so
+   * a caller that names no envelope gets no shape rather than one silently
+   * measured against whatever this process happens to permit.
+   */
+  shape: ExecutionShape | null;
   /** Conservatively resolved advisory inputs, exposed for rendering and tests. */
   resolved: ResolvedRoutingValues;
   /** The single gate a refusing surface should refuse on, or null. */
@@ -182,6 +246,11 @@ export interface RoutingContext {
   taskCount?: number;
   /** Parallel-only escape hatch. Downgrades G3 only; G2 still refuses. */
   allowOverlappingScopes?: boolean;
+  /**
+   * Envelope to bound a shape recommendation by. Omit it and `shape` is null;
+   * routing never substitutes an envelope of its own.
+   */
+  envelope?: ComputeEnvelope;
 }
 
 /**
@@ -245,9 +314,14 @@ export function resolveRoutingValues(card: RoutingPreflightCard): ResolvedRoutin
  * Which declared values are a stated hazard for a parallel decomposition.
  *
  * Total maps for the same reason as resolution: an inequality test (`!== "mutable"`)
- * would silently classify a future declarable value as safe. These read raw
- * declarations, so `unknown` is deliberately *not* a stated hazard — absence of a
- * stated hazard is not a stated hazard.
+ * would silently classify a future declarable value as safe.
+ *
+ * One table, read twice. `evaluateParallelEligibility` feeds it raw declarations,
+ * where `unknown` is deliberately *not* a stated hazard — absence of a stated
+ * hazard is not a stated hazard. `recommendExecutionShape` feeds it resolved
+ * values, where `unknown` has already become the hazard. The raw/resolved
+ * distinction therefore lives entirely in what is fed to the table, rather than in
+ * a second copy of it that could drift.
  */
 const SHARED_STATE_BLOCKS_PARALLEL = {
   none: false,
@@ -261,6 +335,21 @@ const CORE_OVERLAP_BLOCKS_PARALLEL = {
   "shared-core": true,
   unknown: false,
 } as const satisfies Record<CoreOverlap, boolean>;
+
+/**
+ * Whether one seam can be proven on its own, which is what makes concurrent
+ * workers worth their coordination rather than merely structurally legal.
+ *
+ * Read with resolved values only. Shared-only proof does not make parallel work
+ * unsound — nothing races — so it is not a gate; it means N seams would come back
+ * at once with no way to say which of them holds, and staggering them costs
+ * nothing a batch was not paying already.
+ */
+const VERIFICATION_ALLOWS_CONCURRENCY = {
+  "per-seam": true,
+  "shared-only": false,
+  unknown: false,
+} as const satisfies Record<Verification, boolean>;
 
 /** How many of the five declared fields the caller left `unknown`. */
 export function countUnknowns(card: RoutingPreflightCard): number {
@@ -367,6 +456,139 @@ function routeNeutralAdvisories(
 }
 
 /**
+ * Ascending effort order, as a total map over the whole vocabulary.
+ *
+ * A new effort level is a compile error here rather than an unranked value that
+ * silently compares as `undefined` and sorts to the bottom.
+ */
+const EFFORT_RANK = {
+  medium: 0,
+  high: 1,
+  xhigh: 2,
+  max: 3,
+} as const satisfies Record<Effort, number>;
+
+/**
+ * The starting effort a resolved seam size asks for, before the envelope.
+ *
+ * Deliberately not "the most the policy allows". A preflight has read a
+ * five-field card and nothing else, which is not evidence for spending a ceiling,
+ * and recommending the ceiling for every substantial seam would leave the failure
+ * ladder nothing to escalate to. The preference tops out at `high`, so `xhigh` and
+ * `max` are never selected here; they stay where they already live, behind real
+ * failure evidence and the operator's escalation permission.
+ */
+const SEAM_SIZE_EFFORT = {
+  small: "medium",
+  substantial: "high",
+} as const satisfies Record<Exclude<SeamSize, "unknown">, Effort>;
+
+/**
+ * The nearest permitted effort at or below a preference.
+ *
+ * Clamps downward, so an envelope can only ever lower what routing asks for. An
+ * envelope whose every level sits above the preference is not widened to meet it:
+ * its own floor is taken, because that is the least compute the operator left
+ * available. Returns null only for an empty list, which the policy schema forbids
+ * and which this function still declines to invent a value for.
+ */
+function boundEffort(preferred: Effort, allowed: readonly Effort[]): Effort | null {
+  let atOrBelow: Effort | null = null;
+  let floor: Effort | null = null;
+  for (const effort of allowed) {
+    if (floor === null || EFFORT_RANK[effort] < EFFORT_RANK[floor]) floor = effort;
+    if (EFFORT_RANK[effort] > EFFORT_RANK[preferred]) continue;
+    if (atOrBelow === null || EFFORT_RANK[effort] > EFFORT_RANK[atOrBelow]) {
+      atOrBelow = effort;
+    }
+  }
+  return atOrBelow ?? floor;
+}
+
+/** Whole non-negative bound, so a structurally typed envelope stays total. */
+function wholeBound(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+}
+
+/**
+ * The shape of a recommendation against delegating.
+ *
+ * A fresh object per call rather than a shared constant: an evaluation is a value
+ * its caller owns, and one consumer mutating a shared solo shape would reach
+ * every other.
+ */
+function soloShape(): ExecutionShape {
+  return {
+    mechanism: "solo",
+    effort: null,
+    workerCount: 0,
+    concurrency: 0,
+    seamsOverCap: 0,
+  };
+}
+
+/**
+ * Recommend how the declared work would run, if the parent chooses to delegate.
+ *
+ * Three rules keep this a consequence of the route rather than a second opinion
+ * on it.
+ *
+ * A `solo` route yields the `solo` mechanism and zero workers, so one evaluation
+ * can never advise against delegating and name a delegation tool in the same
+ * breath. Seam count alone therefore decides nothing: it only sizes a shape the
+ * route has already admitted.
+ *
+ * Sequential versus parallel reads *resolved* values, so an undeclared hazard
+ * biases toward staggering. That is the mirror image of `parallelEligible`, which
+ * reads raw declarations because it answers a structural question instead of
+ * making a recommendation, and it is why a card that declares nothing can never be
+ * recommended for concurrent workers.
+ *
+ * Every number is the envelope's. Nothing here widens a bound, reads the process,
+ * or consults the escalation and stronger-fallback permissions that belong to the
+ * failure ladder.
+ */
+export function recommendExecutionShape(
+  route: RoutingRoute,
+  seamCount: number,
+  resolved: ResolvedRoutingValues,
+  envelope: ComputeEnvelope,
+): ExecutionShape {
+  // Empty seam lists arrive here as `solo` through R0, so this covers them too.
+  if (route === "solo" || seamCount < 1) return soloShape();
+
+  const workerCount = Math.min(seamCount, wholeBound(envelope.maxWorkersPerBatch));
+  // An envelope permitting no worker at all leaves solo as the only shape it can
+  // honestly name.
+  if (workerCount < 1) return soloShape();
+
+  const permittedConcurrency = Math.min(workerCount, wholeBound(envelope.maxConcurrency));
+  // Parallel has to be worth naming: two workers the operator will really run at
+  // once, no resolved hazard between them, and per-seam proof of each. An envelope
+  // narrowed to one concurrent worker *is* sequential execution, so calling it
+  // parallel would advertise a shape the runtime cannot deliver.
+  const parallel =
+    workerCount >= 2 &&
+    permittedConcurrency >= 2 &&
+    !SHARED_STATE_BLOCKS_PARALLEL[resolved.sharedState] &&
+    !CORE_OVERLAP_BLOCKS_PARALLEL[resolved.coreOverlap] &&
+    VERIFICATION_ALLOWS_CONCURRENCY[resolved.verification];
+
+  return {
+    mechanism:
+      workerCount === 1
+        ? "delegate_task"
+        : parallel
+          ? "delegate_tasks_parallel"
+          : "delegate_tasks_sequential",
+    effort: boundEffort(SEAM_SIZE_EFFORT[resolved.seamSize], envelope.allowedEfforts),
+    workerCount,
+    concurrency: parallel ? permittedConcurrency : 1,
+    seamsOverCap: seamCount - workerCount,
+  };
+}
+
+/**
  * Evaluate one card against one requested mechanism.
  *
  * Pure and synchronous by contract: same inputs, same output, no observation of
@@ -403,13 +625,19 @@ export function evaluateRouting(
     route = "delegation-plausible"; // R5
   }
 
+  const parallelEligible = evaluateParallelEligibility(card);
+  const shape = context.envelope
+    ? recommendExecutionShape(route, card.seams.length, resolved, context.envelope)
+    : null;
+
   return {
     route,
     seamCount: card.seams.length,
     unknownCount: countUnknowns(card),
     gates,
     signals,
-    parallelEligible: evaluateParallelEligibility(card),
+    parallelEligible,
+    shape,
     resolved,
     refusedGate: selectRefusedGate(gates, context),
   };
@@ -501,19 +729,54 @@ export function renderRoutingAdvisory(evaluation: RoutingEvaluation): string | n
 }
 
 /**
+ * The shape line, or null when no envelope was supplied to bound one.
+ *
+ * Says "solo" exactly as flatly as the route does, and marks an `either` shape as
+ * the conditional it is, so the line cannot be read as an instruction to delegate
+ * a parent has not yet decided to accept. The effort is named as a starting
+ * effort, because the failure ladder — not this line — owns raising it.
+ */
+function describeShape(evaluation: RoutingEvaluation): string | null {
+  const shape = evaluation.shape;
+  if (shape === null) return null;
+  if (shape.mechanism === "solo") return "solo; zero workers";
+  const pacing =
+    shape.mechanism === "delegate_tasks_parallel"
+      ? `${shape.workerCount} workers, up to ${shape.concurrency} at once`
+      : shape.mechanism === "delegate_tasks_sequential"
+        ? `${shape.workerCount} workers, one at a time`
+        : "1 worker";
+  const parts = [
+    shape.mechanism,
+    `start at ${shape.effort ?? "no permitted effort"}`,
+    pacing,
+  ];
+  // A capped batch must say so: advertising fewer workers than declared seams
+  // without naming the remainder would read as though the work had shrunk.
+  if (shape.seamsOverCap > 0) parts.push(`${shape.seamsOverCap} seams stay with you`);
+  const line = parts.join(" | ");
+  return evaluation.route === "either" ? `${line}; only if justified` : line;
+}
+
+/**
  * Render an evaluation as compact advisory text.
  *
  * Budgeted, and deliberately free of seam labels: the parent already knows its
  * own decomposition, so echoing it back would spend metadata to say nothing. The
  * caller's own judgement is named explicitly so the advice cannot read as an
  * instruction.
+ *
+ * The shape line appears only when the caller supplied an envelope to bound one,
+ * so a surface that names no envelope renders byte-for-byte what it always did.
  */
 export function renderRoutingPreflight(evaluation: RoutingEvaluation): string {
   const listed = evaluation.signals.length > 0 ? evaluation.signals.join(",") : "none";
+  const shape = describeShape(evaluation);
   const lines = [
     `ROUTE: ${evaluation.route} | seams ${evaluation.seamCount} | unknown ${evaluation.unknownCount}`,
     `SIGNALS: ${listed}`,
     `PARALLEL-ELIGIBLE: ${evaluation.parallelEligible} (structural only; not a worker count)`,
+    ...(shape === null ? [] : [`SHAPE: ${shape}`]),
     `ADVISORY: ${describeRoute(evaluation.route)}. Nothing was created; no delegation is required.`,
   ];
   if (evaluation.gates.length > 0) {

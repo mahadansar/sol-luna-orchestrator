@@ -52,7 +52,7 @@ import {
   emitEvent,
   type EventEmitter,
 } from "./events.js";
-import { admitCompute, cloneComputePolicy } from "./policy.js";
+import { admitCompute, cloneComputePolicy, DEFAULT_COMPUTE_POLICY } from "./policy.js";
 import {
   declaredRoutingFields,
   describeRefusal,
@@ -1462,7 +1462,13 @@ function registerRoutingPreflight(): void {
     },
     (input) => {
       const card = asRoutingCard(input as RoutingPreflightInput);
-      const evaluation = evaluateRouting(card, { mode: "preflight" });
+      // The operator baseline, passed in rather than read by routing itself, so
+      // the shape it recommends is bounded by the envelope this installation
+      // would actually run — and so the evaluator keeps depending on nothing.
+      const evaluation = evaluateRouting(card, {
+        mode: "preflight",
+        envelope: DEFAULT_COMPUTE_POLICY,
+      });
       emitEvent({
         type: "routing.preflight",
         preflightId: makePreflightId(),
@@ -1476,7 +1482,8 @@ function registerRoutingPreflight(): void {
       });
       log(
         `routing_preflight: route=${evaluation.route} seams=${evaluation.seamCount} ` +
-          `unknown=${evaluation.unknownCount} parallelEligible=${evaluation.parallelEligible}`,
+          `unknown=${evaluation.unknownCount} parallelEligible=${evaluation.parallelEligible} ` +
+          `shape=${evaluation.shape?.mechanism ?? "none"}`,
       );
       return {
         content: [{ type: "text" as const, text: renderRoutingPreflight(evaluation) }],
