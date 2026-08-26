@@ -13,7 +13,7 @@ parallel recovery baseline described below. Shipped history belongs in
 - **Runtime baseline:** commit-relative current main for v0.10.0 after the Thin
   Supervisor work above. Package and lockfile versions are `0.10.0`.
 - **Latest full deterministic validation:** `npm run verify` passed on
-  2026-08-26 with **638/641 tests passed**, no failures and three expected
+  2026-08-26 with **686/689 tests passed**, no failures and three expected
   platform-specific Windows skips, plus typecheck and the deterministic MCP
   protocol smoke test.
 - **Current native platform evidence:** deterministic CI covers Windows, Linux,
@@ -53,6 +53,7 @@ parallel recovery baseline described below. Shipped history belongs in
 | P1.0 per-execution failure and usage evidence           | PASS     | DEEP PASS     | N/A           | Strong        |
 | P1.1 reasoned retry and effort escalation decisions     | PASS     | DEEP PASS     | N/A           | Strong        |
 | P1.2 user-owned compute policy and enforcement          | PASS     | PASS          | N/A           | Strong        |
+| P1.2 decomposition and seam planning (internal)         | PARTIAL  | PASS          | N/A           | Moderate      |
 | `failureCauses` and verification contradiction handling | PASS     | PASS          | PASS          | Strong        |
 
 Dates, provenance, dependencies, and retest triggers are recorded below. A live
@@ -93,6 +94,21 @@ and truthful usage preservation, terminal cancellation, and successful sibling
 preservation. No model-backed P1.1 campaign was run; executor authorization and
 selection remain P1.2 work.
 
+P1.2 decomposition and seam planning (`src/seam-plan.ts`, `src/seam-plan.test.ts`)
+is deliberately recorded as **PARTIAL** coverage with **Moderate** confidence. The
+planner itself is complete, pure, and deterministically covered: 29 cases pin that
+a split is earned only by declared evidence or by structure derived from it, that
+undeclared coupling keeps work whole with every unstated field left `unknown`, that
+overlapping declared scopes outrank an optimistic declaration, that a shared
+verification command is a proof boundary and not a dependency, that shared
+directories are not coupling, that disjoint read-only work is independent by
+default, that the seam count is never trimmed to a worker budget, and that the plan
+names no mechanism, effort, worker count, or concurrency. Several of those cases
+feed the produced card straight into `evaluateRouting`, so a drift between the two
+layers fails a test. Coverage is nonetheless PARTIAL and live evidence N/A because
+no tool surface, server handler, or batch path calls `planSeams` yet: the module is
+internal, and exposing it is named P1.2 work in `ROADMAP.md`.
+
 The terminal handoff protocol defaults clean verified PASS responses to compact
 text without `structuredContent`. A batch reruns the deduplicated declared checks
 in the final workspace and reaches `verified-complete` only when every seam,
@@ -119,7 +135,7 @@ universal savings.
   optional observations are not required for Strong confidence.
 - No fresh whole-system native coverage report was produced after the v0.9.1
   runtime changes. The latest coverage percentages belong to the earlier v0.9.0
-  campaign; the current 606-test deterministic suite is green with three
+  campaign; the current 689-test deterministic suite is green with three
   expected platform-specific Windows skips.
 - Raw transcripts, diagnostic logs, event streams, and some structured live
   results are session-local and intentionally uncommitted. The ledger preserves

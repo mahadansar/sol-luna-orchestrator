@@ -108,7 +108,7 @@ prompts. Routing may choose solo, a worker, a batch, continuation, repair,
 retry, an authorised stronger executor, or parent takeover, based on evidence
 and within that envelope.
 
-Two slices are now implemented:
+Four slices are now implemented:
 
 1. **Cheap Routing Eligibility / Preflight**: Deterministic eligibility
    is separated from expensive architecture: a pure synchronous evaluator decides
@@ -134,10 +134,26 @@ Two slices are now implemented:
    raced. It stays advisory, refuses nothing, expands no permission, and the
    evaluator still reaches nothing outside its arguments: the envelope is passed
    in, and the policy module is not imported.
+4. **Decomposition and Seam Planning**: The step before routing. A pure
+   synchronous planner decides whether work the parent has already described stays
+   one unit or becomes several, and emits the result as a routing preflight card,
+   so route planning consumes a decomposition instead of assuming one. A split has
+   to be earned by declared evidence or by structure derivable from it —
+   overlapping declared scopes are a real collision, and read-only work writes
+   nothing and so cannot race — while undeclared coupling keeps the work whole and
+   leaves every unstated field `unknown` rather than inventing a safe one. Shared
+   verification commands are recorded as a shared proof boundary, never as a
+   dependency; shared directories and path adjacency are not read as coupling at
+   all; and no compute envelope reaches the planner, because how many workers a
+   policy permits bounds execution rather than redefining how many seams the work
+   has. It names no mechanism, effort, worker count, or concurrency: those stay in
+   route planning above. Currently an internal module with deterministic coverage;
+   it is not yet exposed on a tool surface or consumed by the runtime.
 
 Future P1.2 work still includes:
 
-- decomposition/seam decisions
+- exposing seam planning on the routing surface and feeding its card into live
+  delegation decisions
 - authorised worker/model selection
 - effort selection from execution evidence rather than a declared seam size
 - recording the recommended shape in routing telemetry

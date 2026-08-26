@@ -854,7 +854,9 @@ test("acceptance ledger owns the current release baseline", async () => {
   const acceptance = await readDoc("docs/FEATURE_ACCEPTANCE.md");
   assert.match(acceptance, /package version is `0\.10\.0`/i);
   assert.match(acceptance, /current main runtime is its release baseline/i);
-  assert.match(acceptance, /\*\*638\/641 tests passed\*\*/);
+  // Refresh both this literal and the ledger from a measured `npm test` run
+  // whenever the suite changes size; the pin is what stops the ledger drifting.
+  assert.match(acceptance, /\*\*686\/689 tests passed\*\*/);
   assert.match(acceptance, /## Current capability matrix/);
   assert.match(
     acceptance,
