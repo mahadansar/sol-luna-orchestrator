@@ -25,7 +25,10 @@ import type {
   AttemptTermination,
   DelegateTaskInput,
   DelegateTaskOutput,
+  Effort,
+  FailureDecision,
   Status,
+  TaskState,
   UsageUnavailableReason,
   WorkerFailureCause,
   WorkerReport,
@@ -677,7 +680,7 @@ export function buildDelegationResult({
     filesChanged,
   );
 
-  return {
+  const result: DelegateTaskOutput = {
     changeIntent,
     verdict,
     workerClaimedStatus,
@@ -704,11 +707,13 @@ export function buildDelegationResult({
     scopeViolations,
     discrepancies,
     reviewChecklist,
-    escalationAdvice: buildEscalationAdvice(input, verdict, observed, scopeViolations),
+    escalationAdvice: null,
     durationSeconds,
     usage: observed.usage,
     errors,
   };
+  applyFailureDecision(input, result);
+  return result;
 }
 
 /** Cancellation is terminal and therefore ineligible for continuation. */
@@ -1237,6 +1242,360 @@ export function classifyRepairEligibility(
   );
 }
 
+export interface FailureDecisionContext {
+  state?: TaskState;
+  attempts?: AttemptEvidence[];
+  error?: string | null;
+  integrationConflict?: boolean;
+  evidenceFailure?: boolean;
+  finalVerificationFailure?: boolean;
+  finalVerificationRefused?: boolean;
+  recovery?: DelegateTaskOutput["recovery"];
+}
+
+const AUTOMATIC_RETRY_LIMIT = 1;
+
+/**
+ * Classify one task outcome and select exactly one conservative next action.
+ *
+ * This function never starts work. Existing automatic repair and parallel
+ * recovery remain the only automatic handlers; every unresolved non-stop
+ * action is advice to the parent. P1.2 owns any actual executor/model change.
+ */
+export function classifyFailureDecision(
+  input: DelegateTaskInput,
+  result: DelegateTaskOutput | null,
+  context: FailureDecisionContext = {},
+): FailureDecision {
+  const attempts = context.attempts ?? result?.attempts ?? [];
+  const latest = attempts.at(-1);
+  const evidenceExecutionIds = attempts.map((attempt) => attempt.executionId);
+  const automaticRetryCount = attempts.filter(
+    (attempt) => attempt.role === "timeout-recovery" || attempt.role === "process-retry",
+  ).length;
+  const recovery = context.recovery ?? result?.recovery ?? null;
+  const automaticHandler = recovery?.attempted
+    ? ("automatic-recovery" as const)
+    : result?.repair?.attempted
+      ? ("automatic-repair" as const)
+      : null;
+  const decide = (
+    classification: FailureDecision["classification"],
+    action: FailureDecision["action"],
+    reason: string,
+    nextEffort: Effort | null = null,
+  ): FailureDecision => ({
+    classification,
+    action,
+    reason,
+    evidenceExecutionIds,
+    nextEffort,
+    automaticHandler,
+    automaticRetryCount,
+    automaticRetryLimit: AUTOMATIC_RETRY_LIMIT,
+  });
+  const parentAfterBound = (
+    classification: FailureDecision["classification"],
+    reason: string,
+  ): FailureDecision =>
+    decide(
+      classification,
+      "parent-takeover",
+      `${reason} The ${automaticHandler === "automatic-repair" ? "repair" : "recovery"} bound is exhausted; no automatic action may chain from it.`,
+    );
+
+  const cancelled =
+    context.state === "cancelled" ||
+    latest?.termination.kind === "cancelled" ||
+    (result !== null && resultWasCancelled(result));
+  if (cancelled) {
+    return decide(
+      "cancellation",
+      "stop",
+      "Cancellation is terminal; preserve completed evidence and do not retry, repair, continue, or escalate effort.",
+    );
+  }
+  if (context.integrationConflict) {
+    return decide(
+      "scope-or-conflict",
+      "parent-takeover",
+      "Observed sibling edits conflict during integration; preserve every sibling result and let the parent resolve ownership.",
+    );
+  }
+  if (context.finalVerificationRefused) {
+    return decide(
+      "security-or-trust-boundary",
+      "parent-takeover",
+      "A declared final-workspace verification command was refused or skipped; the batch trust boundary requires parent review.",
+    );
+  }
+  if (context.finalVerificationFailure) {
+    return decide(
+      "verification",
+      "parent-takeover",
+      "A declared command passed in the task workspace but failed in the final workspace; the parent must diagnose the integrated state without rerunning successful siblings.",
+    );
+  }
+  if (
+    context.evidenceFailure ||
+    /(?:evidence|continuation registration|worktree|lifecycle|lease)/i.test(
+      context.error ?? "",
+    )
+  ) {
+    return decide(
+      "evidence-failure",
+      "parent-takeover",
+      "Authoritative worktree or lifecycle evidence could not be read; retrying would compound an untrusted state.",
+    );
+  }
+  if (!result) {
+    if (
+      latest?.termination.kind === "process-exit" &&
+      automaticRetryCount < AUTOMATIC_RETRY_LIMIT
+    ) {
+      return decide(
+        "runtime",
+        "retry",
+        "The worker process exited before a result, and authoritative attempt evidence identifies the exact process-exit class. One fresh-process retry may be considered if owned-worktree evidence is confined and readable.",
+      );
+    }
+    return decide(
+      latest?.termination.kind === "process-exit" ? "runtime" : "unknown",
+      "parent-takeover",
+      "No reconciled task result exists and the evidence does not prove an eligible bounded process retry.",
+    );
+  }
+  if (result.scopeViolations.length > 0) {
+    return decide(
+      "scope-or-conflict",
+      "parent-takeover",
+      "The worker went outside its file scope or violated immutable change intent; parent review and re-scoping are required, not another worker turn.",
+    );
+  }
+  const authoritative = result.verification.filter(
+    (run) => run.source === "orchestrator",
+  );
+  if (
+    authoritative.some(
+      (run) => run.execution === "rejected" || run.execution === "skipped",
+    )
+  ) {
+    return decide(
+      "security-or-trust-boundary",
+      "parent-takeover",
+      "Verification was refused or skipped, so the trust boundary does not permit repair, retry, continuation, or effort escalation.",
+    );
+  }
+  const terminalDiscrepancies = result.discrepancies.filter(
+    (item) =>
+      !item.startsWith("Worker claimed PASS but the orchestrator re-ran verification") &&
+      !item.startsWith("Worker reported `"),
+  );
+  if (terminalDiscrepancies.length > 0) {
+    return decide(
+      "contract-or-requirement",
+      "parent-takeover",
+      "Claims and authoritative observations disagree; the parent must resolve the contract discrepancy before any retry.",
+    );
+  }
+  if (result.verdict === "PASS") {
+    return decide(
+      "success",
+      "stop",
+      automaticHandler
+        ? `The bounded ${automaticHandler === "automatic-repair" ? "repair" : "recovery"} completed successfully; preserve its lineage and stop.`
+        : "The task passed; successful work is never retried.",
+    );
+  }
+
+  const timedOut =
+    latest?.termination.kind === "timed-out" ||
+    result.errors.some((error) => /exceeded its .* budget/.test(error));
+  if (timedOut) {
+    if (
+      result.errors.some(
+        (error) =>
+          !/exceeded its .* budget/.test(error) &&
+          error !== "Worker produced no final message.",
+      )
+    ) {
+      return decide(
+        "security-or-trust-boundary",
+        "parent-takeover",
+        "The timeout also carries another runtime error, so its thread and partial state are not trustworthy enough to continue automatically.",
+      );
+    }
+    if (automaticHandler) {
+      return parentAfterBound(
+        "timeout",
+        "The bounded recovery or repair execution timed out.",
+      );
+    }
+    if (
+      result.workerThreadId &&
+      result.continuationState?.status !== "consumed" &&
+      automaticRetryCount < AUTOMATIC_RETRY_LIMIT
+    ) {
+      return decide(
+        "timeout",
+        "continuation",
+        "Authoritative evidence records a timeout with a resumable thread; continue once under the immutable contract rather than raising effort.",
+      );
+    }
+    return decide(
+      "timeout",
+      "parent-takeover",
+      "The task timed out without an eligible bounded continuation; split the task or repair the deadline policy instead of raising effort.",
+    );
+  }
+
+  const evidenceFailure = result.errors.some((error) =>
+    /(?:evidence (?:scan|reconciliation)|could not read worktree|lifecycle|lease)/i.test(
+      error,
+    ),
+  );
+  if (evidenceFailure) {
+    return decide(
+      "evidence-failure",
+      "parent-takeover",
+      "Execution evidence or lifecycle reconciliation failed; preserve the evidence and repair the runtime path before considering another worker.",
+    );
+  }
+
+  const environmentFailure =
+    result.workerClaimedFailureCauses?.includes("environment-tooling") ||
+    result.errors.some((error) => ENVIRONMENT_FAILURE.test(error));
+  if (environmentFailure) {
+    return decide(
+      "environment-or-tooling",
+      "parent-takeover",
+      "Environment or tooling evidence requires repairing the environment; more worker effort would not address it.",
+    );
+  }
+
+  if (latest && latest.termination.kind !== "completed") {
+    if (
+      latest.termination.kind === "process-exit" &&
+      automaticRetryCount < AUTOMATIC_RETRY_LIMIT
+    ) {
+      return decide(
+        "runtime",
+        "retry",
+        "Authoritative evidence identifies a worker process exit. One fresh-process retry may be considered only with confined, readable owned-worktree evidence.",
+      );
+    }
+    return decide(
+      "runtime",
+      "parent-takeover",
+      `The worker terminated as ${latest.termination.kind}; that class is not safe for an automatic or same-contract retry.`,
+    );
+  }
+
+  if (
+    input.changeIntent === "forbidden" ||
+    result.verdict === "BLOCKED" ||
+    result.workerClaimedFailureCauses?.some(
+      (cause) => cause === "requirements" || cause === "blocked",
+    )
+  ) {
+    return decide(
+      "contract-or-requirement",
+      "parent-takeover",
+      "The contract, requirements, or read-only intent must be corrected or completed by the parent before another execution.",
+    );
+  }
+
+  const failedVerification = authoritative.filter(
+    (run) => !run.passed && (run.execution === "argv" || run.execution === "shell"),
+  );
+  if (failedVerification.length > 0) {
+    const repairInput = input.automaticRepair
+      ? input
+      : { ...input, automaticRepair: true };
+    const repair = classifyRepairEligibility(repairInput, result);
+    if (repair.classification === "local-verification" && !automaticHandler) {
+      return decide(
+        "verification",
+        "repair",
+        "Exactly one authoritative verification failure followed observed in-scope edits; one same-thread repair is the narrowest eligible response.",
+      );
+    }
+    if (automaticHandler) {
+      return parentAfterBound(
+        "verification",
+        "Authoritative verification still fails after the bounded automatic handler.",
+      );
+    }
+    return decide(
+      "verification",
+      "parent-takeover",
+      "The verification failure is not a single local defect eligible for bounded repair; the parent must diagnose it before retrying.",
+    );
+  }
+
+  const implementationFailure =
+    result.workerClaimedFailureCauses?.includes("implementation") === true;
+  if (
+    implementationFailure &&
+    result.trustworthy &&
+    latest?.termination.kind === "completed"
+  ) {
+    if (automaticHandler) {
+      return parentAfterBound(
+        "implementation",
+        "The implementation still failed after the bounded automatic handler.",
+      );
+    }
+    const priorFailed = input.previousAttempts.some(
+      (attempt) => attempt.verdict === "FAILED",
+    );
+    if (!priorFailed) {
+      return decide(
+        "implementation",
+        "retry",
+        "The completed, trustworthy result identifies an implementation failure. A same-effort retry is warranted only after the parent confirms the immutable contract is sound.",
+      );
+    }
+    const nextEffort = NEXT_EFFORT[input.effort] as Effort | null;
+    if (nextEffort) {
+      return decide(
+        "effort",
+        "effort-escalation",
+        "A prior failed execution is declared and the current completed evidence again identifies intrinsic implementation difficulty; escalate one effort step without changing the executor or contract.",
+        nextEffort,
+      );
+    }
+    return decide(
+      "capability",
+      "stronger-executor-fallback",
+      "Repeated trustworthy implementation failure at max effort warrants a stronger-executor fallback recommendation; P1.2 must authorize and select any executor.",
+    );
+  }
+
+  return decide(
+    "unknown",
+    "parent-takeover",
+    "The available evidence does not prove a safe repair, continuation, retry, or effort escalation; the parent must diagnose or re-scope the task.",
+  );
+}
+
+/** Keep the legacy advice field as a projection of the canonical P1.1 decision. */
+export function applyFailureDecision(
+  input: DelegateTaskInput,
+  result: DelegateTaskOutput,
+  context: FailureDecisionContext = {},
+): FailureDecision {
+  const decision = classifyFailureDecision(input, result, context);
+  result.failureDecision = decision;
+  result.escalationAdvice =
+    decision.action === "stop"
+      ? null
+      : `${decision.reason} Recommended next action: ${decision.action}${
+          decision.nextEffort ? ` at ${decision.nextEffort}` : ""
+        }.`;
+  return decision;
+}
+
 /** Build the only extra context supplied to an automatic repair turn. */
 export function buildRepairInstruction(decision: RepairDecision): string {
   return [
@@ -1350,18 +1709,20 @@ function buildTurnResult(
   workingDirectory: string,
   turn: TaskTurn,
 ): DelegateTaskOutput {
+  let result: DelegateTaskOutput;
   try {
-    const result = buildDelegationResult({
+    result = buildDelegationResult({
       input,
       workingDirectory,
       ...turn,
       logicalAttempt: turn.evidence.logicalAttempt,
     });
-    result.attempts = [turn.evidence];
-    return result;
   } catch (error) {
-    return buildRuntimeFailureResult(input, turn, error);
+    result = buildRuntimeFailureResult(input, turn, error);
   }
+  result.attempts = [turn.evidence];
+  applyFailureDecision(input, result);
+  return result;
 }
 
 /** Execute a fresh or resumed task, with at most one opted-in automatic repair. */
@@ -1377,6 +1738,7 @@ export async function executeTask(
   const decision = classifyRepairEligibility(input, initial);
   initial.repair = decision;
   if (decision.classification !== "local-verification" || !initial.workerThreadId) {
+    applyFailureDecision(input, initial);
     return initial;
   }
 
@@ -1426,6 +1788,7 @@ export async function executeTask(
         ? "The one automatic repair turn completed and normal classification passed."
         : "The one automatic repair turn completed without passing; the repair limit is exhausted and control returns to the parent.",
   };
+  applyFailureDecision(input, repaired);
   options.onRepairComplete?.(repaired.verdict, repairExecutionId);
   return repaired;
 }
@@ -1503,63 +1866,6 @@ const NEXT_EFFORT: Record<string, string | null> = {
   xhigh: "max",
   max: null,
 };
-
-/**
- * Say what to change before retrying.
- *
- * Raising effort is the last resort, not the first: a vague brief re-run at a
- * higher level usually fails again and costs more.
- */
-function buildEscalationAdvice(
-  input: DelegateTaskInput,
-  verdict: Status,
-  observed: ObservedRun,
-  scopeViolations: string[],
-): string | null {
-  if (verdict === "PASS") return null;
-
-  const attempt = input.previousAttempts.length + 1;
-  const next = NEXT_EFFORT[input.effort];
-
-  if (scopeViolations.length > 0) {
-    return (
-      "The worker went outside its file scope. Effort is not the problem. " +
-      "Either widen allowedFiles deliberately, or restate the objective so the " +
-      "work fits the scope you intended."
-    );
-  }
-
-  if (observed.timedOut) {
-    return (
-      "The worker ran out of time rather than out of capability. Split the " +
-      "objective into smaller tasks, or raise timeoutSeconds. Do not raise effort " +
-      "for this — higher effort takes longer, not less."
-    );
-  }
-
-  if (verdict === "BLOCKED") {
-    return (
-      "BLOCKED usually means the brief was incomplete, not that the task was too " +
-      "hard. Read `notes`, supply what the worker was missing, and re-delegate at " +
-      `the same effort (${input.effort}).`
-    );
-  }
-
-  if (!next) {
-    return (
-      "This already ran at max effort. Higher effort is not available: decompose " +
-      "the objective into smaller bounded tasks, or take it on yourself."
-    );
-  }
-
-  return (
-    `Attempt ${attempt} at ${input.effort} did not pass. First ask whether the ` +
-    `brief was the problem — vague objectives fail again at higher effort, more ` +
-    `expensively. If the brief was sound and the task was genuinely hard, ` +
-    `re-delegate at ${next} and pass previousAttempts so the worker knows what ` +
-    `already failed.`
-  );
-}
 
 /**
  * Marks a file the orchestrator saw change that the worker never mentioned.

@@ -20,6 +20,7 @@ import {
   delegateTaskInputSchema,
   delegateTasksInputSchema,
   workerOutputJsonSchema,
+  type AttemptEvidence,
   type DelegateTaskInput,
   type WorkerReport,
 } from "./contract.js";
@@ -27,6 +28,7 @@ import { findScopeViolations, toRelativePosix } from "./scope.js";
 import { runVerificationCommand, truncate, type VerificationRun } from "./verify.js";
 import {
   buildDelegationResult,
+  classifyFailureDecision,
   classifyRepairEligibility,
   continueToLuna,
   executeTask,
@@ -1050,6 +1052,36 @@ const rejectedRun: VerificationRun = {
   execution: "rejected",
 };
 
+const makeAttemptEvidence = (
+  termination: AttemptEvidence["termination"]["kind"],
+  role: AttemptEvidence["role"] = "initial",
+  executionId = `exec-${termination}-${role}`,
+): AttemptEvidence => ({
+  executionId,
+  logicalAttempt: role === "initial" || role === "automatic-repair" ? 1 : 2,
+  role,
+  predecessorExecutionId: role === "initial" ? null : "exec-initial",
+  requestedModel: "gpt-5.6-luna",
+  requestedEffort: "high",
+  threadId: termination === "process-exit" ? null : "thread-abc",
+  threadOperation: role === "initial" || role === "process-retry" ? "start" : "resume",
+  threadIdentityMatched: null,
+  startedAt: "2026-08-26T00:00:00.000Z",
+  finishedAt: "2026-08-26T00:00:01.000Z",
+  elapsedMs: 1_000,
+  workerElapsedMs: 900,
+  verificationElapsedMs: 100,
+  timeoutMs: 60_000,
+  termination: { kind: termination, message: termination },
+  usage: {
+    status: "unavailable",
+    reason: termination === "completed" ? "no-turn-completed" : termination,
+  },
+  workerClaimedStatus: termination === "completed" ? "FAILED" : null,
+  workerClaimedFailureCauses: [],
+  verification: [],
+});
+
 test("repair classifier permits only a clear local verification defect", () => {
   const eligibleInput = makeTask({ automaticRepair: true });
   const eligible = analyze(makeReport(), [failingRun], { automaticRepair: true });
@@ -1672,6 +1704,198 @@ test("the thread id is always returned so the parent can inspect the session", (
   assert.equal(analyze(makeReport(), [passingRun]).workerThreadId, "thread-abc");
 });
 
+test("P1.1 failure decisions conservatively cover deterministic failure classes", () => {
+  const passed = analyze(makeReport(), [passingRun]);
+  assert.deepEqual(
+    [
+      classifyFailureDecision(makeTask(), passed).classification,
+      classifyFailureDecision(makeTask(), passed).action,
+    ],
+    ["success", "stop"],
+  );
+
+  const timedOut = analyze(
+    null,
+    [],
+    {},
+    {
+      finalResponse: "",
+      timedOut: true,
+      errors: ["Worker exceeded its 60s budget and was aborted."],
+      termination: "timed-out",
+    },
+  );
+  assert.deepEqual(
+    [
+      classifyFailureDecision(makeTask(), timedOut).classification,
+      classifyFailureDecision(makeTask(), timedOut).action,
+    ],
+    ["timeout", "continuation"],
+  );
+
+  const cancelled = analyze(
+    null,
+    [],
+    {},
+    {
+      finalResponse: "",
+      cancelled: true,
+      errors: ["Worker was cancelled before it finished."],
+      termination: "cancelled",
+    },
+  );
+  assert.deepEqual(
+    [
+      classifyFailureDecision(makeTask(), cancelled).classification,
+      classifyFailureDecision(makeTask(), cancelled).action,
+    ],
+    ["cancellation", "stop"],
+  );
+
+  const scoped = analyze(makeReport(), [passingRun], { forbiddenFiles: ["src/**"] });
+  assert.deepEqual(
+    [
+      classifyFailureDecision(makeTask({ forbiddenFiles: ["src/**"] }), scoped)
+        .classification,
+      classifyFailureDecision(makeTask({ forbiddenFiles: ["src/**"] }), scoped).action,
+    ],
+    ["scope-or-conflict", "parent-takeover"],
+  );
+
+  const refused = analyze(makeReport(), [rejectedRun]);
+  assert.deepEqual(
+    [
+      classifyFailureDecision(makeTask(), refused).classification,
+      classifyFailureDecision(makeTask(), refused).action,
+    ],
+    ["security-or-trust-boundary", "parent-takeover"],
+  );
+
+  const blockedReport = makeReport({
+    status: "BLOCKED",
+    failureCauses: ["blocked"],
+    filesChanged: [],
+    verification: [],
+  });
+  const blocked = analyze(blockedReport, [], {}, { filesChanged: [] });
+  assert.deepEqual(
+    [
+      classifyFailureDecision(makeTask(), blocked).classification,
+      classifyFailureDecision(makeTask(), blocked).action,
+    ],
+    ["contract-or-requirement", "parent-takeover"],
+  );
+
+  const environmentReport = makeReport({
+    status: "FAILED",
+    failureCauses: ["environment-tooling"],
+    filesChanged: [],
+    verification: [],
+  });
+  const environment = analyze(environmentReport, [], {}, { filesChanged: [] });
+  assert.deepEqual(
+    [
+      classifyFailureDecision(makeTask(), environment).classification,
+      classifyFailureDecision(makeTask(), environment).action,
+    ],
+    ["environment-or-tooling", "parent-takeover"],
+  );
+
+  const verification = analyze(makeReport(), [failingRun]);
+  assert.deepEqual(
+    [
+      classifyFailureDecision(makeTask(), verification).classification,
+      classifyFailureDecision(makeTask(), verification).action,
+    ],
+    ["verification", "repair"],
+  );
+});
+
+test("P1.1 retry and escalation require evidence and respect hard bounds", () => {
+  const implementationReport = makeReport({
+    status: "FAILED",
+    failureCauses: ["implementation"],
+    verification: [],
+  });
+  const firstInput = makeTask({ effort: "high" });
+  const first = analyze(implementationReport, [], { effort: "high" });
+  first.attempts = [makeAttemptEvidence("completed")];
+  assert.deepEqual(
+    [
+      classifyFailureDecision(firstInput, first).classification,
+      classifyFailureDecision(firstInput, first).action,
+    ],
+    ["implementation", "retry"],
+  );
+
+  const previousAttempts = [
+    {
+      effort: "high" as const,
+      verdict: "FAILED" as const,
+      whatWentWrong: "The implementation remained incomplete.",
+    },
+  ];
+  const escalationInput = makeTask({ effort: "high", previousAttempts });
+  const escalationResult = analyze(implementationReport, [], {
+    effort: "high",
+    previousAttempts,
+  });
+  escalationResult.attempts = [makeAttemptEvidence("completed")];
+  const escalation = classifyFailureDecision(escalationInput, escalationResult);
+  assert.deepEqual(
+    [escalation.classification, escalation.action, escalation.nextEffort],
+    ["effort", "effort-escalation", "xhigh"],
+  );
+
+  const maxInput = makeTask({ effort: "max", previousAttempts });
+  const maxResult = analyze(implementationReport, [], {
+    effort: "max",
+    previousAttempts,
+  });
+  maxResult.attempts = [makeAttemptEvidence("completed")];
+  const fallback = classifyFailureDecision(maxInput, maxResult);
+  assert.deepEqual(
+    [fallback.classification, fallback.action, fallback.nextEffort],
+    ["capability", "stronger-executor-fallback", null],
+  );
+
+  const processExit = makeAttemptEvidence("process-exit");
+  const retry = classifyFailureDecision(makeTask(), null, {
+    state: "failed",
+    attempts: [processExit],
+    error: "Codex Exec exited with code 1",
+  });
+  assert.equal(retry.action, "retry");
+  assert.deepEqual(retry.evidenceExecutionIds, [processExit.executionId]);
+
+  const exhausted = classifyFailureDecision(makeTask(), null, {
+    state: "failed",
+    attempts: [
+      processExit,
+      makeAttemptEvidence("process-exit", "process-retry", "exec-process-retry"),
+    ],
+    error: "Codex Exec exited with code 1",
+  });
+  assert.equal(exhausted.action, "parent-takeover");
+  assert.equal(exhausted.automaticRetryCount, 1);
+  assert.equal(exhausted.automaticRetryLimit, 1);
+});
+
+test("P1.1 never chains retry or escalation after automatic repair", () => {
+  const result = analyze(makeReport(), [failingRun], { automaticRepair: true });
+  result.repair = {
+    requested: true,
+    attempted: true,
+    classification: "local-verification",
+    reason: "The bounded repair still failed.",
+    failureEvidence: [],
+  };
+  const decision = classifyFailureDecision(makeTask({ automaticRepair: true }), result);
+  assert.equal(decision.action, "parent-takeover");
+  assert.equal(decision.automaticHandler, "automatic-repair");
+  assert.match(decision.reason, /bound is exhausted/i);
+});
+
 test("a PASS resting on a refused command is flagged as unverified", () => {
   const result = analyze(makeReport(), [rejectedRun]);
   assert.equal(result.trustworthy, false);
@@ -1703,25 +1927,26 @@ test("a passing task gets no escalation advice", () => {
   assert.equal(analyze(makeReport(), [passingRun]).escalationAdvice, null);
 });
 
-test("escalation advice names the next effort after a genuine failure", () => {
+test("legacy escalation advice projects the P1.1 repair decision", () => {
   const result = analyze(makeReport(), [failingRun], { effort: "high" });
   assert.equal(result.verdict, "FAILED");
-  assert.match(result.escalationAdvice ?? "", /re-delegate at xhigh/);
-  assert.match(result.escalationAdvice ?? "", /brief was the problem/);
+  assert.match(result.escalationAdvice ?? "", /next action: repair/i);
+  assert.equal(result.failureDecision?.nextEffort, null);
 });
 
-test("escalation advice refuses to recommend effort past max", () => {
+test("max effort does not override a narrower verification repair", () => {
   const result = analyze(makeReport(), [failingRun], { effort: "max" });
-  assert.match(result.escalationAdvice ?? "", /decompose/);
-  assert.doesNotMatch(result.escalationAdvice ?? "", /re-delegate at/);
+  assert.equal(result.failureDecision?.action, "repair");
+  assert.equal(result.failureDecision?.nextEffort, null);
 });
 
 test("a scope violation is not treated as an effort problem", () => {
   const result = analyze(makeReport(), [passingRun], { forbiddenFiles: ["src/**"] });
-  assert.match(result.escalationAdvice ?? "", /Effort is not the problem/);
+  assert.equal(result.failureDecision?.classification, "scope-or-conflict");
+  assert.match(result.escalationAdvice ?? "", /parent-takeover/i);
 });
 
-test("a timeout advises splitting the task rather than raising effort", () => {
+test("a timeout prefers bounded continuation rather than raising effort", () => {
   const result = analyze(
     null,
     [],
@@ -1732,8 +1957,8 @@ test("a timeout advises splitting the task rather than raising effort", () => {
       errors: ["Worker exceeded its 60s budget and was aborted."],
     },
   );
-  assert.match(result.escalationAdvice ?? "", /Split the objective/);
-  assert.match(result.escalationAdvice ?? "", /Do not raise effort/);
+  assert.equal(result.failureDecision?.action, "continuation");
+  assert.match(result.escalationAdvice ?? "", /rather than raising effort/i);
 });
 
 test("BLOCKED advises fixing the brief at the same effort", () => {
@@ -1745,8 +1970,8 @@ test("BLOCKED advises fixing the brief at the same effort", () => {
   });
   const result = analyze(report, [], {}, { filesChanged: [] });
   assert.equal(result.verdict, "BLOCKED");
-  assert.match(result.escalationAdvice ?? "", /brief was incomplete/);
-  assert.match(result.escalationAdvice ?? "", /same effort \(high\)/);
+  assert.equal(result.failureDecision?.classification, "contract-or-requirement");
+  assert.match(result.escalationAdvice ?? "", /parent-takeover/i);
 });
 
 test("the verification policy in force is reported to the parent", () => {

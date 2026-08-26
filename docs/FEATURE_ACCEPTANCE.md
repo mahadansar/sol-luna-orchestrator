@@ -3,17 +3,17 @@
 This is the authoritative current capability, evidence, freshness, and
 confidence ledger for the repository. The package version is `0.10.0`, and the
 current main runtime is its release baseline. The current development tree adds
-P1.0 attempt-usage and failure-evidence hardening to the Thin Supervisor,
-terminal batch verification, and bounded parallel recovery baseline described
-below. Shipped history belongs in `CHANGELOG.md`; future work belongs in
-`ROADMAP.md`.
+P1.0 attempt-usage and failure-evidence hardening plus P1.1 reasoned failure
+decisions to the Thin Supervisor, terminal batch verification, and bounded
+parallel recovery baseline described below. Shipped history belongs in
+`CHANGELOG.md`; future work belongs in `ROADMAP.md`.
 
 ## Current baseline
 
 - **Runtime baseline:** commit-relative current main for v0.10.0 after the Thin
   Supervisor work above. Package and lockfile versions are `0.10.0`.
 - **Latest full deterministic validation:** `npm run verify` passed on
-  2026-08-26 with **603/606 tests passed**, no failures and three expected
+  2026-08-26 with **609/612 tests passed**, no failures and three expected
   platform-specific Windows skips, plus typecheck and the deterministic MCP
   protocol smoke test.
 - **Current native platform evidence:** deterministic CI covers Windows, Linux,
@@ -51,6 +51,7 @@ below. Shipped history belongs in `CHANGELOG.md`; future work belongs in
 | Bounded parallel automatic recovery                     | PASS     | PASS          | PASS          | Strong        |
 | P1.0 parent/pricing foundation                          | PASS     | PASS          | N/A           | Strong        |
 | P1.0 per-execution failure and usage evidence           | PASS     | DEEP PASS     | N/A           | Strong        |
+| P1.1 reasoned retry and effort escalation decisions     | PASS     | DEEP PASS     | N/A           | Strong        |
 | `failureCauses` and verification contradiction handling | PASS     | PASS          | PASS          | Strong        |
 
 Dates, provenance, dependencies, and retest triggers are recorded below. A live
@@ -61,7 +62,7 @@ that distinction matters.
 Bounded parallel automatic recovery is deterministic and internal to the original
 batch call. The default is enabled with an explicit opt-out. Only one eligible
 failed task turn is added after the initial parallel window: timeout continuation
-uses the same thread/worktree, while a no-result worker-process failure uses a
+uses the same thread/worktree, while canonical `process-exit` evidence may use a
 fresh thread in the same owned worktree. Recovery preserves partial successes,
 reruns verification, reconciles final worktree evidence before integration, and
 records stable identities, attempt ordinals, classifications, and separate usage
@@ -79,8 +80,17 @@ messages/files, repair, manual continuation, timeout recovery, fresh-process
 retry, failed recovery, sibling preservation, and post-execution lifecycle
 failure. Aggregate usage now fails closed whenever any constituent lacks
 authoritative `turn.completed` usage; the known constituent remains visible.
-This is factual evidence only and introduces no P1.1 retry, escalation,
-environment classification, executor-selection, or takeover policy.
+
+P1.1 now derives one `failureDecision` from that factual evidence. Deterministic
+coverage distinguishes success, cancellation, timeout, exact process exit,
+generic runtime failure, local and non-local verification failure, scope,
+security/trust, contract/requirement, environment/tooling, implementation,
+effort, capability, and evidence failure. It proves repair-before-recovery
+precedence, one-turn bounds, no retry from counter availability alone, one-step
+effort escalation, stronger-executor recommendation without selection, lineage
+and truthful usage preservation, terminal cancellation, and successful sibling
+preservation. No model-backed P1.1 campaign was run; executor authorization and
+selection remain P1.2 work.
 
 The terminal handoff protocol defaults clean verified PASS responses to compact
 text without `structuredContent`. A batch reruns the deduplicated declared checks
@@ -308,8 +318,8 @@ Windows campaign could not execute, without changing production/runtime source:
 These results added the missing Linux/POSIX platform evidence. At this
 checkpoint, the three known cross-module abnormal lifecycle handoffs remained
 out of scope; the later focused lifecycle closure superseded that state.
-Adaptive Effort was addressed by a later focused campaign. P1.1 remains future
-work and was never part of these campaigns.
+Adaptive Effort was addressed by a later focused campaign. P1.1 was future work
+at this checkpoint and was never part of these campaigns.
 
 ### Focused abnormal-lifecycle findings closure
 

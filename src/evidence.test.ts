@@ -166,6 +166,24 @@ test("evidence packet - bounded repair decision and exact failure excerpt", () =
   assert.match(text, /exact failing assertion/);
 });
 
+test("evidence packet - P1.1 decision remains visible and survives compaction", () => {
+  const result = mockResult();
+  result.verdict = "FAILED";
+  result.failureDecision = {
+    classification: "effort",
+    action: "effort-escalation",
+    reason: "Repeated trustworthy implementation evidence warrants one step.",
+    evidenceExecutionIds: ["exec-one", "exec-two"],
+    nextEffort: "xhigh",
+    automaticHandler: null,
+    automaticRetryCount: 0,
+    automaticRetryLimit: 1,
+  };
+  const text = renderResult(result);
+  assert.match(text, /FAILURE DECISION: effort -> effort-escalation \(xhigh\)/);
+  assert.deepEqual(compactResult(result).failureDecision, result.failureDecision);
+});
+
 test("evidence packet - verification refusal", () => {
   const result = mockResult();
   if (result.verification[0]) {

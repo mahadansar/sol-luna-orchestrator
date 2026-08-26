@@ -259,10 +259,19 @@ and queues the rest. A 12-task batch never means 12 simultaneous workers.
 `true`; set it to `false` to opt out. It affects only parallel batches and only
 after the initial worker window. Each eligible failed task receives at most one
 additional turn in its existing owned worktree: timeouts resume the same thread,
-and a worker-process failure with no result starts one fresh thread. Effort,
+and canonical `process-exit` evidence may start one fresh thread. Generic runtime
+exceptions and an unused retry count are not sufficient. Effort,
 scope, acceptance, verification commands, batchId, and taskId remain unchanged.
 Successful tasks and cancellation, scope/security/evidence, refused-verification,
 contract-discrepancy, and integration-conflict cases are not retried.
+
+Every current task outcome carries a `failureDecision` with one conservative
+classification/action, the execution ids used, any recommended next effort, the
+automatic handler that already ran, and the automatic retry count and limit.
+`automaticRepair` runs before this batch recovery stage; recovery explicitly
+disables repair, and neither mechanism chains after its single bound. Retry,
+effort escalation, and stronger-executor fallback are otherwise recommendations.
+P1.2 owns actual executor selection and compute-policy enforcement.
 
 ### Worktree retention
 

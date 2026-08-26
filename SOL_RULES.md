@@ -36,8 +36,8 @@ results. Pending calls with no meaningful new state are silent.
 Parallel `delegate_tasks` calls default `automaticRecovery:true`. Only after the
 initial parallel worker window, and before integration or cleanup, the runtime
 may make one additional attempt for each eligible failed task: a timeout resumes
-the same thread in the same owned worktree, and a worker-process failure with no
-result starts one fresh thread there. Set it to `false` to opt out. Successful
+the same thread in the same owned worktree, and authoritative `process-exit`
+evidence may start one fresh thread there. Set it to `false` to opt out. Successful
 tasks are never rerun; cancellation, scope/security/evidence failures, refused
 verification, contract discrepancies, and integration conflicts stay with the
 parent. The batch and task identities remain stable, and attempt evidence is
@@ -276,6 +276,33 @@ After the one repair turn, success or failure returns to the parent; there is no
 automatic retry, effort escalation, or wider-scope contract. Manual
 `continue_task` remains an explicit follow-up and never chains into repair.
 
+## Reasoned failure decisions and precedence
+
+Current task results include one `failureDecision` derived from canonical
+attempt termination and lineage, authoritative verification, observed scope,
+contract discrepancies, and existing repair/recovery evidence. It selects
+exactly one next action: `stop`, `repair`, `continuation`, `retry`,
+`effort-escalation`, `stronger-executor-fallback`, or `parent-takeover`.
+Non-stop actions are recommendations to the parent unless the separate repair or
+recovery record proves that the existing bounded automatic handler ran.
+
+Precedence is strict. Cancellation and success stop. Scope/conflict,
+security/trust, evidence, contract/requirement, environment/tooling, and refused
+or skipped verification return to the parent. One local authoritative
+verification defect may use the existing opted-in same-thread repair. Only after
+task-local repair finishes may parallel recovery consider one timeout
+continuation or one exact process-exit retry with confined readable worktree
+evidence. Recovery disables repair, and neither exhausted handler may chain into
+another automatic action. A generic runtime exception, counter availability, or
+worker claim alone never authorizes retry.
+
+A completed trustworthy implementation failure may recommend a same-effort
+retry. Repeated implementation evidence may recommend exactly one next effort
+step; repeated failure at `max` may recommend a stronger executor. The latter is
+advice only: P1.2 owns executor/model authorization, selection, and compute-policy
+enforcement. Every decision names its source execution ids and reports the
+automatic retry count/limit without altering attempts or aggregate usage.
+
 ## Evidence and review
 
 A worker's status, summary, changed-file list, and verification report are
@@ -285,7 +312,7 @@ executed orchestrator `argv` or `shell` verification rows prove a command;
 `rejected`, `skipped`, and worker `reported` rows do not.
 
 `workerClaimedFailureCauses` preserves the worker's structured explanation; it
-is evidence, not the repair classification or a future retry classifier. New
+is low-trust evidence, not the repair or P1.1 failure classification. New
 worker reports obey these invariants: `PASS` uses no causes, `FAILED` uses one or
 more non-`blocked` causes, and `BLOCKED` includes `blocked`. Legacy reports with
 no field normalize conservatively to no causes for `PASS`, `unclassified` for

@@ -36,9 +36,13 @@ final checks return `needs-supervisor` with evidence for targeted diagnosis.
 
 Parallel batches enable bounded automatic recovery by default. After the initial
 worker window, an eligible timeout resumes its same Luna thread in the same owned
-worktree, while a worker-process failure with no result gets one fresh thread in
-that worktree. Set `automaticRecovery: false` to opt out. Recovery is one extra
-turn only; successful tasks and trust-boundary, cancellation, evidence,
+worktree, while an authoritative worker `process-exit` may get one fresh thread
+in that worktree. Set `automaticRecovery: false` to opt out. Recovery is one
+extra turn only; an unused allowance is never enough to retry. Each current task
+result also carries one evidence-derived `failureDecision` selecting stop,
+repair, continuation, retry, one-step effort escalation, stronger-executor
+fallback recommendation, or parent takeover. Repair precedes recovery and
+neither may chain. Successful tasks and trust-boundary, cancellation, evidence,
 contract, and integration-conflict failures remain for parent review.
 
 Requires Node.js 22.12 or newer and a logged-in Codex CLI.
@@ -100,6 +104,7 @@ for options and [Troubleshooting](docs/TROUBLESHOOTING.md) for recovery.
 | Isolated parallel execution     | Uses separate worktrees, bounded concurrency, leases, and conservative conflict-aware integration for independent tasks.                                   |
 | Independent evidence            | Reruns declared verification, reconciles claims with observed Git changes, and verifies the combined batch workspace before terminal acceptance.           |
 | Continuation and bounded repair | Can resume an eligible worker under the original contract and optionally perform one conservatively classified repair attempt.                             |
+| Reasoned failure decisions      | Classifies authoritative failure evidence and selects one bounded next action without silently changing executor or compute policy.                        |
 | Context and review controls     | Uses structured Context Capsules and Compact Evidence Packets to limit unnecessary context while preserving review evidence.                               |
 | Activity and observability      | Exposes human-readable and JSON batch and worker activity while keeping prompts and sensitive task context out of the activity stream.                     |
 | Setup and diagnostics           | Provides `init`, `doctor`, `status`, `activity`, and `uninstall`, including managed discovery for normal Codex usage.                                      |

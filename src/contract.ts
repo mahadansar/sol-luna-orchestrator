@@ -64,6 +64,43 @@ export const RECOVERY_CLASSIFICATIONS = [
 ] as const;
 export type RecoveryClassification = (typeof RECOVERY_CLASSIFICATIONS)[number];
 
+/** Conservative P1.1 classifications derived from task execution evidence. */
+export const FAILURE_CLASSIFICATIONS = [
+  "success",
+  "cancellation",
+  "timeout",
+  "runtime",
+  "verification",
+  "scope-or-conflict",
+  "security-or-trust-boundary",
+  "contract-or-requirement",
+  "environment-or-tooling",
+  "implementation",
+  "effort",
+  "capability",
+  "evidence-failure",
+  "unknown",
+] as const;
+export type FailureClassification = (typeof FAILURE_CLASSIFICATIONS)[number];
+
+/** One next action selected by P1.1; executor selection remains P1.2-owned. */
+export const FAILURE_ACTIONS = [
+  "stop",
+  "repair",
+  "continuation",
+  "retry",
+  "effort-escalation",
+  "stronger-executor-fallback",
+  "parent-takeover",
+] as const;
+export type FailureAction = (typeof FAILURE_ACTIONS)[number];
+
+export const AUTOMATIC_FAILURE_HANDLERS = [
+  "automatic-repair",
+  "automatic-recovery",
+] as const;
+export type AutomaticFailureHandler = (typeof AUTOMATIC_FAILURE_HANDLERS)[number];
+
 /** Terminal states a worker may report, and that the orchestrator may assign. */
 export const STATUSES = ["PASS", "BLOCKED", "FAILED"] as const;
 export type Status = (typeof STATUSES)[number];
@@ -529,6 +566,18 @@ export const attemptEvidenceSchema = z.object({
 });
 export type AttemptEvidence = z.infer<typeof attemptEvidenceSchema>;
 
+const failureDecisionShape = z.object({
+  classification: z.enum(FAILURE_CLASSIFICATIONS),
+  action: z.enum(FAILURE_ACTIONS),
+  reason: z.string(),
+  evidenceExecutionIds: z.array(z.string()),
+  nextEffort: z.enum(EFFORTS).nullable(),
+  automaticHandler: z.enum(AUTOMATIC_FAILURE_HANDLERS).nullable(),
+  automaticRetryCount: z.number().int().nonnegative(),
+  automaticRetryLimit: z.literal(1),
+});
+export type FailureDecision = z.infer<typeof failureDecisionShape>;
+
 export const delegateTaskOutputShape = {
   changeIntent: z
     .enum(CHANGE_INTENTS)
@@ -632,6 +681,13 @@ export const delegateTaskOutputShape = {
     .describe(
       "At most one internal parallel-batch recovery decision; records classification, evidence, and separate initial/recovery usage and duration.",
     ),
+  failureDecision: failureDecisionShape
+    .optional()
+    .describe(
+      "P1.1 evidence-derived classification and single next action. Current runtime " +
+        "results populate it; omission denotes a historical result. Repair and recovery " +
+        "remain the only automatic handlers, and stronger-executor fallback is only a recommendation.",
+    ),
   model: z.string(),
   effort: z.string(),
   effortReason: z.string(),
@@ -692,8 +748,7 @@ export const delegateTaskOutputShape = {
     .string()
     .nullable()
     .describe(
-      "When the task did not pass, what to change before retrying — including " +
-        "whether raising effort is actually justified.",
+      "Backward-compatible text projection of failureDecision; null when its action is stop.",
     ),
   durationSeconds: z.number(),
   usage: z.object(usageShape).nullable(),
@@ -965,6 +1020,7 @@ export const batchTaskResultSchema = z.object({
       "Per-execution evidence retained even when no final task result was built.",
     ),
   recovery: delegateTaskOutputShape.recovery,
+  failureDecision: delegateTaskOutputShape.failureDecision,
 });
 
 export type BatchTaskResult = z.infer<typeof batchTaskResultSchema>;

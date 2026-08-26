@@ -33,6 +33,8 @@ import {
 } from "./overlap.js";
 import {
   executeTask,
+  applyFailureDecision,
+  classifyFailureDecision,
   createExecutionId,
   reconcileParallelWorktreeEvidence,
   resultWasCancelled,
@@ -718,6 +720,17 @@ export async function runBatch(
     );
   }
 
+  for (const task of running) {
+    const taskFinalVerification = integrationVerification.filter((run) =>
+      task.input.verificationCommands.includes(run.command),
+    );
+    setFailureDecision(
+      task,
+      integrationConflicts.some((conflict) => conflict.tasks.includes(task.taskId)),
+      taskFinalVerification,
+    );
+  }
+
   const durationSeconds = Math.round((Date.now() - startedAt) / 1000);
   const passed = running.filter((task) => task.result.result?.verdict === "PASS").length;
   const failed = running.length - passed;
@@ -1086,42 +1099,69 @@ function recoveryDecision(
         "Refused or skipped verification is not trustworthy recovery evidence.",
       );
     }
-    const timedOut =
-      task.state === "timedOut" ||
-      result.errors.some((error) => /exceeded its .* budget/.test(error));
-    if (timedOut) {
-      if (!result.workerThreadId) {
-        return base(
-          false,
-          "no-trustworthy-thread",
-          "The timeout produced no trustworthy Luna thread id to resume.",
-        );
-      }
-      if (result.errors.some((error) => !/exceeded its .* budget/.test(error))) {
-        return base(
-          false,
-          "security-or-trust-boundary",
-          "The timeout also produced another runtime error, so its evidence is not safe to resume.",
-        );
-      }
+    const failure = classifyFailureDecision(task.input, result, {
+      state: task.state,
+      attempts: task.result.attempts,
+      error: task.result.error,
+      recovery: task.recovery,
+    });
+    if (failure.classification === "timeout" && !result.workerThreadId) {
+      return base(
+        false,
+        "no-trustworthy-thread",
+        "The timeout produced no trustworthy Luna thread id to resume.",
+      );
+    }
+    if (failure.classification === "security-or-trust-boundary") {
+      return base(false, "security-or-trust-boundary", failure.reason);
+    }
+    if (failure.classification === "timeout" && failure.action === "continuation") {
       return base(
         true,
         "timeout-continuation",
         "Timeout with a thread id and confined, readable worktree evidence; resume once in place.",
       );
     }
+    if (
+      failure.classification === "runtime" &&
+      failure.action === "retry" &&
+      task.result.attempts?.at(-1)?.termination.kind === "process-exit"
+    ) {
+      return base(
+        true,
+        "worker-process-retry",
+        "Authoritative attempt evidence records a worker process exit and the owned worktree evidence is confined and readable; retry once in a fresh process.",
+      );
+    }
     return base(
       false,
       "not-eligible",
-      "A non-timeout result failure is outside bounded parallel recovery.",
+      `P1.1 selected ${failure.action} (${failure.classification}), which is outside bounded parallel automatic recovery: ${failure.reason}`,
     );
   }
 
   if (task.state === "failed") {
+    const failure = classifyFailureDecision(task.input, null, {
+      state: task.state,
+      attempts: task.result.attempts,
+      error: task.result.error,
+      recovery: task.recovery,
+    });
+    if (
+      failure.classification === "runtime" &&
+      failure.action === "retry" &&
+      task.result.attempts?.at(-1)?.termination.kind === "process-exit"
+    ) {
+      return base(
+        true,
+        "worker-process-retry",
+        "Authoritative attempt evidence records a worker process exit without a result, and the owned worktree evidence is confined and readable; retry once in a fresh process.",
+      );
+    }
     return base(
-      true,
-      "worker-process-retry",
-      "The worker process failed without a result, but its owned worktree evidence is confined and readable.",
+      false,
+      "not-eligible",
+      `P1.1 selected ${failure.action} (${failure.classification}); an unused retry allowance alone cannot authorize another process: ${failure.reason}`,
     );
   }
   return base(
@@ -1135,6 +1175,37 @@ function setRecoveryMetadata(task: RunningTask, metadata: RecoveryDecision): voi
   task.recovery = metadata;
   task.result.recovery = metadata;
   if (task.result.result) task.result.result.recovery = metadata;
+}
+
+function setFailureDecision(
+  task: RunningTask,
+  integrationConflict = false,
+  finalVerification: BatchOutput["integrationVerification"] = [],
+): void {
+  const context = {
+    state: task.state,
+    attempts: task.result.attempts,
+    error: task.result.error,
+    integrationConflict,
+    evidenceFailure:
+      task.worktreeOutcomeError !== null ||
+      task.result.warnings.some((warning) =>
+        /(?:evidence|continuation registration|worktree lifecycle|lease renewal|cleanup incomplete)/i.test(
+          warning,
+        ),
+      ),
+    finalVerificationFailure: finalVerification.some(
+      (run) => !run.passed && (run.execution === "argv" || run.execution === "shell"),
+    ),
+    finalVerificationRefused: finalVerification.some(
+      (run) => run.execution === "rejected" || run.execution === "skipped",
+    ),
+    recovery: task.recovery,
+  };
+  const decision = task.result.result
+    ? applyFailureDecision(task.input, task.result.result, context)
+    : classifyFailureDecision(task.input, null, context);
+  task.result.failureDecision = decision;
 }
 
 function recoveryInstruction(decision: RecoveryDecision): string {

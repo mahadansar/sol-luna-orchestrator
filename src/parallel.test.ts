@@ -2222,6 +2222,9 @@ test("an already-running parallel worker cancels while its sibling completes", a
     assert.equal(cancelled.result?.verdict, "FAILED", describeBatch(result));
     assert.equal(cancelled.result?.workerClaimedStatus, "FAILED");
     assert.equal(cancelled.result?.trustworthy, false);
+    assert.equal(cancelled.failureDecision?.classification, "cancellation");
+    assert.equal(cancelled.failureDecision?.action, "stop");
+    assert.equal(cancelled.failureDecision?.automaticRetryCount, 0);
     assert.equal(completed.result?.continuationReference, `ctr_${"c".repeat(32)}`);
     assert.equal(cancelled.result?.continuationReference, null);
     assert.deepEqual(registeredThreads, ["thread-complete"]);
@@ -2711,6 +2714,17 @@ test("parallel timeout recovery resumes the same thread and integrates final evi
       outputTokens: 6,
       reasoningOutputTokens: 2,
     });
+    assert.equal(result.tasks[0]?.failureDecision?.classification, "success");
+    assert.equal(result.tasks[0]?.failureDecision?.action, "stop");
+    assert.equal(
+      result.tasks[0]?.failureDecision?.automaticHandler,
+      "automatic-recovery",
+    );
+    assert.equal(result.tasks[0]?.failureDecision?.automaticRetryCount, 1);
+    assert.deepEqual(
+      result.tasks[0]?.failureDecision?.evidenceExecutionIds,
+      result.tasks[0]?.attempts?.map((attempt) => attempt.executionId),
+    );
     assert.equal(result.integrated, true);
     assert.equal(
       await fs.readFile(path.join(repo, "src", "recovered", "value.ts"), "utf8"),
@@ -2751,7 +2765,7 @@ test("parallel worker-process failures get one fresh retry in the same worktree"
             directory: options.workingDirectory,
             resumeThreadId: options.resumeThreadId,
           });
-          if (calls.length === 1) throw new Error("worker process exited");
+          if (calls.length === 1) throw new Error("Codex Exec exited with code 1");
           const target = path.join(options.workingDirectory, "src", "fresh", "value.ts");
           await fs.mkdir(path.dirname(target), { recursive: true });
           await fs.writeFile(target, "fresh retry\n", "utf8");
@@ -2776,7 +2790,39 @@ test("parallel worker-process failures get one fresh retry in the same worktree"
     assert.equal(result.tasks[0]?.result?.attempt, 2);
     assert.equal(result.tasks[0]?.attempts?.length, 2);
     assert.equal(result.tasks[0]?.attempts?.[1]?.role, "process-retry");
+    assert.equal(result.tasks[0]?.failureDecision?.classification, "success");
+    assert.equal(
+      result.tasks[0]?.failureDecision?.automaticHandler,
+      "automatic-recovery",
+    );
     assert.equal(result.passed, 1);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel generic runtime failures do not retry merely because a slot remains", async () => {
+  const repo = await makeRepo();
+  let calls = 0;
+  try {
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/runtime/**"] })],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        executor: async () => {
+          calls += 1;
+          throw new Error("fixture runtime exception without process-exit evidence");
+        },
+      },
+    );
+    const task = result.tasks[0]!;
+    assert.equal(calls, 1);
+    assert.equal(task.recovery?.attempted, false);
+    assert.equal(task.recovery?.classification, "not-eligible");
+    assert.equal(task.failureDecision?.action, "parent-takeover");
+    assert.equal(task.failureDecision?.automaticRetryCount, 0);
+    assert.equal(task.attempts?.[0]?.termination.kind, "runtime-error");
   } finally {
     await cleanupRepo(repo);
   }
@@ -2810,8 +2856,19 @@ test("parallel recovery runs independent failures concurrently and never retries
           const key = moduleOf(input);
           const count = (calls.get(key) ?? 0) + 1;
           calls.set(key, count);
-          if (key === "one") return makeOutput({ effort: input.effort });
-          if (count === 1) throw new Error(`first process failure for ${key}`);
+          if (key === "one") {
+            const relative = "src/one/value.ts";
+            const target = path.join(options.workingDirectory, ...relative.split("/"));
+            await fs.mkdir(path.dirname(target), { recursive: true });
+            await fs.writeFile(target, "successful sibling\n", "utf8");
+            return makeOutput({
+              effort: input.effort,
+              filesChanged: [
+                { path: relative, kind: "add", why: "test", observed: true },
+              ],
+            });
+          }
+          if (count === 1) throw new Error("Codex Exec exited with code 1");
           activeRecovery += 1;
           peakRecovery = Math.max(peakRecovery, activeRecovery);
           await new Promise((resolve) => setTimeout(resolve, 35));
@@ -2832,6 +2889,11 @@ test("parallel recovery runs independent failures concurrently and never retries
     assert.equal(calls.get("three"), 2);
     assert.equal(peakRecovery, 2);
     assert.equal(result.passed, 3);
+    const successfulSibling = result.tasks.find((task) => task.taskId === "t1")!;
+    assert.equal(successfulSibling.attempts?.length, 1);
+    assert.equal(successfulSibling.recovery?.classification, "already-successful");
+    assert.equal(successfulSibling.failureDecision?.classification, "success");
+    assert.equal(successfulSibling.failureDecision?.automaticRetryCount, 0);
   } finally {
     await cleanupRepo(repo);
   }
@@ -2883,7 +2945,7 @@ test("parallel recovery does not retry contract discrepancies and stops after on
               errors: ["Worker exceeded its 1s budget and was aborted."],
             });
           }
-          throw new Error("persistent worker process failure");
+          throw new Error("Codex Exec exited with code 1");
         },
       },
     );
@@ -2894,6 +2956,9 @@ test("parallel recovery does not retry contract discrepancies and stops after on
     assert.equal(bounded.result, null);
     assert.equal(bounded.recovery?.attempted, true);
     assert.equal(bounded.recovery?.recoveryAttempt, 2);
+    assert.equal(bounded.failureDecision?.action, "parent-takeover");
+    assert.equal(bounded.failureDecision?.automaticHandler, "automatic-recovery");
+    assert.equal(bounded.failureDecision?.automaticRetryCount, 1);
     assert.equal(
       result.tasks.find((task) => task.taskId === "t1")?.recovery?.classification,
       "contract-discrepancy",
@@ -2915,7 +2980,7 @@ test("parallel recovery does not retry contract discrepancies and stops after on
     assert.equal(timeout.result?.recovery?.classification, "timeout-continuation");
     assert.ok(
       timeout.result?.errors.some((error) =>
-        error.includes("persistent worker process failure"),
+        error.includes("Codex Exec exited with code 1"),
       ),
     );
   } finally {
@@ -3391,6 +3456,8 @@ test("failed final workspace verification expands evidence for targeted diagnosi
     });
 
     assert.equal(result.completionState, "needs-supervisor");
+    assert.equal(result.tasks[0]?.failureDecision?.classification, "verification");
+    assert.equal(result.tasks[0]?.failureDecision?.action, "parent-takeover");
     assert.match(result.warnings.join("\n"), /did not pass completely/i);
     assert.match(renderBatch(result), /FINAL_INTEGRATION_FAILURE/);
   } finally {

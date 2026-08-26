@@ -37,6 +37,7 @@ import {
 import { BatchRejectedError, runBatch } from "./batch.js";
 import { ContinuationStore, type ContinuationConsumeResult } from "./continuation.js";
 import {
+  applyFailureDecision,
   continueToLuna,
   delegateToLuna,
   reconcileParallelWorktreeEvidence,
@@ -102,6 +103,7 @@ function registerContinuation(
       status: "not-eligible",
       reason: "No worker thread identity was observed.",
     };
+    applyFailureDecision(input, result);
     return null;
   }
   if (resultWasCancelled(result)) {
@@ -109,6 +111,7 @@ function registerContinuation(
       status: "not-eligible",
       reason: "Cancellation is terminal for bounded continuation.",
     };
+    applyFailureDecision(input, result);
     return null;
   }
   const predecessorExecutionId = result.attempts?.at(-1)?.executionId ?? null;
@@ -125,6 +128,7 @@ function registerContinuation(
     status: "issued",
     reason: "One bounded continuation reference was issued for this worker thread.",
   };
+  applyFailureDecision(input, result);
   return reference;
 }
 
@@ -382,7 +386,7 @@ function emitCanonicalAttemptCompletion(
 
 export const TOOL_DESCRIPTION = `Delegate ONE substantial, bounded executable seam to ${LUNA_MODEL}; no second seam is required. Keep small, simple, or tightly coupled work solo. Tasks may be implementation, tests, bug fixing, refactoring, investigation, or chores. The parent owns architecture, decomposition, unresolved design, sequencing, interfaces, scope, acceptance, and final judgement. Luna owns scoped exploration, implementation, verification, and bounded repair; it cannot see the conversation or delegate.
 
-Provide a self-contained objective, effortReason, acceptanceCriteria, verificationCommands, changeIntent, and honest allowedFiles/forbiddenFiles; add a concise activityLabel only when safe and context only for facts unavailable in the repository. automaticRepair permits at most one conservative same-thread repair. resultDetail=handoff is the default.
+Provide a self-contained objective, effortReason, acceptanceCriteria, verificationCommands, changeIntent, and honest scopes; add a concise activityLabel when safe and only repository-unavailable context. automaticRepair permits at most one conservative same-thread repair. Results include one evidence-derived failureDecision; parent owns nonautomatic actions. resultDetail=handoff is the default.
 
 The runtime reruns declared checks and reconciles observed edits. A clean PASS returns a text-only VERIFIED_COMPLETE handoff: finish without rereading worker-owned files or rerunning passed checks unless a listed risk changes architecture. FAILED/BLOCKED, untrustworthy, discrepant, scope-violating, refused/skipped, or runtime-error results expand with evidence. Worker claims are not authoritative.
 
@@ -475,6 +479,19 @@ function renderRichResult(result: DelegateTaskOutput): string {
         );
       }
     }
+  }
+  if (result.recovery) {
+    lines.push(
+      `RECOVERY: ${result.recovery.attempted ? "attempted" : "not attempted"} | ` +
+        `${result.recovery.classification} | ${result.recovery.evidence}`,
+    );
+  }
+  if (result.failureDecision) {
+    lines.push(
+      `FAILURE DECISION: ${result.failureDecision.classification} -> ` +
+        `${result.failureDecision.action}${result.failureDecision.nextEffort ? ` (${result.failureDecision.nextEffort})` : ""} | ` +
+        `${result.failureDecision.reason}`,
+    );
   }
   lines.push("");
   lines.push(`WORKER SUMMARY (claim)\n${result.summary || "(none)"}`);
@@ -918,6 +935,7 @@ function registerDelegateTask(): void {
             result.errors.push(detail);
             result.continuationReference = null;
             result.continuationState = { status: "unavailable", reason: detail };
+            applyFailureDecision(task, result);
           }
         }
         emitSingleCompletion(
@@ -1168,6 +1186,7 @@ export async function handleContinueTask(
       status: "consumed",
       reason: "The single-use continuation bound was consumed by this execution.",
     };
+    applyFailureDecision(entry.input, result);
     emitSingleCompletion(batchId, taskId, timeoutSeconds, result, dependencies.emit);
     dependencies.record(result);
     const structuredContent = structuredResultForDetail(
@@ -1264,9 +1283,9 @@ function registerContinueTask(): void {
   );
 }
 
-export const BATCH_TOOL_DESCRIPTION = `Delegate a batch intended for two or more owned seams to ${LUNA_MODEL}; one task remains accepted for compatibility, but prefer delegate_task when no scheduling is needed. Use sequential for dependencies/shared workspace state and parallel only for genuinely independent disjoint declared scopes. Do not create artificial seams. At most ${MAX_BATCH_SIZE} tasks are accepted and at most ${MAX_PARALLEL} run concurrently; the rest queue. Each task needs a self-contained objective, effortReason, changeIntent, allowedFiles/forbiddenFiles, acceptanceCriteria, scoped verificationCommands, and a concise activityLabel when a safe label exists. The parent owns architecture/interfaces and exceptional judgement; Luna owns exploration, implementation, verification, and repair. automaticRepair is one bounded task-local turn.
+export const BATCH_TOOL_DESCRIPTION = `Delegate a batch intended for two or more owned seams to ${LUNA_MODEL}; one task remains accepted for compatibility, but prefer delegate_task when no scheduling is needed. Use sequential for dependencies/shared workspace state and parallel only for genuinely independent disjoint declared scopes. Do not create artificial seams. At most ${MAX_BATCH_SIZE} tasks are accepted and at most ${MAX_PARALLEL} run concurrently; the rest queue. Each task needs a self-contained contract and a concise activityLabel when a safe label exists. The parent owns architecture/interfaces and exceptional judgement; Luna owns exploration, implementation, verification, and repair. automaticRepair is one bounded task-local turn.
 
-Parallel same-file edits prevent automatic integration. allowOverlappingScopes:true only accepts the declared overlap; it is not a write sandbox and does not permit same-file integration. integrate=false skips copying and retention follows operator policy. Partial outcomes remain visible. automaticRecovery defaults true and adds at most one eligible timeout continuation or fresh-process retry in the same owned worktree; successes, cancellation, scope/security/evidence failures, refused checks, discrepancies, and conflicts are never retried. Successful streams survive sibling failure.
+Parallel same-file edits prevent automatic integration. allowOverlappingScopes:true only accepts the declared overlap; it is not a write sandbox and does not permit same-file integration. integrate=false skips copying and retention follows operator policy. Partial outcomes remain visible. automaticRecovery defaults true: at most one evidence-eligible timeout continuation or exact process-exit retry; a counter alone never authorizes retry. Repair precedes recovery and neither nests. Successes, cancellation, scope/security/evidence failures, refused checks, discrepancies, and conflicts are never retried. Successful streams survive sibling failure.
 
 After integration, deterministic code reruns the deduplicated union of declared checks in the final workspace. completionState=verified-complete means all seams, integration, and final checks passed; the default text-only handoff then tells the parent to finish without rereading files or rerunning checks. Any failure/refusal/conflict returns rich evidence for targeted diagnosis. resultDetail is one batch-level compatibility choice. More workers are not automatically cheaper; raw tokens are not credit cost and savings depend on the parent and task mix. While pending with no meaningful new state, remain silent; do not narrate waiting or polling. Report only a result, error, cancellation, timeout, or actionable state change.`;
 
@@ -1453,6 +1472,14 @@ function renderRichBatch(batch: BatchOutput): string {
     }
     if (result?.continuationReference) {
       lines.push(`    continuation: ${result.continuationReference}`);
+    }
+    const failureDecision = task.failureDecision ?? result?.failureDecision;
+    if (failureDecision) {
+      lines.push(
+        `    failure decision: ${failureDecision.classification} -> ` +
+          `${failureDecision.action}${failureDecision.nextEffort ? ` (${failureDecision.nextEffort})` : ""} | ` +
+          `${compact(failureDecision.reason)}`,
+      );
     }
 
     if (result?.summary)

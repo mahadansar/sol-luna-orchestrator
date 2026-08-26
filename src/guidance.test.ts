@@ -268,6 +268,30 @@ test("bounded repair guidance and schemas keep parent control and the one-turn l
   assert.match(rules, /Manual[\s\S]*continue_task[\s\S]*never chains into repair/i);
 });
 
+test("P1.1 guidance exposes one evidence-driven action and strict retry precedence", async () => {
+  assert.match(TOOL_DESCRIPTION, /failureDecision/i);
+  assert.match(TOOL_DESCRIPTION, /parent owns nonautomatic actions/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /exact process-exit retry/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /counter alone never authorizes retry/i);
+  assert.match(BATCH_TOOL_DESCRIPTION, /Repair precedes recovery/i);
+  assert.match(
+    delegateTaskOutputShape.failureDecision.description ?? "",
+    /stronger-executor fallback is only a recommendation/i,
+  );
+
+  const [rules, configuration, observability] = await Promise.all([
+    readDoc("SOL_RULES.md"),
+    readDoc("docs/CONFIGURATION.md"),
+    readDoc("docs/OBSERVABILITY.md"),
+  ]);
+  assert.match(rules, /exactly one next action/i);
+  assert.match(rules, /Recovery disables repair/i);
+  assert.match(rules, /P1\.2 owns executor\/model authorization/i);
+  assert.match(configuration, /unused retry count are not sufficient/i);
+  assert.match(observability, /result evidence/i);
+  assert.match(observability, /not a separate activity[\s\S]*event/i);
+});
+
 test("delegation remains broader than implementation", () => {
   for (const kind of [
     "implementation",

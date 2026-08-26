@@ -8,6 +8,18 @@ All notable changes to this project are documented here. Format follows
 
 ### Added
 
+- Added P1.1 reasoned failure decisions on top of canonical per-execution
+  evidence. Current task outcomes conservatively classify success,
+  cancellation, timeout, runtime/process, verification, scope/conflict,
+  security/trust, contract/requirement, environment/tooling, implementation,
+  effort, capability, evidence, and unknown failures, then select exactly one
+  stop, repair, continuation, retry, effort-escalation, stronger-executor
+  fallback recommendation, or parent-takeover action. Existing automatic repair
+  precedes existing one-turn parallel recovery and neither may nest or chain;
+  generic runtime errors and counter availability alone never authorize retry.
+  Decisions retain source execution ids, retry bounds, lineage, truthful usage,
+  cancellation, and successful siblings. Stronger-executor selection and compute
+  policy remain P1.2-owned.
 - Added canonical per-execution attempt evidence to task and batch results, with
   stable execution identity, logical ordinal, repair/continuation/recovery
   lineage, requested model and effort, thread facts, worker and verification

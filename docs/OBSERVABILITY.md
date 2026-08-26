@@ -46,6 +46,12 @@ deduplicated declared checks. The handoff directs the parent to finish without
 routine file rereads or duplicate checks. `needs-supervisor` retains the final
 failure, refusal, skip, or incompleteness evidence for targeted diagnosis.
 
+Current structured task outcomes also carry `failureDecision`: one conservative
+classification and next action, the canonical execution ids consulted, optional
+next effort, any automatic repair/recovery handler already used, and the bounded
+automatic retry count/limit. This is result evidence, not a separate activity
+event. It contains no prompt, source, command output, or new usage estimate.
+
 ## What the event stream contains
 
 Records are appended as the run progresses: batch started, completed, cancelled
@@ -78,7 +84,7 @@ remain in structured tool-result evidence, not attempt activity events.
 
 Parallel recovery keeps the original batchId/taskId and emits an explicit attempt
 ordinal. Its classification and concise evidence identify a timeout continuation
-or a fresh-process retry, while separate initial/recovery duration and usage
+or an exact process-exit retry, while separate initial/recovery duration and usage
 remain in the structured result and recovery completion event. Recovery decisions
 are made before integration and cleanup; an opted-out or ineligible task emits a
 skipped decision rather than another worker turn. The JSON activity snapshot keeps
