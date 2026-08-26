@@ -2,6 +2,13 @@ import { appendFileSync } from "node:fs";
 import { EVENTS_FILE } from "./config.js";
 import type { DelegateTaskOutput } from "./contract.js";
 import { sanitizeForLog } from "./log.js";
+import type {
+  CoreOverlap,
+  DeclaredRoutingFields,
+  RoutingGate,
+  RoutingRoute,
+  RoutingSignal,
+} from "./routing.js";
 
 /**
  * Structured run telemetry.
@@ -211,6 +218,66 @@ export type OrchestratorEvent =
       appliedFiles: number;
     }
   | { type: "integration.disabled"; batchId: string }
+  | ({
+      /**
+       * One advisory `routing_preflight` evaluation. No batch exists yet, so
+       * there is deliberately no batchId to correlate it with.
+       */
+      type: "routing.preflight";
+      /**
+       * Explicitly absent rather than merely missing: this record predates any
+       * batch, and saying so in the type keeps every batch-keyed reader — which
+       * is all of them — valid without special-casing this event.
+       */
+      batchId?: undefined;
+      preflightId: string;
+      route: RoutingRoute;
+      seamCount: number;
+      unknownCount: number;
+      gates: RoutingGate[];
+      signals: RoutingSignal[];
+      parallelEligible: boolean;
+    } & DeclaredRoutingFields)
+  | ({
+      /** What a real delegation call declared, and what routing did with it. */
+      type: "routing.declared";
+      batchId: string;
+      declaration: "attached";
+      mode: string;
+      taskCount: number;
+      seamCount: number;
+      unknownCount: number;
+      route: RoutingRoute;
+      gates: RoutingGate[];
+      signals: RoutingSignal[];
+      refusedGate: RoutingGate | null;
+      parallelEligible: boolean;
+    } & DeclaredRoutingFields)
+  | {
+      /**
+       * A call that attached no card. Nothing was evaluated, so no route,
+       * signal, or eligibility is recorded: an absent declaration must not be
+       * reported as though routing had reached a conclusion about it.
+       */
+      type: "routing.declared";
+      batchId: string;
+      declaration: "absent";
+      mode: string;
+      taskCount: number;
+    }
+  | {
+      /**
+       * A declaration the runtime's own already-computed evidence contradicts.
+       * Advisory: the existing scope and integration gates remain authoritative
+       * for actual safety, and this only records that the card was wrong.
+       */
+      type: "routing.contradiction";
+      batchId: string;
+      kind:
+        "declared-disjoint-core-scopes-overlap" | "declared-disjoint-core-files-collided";
+      declaredCoreOverlap: CoreOverlap;
+      observed: number;
+    }
   | {
       type: "worktree.retained";
       batchId: string;

@@ -6,6 +6,7 @@ Everything the orchestrator reads, and how to change it. The
 - [Requirements](#requirements)
 - [Advanced installation](#advanced-installation)
 - [Discovery hint and adaptive routing](#discovery-hint-and-adaptive-routing)
+- [Cheap routing preflight](#cheap-routing-preflight)
 - [Codex settings and environment variables](#codex-settings-and-environment-variables)
 - [Activity and diagnostics logs](#activity-and-diagnostics-logs)
 - [Parent model and effort](#parent-model-and-effort)
@@ -107,13 +108,58 @@ exact managed blocks from either global instruction file. Use
 whether the hint is installed, missing or modified; `doctor` checks it and
 prints the command that repairs a missing or incorrect setup.
 
+### Cheap routing preflight
+
+The runtime advertises an optional advisory tool, `routing_preflight`, and an
+optional `routingPreflight` card on `delegate_task` and `delegate_tasks`. The
+parent declares the seams it is considering and what they share; the runtime
+evaluates that declaration with a pure synchronous function — no filesystem,
+process, network, model call, or repository analysis — and answers before any
+exploration has been paid for.
+
+Nothing about this is required. With no card attached, behavior is exactly what
+it was before the feature existed, and the telemetry simply records the
+declaration as `absent`. Calling `routing_preflight` and then delegating nothing
+is a normal successful outcome.
+
+Any declared field may be `unknown`. Unknown biases the _advice_ toward staying
+solo but can never produce a structural refusal, because refusals read the raw
+declaration only. The runtime refuses only an empty seam list, and — in parallel
+mode alone — explicitly declared mutable shared state, an explicitly declared
+shared core, or more tasks than declared seams. Those parallel gates are enforced
+before any worktree is created. `allowOverlappingScopes: true` downgrades the
+shared-core gate to a warning and never downgrades mutable shared state.
+Everything else is advice the parent may override; see
+[SOL_RULES.md](../SOL_RULES.md#cheap-routing-preflight) for the full route table.
+
+Routing is independent of compute policy. It never reads, outputs, or selects
+worker effort, never recommends a worker count, and never changes `maxParallel`
+or any concurrency behavior. `parallelEligible` is a structural boolean only, and
+`seams.length` describes separability rather than a worker target.
+
 ### Metadata and thin result fast path
 
 The MCP registration advertises a compact routing card and bounded input
 metadata. Output schemas are intentionally not advertised in tool metadata, and
 the advertised input schemas reuse the exact runtime validators/defaults without
-repeating per-field prose. Deterministic metadata-size budgets protect this
-boundary.
+repeating per-field prose — the optional `routingPreflight` card is the single
+deliberate exception, because it is the only optional input that can refuse a
+delegation and the parent has to be able to see that from the schema.
+Deterministic metadata-size budgets protect this boundary.
+
+Every budget is checked against the schema the server actually registers.
+`advertisedTotal` is the honest ceiling: instructions, all four tool
+descriptions, and all four input schemas, with the routing card included where it
+is really advertised. `delegationContract` and `routingCombined` split that same
+total by owner so a regression can be attributed to the delegation protocol or to
+routing, and they sum to it exactly — no ceiling is reached by excluding one
+advertised surface from another. The routing card is advertised on both
+delegation tools whether or not a call uses it, so its cost is counted on both.
+A routing advisory that prevents one unnecessary delegation must stay materially
+cheaper than that delegation would have been, so the surface is kept deliberately
+small. Advisory routing output is one compact line on a delegation result, and is
+omitted entirely when routing has nothing to add — the thin verified handoff is
+unaffected.
 
 Clean verified PASS text is a thin handoff with identity, changed paths,
 authoritative verification counts, integration status, continuation reference,

@@ -15,6 +15,7 @@ import {
   CONTINUE_TOOL_DESCRIPTION,
   METADATA_SIZE_BUDGETS,
   metadataSizeReport,
+  ROUTING_PREFLIGHT_TOOL_DESCRIPTION,
   SERVER_INSTRUCTIONS,
   TOOL_DESCRIPTION,
 } from "./server.js";
@@ -32,7 +33,19 @@ import {
   delegateTasksOutputShape,
   INPUT_METADATA_SIZE_BUDGETS,
   inputMetadataSizeReport,
+  asRoutingCard,
+  ROUTING_CARD_DESCRIPTION,
+  routingPreflightMcpInputShape,
+  routingPreflightShape,
 } from "./contract.js";
+import {
+  CORE_OVERLAPS,
+  evaluateRouting,
+  INTEGRATIONS,
+  SEAM_SIZES,
+  SHARED_STATES,
+  VERIFICATIONS,
+} from "./routing.js";
 import { buildWorkerPrompt } from "./prompt.js";
 import { DISCOVERY_HINT_TEXT } from "./cli/discovery-hint.js";
 
@@ -84,12 +97,14 @@ test("thin metadata stays within deterministic budgets", () => {
   assert.ok(
     report.continueTaskDescription <= METADATA_SIZE_BUDGETS.continueTaskDescription,
   );
-  assert.ok(report.combined <= METADATA_SIZE_BUDGETS.combined);
+  assert.ok(report.advertisedTotal <= METADATA_SIZE_BUDGETS.advertisedTotal);
+  assert.ok(report.delegationContract <= METADATA_SIZE_BUDGETS.delegationContract);
   const inputs = inputMetadataSizeReport();
   assert.ok(inputs.delegateTask <= INPUT_METADATA_SIZE_BUDGETS.delegateTask);
   assert.ok(inputs.continueTask <= INPUT_METADATA_SIZE_BUDGETS.continueTask);
   assert.ok(inputs.delegateTasks <= INPUT_METADATA_SIZE_BUDGETS.delegateTasks);
-  assert.ok(inputs.combined <= INPUT_METADATA_SIZE_BUDGETS.combined);
+  assert.ok(inputs.advertisedCombined <= INPUT_METADATA_SIZE_BUDGETS.advertisedCombined);
+  assert.ok(inputs.contractCombined <= INPUT_METADATA_SIZE_BUDGETS.contractCombined);
 });
 
 test("advertised schemas retain runtime validation and defaults without prose", () => {
@@ -130,8 +145,16 @@ test("advertised schemas retain runtime validation and defaults without prose", 
       objective: "too short",
     }),
   );
+  // Per-field prose is stripped from every advertised field. The routing card is
+  // the single deliberate exception: it can refuse a delegation, so the parent
+  // must be able to see that from the schema. Nothing else may reintroduce prose.
   const advertised = JSON.stringify(z.toJSONSchema(z.object(delegateTasksMcpInputShape)));
-  assert.doesNotMatch(advertised, /"description"/);
+  assert.equal(
+    (advertised.match(/"description"/g) ?? []).length,
+    1,
+    "only the routing card may carry advertised prose",
+  );
+  assert.match(advertised, /"description":"Optional advisory routing declaration\./);
 });
 
 test("activityLabel is optional, concise, and bounded", () => {
@@ -712,4 +735,357 @@ test("acceptance ledger owns the current release baseline", async () => {
   assert.match(acceptance, /No natural `xhigh` or `max` selection is claimed/i);
   assert.doesNotMatch(acceptance, /findings\.md/i);
   assert.doesNotMatch(acceptance, /runtime is unchanged from/i);
+});
+
+// --- Cheap routing preflight guidance ---------------------------------------
+
+test("routing metadata is metered by its own budgets, not the delegation contract's", () => {
+  const report = metadataSizeReport();
+  assert.ok(
+    report.routingPreflightDescription <=
+      METADATA_SIZE_BUDGETS.routingPreflightDescription,
+  );
+  assert.ok(report.routingCombined <= METADATA_SIZE_BUDGETS.routingCombined);
+
+  const inputs = inputMetadataSizeReport();
+  assert.ok(
+    inputs.routingCardDelegateTask <= INPUT_METADATA_SIZE_BUDGETS.routingCardDelegateTask,
+  );
+  assert.ok(
+    inputs.routingCardDelegateTasks <=
+      INPUT_METADATA_SIZE_BUDGETS.routingCardDelegateTasks,
+  );
+  assert.ok(
+    inputs.routingPreflightTool <= INPUT_METADATA_SIZE_BUDGETS.routingPreflightTool,
+  );
+  assert.ok(inputs.routingCombined <= INPUT_METADATA_SIZE_BUDGETS.routingCombined);
+
+  // The contract-only diagnostics must keep measuring the contract alone, so a
+  // growing advisory surface stays attributable — but they are attribution, not
+  // the total, which is asserted separately and includes every routing byte.
+  assert.equal(
+    inputs.contractCombined,
+    inputs.delegateTaskContract + inputs.continueTask + inputs.delegateTasksContract,
+  );
+  assert.equal(
+    inputs.routingCombined,
+    inputs.routingCardDelegateTask +
+      inputs.routingCardDelegateTasks +
+      inputs.routingPreflightTool,
+  );
+  assert.ok(
+    report.routingCombined < report.delegationContract,
+    "the advisory surface must stay a fraction of the delegation protocol",
+  );
+});
+
+test("the advertised metadata total accounts for every routing byte", () => {
+  const report = metadataSizeReport();
+  const inputs = report.inputSchemas;
+
+  // The two attribution diagnostics must exactly reconstruct the honest total:
+  // no bytes may fall between the delegation contract and routing.
+  assert.equal(
+    report.advertisedTotal,
+    report.delegationContract + report.routingCombined,
+    "advertised metadata must be fully attributed, never partly excluded",
+  );
+  assert.equal(
+    inputs.advertisedCombined,
+    inputs.contractCombined + inputs.routingCombined,
+  );
+  assert.equal(
+    inputs.advertisedCombined,
+    inputs.delegateTask +
+      inputs.continueTask +
+      inputs.delegateTasks +
+      inputs.routingPreflightTool,
+  );
+
+  // The routing card is really advertised on both delegation surfaces, so the
+  // advertised figures must exceed the contract-only ones by exactly its cost.
+  assert.ok(inputs.routingCardDelegateTask > 0);
+  assert.ok(inputs.routingCardDelegateTasks > 0);
+  assert.equal(
+    inputs.delegateTask - inputs.delegateTaskContract,
+    inputs.routingCardDelegateTask,
+  );
+  assert.equal(
+    inputs.delegateTasks - inputs.delegateTasksContract,
+    inputs.routingCardDelegateTasks,
+  );
+
+  assert.ok(report.advertisedTotal <= METADATA_SIZE_BUDGETS.advertisedTotal);
+});
+
+test("advertised-schema budgets bound the JSON the MCP server actually registers", () => {
+  // Serialized here from the registered shapes rather than read out of the
+  // report, so a report that ever stopped measuring the real schema — by
+  // excluding the routing card again, say — fails this test rather than passing
+  // its own arithmetic.
+  const serialized = (shape: z.ZodRawShape): number =>
+    JSON.stringify(z.toJSONSchema(z.object(shape))).length;
+  const advertised = {
+    delegateTask: serialized(delegateTaskMcpInputShape),
+    delegateTasks: serialized(delegateTasksMcpInputShape),
+    continueTask: serialized(continueTaskMcpInputShape),
+    routingPreflightTool: serialized(routingPreflightMcpInputShape),
+  };
+
+  assert.ok(
+    advertised.delegateTask <= INPUT_METADATA_SIZE_BUDGETS.delegateTask,
+    `delegate_task advertises ${advertised.delegateTask}`,
+  );
+  assert.ok(
+    advertised.delegateTasks <= INPUT_METADATA_SIZE_BUDGETS.delegateTasks,
+    `delegate_tasks advertises ${advertised.delegateTasks}`,
+  );
+  assert.ok(
+    advertised.continueTask <= INPUT_METADATA_SIZE_BUDGETS.continueTask,
+    `continue_task advertises ${advertised.continueTask}`,
+  );
+  assert.ok(
+    advertised.routingPreflightTool <= INPUT_METADATA_SIZE_BUDGETS.routingPreflightTool,
+    `routing_preflight advertises ${advertised.routingPreflightTool}`,
+  );
+
+  const total =
+    advertised.delegateTask +
+    advertised.delegateTasks +
+    advertised.continueTask +
+    advertised.routingPreflightTool;
+  assert.ok(
+    total <= INPUT_METADATA_SIZE_BUDGETS.advertisedCombined,
+    `advertised input schemas total ${total}`,
+  );
+
+  // The report must agree with the schemas, not with itself.
+  const inputs = inputMetadataSizeReport();
+  assert.equal(inputs.delegateTask, advertised.delegateTask);
+  assert.equal(inputs.delegateTasks, advertised.delegateTasks);
+  assert.equal(inputs.continueTask, advertised.continueTask);
+  assert.equal(inputs.routingPreflightTool, advertised.routingPreflightTool);
+  assert.equal(inputs.advertisedCombined, total);
+});
+
+test("the routing card is advertised identically wherever it appears", () => {
+  type JsonSchema = {
+    $schema?: string;
+    description?: string;
+    properties?: Record<string, unknown>;
+    required?: string[];
+  };
+  // The standalone tool's card is a schema root and so carries a `$schema` key
+  // the nested copies cannot; the nested copies carry the card's own description,
+  // which the standalone tool states as its tool description instead. Everything
+  // that describes the card's *shape* must still be identical.
+  const { $schema: _rootMarker, ...tool } = z.toJSONSchema(
+    z.object(routingPreflightMcpInputShape),
+  ) as JsonSchema;
+  for (const shape of [delegateTaskMcpInputShape, delegateTasksMcpInputShape]) {
+    const advertised = z.toJSONSchema(z.object(shape)) as JsonSchema;
+    const { description: _cardProse, ...nested } = (advertised.properties
+      ?.routingPreflight ?? {}) as JsonSchema;
+    assert.deepEqual(nested, tool, "one card definition, three surfaces");
+    assert.ok(
+      !(advertised.required ?? []).includes("routingPreflight"),
+      "the card must remain optional",
+    );
+  }
+});
+
+test("the advertised routing card tells the parent it is advisory and can refuse", () => {
+  // Read from the serialized schema, because a description that exists on the
+  // internal shape but is stripped from the advertised copy is invisible to Sol
+  // and therefore worth nothing.
+  for (const shape of [delegateTaskMcpInputShape, delegateTasksMcpInputShape]) {
+    const advertised = z.toJSONSchema(z.object(shape)) as {
+      properties?: Record<string, { description?: string }>;
+    };
+    const prose = advertised.properties?.routingPreflight?.description ?? "";
+    assert.ok(prose.length > 0, "the advertised card must describe itself");
+    assert.equal(prose, ROUTING_CARD_DESCRIPTION);
+
+    // Advisory, and explicitly not a refusal.
+    assert.match(prose, /advisory/i);
+    assert.match(prose, /never blocks execution|does not refuse|never refuses/i);
+    // Enforcing, on every surface, for an empty seam list.
+    assert.match(prose, /empty seams/i);
+    // And the three parallel-only structural refusals, by their declared field.
+    assert.match(prose, /parallel/i);
+    assert.match(prose, /sharedState/);
+    assert.match(prose, /coreOverlap/);
+    assert.match(prose, /tasks > seams|tasks exceed|more tasks than/i);
+    // Uncertainty is safe to declare.
+    assert.match(prose, /unknown/);
+  }
+});
+
+test("the routing_preflight tool description stays discoverable", () => {
+  // The tool description is the only always-visible prose that tells the parent
+  // this surface exists and when to reach for it. Pin the discoverability claims
+  // so they cannot be trimmed away for budget headroom without a test failing.
+  assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /cheap/i);
+  assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /before any repository exploration/i);
+  assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /whether delegating/i);
+  assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /declare the ownership seams/i);
+  // It must remain reachable as a named tool in the guidance a parent reads.
+  assert.ok(ROUTING_PREFLIGHT_TOOL_DESCRIPTION.length > 0);
+});
+
+test("an omitted routing card parses to undefined on both delegation surfaces", () => {
+  assert.equal(delegateTaskInputSchema.parse(BASE_INPUT).routingPreflight, undefined);
+  const batch = delegateTasksInputSchema.parse({
+    mode: "sequential",
+    tasks: [BASE_INPUT],
+  });
+  assert.equal(batch.routingPreflight, undefined);
+});
+
+test("an attached routing card completes itself with unknown rather than a guess", () => {
+  const parsed = delegateTaskInputSchema.parse({
+    ...BASE_INPUT,
+    routingPreflight: { seams: ["one seam"] },
+  });
+  assert.deepEqual(parsed.routingPreflight, {
+    seams: ["one seam"],
+    seamSize: "unknown",
+    sharedState: "unknown",
+    coreOverlap: "unknown",
+    integration: "unknown",
+    verification: "unknown",
+  });
+  // Every unknown resolves the cautious way, so an under-specified card advises
+  // solo — and still refuses nothing.
+  const evaluation = evaluateRouting(asRoutingCard(parsed.routingPreflight!), {
+    mode: "single",
+    taskCount: 1,
+  });
+  assert.equal(evaluation.route, "solo");
+  assert.equal(evaluation.refusedGate, null);
+  assert.equal(evaluation.unknownCount, 5);
+});
+
+test("the routing card bounds seam labels so they stay cheap and non-sensitive", () => {
+  const schema = z.object(routingPreflightShape);
+  assert.ok(schema.safeParse({ seams: [] }).success, "zero seams is declarable");
+  assert.ok(
+    schema.safeParse({ seams: Array(MAX_BATCH_SIZE).fill("seam") }).success,
+    "a seam per possible task is declarable",
+  );
+  assert.equal(
+    schema.safeParse({ seams: Array(MAX_BATCH_SIZE + 1).fill("seam") }).success,
+    false,
+  );
+  assert.equal(schema.safeParse({ seams: ["x".repeat(49)] }).success, false);
+  assert.ok(schema.safeParse({ seams: ["x".repeat(48)] }).success);
+});
+
+test("the preflight tool advertises advisory, no-side-effect, parent-owned semantics", () => {
+  assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /advisory only/i);
+  assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /refuses nothing/i);
+  assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /never required/i);
+  assert.match(
+    ROUTING_PREFLIGHT_TOOL_DESCRIPTION,
+    /creates no worker, batch, worktree, or thread/i,
+  );
+  assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /unknown/i);
+  assert.match(
+    ROUTING_PREFLIGHT_TOOL_DESCRIPTION,
+    /solo \| either \| delegation-plausible/,
+  );
+  assert.match(
+    ROUTING_PREFLIGHT_TOOL_DESCRIPTION,
+    /zero workers[\s\S]*normal|choosing zero workers/i,
+  );
+  assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /parent owns/i);
+  // The one reading that would make the advice actively harmful.
+  assert.match(
+    ROUTING_PREFLIGHT_TOOL_DESCRIPTION,
+    /either means fixed delegation overhead needs explicit justification/i,
+  );
+  // Routing must not appear to touch compute policy.
+  assert.doesNotMatch(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /how many workers/i);
+});
+
+test("SOL_RULES and the runtime agree on refuse, recommend, and parent judgement", async () => {
+  const rules = await readDoc("SOL_RULES.md");
+
+  // Refuse: the exact structural gates, and only those.
+  assert.match(rules, /seam-count-zero/);
+  assert.match(rules, /parallel-shared-mutable/);
+  assert.match(rules, /parallel-shared-core/);
+  assert.match(rules, /parallel-tasks-exceed-seams/);
+  assert.match(rules, /allowOverlappingScopes[\s\S]*downgrades `parallel-shared-core`/i);
+  assert.match(rules, /never downgrades[\s\S]*mutable shared state/i);
+  assert.match(rules, /Sequential mode is not refused/i);
+  assert.match(rules, /`routing_preflight` refuses nothing at all/i);
+
+  // Recommend: the route vocabulary and the reading of "either".
+  for (const route of ["solo", "either", "delegation-plausible"]) {
+    assert.match(rules, new RegExp(escapeRegExp(route)));
+  }
+  assert.match(rules, /either.{0,80}does\s+not\s+mean\s+"delegate by default"/is);
+  assert.match(rules, /read-only.{0,60}not a coupling\s+signal/is);
+  assert.match(rules, /no score, no threshold/i);
+
+  // Parent judgement, and the guarantees that make the card safe to attach.
+  assert.match(rules, /parent keeps every judgement/i);
+  assert.match(rules, /never blocks the call/i);
+  assert.match(
+    rules,
+    /uncertainty can never produce one|never produce a structural refusal/i,
+  );
+  assert.match(rules, /not a worker count/i);
+  assert.match(rules, /zero workers remains first-class/i);
+  assert.match(rules, /Never persisted in telemetry/i);
+});
+
+test("the routing docs agree with the runtime vocabulary", async () => {
+  const [rules, configuration, observability] = await Promise.all([
+    readDoc("SOL_RULES.md"),
+    readDoc("docs/CONFIGURATION.md"),
+    readDoc("docs/OBSERVABILITY.md"),
+  ]);
+
+  // Every declarable value the runtime accepts must be documented somewhere the
+  // parent will actually look.
+  for (const value of [
+    ...SEAM_SIZES,
+    ...SHARED_STATES,
+    ...CORE_OVERLAPS,
+    ...INTEGRATIONS,
+    ...VERIFICATIONS,
+  ]) {
+    assert.match(rules, new RegExp(escapeRegExp(value)), `${value} is undocumented`);
+  }
+
+  // The three telemetry records, and the privacy boundary they observe.
+  for (const record of [
+    "routing.preflight",
+    "routing.declared",
+    "routing.contradiction",
+    "declared-disjoint-core-scopes-overlap",
+    "declared-disjoint-core-files-collided",
+  ]) {
+    assert.match(observability, new RegExp(escapeRegExp(record)));
+  }
+  assert.match(observability, /seam labels/i);
+  assert.match(observability, /raw/i);
+  assert.match(observability, /no.{0,20}batchId|has \*\*no\*\* `batchId`/i);
+
+  // The documented seam bound must track the constant, not a copied number.
+  assert.match(rules, new RegExp(`0\.\.${MAX_BATCH_SIZE}`));
+
+  assert.match(configuration, /routing_preflight/);
+  assert.match(configuration, /before any worktree is created/i);
+  assert.match(configuration, /never reads, outputs, or selects\s*\n?worker effort/i);
+  // The accounting the docs describe must be the honest one: budgets bound the
+  // registered schemas, and the attribution diagnostics never stand in for the
+  // total.
+  assert.match(configuration, /advertisedTotal/);
+  assert.match(configuration, /delegationContract/);
+  assert.match(configuration, /routingCombined/);
+  assert.match(configuration, /schema the server actually registers/i);
+  assert.match(configuration, /sum to it exactly/i);
 });

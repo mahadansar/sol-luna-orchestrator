@@ -19,16 +19,19 @@ import {
   WORKER_MARKER_ENV,
 } from "./config.js";
 import {
+  asRoutingCard,
   continueTaskMcpInputShape,
   delegateTaskMcpInputShape,
   inputMetadataSizeReport,
   INPUT_METADATA_SIZE_BUDGETS,
   delegateTasksMcpInputShape,
+  routingPreflightMcpInputShape,
   type BatchOutput,
   type ContinueTaskInput,
   type DelegateTaskInput,
   type DelegateTaskOutput,
   type DelegateTasksInput,
+  type RoutingPreflightInput,
 } from "./contract.js";
 import { BatchRejectedError, runBatch } from "./batch.js";
 import { ContinuationStore, type ContinuationConsumeResult } from "./continuation.js";
@@ -41,6 +44,13 @@ import {
 import { collectWorktreeChanges, type WorktreeChanges } from "./git.js";
 import { WorkspaceError } from "./workspace.js";
 import { activityFailureReason, emitEvent, type EventEmitter } from "./events.js";
+import {
+  declaredRoutingFields,
+  describeRefusal,
+  evaluateRouting,
+  renderRoutingAdvisory,
+  renderRoutingPreflight,
+} from "./routing.js";
 import {
   filterOrchestratorOwnedSharedLinks,
   refreshWorktreeLease,
@@ -192,6 +202,69 @@ export const recordEvent = (
     // Telemetry must never break a delegation.
   }
 };
+
+/**
+ * Evaluate an optional routing card for a delegation call that is about to run.
+ *
+ * The batch path evaluates the card again inside `runBatch`, where the gates must
+ * sit before worktree creation; this evaluation exists only to render the compact
+ * advisory line. Both call the same pure function with the same inputs, so the
+ * two can neither disagree nor cost anything but a few comparisons — which is
+ * cheaper than widening the batch result schema to carry the evaluation back out.
+ */
+export function routingAdvisoryLine(
+  card: RoutingPreflightInput | undefined,
+  context: {
+    mode: "single" | "sequential" | "parallel";
+    taskCount: number;
+    allowOverlappingScopes?: boolean;
+  },
+): string | null {
+  if (!card) return null;
+  return renderRoutingAdvisory(evaluateRouting(asRoutingCard(card), context));
+}
+
+/**
+ * Enforce the universal structural gate for a single delegation.
+ *
+ * `delegate_task` requests no execution mechanism that a declaration can make
+ * unsound, so only the seam-count gate can refuse here. Everything else the card
+ * says is advice, and unknown values cannot reach this path at all.
+ */
+export function refuseSingleDelegation(
+  card: RoutingPreflightInput | undefined,
+  batchId: string,
+  emit: EventEmitter = emitEvent,
+): string | null {
+  if (!card) {
+    emit({
+      type: "routing.declared",
+      batchId,
+      declaration: "absent",
+      mode: "single",
+      taskCount: 1,
+    });
+    return null;
+  }
+  const routingCard = asRoutingCard(card);
+  const routing = evaluateRouting(routingCard, { mode: "single", taskCount: 1 });
+  emit({
+    type: "routing.declared",
+    batchId,
+    declaration: "attached",
+    mode: "single",
+    taskCount: 1,
+    seamCount: routing.seamCount,
+    unknownCount: routing.unknownCount,
+    route: routing.route,
+    gates: routing.gates,
+    signals: routing.signals,
+    refusedGate: routing.refusedGate,
+    parallelEligible: routing.parallelEligible,
+    ...declaredRoutingFields(routingCard),
+  });
+  return routing.refusedGate ? describeRefusal(routing.refusedGate) : null;
+}
 
 function makeSingleBatchId(): string {
   return `b${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
@@ -563,38 +636,80 @@ export function renderResult(
 /** The short general policy sent to the parent during MCP initialization. */
 export const SERVER_INSTRUCTIONS = `Sol-Luna Orchestrator routes bounded ownership from any compatible parent Codex model to ${LUNA_MODEL}; adaptive zero-worker use is valid. The parent owns architecture, decomposition, interfaces, scope, acceptance, and final judgement. Luna owns scoped exploration, implementation, verification, and repair. Use delegate_task for one substantial seam; delegate_tasks sequentially for dependent/shared state or parallel for independent disjoint scopes. More workers are not automatically better or cheaper; raw tokens are not credit cost and savings are parent-conditional. Runtime evidence outranks worker claims. VERIFIED_COMPLETE already passed scoped and final workspace checks: finish without rereading worker files or rerunning checks unless a listed risk changes architecture. Failures, conflicts, scope/trust discrepancies, and refused checks expand for targeted diagnosis. While a call has no meaningful new state, remain silent; do not narrate waiting or polling. Report only a result, error, cancellation, timeout, or actionable state change.`;
 
+export const ROUTING_PREFLIGHT_TOOL_DESCRIPTION = `Cheap deterministic check of whether delegating is structurally sound and economically sensible, before any repository exploration. Declare the ownership seams you are considering and what they share; leave a field "unknown" when you do not know, which biases the advice toward solo without ever refusing. Creates no worker, batch, worktree, or thread, refuses nothing, and returns route (solo | either | delegation-plausible), the deciding signals, and structural parallel eligibility. Advisory only and never required: the parent owns sequential vs parallel, worker count, effort, and the final decision, and choosing zero workers afterwards is a normal successful outcome. either means fixed delegation overhead needs explicit justification, otherwise stay solo.`;
+
+/**
+ * Deterministic ceilings for everything the server always advertises.
+ *
+ * `advertisedTotal` is the honest one: instructions, every tool description, and
+ * every registered input schema, with nothing excluded. `delegationContract` and
+ * `routingCombined` split that same total by owner so a regression can be
+ * attributed, but neither is presented as the session's metadata cost.
+ */
 export const METADATA_SIZE_BUDGETS = {
   serverInstructions: 1_100,
   delegateTaskDescription: 1_700,
   delegateTasksDescription: 2_150,
   continueTaskDescription: 700,
-  combined: 10_300,
+  routingPreflightDescription: 900,
+  advertisedTotal: 14_300,
+  delegationContract: 10_300,
+  routingCombined: 3_950,
 } as const;
 
+/**
+ * Measure the always-advertised metadata.
+ *
+ * `advertisedTotal` is what the parent is actually sent. `delegationContract`
+ * measures the pre-routing protocol surface — the same quantity the old
+ * `combined` entry guarded — so the delegation contract still cannot grow
+ * unnoticed, and `routingCombined` accounts for every byte routing preflight
+ * adds. The two diagnostics sum to the total by construction rather than by
+ * excluding anything from it.
+ */
 export function metadataSizeReport(): {
   serverInstructions: number;
   delegateTaskDescription: number;
   delegateTasksDescription: number;
   continueTaskDescription: number;
+  routingPreflightDescription: number;
   inputSchemas: ReturnType<typeof inputMetadataSizeReport>;
-  combined: number;
+  advertisedTotal: number;
+  delegationContract: number;
+  routingCombined: number;
 } {
   const inputSchemas = inputMetadataSizeReport();
-  const report = {
-    serverInstructions: SERVER_INSTRUCTIONS.length,
-    delegateTaskDescription: TOOL_DESCRIPTION.length,
-    delegateTasksDescription: BATCH_TOOL_DESCRIPTION.length,
-    continueTaskDescription: CONTINUE_TOOL_DESCRIPTION.length,
+  const serverInstructions = SERVER_INSTRUCTIONS.length;
+  const delegateTaskDescription = TOOL_DESCRIPTION.length;
+  const delegateTasksDescription = BATCH_TOOL_DESCRIPTION.length;
+  const continueTaskDescription = CONTINUE_TOOL_DESCRIPTION.length;
+  const routingPreflightDescription = ROUTING_PREFLIGHT_TOOL_DESCRIPTION.length;
+  const delegationContract =
+    serverInstructions +
+    delegateTaskDescription +
+    delegateTasksDescription +
+    continueTaskDescription +
+    inputSchemas.contractCombined;
+  const routingCombined = routingPreflightDescription + inputSchemas.routingCombined;
+  return {
+    serverInstructions,
+    delegateTaskDescription,
+    delegateTasksDescription,
+    continueTaskDescription,
+    routingPreflightDescription,
     inputSchemas,
-    combined: 0,
+    // Summed from the advertised figures directly, not from the two diagnostics:
+    // the total must stay correct even if their attribution ever changes.
+    advertisedTotal:
+      serverInstructions +
+      delegateTaskDescription +
+      delegateTasksDescription +
+      continueTaskDescription +
+      routingPreflightDescription +
+      inputSchemas.advertisedCombined,
+    delegationContract,
+    routingCombined,
   };
-  report.combined =
-    report.serverInstructions +
-    report.delegateTaskDescription +
-    report.delegateTasksDescription +
-    report.continueTaskDescription +
-    inputSchemas.combined;
-  return report;
 }
 
 export function assertMetadataBudgets(): void {
@@ -607,12 +722,17 @@ export function assertMetadataBudgets(): void {
       METADATA_SIZE_BUDGETS.delegateTasksDescription ||
     metadataSizes.continueTaskDescription >
       METADATA_SIZE_BUDGETS.continueTaskDescription ||
-    metadataSizes.combined > METADATA_SIZE_BUDGETS.combined ||
-    Object.entries(INPUT_METADATA_SIZE_BUDGETS).some(([key, budget]) =>
-      key === "combined"
-        ? metadataSizes.inputSchemas.combined > budget
-        : metadataSizes.inputSchemas[key as keyof typeof metadataSizes.inputSchemas] >
-          budget,
+    metadataSizes.routingPreflightDescription >
+      METADATA_SIZE_BUDGETS.routingPreflightDescription ||
+    metadataSizes.advertisedTotal > METADATA_SIZE_BUDGETS.advertisedTotal ||
+    metadataSizes.delegationContract > METADATA_SIZE_BUDGETS.delegationContract ||
+    metadataSizes.routingCombined > METADATA_SIZE_BUDGETS.routingCombined ||
+    // Every input-schema budget names a field of the report, so there is no
+    // special case here and no advertised surface without a ceiling.
+    Object.entries(INPUT_METADATA_SIZE_BUDGETS).some(
+      ([key, budget]) =>
+        metadataSizes.inputSchemas[key as keyof typeof metadataSizes.inputSchemas] >
+        budget,
     )
   ) {
     throw new Error(
@@ -657,6 +777,23 @@ function registerDelegateTask(): void {
         taskCount: 1,
         maxParallel: 1,
       });
+
+      // Before the worker, the workspace, or anything else: the only refusal a
+      // single delegation's declaration can earn is having declared no seam.
+      const routingRefusal = refuseSingleDelegation(task.routingPreflight, batchId);
+      if (routingRefusal) {
+        emitEvent({ type: "batch.rejected", batchId, reason: routingRefusal });
+        log(`delegate_task refused: ${routingRefusal}`);
+        return {
+          content: [{ type: "text" as const, text: routingRefusal }],
+          isError: true,
+        };
+      }
+      const routingAdvisory = routingAdvisoryLine(task.routingPreflight, {
+        mode: "single",
+        taskCount: 1,
+      });
+
       emitEvent({
         type: "task.queued",
         batchId,
@@ -737,15 +874,16 @@ function registerDelegateTask(): void {
           task.resultDetail ?? "handoff",
         );
 
+        const rendered = renderResult(result, {
+          batchId,
+          taskId,
+          integration: "single-task workspace",
+        });
         const response = {
           content: [
             {
               type: "text" as const,
-              text: renderResult(result, {
-                batchId,
-                taskId,
-                integration: "single-task workspace",
-              }),
+              text: routingAdvisory ? `${routingAdvisory}\n${rendered}` : rendered,
             },
           ],
         };
@@ -1016,6 +1154,12 @@ function registerDelegateTasks(): void {
           `efforts=[${batch.tasks.map((task) => task.effort).join(",")}]`,
       );
 
+      const routingAdvisory = routingAdvisoryLine(batch.routingPreflight, {
+        mode: batch.mode,
+        taskCount: batch.tasks.length,
+        allowOverlappingScopes: batch.allowOverlappingScopes,
+      });
+
       try {
         const result = await runBatch(batch.tasks as DelegateTaskInput[], {
           mode: batch.mode,
@@ -1026,6 +1170,7 @@ function registerDelegateTasks(): void {
           signal: extra?.signal,
           continuationRegistrar: registerContinuation,
           protectedWorktreePaths: continuationStore.protectedWorkingDirectories(),
+          routingPreflight: batch.routingPreflight,
         });
         log(
           `batch done: ${result.passed}/${result.taskCount} passed in ` +
@@ -1037,8 +1182,14 @@ function registerDelegateTasks(): void {
           batch.resultDetail ?? "handoff",
         );
 
+        const rendered = renderBatch(result);
         const response = {
-          content: [{ type: "text" as const, text: renderBatch(result) }],
+          content: [
+            {
+              type: "text" as const,
+              text: routingAdvisory ? `${routingAdvisory}\n${rendered}` : rendered,
+            },
+          ],
         };
         return structuredContent ? { ...response, structuredContent } : response;
       } catch (error) {
@@ -1052,6 +1203,52 @@ function registerDelegateTasks(): void {
           isError: true,
         };
       }
+    },
+  );
+}
+
+function makePreflightId(): string {
+  return `p${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
+}
+
+/**
+ * The advisory surface.
+ *
+ * Registered as a real tool because the decision it informs happens before the
+ * parent has spent anything, and a tool call is the only place the parent can ask
+ * a question at that point. It refuses nothing, creates nothing, and its only
+ * side effect is one telemetry record — deliberately, so that calling it and then
+ * choosing zero workers is indistinguishable from a normal successful outcome.
+ */
+function registerRoutingPreflight(): void {
+  server.registerTool(
+    "routing_preflight",
+    {
+      title: "Check cheaply whether delegating is worth it",
+      description: ROUTING_PREFLIGHT_TOOL_DESCRIPTION,
+      inputSchema: routingPreflightMcpInputShape,
+    },
+    (input) => {
+      const card = asRoutingCard(input as RoutingPreflightInput);
+      const evaluation = evaluateRouting(card, { mode: "preflight" });
+      emitEvent({
+        type: "routing.preflight",
+        preflightId: makePreflightId(),
+        route: evaluation.route,
+        seamCount: evaluation.seamCount,
+        unknownCount: evaluation.unknownCount,
+        gates: evaluation.gates,
+        signals: evaluation.signals,
+        parallelEligible: evaluation.parallelEligible,
+        ...declaredRoutingFields(card),
+      });
+      log(
+        `routing_preflight: route=${evaluation.route} seams=${evaluation.seamCount} ` +
+          `unknown=${evaluation.unknownCount} parallelEligible=${evaluation.parallelEligible}`,
+      );
+      return {
+        content: [{ type: "text" as const, text: renderRoutingPreflight(evaluation) }],
+      };
     },
   );
 }
@@ -1272,6 +1469,7 @@ async function main(): Promise<void> {
     registerDelegateTask();
     registerDelegateTasks();
     registerContinueTask();
+    registerRoutingPreflight();
   }
 
   const transport = new StdioServerTransport();

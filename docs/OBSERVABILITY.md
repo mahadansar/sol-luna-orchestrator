@@ -53,8 +53,9 @@ or rejected; task queued; worker started, completed, failed, cancelled or timed
 out; worktree created, removed or retained; verification started and completed;
 scope conflicts; integration conflicts, applied file counts, and completed,
 not-attempted, partial or failed integration; final-workspace verification
-started and completed; bounded repair started and completed; and bounded
-recovery skipped, started, and completed.
+started and completed; bounded repair started and completed; bounded recovery
+skipped, started, and completed; and cheap routing preflight, declaration, and
+contradiction records.
 
 Parallel recovery keeps the original batchId/taskId and emits an explicit attempt
 ordinal. Its classification and concise evidence identify a timeout continuation
@@ -97,6 +98,7 @@ Carried on those records:
 - Optional explicit `activityLabel` (never derived from the objective)
 - Batch mode, task count and configured concurrency
 - Attempt ordinal and bounded recovery classification/evidence when applicable
+- Raw declared routing values, seam and unknown counts, route, gates and signals
 
 Deliberately **not** written to this stream:
 
@@ -104,6 +106,7 @@ Deliberately **not** written to this stream:
 - Task context (`context`, `contextCapsule`)
 - Source code
 - Verification command output — only a short failure reason may surface
+- Routing seam labels, routing rationale, routing scores, and cost estimates
 
 Task ids are opaque (`t1`, `t2`, …) and batch ids are generated: neither is
 derived from the objective text, so an id can never leak the brief. Paths,
@@ -120,6 +123,46 @@ from a pre-hardening version may still contain older schema fields such as an
 objective. Rotate or remove historical JSONL if that older local content is too
 sensitive to retain. The current reader validates and drops unsupported fields;
 it does not rewrite the file on disk.
+
+### Routing preflight records
+
+Three records describe cheap routing. They are decision records, not lifecycle
+records, and the activity reducer deliberately does not know them: it drops
+unknown event shapes, so they never alter an `ActivitySnapshot` or raise an
+operator warning.
+
+`routing.preflight` records one advisory `routing_preflight` call. It carries a
+`preflightId`, the route, seam count, unknown count, gates, signals, and
+`parallelEligible`, plus the five raw declared values. It has **no** `batchId`,
+because no batch exists at that point.
+
+`routing.declared` records what a real delegation call declared. It always
+carries `batchId`, `declaration` (`attached` or `absent`), `mode`, and
+`taskCount`. An attached declaration additionally carries `seamCount`,
+`unknownCount`, `route`, `gates`, `signals`, `refusedGate` (or `null`), the raw
+declared values, and `parallelEligible`. An absent declaration carries none of
+those: nothing was evaluated, so no route or eligibility is claimed for it.
+
+`routing.contradiction` records that the runtime's own already-computed evidence
+disagrees with the declaration — `declared-disjoint-core-scopes-overlap` when
+declared-disjoint cores have overlapping declared scopes, and
+`declared-disjoint-core-files-collided` when workers demonstrably wrote the same
+file. Each keeps only the declared value and a count of what was observed. These
+are advisory records: the existing scope and integration gates remain
+authoritative for what actually happens.
+
+Routing records its evaluation before it enforces it, so an attached card appears
+in `routing.declared` — including the `refusedGate` it would have refused on —
+even when the observed scope-conflict gate rejects the batch first. A rejection
+therefore has exactly one `batch.rejected` reason, while telemetry still shows
+what routing concluded.
+
+Declared values are recorded **raw**, never conservatively resolved, so a reader
+can always distinguish a declared hazard from an admitted `unknown` — which is
+also why `unknownCount` is kept. Deliberately **not** written for any routing
+record: seam labels, objective text, free-text rationale, any numeric routing
+score, and any cost estimate. The seam count is kept because a count describes no
+work; the labels are dropped because they can.
 
 ### activityLabel
 

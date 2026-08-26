@@ -15,7 +15,12 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { handleContinueTask, renderBatch } from "./server.js";
+import {
+  handleContinueTask,
+  refuseSingleDelegation,
+  renderBatch,
+  routingAdvisoryLine,
+} from "./server.js";
 import { BatchRejectedError, runBatch as runProductionBatch } from "./batch.js";
 import { CONTINUATION_TTL_MS, ContinuationStore } from "./continuation.js";
 import {
@@ -29,6 +34,7 @@ import {
   type BatchOutput,
   type DelegateTaskInput,
   type DelegateTaskOutput,
+  type RoutingPreflightInput,
   type WorkerReport,
 } from "./contract.js";
 import { collectWorktreeChanges, runGit } from "./git.js";
@@ -3660,3 +3666,622 @@ for (const mode of ["parallel", "sequential"] as const) {
     }
   });
 }
+
+// --- Cheap routing on the delegation paths ----------------------------------
+
+type RoutingEventRecord = { type: string } & Record<string, unknown>;
+
+/**
+ * Run a batch while capturing its telemetry.
+ *
+ * The shared `runBatch` above silences events deliberately; these cases are
+ * specifically about what routing records and when it refuses, so they use the
+ * production entry point with their own sink.
+ */
+async function runRoutedBatch(
+  tasks: DelegateTaskInput[],
+  options: Parameters<typeof runProductionBatch>[1],
+): Promise<{
+  result: BatchOutput | null;
+  error: Error | null;
+  events: RoutingEventRecord[];
+}> {
+  const events: RoutingEventRecord[] = [];
+  try {
+    const result = await runProductionBatch(tasks, {
+      ...options,
+      eventEmitter: (event) => events.push(event as RoutingEventRecord),
+      integrationVerifier:
+        options.integrationVerifier ??
+        (async (commands) =>
+          commands.map((command) => ({
+            command,
+            exitCode: 0,
+            passed: true,
+            output: "deterministic final verification passed",
+            execution: "argv" as const,
+          }))),
+    });
+    return { result, error: null, events };
+  } catch (error) {
+    return { result: null, error: error as Error, events };
+  }
+}
+
+const declaredOf = (events: RoutingEventRecord[]): RoutingEventRecord | undefined =>
+  events.find((event) => event.type === "routing.declared");
+
+const ROUTING_CARD: RoutingPreflightInput = {
+  seams: ["alpha", "beta"],
+  seamSize: "substantial",
+  sharedState: "none",
+  coreOverlap: "disjoint",
+  integration: "mechanical",
+  verification: "per-seam",
+};
+
+const routingCard = (
+  overrides: Partial<RoutingPreflightInput> = {},
+): RoutingPreflightInput => ({ ...ROUTING_CARD, ...overrides });
+
+test("routing paths - a single delegation can only be refused for declaring no seam", () => {
+  const events: RoutingEventRecord[] = [];
+  const emit = (event: unknown): void => void events.push(event as RoutingEventRecord);
+
+  // Every hazard a card can declare, on the surface that requests no mechanism.
+  for (const hazard of [
+    routingCard({ sharedState: "mutable" }),
+    routingCard({ coreOverlap: "shared-core" }),
+    routingCard({ integration: "architectural" }),
+    routingCard({ seamSize: "small", verification: "shared-only" }),
+    routingCard({ sharedState: "unknown", coreOverlap: "unknown" }),
+  ]) {
+    assert.equal(
+      refuseSingleDelegation(hazard, "b-single", emit),
+      null,
+      "coupling and uncertainty advise, they do not refuse",
+    );
+  }
+  const refusal = refuseSingleDelegation(routingCard({ seams: [] }), "b-single", emit);
+  assert.match(refusal ?? "", /no ownership seams/i);
+  assert.match(refusal ?? "", /solo|declare the seams/i);
+});
+
+test("routing paths - coupling recommends solo in single, sequential and parallel modes", () => {
+  for (const mode of ["single", "sequential", "parallel"] as const) {
+    const line = routingAdvisoryLine(routingCard({ coreOverlap: "shared-core" }), {
+      mode,
+      taskCount: 2,
+      allowOverlappingScopes: true,
+    });
+    assert.match(line ?? "", /^ROUTING: solo advised/, `${mode} should advise solo`);
+    assert.match(line ?? "", /shared-core/, `${mode} should name the signal`);
+    assert.match(
+      line ?? "",
+      /executed as requested/,
+      `${mode} must not read as a refusal`,
+    );
+  }
+});
+
+test("routing paths - an attached card records its raw declaration and route", async () => {
+  const repo = await makeRepo();
+  try {
+    const { result, events } = await runRoutedBatch(
+      [makeTask({ allowedFiles: ["src/one/**"] })],
+      {
+        mode: "sequential",
+        workingDirectory: repo,
+        executor: fakeExecutor({}),
+        routingPreflight: routingCard({ seams: ["alpha"], seamSize: "small" }),
+      },
+    );
+    assert.ok(result);
+    const declared = declaredOf(events);
+    assert.equal(declared?.declaration, "attached");
+    assert.equal(declared?.mode, "sequential");
+    assert.equal(declared?.taskCount, 1);
+    assert.equal(declared?.seamCount, 1);
+    assert.equal(declared?.unknownCount, 0);
+    assert.equal(declared?.route, "solo");
+    assert.equal(declared?.declaredSeamSize, "small");
+    assert.equal(declared?.declaredSharedState, "none");
+    assert.equal(declared?.declaredCoreOverlap, "disjoint");
+    assert.equal(declared?.declaredIntegration, "mechanical");
+    assert.equal(declared?.declaredVerification, "per-seam");
+    assert.equal(declared?.refusedGate, null);
+    assert.equal(declared?.parallelEligible, false);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("routing paths - no card keeps the previous behavior and records an absent declaration", async () => {
+  const repo = await makeRepo();
+  try {
+    const { result, events } = await runRoutedBatch(
+      [makeTask({ allowedFiles: ["src/one/**"] })],
+      { mode: "sequential", workingDirectory: repo, executor: fakeExecutor({}) },
+    );
+    assert.ok(result);
+    assert.equal(result.passed, 1, describeBatch(result));
+    const declared = declaredOf(events);
+    assert.equal(declared?.declaration, "absent");
+    assert.equal(declared?.mode, "sequential");
+    assert.equal(declared?.taskCount, 1);
+    // Nothing was evaluated, so nothing about a route may be claimed.
+    assert.equal(declared?.route, undefined);
+    assert.equal(declared?.parallelEligible, undefined);
+    assert.equal(declared?.seamCount, undefined);
+    assert.equal(
+      result.warnings.filter((warning) => /routing/i.test(warning)).length,
+      0,
+      describeBatch(result),
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("routing paths - a sequential batch is never refused for coupling or shape", async () => {
+  const repo = await makeRepo();
+  try {
+    for (const hazard of [
+      routingCard({ sharedState: "mutable" }),
+      routingCard({ coreOverlap: "shared-core" }),
+      routingCard({ integration: "architectural" }),
+      routingCard({ sharedState: "unknown", coreOverlap: "unknown" }),
+    ]) {
+      const { result, events } = await runRoutedBatch(
+        [
+          makeTask({ allowedFiles: ["src/one/**"] }),
+          makeTask({ allowedFiles: ["src/two/**"] }),
+        ],
+        {
+          mode: "sequential",
+          workingDirectory: repo,
+          executor: fakeExecutor({}),
+          routingPreflight: hazard,
+        },
+      );
+      assert.ok(result, "sequential work may share state by design");
+      assert.equal(result.passed, 2, describeBatch(result));
+      assert.equal(declaredOf(events)?.refusedGate, null);
+    }
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("routing paths - more sequential steps than seams executes and reports the advisory", async () => {
+  const repo = await makeRepo();
+  try {
+    const { result, events } = await runRoutedBatch(
+      [
+        makeTask({ allowedFiles: ["src/one/**"] }),
+        makeTask({ allowedFiles: ["src/two/**"] }),
+        makeTask({ allowedFiles: ["src/three/**"] }),
+      ],
+      {
+        mode: "sequential",
+        workingDirectory: repo,
+        executor: fakeExecutor({}),
+        routingPreflight: routingCard({ seams: ["alpha", "beta"] }),
+      },
+    );
+    assert.ok(result, "an advisory must not stop execution");
+    assert.equal(result.passed, 3, describeBatch(result));
+    const declared = declaredOf(events);
+    assert.equal(declared?.refusedGate, null);
+    assert.deepEqual(declared?.signals, ["steps-exceed-seams"]);
+    assert.deepEqual(declared?.gates, []);
+
+    const advisory = routingAdvisoryLine(routingCard({ seams: ["alpha", "beta"] }), {
+      mode: "sequential",
+      taskCount: 3,
+    });
+    assert.match(advisory ?? "", /more tasks than declared seams/);
+    assert.match(advisory ?? "", /continue_task/);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("routing paths - more parallel tasks than seams is refused before any worktree", async () => {
+  const repo = await makeRepo();
+  try {
+    let started = false;
+    const { result, error, events } = await runRoutedBatch(
+      [
+        makeTask({ allowedFiles: ["src/one/**"] }),
+        makeTask({ allowedFiles: ["src/two/**"] }),
+        makeTask({ allowedFiles: ["src/three/**"] }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        routingPreflight: routingCard({ seams: ["alpha", "beta"] }),
+        executor: async () => {
+          started = true;
+          return makeOutput();
+        },
+      },
+    );
+    assert.equal(result, null);
+    assert.ok(error instanceof BatchRejectedError);
+    assert.match(error.message, /more tasks than the routing card declares seams/);
+    assert.equal(started, false, "no worker may start");
+    assert.equal(
+      events.some((event) => event.type === "worktree.created"),
+      false,
+      "no worktree may be created before the gate",
+    );
+    assert.equal(declaredOf(events)?.refusedGate, "parallel-tasks-exceed-seams");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("routing paths - declared mutable shared state is refused before any worktree", async () => {
+  const repo = await makeRepo();
+  try {
+    for (const allowOverlappingScopes of [false, true]) {
+      let started = false;
+      const { result, error, events } = await runRoutedBatch(
+        [
+          makeTask({ allowedFiles: ["src/one/**"] }),
+          makeTask({ allowedFiles: ["src/two/**"] }),
+        ],
+        {
+          mode: "parallel",
+          workingDirectory: repo,
+          allowOverlappingScopes,
+          routingPreflight: routingCard({ sharedState: "mutable" }),
+          executor: async () => {
+            started = true;
+            return makeOutput();
+          },
+        },
+      );
+      assert.equal(result, null);
+      assert.ok(error instanceof BatchRejectedError);
+      assert.match(error.message, /mutable shared state/);
+      assert.match(error.message, /sequential|solo/);
+      assert.equal(started, false);
+      assert.equal(
+        events.some((event) => event.type === "worktree.created"),
+        false,
+      );
+      assert.equal(
+        declaredOf(events)?.refusedGate,
+        "parallel-shared-mutable",
+        "the escape hatch must never downgrade mutable shared state",
+      );
+    }
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("routing paths - a declared shared core is refused unless the caller accepts the overlap", async () => {
+  const repo = await makeRepo();
+  try {
+    let started = false;
+    const refused = await runRoutedBatch(
+      [
+        makeTask({ allowedFiles: ["src/one/**"] }),
+        makeTask({ allowedFiles: ["src/two/**"] }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        routingPreflight: routingCard({ coreOverlap: "shared-core" }),
+        executor: async () => {
+          started = true;
+          return makeOutput();
+        },
+      },
+    );
+    assert.ok(refused.error instanceof BatchRejectedError);
+    assert.match(refused.error.message, /shared core/);
+    assert.match(refused.error.message, /allowOverlappingScopes/);
+    assert.equal(started, false);
+    assert.equal(
+      refused.events.some((event) => event.type === "worktree.created"),
+      false,
+    );
+
+    const accepted = await runRoutedBatch(
+      [
+        makeTask({ allowedFiles: ["src/one/**"] }),
+        makeTask({ allowedFiles: ["src/two/**"] }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        allowOverlappingScopes: true,
+        keepWorktrees: "never",
+        routingPreflight: routingCard({ coreOverlap: "shared-core" }),
+        executor: fakeExecutor({
+          writes: (task) => ({ [`src/${moduleOf(task)}/value.ts`]: "unique\n" }),
+        }),
+      },
+    );
+    assert.ok(accepted.result, "an accepted overlap must execute");
+    assert.equal(accepted.result.passed, 2, describeBatch(accepted.result));
+    assert.equal(declaredOf(accepted.events)?.refusedGate, null);
+    assert.deepEqual(declaredOf(accepted.events)?.gates, ["parallel-shared-core"]);
+    assert.ok(
+      accepted.result.warnings.some((warning) => /shared core/i.test(warning)),
+      describeBatch(accepted.result),
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("routing paths - a solo recommendation still executes a parallel batch", async () => {
+  const repo = await makeRepo();
+  try {
+    const { result, events } = await runRoutedBatch(
+      [
+        makeTask({ allowedFiles: ["src/one/**"] }),
+        makeTask({ allowedFiles: ["src/two/**"] }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        // Architectural integration is decisive advice, and structurally silent.
+        routingPreflight: routingCard({ integration: "architectural" }),
+        executor: fakeExecutor({
+          writes: (task) => ({ [`src/${moduleOf(task)}/value.ts`]: "unique\n" }),
+        }),
+      },
+    );
+    assert.ok(result, "advice never blocks execution");
+    assert.equal(result.passed, 2, describeBatch(result));
+    const declared = declaredOf(events);
+    assert.equal(declared?.route, "solo");
+    assert.equal(declared?.refusedGate, null);
+    // Structurally separable while still advised against: the two are different
+    // questions, and the runtime answers both without conflating them.
+    assert.equal(declared?.parallelEligible, true);
+    assert.equal(
+      result.warnings.filter((warning) => /solo/i.test(warning)).length,
+      0,
+      "advice belongs on the advisory line, not in batch warnings",
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("routing paths - declared disjoint cores contradicted by overlapping scopes", async () => {
+  const repo = await makeRepo();
+  try {
+    const { events } = await runRoutedBatch(
+      [
+        makeTask({ allowedFiles: ["src/auth/**"] }),
+        makeTask({ allowedFiles: ["src/**"] }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        routingPreflight: routingCard({ coreOverlap: "disjoint" }),
+        executor: fakeExecutor({}),
+      },
+    );
+    const contradiction = events.find((event) => event.type === "routing.contradiction");
+    assert.equal(contradiction?.kind, "declared-disjoint-core-scopes-overlap");
+    assert.equal(contradiction?.declaredCoreOverlap, "disjoint");
+    assert.equal(contradiction?.observed, 1);
+    // The existing scope gate remains the authority on what actually happens.
+    assert.ok(
+      events.some(
+        (event) =>
+          event.type === "batch.rejected" && /overlapping/i.test(String(event.reason)),
+      ),
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("routing paths - an observed scope conflict outranks a routing refusal", async () => {
+  const repo = await makeRepo();
+  try {
+    let started = false;
+    const { error, events } = await runRoutedBatch(
+      [
+        makeTask({ allowedFiles: ["src/auth/**"] }),
+        makeTask({ allowedFiles: ["src/**"] }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        // Both gates would fire. The observed same-file race is the real hazard
+        // and must be the one the caller is told about, because its remedy
+        // (disjoint scopes) is narrower than allowOverlappingScopes, which the
+        // shared-core message would have recommended and which also waives this.
+        routingPreflight: routingCard({ coreOverlap: "shared-core" }),
+        executor: async () => {
+          started = true;
+          return makeOutput();
+        },
+      },
+    );
+
+    assert.ok(error instanceof BatchRejectedError);
+    assert.match(error.message, /overlapping file scopes/i);
+    assert.doesNotMatch(error.message, /routing card/i);
+    assert.equal(started, false, "nothing may run");
+    assert.equal(
+      events.some((event) => event.type === "worktree.created"),
+      false,
+      "both gates stay before worktree creation",
+    );
+
+    const rejected = events.filter((event) => event.type === "batch.rejected");
+    assert.equal(rejected.length, 1, "exactly one rejection is recorded");
+    assert.equal(rejected[0]?.reason, "overlapping scopes");
+
+    // Routing still recorded its evaluation, including the gate it would have
+    // refused on, so precedence changed which message the caller reads and
+    // nothing about what telemetry knows.
+    const declared = declaredOf(events);
+    assert.equal(declared?.declaration, "attached");
+    assert.equal(declared?.refusedGate, "parallel-shared-core");
+    assert.deepEqual(declared?.gates, ["parallel-shared-core"]);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("routing paths - routing still refuses when no scope conflict competes", async () => {
+  const repo = await makeRepo();
+  try {
+    let started = false;
+    const { error, events } = await runRoutedBatch(
+      [
+        makeTask({ allowedFiles: ["src/one/**"] }),
+        makeTask({ allowedFiles: ["src/two/**"] }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        routingPreflight: routingCard({ sharedState: "mutable" }),
+        executor: async () => {
+          started = true;
+          return makeOutput();
+        },
+      },
+    );
+
+    // Disjoint declared scopes, so the scope gate is silent and routing is the
+    // gate that actually rejects — still before any worktree.
+    assert.ok(error instanceof BatchRejectedError);
+    assert.match(error.message, /mutable shared state/i);
+    assert.equal(started, false);
+    assert.equal(
+      events.some((event) => event.type === "worktree.created"),
+      false,
+    );
+    assert.equal(
+      events.some((event) => event.type === "scope.conflict"),
+      false,
+    );
+    const rejected = events.filter((event) => event.type === "batch.rejected");
+    assert.equal(rejected.length, 1);
+    assert.match(String(rejected[0]?.reason), /mutable shared state/i);
+    assert.equal(declaredOf(events)?.refusedGate, "parallel-shared-mutable");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("routing paths - declared disjoint cores contradicted by a real file collision", async () => {
+  const repo = await makeRepo();
+  try {
+    const { result, events } = await runRoutedBatch(
+      [
+        makeTask({ allowedFiles: ["src/one/**", "shared/**"] }),
+        makeTask({ allowedFiles: ["src/two/**", "shared/**"] }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        allowOverlappingScopes: true,
+        keepWorktrees: "never",
+        routingPreflight: routingCard({ coreOverlap: "disjoint" }),
+        executor: fakeExecutor({
+          writes: (task) => ({
+            [`src/${moduleOf(task)}/value.ts`]: "unique\n",
+            "shared/value.ts": `${moduleOf(task)}\n`,
+          }),
+        }),
+      },
+    );
+    assert.ok(result);
+    assert.equal(result.integrationConflicts.length, 1, describeBatch(result));
+    const contradiction = events.find(
+      (event) =>
+        event.type === "routing.contradiction" &&
+        event.kind === "declared-disjoint-core-files-collided",
+    );
+    assert.ok(contradiction, "a demonstrated collision contradicts the declaration");
+    assert.equal(contradiction.observed, 1);
+    // Recorded, not enforced: integration had already refused to apply it.
+    assert.equal(result.integrated, false);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("routing paths - telemetry never carries seam labels", async () => {
+  const repo = await makeRepo();
+  try {
+    const { events } = await runRoutedBatch(
+      [makeTask({ allowedFiles: ["src/one/**"] })],
+      {
+        mode: "sequential",
+        workingDirectory: repo,
+        executor: fakeExecutor({}),
+        routingPreflight: routingCard({
+          seams: ["SEAM_LABEL_LEAK_SENTINEL", "SECOND_SENTINEL"],
+        }),
+      },
+    );
+    const serialized = JSON.stringify(events);
+    assert.doesNotMatch(serialized, /SENTINEL/);
+    assert.doesNotMatch(serialized, /"seams"/);
+    // The count survives, because a count describes no work.
+    assert.equal(declaredOf(events)?.seamCount, 2);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("routing paths - routing changes no worker count, concurrency, or effort", async () => {
+  const repo = await makeRepo();
+  try {
+    const efforts: string[] = [];
+    let peak = 0;
+    const { result, events } = await runRoutedBatch(
+      [
+        makeTask({ allowedFiles: ["src/one/**"], effort: "medium" }),
+        makeTask({ allowedFiles: ["src/two/**"], effort: "xhigh" }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        // Eligible for parallel work, and advised against it: neither may touch
+        // the mechanical parameters the operator and parent own.
+        routingPreflight: routingCard({ integration: "architectural" }),
+        executor: fakeExecutor({
+          writes: (task) => ({ [`src/${moduleOf(task)}/value.ts`]: "unique\n" }),
+          onConcurrency: (active) => {
+            peak = Math.max(peak, active);
+          },
+          output: (task) => {
+            efforts.push(task.effort);
+            return {};
+          },
+        }),
+      },
+    );
+    assert.ok(result);
+    assert.equal(result.taskCount, 2, describeBatch(result));
+    assert.equal(result.maxParallel, MAX_PARALLEL);
+    assert.deepEqual(efforts.sort(), ["medium", "xhigh"]);
+    assert.deepEqual(
+      result.tasks.map((task) => task.effort),
+      ["medium", "xhigh"],
+    );
+    assert.ok(peak <= MAX_PARALLEL);
+    assert.equal(declaredOf(events)?.route, "solo");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});

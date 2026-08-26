@@ -8,6 +8,35 @@ All notable changes to this project are documented here. Format follows
 
 ### Added
 
+- Added a cheap routing eligibility preflight. An optional `routing_preflight`
+  advisory tool and an optional `routingPreflight` card on `delegate_task` and
+  `delegate_tasks` let the parent test a delegation before paying for it. A pure
+  synchronous evaluator (no filesystem, process, network, model call, or
+  repository analysis) returns a `solo` / `either` / `delegation-plausible`
+  route, the deciding signals, and a structural `parallelEligible` boolean.
+  Structural refusals read raw declarations only — an empty seam list on any
+  surface, and in parallel mode declared mutable shared state, a declared shared
+  core, or more tasks than declared seams — and are enforced before any worktree
+  is created. `allowOverlappingScopes: true` downgrades the shared-core gate
+  only. Declaring `unknown` biases advice toward solo but never refuses, coupling
+  advice never blocks execution, and the card is optional: with none attached,
+  behavior is unchanged. Routing reads no effort, recommends no worker count, and
+  changes no concurrency. New `routing.preflight`, `routing.declared`, and
+  `routing.contradiction` telemetry records raw declared values, counts, gates,
+  signals, and eligibility, and never seam labels, objectives, rationale, scores,
+  or cost estimates. Metadata budgets now measure the schemas the server actually
+  registers: `advertisedTotal` bounds everything advertised with the routing card
+  included, while `delegationContract` and `routingCombined` attribute that same
+  total to the delegation protocol and to routing without either standing in for
+  it.
+- Changed the advertised metadata accounting so every budget bounds a schema the
+  MCP server really registers. The previous per-surface delegation entries and
+  the `combined` ceiling measured the delegation contract with the routing card
+  removed, so they no longer bounded what the parent was actually sent.
+  `delegateTask` and `delegateTasks` now include the card and have explicit
+  raised ceilings, `advertisedCombined`/`advertisedTotal` bound the real
+  advertised totals, and the card-excluded figures are retained as the
+  `*Contract`/`delegationContract` diagnostics they always were.
 - Added the frozen Benchmark V3 routing holdout: nine new deterministic
   engineering fixtures, hidden references, evaluator-only routing categories,
   Solo/Adaptive campaign support, pricing revalidation, checkpoint-compatible

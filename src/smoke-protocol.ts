@@ -92,6 +92,78 @@ async function main(): Promise<void> {
 
   const continueTool = tools.find((t) => t.name === "continue_task");
   check("continue_task is advertised", () => assert.ok(continueTool));
+
+  const preflightTool = tools.find((t) => t.name === "routing_preflight");
+  check("routing_preflight is advertised", () => assert.ok(preflightTool));
+  check("routing_preflight advertises exactly the finalized card fields", () => {
+    const properties = (preflightTool?.inputSchema?.properties ?? {}) as Record<
+      string,
+      unknown
+    >;
+    assert.deepEqual(Object.keys(properties).sort(), [
+      "coreOverlap",
+      "integration",
+      "seamSize",
+      "seams",
+      "sharedState",
+      "verification",
+    ]);
+    const enums: Record<string, string[]> = {
+      seamSize: ["small", "substantial", "unknown"],
+      sharedState: ["none", "read-only", "mutable", "unknown"],
+      coreOverlap: ["disjoint", "shared-core", "unknown"],
+      integration: ["mechanical", "architectural", "unknown"],
+      verification: ["per-seam", "shared-only", "unknown"],
+    };
+    for (const [field, expected] of Object.entries(enums)) {
+      const schema = properties[field] as { enum?: string[]; default?: string };
+      assert.deepEqual(schema.enum, expected, `${field} vocabulary drifted`);
+      assert.equal(schema.default, "unknown", `${field} must default to unknown`);
+    }
+  });
+  check("routing_preflight is advisory and creates nothing", () => {
+    const description = preflightTool?.description ?? "";
+    assert.match(description, /advisory only/i);
+    assert.match(description, /creates no worker/i);
+    assert.match(description, /refuses nothing/i);
+    assert.match(description, /never required/i);
+  });
+  check("the delegation tools accept the same optional card", () => {
+    for (const delegation of [tool, batchTool]) {
+      const properties = (delegation?.inputSchema?.properties ?? {}) as Record<
+        string,
+        unknown
+      >;
+      assert.ok("routingPreflight" in properties, `${delegation?.name} lacks the card`);
+      const required = (delegation?.inputSchema?.required ?? []) as string[];
+      assert.ok(
+        !required.includes("routingPreflight"),
+        "the card must stay optional for backward compatibility",
+      );
+    }
+  });
+  check("the advertised card says it is advisory and that it can refuse", () => {
+    // Read off the wire, not off the internal shape: a description stripped from
+    // the advertised copy is invisible to the parent and therefore worthless. The
+    // card is the only optional input here that can refuse a delegation, so that
+    // has to be legible from the schema alone.
+    for (const delegation of [tool, batchTool]) {
+      const properties = (delegation?.inputSchema?.properties ?? {}) as Record<
+        string,
+        { description?: string }
+      >;
+      const prose = properties.routingPreflight?.description ?? "";
+      assert.ok(prose.length > 0, `${delegation?.name} advertises an unlabeled card`);
+      assert.match(prose, /advisory/i);
+      assert.match(prose, /never blocks execution/i);
+      assert.match(prose, /empty seams/i);
+      assert.match(prose, /parallel/i);
+      assert.match(prose, /sharedState/);
+      assert.match(prose, /coreOverlap/);
+      assert.match(prose, /unknown/);
+      assert.ok(prose.length <= 320, `card prose was ${prose.length} bytes`);
+    }
+  });
   check(
     "continue_task accepts a bounded reference, instruction, and result detail",
     () => {
@@ -122,6 +194,43 @@ async function main(): Promise<void> {
     assert.equal(tool?.outputSchema, undefined);
     assert.equal(batchTool?.outputSchema, undefined);
     assert.equal(continueTool?.outputSchema, undefined);
+    assert.equal(preflightTool?.outputSchema, undefined);
+  });
+
+  const preflight = await client.callTool({
+    name: "routing_preflight",
+    arguments: {
+      seams: ["auth adapter", "billing adapter"],
+      seamSize: "substantial",
+      sharedState: "none",
+      coreOverlap: "disjoint",
+      integration: "mechanical",
+      verification: "per-seam",
+    },
+  });
+  const preflightText = ((preflight.content as Array<{ text?: string }>) ?? [])
+    .map((entry) => entry.text ?? "")
+    .join("\n");
+  check("routing_preflight answers without creating anything", () => {
+    assert.notEqual(preflight.isError, true);
+    assert.match(preflightText, /ROUTE: delegation-plausible/);
+    assert.match(preflightText, /PARALLEL-ELIGIBLE: true/);
+    assert.ok(preflightText.length <= 400, `advisory text was ${preflightText.length}`);
+    // A parent's own seam labels must not be echoed back at it.
+    assert.doesNotMatch(preflightText, /auth adapter|billing adapter/);
+  });
+
+  const soloPreflight = await client.callTool({
+    name: "routing_preflight",
+    arguments: { seams: [] },
+  });
+  check("an empty seam list is a valid solo answer, not an error", () => {
+    assert.notEqual(soloPreflight.isError, true);
+    const text = ((soloPreflight.content as Array<{ text?: string }>) ?? [])
+      .map((entry) => entry.text ?? "")
+      .join("\n");
+    assert.match(text, /ROUTE: solo/);
+    assert.match(text, /no delegation is required/i);
   });
 
   check("the batch description tells the parent when parallel is inappropriate", () => {
@@ -208,6 +317,39 @@ async function main(): Promise<void> {
   });
 
   await client.close();
+
+  // A worker process must not be able to reach any orchestration surface, the
+  // new advisory tool included: recursive delegation is prevented by not
+  // advertising the tools at all, not by trusting a name match.
+  const workerEnv = { ...childEnv, SOL_LUNA_WORKER: "1" };
+  const workerTransport = new StdioClientTransport({
+    command: process.execPath,
+    args: [serverEntry],
+    stderr: "pipe",
+    env: workerEnv,
+  });
+  const workerClient = new Client({ name: "smoke-test-worker", version: "1.0.0" });
+  await workerClient.connect(workerTransport);
+  const workerCapabilities = workerClient.getServerCapabilities();
+  // With nothing registered the server does not even declare a tool capability,
+  // so listing is a missing method rather than an empty list.
+  let workerToolNames: string[] | null = null;
+  let workerListError: unknown = null;
+  try {
+    workerToolNames = (await workerClient.listTools()).tools.map((t) => t.name);
+  } catch (error) {
+    workerListError = error;
+  }
+  await workerClient.close();
+  check("a worker process exposes no tool surface at all", () => {
+    assert.equal(workerCapabilities?.tools, undefined);
+    if (workerToolNames !== null) {
+      assert.deepEqual(workerToolNames, [], "a worker must advertise no tools");
+      return;
+    }
+    assert.match(String(workerListError), /Method not found/);
+  });
+
   check("diagnostic logging uses the smoke's isolated path", () => {
     assert.match(fs.readFileSync(logPath, "utf8"), /client connected|ready in/);
   });

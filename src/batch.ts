@@ -12,8 +12,11 @@ import type {
   DelegateTaskInput,
   DelegateTaskOutput,
   RecoveryClassification,
+  RoutingPreflightInput,
   TaskState,
 } from "./contract.js";
+import { asRoutingCard } from "./contract.js";
+import { declaredRoutingFields, describeRefusal, evaluateRouting } from "./routing.js";
 import { activityFailureReason, emitEvent, type EventEmitter } from "./events.js";
 import {
   findIntegrationConflicts,
@@ -151,6 +154,11 @@ export async function runBatch(
     leaseMaintainer?: typeof maintainWorktreeLease;
     /** Deterministic retention seam; production uses configured policy. */
     keepWorktrees?: WorktreeRetentionPolicy;
+    /**
+     * Optional call-level routing declaration. Absent means no routing is
+     * evaluated and behavior is exactly what it was before preflight existed.
+     */
+    routingPreflight?: RoutingPreflightInput;
   },
 ): Promise<BatchOutput> {
   const batchId = options.batchId ?? makeBatchId();
@@ -242,6 +250,60 @@ export async function runBatch(
     emit({ type: "scope.conflict", batchId, detail: conflict.detail });
   }
 
+  // --- Cheap routing: evaluate and record, before anything is created ------
+  //
+  // Evaluation is separated from enforcement. Recording happens here, so an
+  // attached card is always in telemetry even when a different gate rejects the
+  // batch first; refusal happens below, after the observed scope gate, so a real
+  // same-file race keeps precedence over a claim about the caller's own
+  // decomposition. Both sit before any worktree, thread, or worker exists.
+  const card = options.routingPreflight ? asRoutingCard(options.routingPreflight) : null;
+  const routing = card
+    ? evaluateRouting(card, {
+        mode,
+        taskCount: tasks.length,
+        allowOverlappingScopes: options.allowOverlappingScopes,
+      })
+    : null;
+  if (!card || !routing) {
+    emit({
+      type: "routing.declared",
+      batchId,
+      declaration: "absent",
+      mode,
+      taskCount: tasks.length,
+    });
+  } else {
+    emit({
+      type: "routing.declared",
+      batchId,
+      declaration: "attached",
+      mode,
+      taskCount: tasks.length,
+      seamCount: routing.seamCount,
+      unknownCount: routing.unknownCount,
+      route: routing.route,
+      gates: routing.gates,
+      signals: routing.signals,
+      refusedGate: routing.refusedGate,
+      parallelEligible: routing.parallelEligible,
+      ...declaredRoutingFields(card),
+    });
+
+    // The card claimed disjoint cores while the runtime's own already-computed
+    // scope comparison disagrees. Recorded, not enforced: the scope gate below
+    // decides what happens about the overlap itself.
+    if (card.coreOverlap === "disjoint" && scopeConflicts.length > 0) {
+      emit({
+        type: "routing.contradiction",
+        batchId,
+        kind: "declared-disjoint-core-scopes-overlap",
+        declaredCoreOverlap: card.coreOverlap,
+        observed: scopeConflicts.length,
+      });
+    }
+  }
+
   if (scopeConflicts.length > 0 && !options.allowOverlappingScopes) {
     emit({ type: "batch.rejected", batchId, reason: "overlapping scopes" });
     throw new BatchRejectedError(
@@ -254,7 +316,34 @@ export async function runBatch(
     );
   }
 
-  const warnings: string[] = [];
+  // --- Cheap routing: enforce -----------------------------------------------
+  //
+  // Still before any worktree: the only thing spent so far is the caller's own
+  // declaration. The scope and integration gates remain authoritative for actual
+  // safety; routing never replaces them, and now never speaks ahead of them.
+  const routingWarnings: string[] = [];
+  if (routing?.refusedGate) {
+    const reason = describeRefusal(routing.refusedGate);
+    emit({ type: "batch.rejected", batchId, reason });
+    throw new BatchRejectedError(reason);
+  }
+  // An accepted overlap downgrades the shared-core gate to a warning, exactly as
+  // it already does for declared scope overlap. Mutable shared state is not
+  // downgradable and has already refused above.
+  if (routing?.gates.includes("parallel-shared-core")) {
+    routingWarnings.push(
+      "The routing card declares a shared core and allowOverlappingScopes:true " +
+        "accepted it; parallel seams both reasoning about one core remain the " +
+        "caller's risk.",
+    );
+  }
+  // Advisory routing deliberately adds nothing to batch warnings. A soft Solo
+  // recommendation is not an operational problem with the run, and a warning
+  // would cost the caller the thin verified handoff for taking the advice's
+  // subject matter seriously. Advisories are rendered as one compact line on the
+  // tool result instead; telemetry above keeps the full evaluation.
+
+  const warnings: string[] = [...routingWarnings];
 
   try {
     if (mode === "sequential") {
@@ -322,6 +411,18 @@ export async function runBatch(
       batchId,
       path: conflict.path,
       tasks: conflict.tasks,
+    });
+  }
+  // Declared disjoint cores, but the workers demonstrably wrote the same file.
+  // Measured from what was written, so it is worth recording even though the
+  // integration gate has already prevented the collision from being applied.
+  if (card?.coreOverlap === "disjoint" && integrationConflicts.length > 0) {
+    emit({
+      type: "routing.contradiction",
+      batchId,
+      kind: "declared-disjoint-core-files-collided",
+      declaredCoreOverlap: card.coreOverlap,
+      observed: integrationConflicts.length,
     });
   }
 

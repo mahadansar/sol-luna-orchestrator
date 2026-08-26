@@ -58,6 +58,87 @@ not create artificial seams merely to use cheap workers.
 The batch contract accepts one task for compatibility; use `delegate_task` when
 no batch-level scheduling is needed.
 
+## Cheap routing preflight
+
+Delegating costs a fixed amount of overhead before it produces anything. The
+expensive way to learn a seam was not worth delegating is to delegate it, so the
+runtime offers a cheap way to ask first. `routing_preflight` is an optional
+advisory tool, and the same declaration may be attached to `delegate_task` or
+`delegate_tasks` as `routingPreflight`. It is never required, and omitting it
+leaves behavior exactly as it was.
+
+The card describes one call, not one task, and the runtime never inspects task
+semantics itself:
+
+| Field          | Values                                    | Meaning                                                                   |
+| -------------- | ----------------------------------------- | ------------------------------------------------------------------------- |
+| `seams`        | short non-sensitive labels, 0..12         | Independent ownership seams. Never persisted in telemetry.                |
+| `seamSize`     | `small`, `substantial`, `unknown`         | Work volume per seam. Not difficulty, and never an effort input.          |
+| `sharedState`  | `none`, `read-only`, `mutable`, `unknown` | State shared with another seam or the parent's remaining work.            |
+| `coreOverlap`  | `disjoint`, `shared-core`, `unknown`      | Whether the work is isolated from what siblings or the parent still need. |
+| `integration`  | `mechanical`, `architectural`, `unknown`  | Whether recombining finished seams needs judgement.                       |
+| `verification` | `per-seam`, `shared-only`, `unknown`      | Whether each seam can be proven on its own.                               |
+
+Any field may be left `unknown`. For advice, unknown resolves the cautious way —
+`small`, `mutable`, `shared-core`, `architectural`, `shared-only` — so admitting
+uncertainty biases the recommendation toward staying solo. Structural refusals
+read the raw declaration only, so uncertainty can never produce one.
+
+### Refuse, recommend, and parent judgement
+
+The runtime **refuses** only when an explicit declaration makes the requested
+execution mechanism structurally unsound:
+
+| Gate                          | Condition                          | Refuses in                        |
+| ----------------------------- | ---------------------------------- | --------------------------------- |
+| `seam-count-zero`             | `seams` is empty                   | `delegate_task`, both batch modes |
+| `parallel-shared-mutable`     | raw `sharedState` is `mutable`     | parallel only                     |
+| `parallel-shared-core`        | raw `coreOverlap` is `shared-core` | parallel only                     |
+| `parallel-tasks-exceed-seams` | more tasks than declared seams     | parallel only                     |
+
+`allowOverlappingScopes: true` downgrades `parallel-shared-core` to a warning,
+exactly as it already accepts declared scope overlap. It never downgrades
+mutable shared state. Sequential mode is not refused for shared state, a shared
+core, or having more steps than seams: sequential execution exists precisely to
+let dependent work share a workspace. `routing_preflight` refuses nothing at all.
+
+Routing gates never speak ahead of the existing safety gates. When declared file
+scopes actually overlap, that refusal comes first, because its remedy — disjoint
+scopes — is narrower than the escape hatch a routing message would suggest. Both
+are evaluated before any worktree exists, and an attached card is recorded in
+telemetry either way.
+
+Everything else **recommends**. The route is `solo`, `either`, or
+`delegation-plausible`; any one decisive coupling signal (mutable shared state,
+shared core, architectural integration) recommends `solo` in every mode. Two
+overhead signals (small seam, shared-only verification) also recommend `solo`,
+one alone gives `either`, and none gives `delegation-plausible`. `either` does
+not mean "delegate by default": it means fixed delegation overhead needs an
+explicit justification, or stay solo. `read-only` shared state is not a coupling
+signal. There is no score, no threshold, and no benchmark-derived tuning.
+
+The **parent keeps every judgement** a recommendation touches: whether to proceed
+against a `solo` recommendation, sequential versus parallel, `delegate_task`
+versus `delegate_tasks`, `delegate_task` plus `continue_task`, worker effort,
+worker count, and final acceptance. A recommendation the parent overrides is
+reported on one compact advisory line and never blocks the call. Because the
+signals on that line are resolved values, it also states how many fields were
+left `unknown` — so a signal the runtime assumed is never mistaken for one the
+parent declared.
+
+`parallelEligible` is reported separately and answers only a structural question:
+two or more seams, no explicitly declared mutable shared state, and no explicitly
+declared shared core. Unknown values do not make it false. It is not a
+recommendation to use parallel mode, not a worker count, and unrelated to the
+configured concurrency cap — `seams.length` describes separability, not a worker
+target. It can be `true` while the route is `solo`, which simply means a split is
+possible but not obviously worth its overhead.
+
+Calling `routing_preflight` and then delegating nothing is a normal successful
+outcome; zero workers remains first-class. An empty seam list is a valid
+preflight answer that returns `solo`, and becomes a refusal only if the caller
+then actually requests delegation with that card.
+
 ## Cost and parallelism
 
 Delegation has fixed contract, startup, coordination, and review overhead. Small

@@ -2421,3 +2421,223 @@ test("policy-retained worktrees are counted without a false cleanup warning", ()
     "Some tasks have no semantic activity label; using a positional fallback.",
   ]);
 });
+
+// ========================================================================
+// Routing telemetry
+// ========================================================================
+
+test("routing events render their declaration without the parent's seam labels", () => {
+  const rendered = renderEvent({
+    type: "routing.declared",
+    batchId: "b1",
+    declaration: "attached",
+    mode: "parallel",
+    taskCount: 2,
+    seamCount: 2,
+    unknownCount: 1,
+    route: "solo",
+    gates: ["parallel-shared-core"],
+    signals: ["shared-core", "small-seam"],
+    refusedGate: null,
+    parallelEligible: false,
+    declaredSeamSize: "small",
+    declaredSharedState: "unknown",
+    declaredCoreOverlap: "shared-core",
+    declaredIntegration: "mechanical",
+    declaredVerification: "per-seam",
+  });
+
+  const parsed = JSON.parse(rendered) as Record<string, unknown>;
+  // Raw declarations are kept so a later reader can tell a declared hazard from
+  // an admitted unknown; the resolved values are not persisted at all.
+  assert.equal(parsed.declaredSharedState, "unknown");
+  assert.equal(parsed.declaredCoreOverlap, "shared-core");
+  assert.equal(parsed.unknownCount, 1);
+  assert.equal(parsed.seamCount, 2);
+  assert.equal(parsed.seams, undefined);
+  assert.equal(parsed.objective, undefined);
+  assert.equal(parsed.score, undefined);
+  assert.equal(parsed.rationale, undefined);
+  assert.equal(parsed.cost, undefined);
+  assert.deepEqual(parsed.signals, ["shared-core", "small-seam"]);
+});
+
+test("an advisory preflight record carries no batch and no seam labels", () => {
+  const rendered = renderEvent({
+    type: "routing.preflight",
+    preflightId: "p1",
+    route: "either",
+    seamCount: 3,
+    unknownCount: 0,
+    gates: [],
+    signals: ["small-seam"],
+    parallelEligible: true,
+    declaredSeamSize: "small",
+    declaredSharedState: "read-only",
+    declaredCoreOverlap: "disjoint",
+    declaredIntegration: "mechanical",
+    declaredVerification: "per-seam",
+  });
+
+  const parsed = JSON.parse(rendered) as Record<string, unknown>;
+  assert.equal(parsed.preflightId, "p1");
+  assert.equal(parsed.batchId, undefined, "no batch exists yet");
+  assert.equal(parsed.seams, undefined);
+  assert.equal(parsed.route, "either");
+  assert.equal(parsed.parallelEligible, true);
+});
+
+test("a contradiction record keeps only what diagnoses it", () => {
+  const parsed = JSON.parse(
+    renderEvent({
+      type: "routing.contradiction",
+      batchId: "b1",
+      kind: "declared-disjoint-core-files-collided",
+      declaredCoreOverlap: "disjoint",
+      observed: 2,
+    }),
+  ) as Record<string, unknown>;
+  assert.deepEqual(Object.keys(parsed).sort(), [
+    "batchId",
+    "declaredCoreOverlap",
+    "kind",
+    "observed",
+    "type",
+  ]);
+});
+
+/**
+ * The three routing records, as the runtime actually emits them.
+ *
+ * Typed as `TimestampedEvent` because they really are members of
+ * `OrchestratorEvent`, so the reducer can be handed them directly. That matters:
+ * they must be fed to `reduceEvents` without going through `parseEventLine`,
+ * because a test that filters them out first proves only that the parser dropped
+ * them, and nothing at all about the reducer.
+ */
+const ROUTING_RECORDS: TimestampedEvent[] = [
+  {
+    timestamp: "2024-01-01T00:00:01Z",
+    type: "routing.preflight",
+    preflightId: "p1",
+    route: "solo",
+    seamCount: 0,
+    unknownCount: 5,
+    gates: ["seam-count-zero"],
+    signals: [],
+    parallelEligible: false,
+    declaredSeamSize: "unknown",
+    declaredSharedState: "unknown",
+    declaredCoreOverlap: "unknown",
+    declaredIntegration: "unknown",
+    declaredVerification: "unknown",
+  },
+  {
+    timestamp: "2024-01-01T00:00:02Z",
+    type: "routing.declared",
+    batchId: "b1",
+    declaration: "attached",
+    mode: "parallel",
+    taskCount: 2,
+    seamCount: 2,
+    unknownCount: 0,
+    route: "delegation-plausible",
+    gates: [],
+    signals: [],
+    refusedGate: null,
+    parallelEligible: true,
+    declaredSeamSize: "substantial",
+    declaredSharedState: "none",
+    declaredCoreOverlap: "disjoint",
+    declaredIntegration: "mechanical",
+    declaredVerification: "per-seam",
+  },
+  {
+    timestamp: "2024-01-01T00:00:02Z",
+    type: "routing.declared",
+    batchId: "b1",
+    declaration: "absent",
+    mode: "sequential",
+    taskCount: 2,
+  },
+  {
+    timestamp: "2024-01-01T00:00:03Z",
+    type: "routing.contradiction",
+    batchId: "b1",
+    kind: "declared-disjoint-core-scopes-overlap",
+    declaredCoreOverlap: "disjoint",
+    observed: 1,
+  },
+];
+
+test("the activity reducer is inert when handed routing events directly", () => {
+  // Routing records are deliberately outside the reducer's lifecycle vocabulary:
+  // they describe a decision, not a running batch. Handed straight to the
+  // reducer — sharing the batchId, so the batch filter cannot be what saves us —
+  // they must change nothing and warn about nothing.
+  const lifecycle: TimestampedEvent[] = [
+    {
+      timestamp: "2024-01-01T00:00:00Z",
+      type: "batch.started",
+      batchId: "b1",
+      mode: "parallel",
+      taskCount: 1,
+      maxParallel: 3,
+    },
+    {
+      timestamp: "2024-01-01T00:00:04Z",
+      type: "task.queued",
+      batchId: "b1",
+      taskId: "t1",
+      effort: "high",
+    },
+  ];
+
+  assert.ok(ROUTING_RECORDS.length > 0, "the injected records must not be empty");
+  const withoutRouting = reduceEvents(lifecycle);
+  const withRouting = reduceEvents([...lifecycle, ...ROUTING_RECORDS]);
+  assert.deepEqual(withRouting, withoutRouting, "the snapshot must not change");
+  assert.deepEqual(
+    withRouting.warnings,
+    withoutRouting.warnings,
+    "routing must add no operator warning of its own",
+  );
+  assert.equal(withRouting.state, withoutRouting.state);
+  assert.deepEqual(withRouting.workers, withoutRouting.workers);
+  assert.deepEqual(withRouting.conflicts, withoutRouting.conflicts);
+  assert.deepEqual(withRouting.integration, withoutRouting.integration);
+  assert.equal(withRouting.updatedAt, withoutRouting.updatedAt);
+  assert.doesNotThrow(() => renderHumanLines(withRouting));
+
+  // Interleaved rather than appended, in case ordering ever mattered.
+  const interleaved = reduceEvents([
+    lifecycle[0]!,
+    ...ROUTING_RECORDS,
+    lifecycle[1]!,
+    ...ROUTING_RECORDS,
+  ]);
+  assert.deepEqual(interleaved, withoutRouting, "position must not matter either");
+
+  // Routing records alone must not fabricate a batch out of nothing. `updatedAt`
+  // is excluded because it is a stream-freshness marker taken from the newest
+  // record of any type, not batch state — and it is the only field they move.
+  const { updatedAt: _routingSeen, ...alone } = reduceEvents([...ROUTING_RECORDS]);
+  const { updatedAt: _emptySeen, ...empty } = reduceEvents([]);
+  assert.deepEqual(alone, empty, "no batch may be invented");
+  assert.equal(alone.batchId, null);
+  assert.equal(alone.state, "unknown");
+  assert.equal(alone.taskCount, 0);
+  assert.deepEqual(alone.warnings, []);
+});
+
+test("routing events are dropped by the JSONL reader as unknown shapes", () => {
+  // A separate guarantee from reducer inertness: the on-disk reader never
+  // promotes a routing record into the lifecycle stream in the first place.
+  for (const record of ROUTING_RECORDS) {
+    assert.equal(
+      parseEventLine(JSON.stringify(record)),
+      null,
+      `${record.type} must be dropped, not trusted`,
+    );
+  }
+});

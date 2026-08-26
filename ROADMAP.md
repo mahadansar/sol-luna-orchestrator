@@ -22,6 +22,7 @@ actions.
 | P0.4     | Bounded Repair Loop                                    | Shipped in v0.9.0; depends on P0.3 and P0.2a |
 | P1.0     | Parent Identity, Billing, and Post-Hoc Cost Foundation | Shipped in v0.9.0                            |
 | P1.1     | Reasoned Retry and Effort Escalation                   | Depends on P0.4                              |
+| P1.2a    | Cheap Routing Eligibility / Preflight                  | Shipped unreleased                           |
 | P1.2     | Adaptive Worker Routing and Compute Policy             | Depends on P1.0 and P1.1                     |
 | P1.3     | Automatic Context Lifecycle Management                 | Depends on P0.1, P0.2, and P0.3              |
 | P2.1     | Optional Explorer                                      | Depends on P1.2                              |
@@ -67,6 +68,25 @@ failures should return to the supervisor rather than burn another worker turn.
 **Not decided.** The derived classifier schema and which responses are automatic
 versus recommendations. Depends on P0.4.
 
+## P1.2a Cheap Routing Eligibility / Preflight
+
+**Shipped (unreleased).** Deterministic eligibility is now separated from
+expensive architecture: a pure synchronous evaluator decides obvious solo cases
+from a small declared card before any repository exploration, worktree, thread,
+or worker exists. Raw declarations feed a few structural gates; conservatively
+resolved values feed advice only. Uncertainty biases advice toward solo and can
+never refuse.
+
+This is deliberately _not_ P1.2. It owns no compute policy: it reads no effort,
+recommends no worker count, and changes no concurrency. `parallelEligible` is a
+structural boolean, not a plan. Routing rules are declaration-driven and carry no
+score, threshold, or benchmark-derived tuning, and the V3 routing holdout remains
+isolated from runtime logic.
+
+**Not decided.** Whether observed-versus-declared contradictions should ever
+become enforcement rather than telemetry, and whether the card should later carry
+anything the parent does not already know.
+
 ## P1.2 Adaptive Worker Routing and Compute Policy
 
 Separate user-owned compute policy from supervisor routing. A future policy will
@@ -82,7 +102,8 @@ only when applicable billing evidence is known; otherwise it remains qualitative
 
 **Not decided.** Policy storage and CLI shape, how effective policy reaches the
 supervisor, routing rules, and representation of uncertain cost. Depends on P1.0,
-P1.1, and the preceding P0 chain.
+P1.1, and the preceding P0 chain. The cheap preflight in P1.2a is a deliberate
+subset: it decides eligibility, never policy.
 
 ## P1.3 Automatic Context Lifecycle Management
 

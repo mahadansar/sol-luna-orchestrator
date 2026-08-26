@@ -6,6 +6,15 @@ import {
   MAX_PARALLEL,
   type Effort,
 } from "./config.js";
+import {
+  CORE_OVERLAPS,
+  INTEGRATIONS,
+  MAX_SEAM_LABEL_LENGTH,
+  SEAM_SIZES,
+  SHARED_STATES,
+  VERIFICATIONS,
+  type RoutingPreflightCard,
+} from "./routing.js";
 
 /** Coarse shape of the delegated work. Helps the parent reason about effort. */
 export const TASK_CATEGORIES = [
@@ -96,6 +105,64 @@ const previousAttemptShape = {
     .string()
     .describe("Why the earlier attempt did not succeed, in one sentence."),
 };
+
+/**
+ * Optional cheap-routing declaration, one per delegation call.
+ *
+ * The runtime does not inspect task semantics itself; this is the parent stating
+ * what it already knows about its own decomposition. Raw values feed hard
+ * structural gates, conservatively resolved values feed advisory routing, and the
+ * distinction is what keeps uncertainty from ever becoming a refusal.
+ */
+export const routingPreflightShape = {
+  seams: z
+    .array(z.string().min(1).max(MAX_SEAM_LABEL_LENGTH))
+    .max(MAX_BATCH_SIZE)
+    .describe(
+      "Short non-sensitive labels for the independent ownership seams; never persisted in telemetry.",
+    ),
+  seamSize: z
+    .enum(SEAM_SIZES)
+    .default("unknown")
+    .describe("Per-seam work volume, not difficulty and never an effort input."),
+  sharedState: z
+    .enum(SHARED_STATES)
+    .default("unknown")
+    .describe(
+      "State or invariants shared between a seam and another seam or the parent's remaining work.",
+    ),
+  coreOverlap: z
+    .enum(CORE_OVERLAPS)
+    .default("unknown")
+    .describe(
+      "Whether delegated work is isolated from files/modules siblings or the parent still reason about.",
+    ),
+  integration: z
+    .enum(INTEGRATIONS)
+    .default("unknown")
+    .describe("Whether recombining the finished seams is mechanical or architectural."),
+  verification: z
+    .enum(VERIFICATIONS)
+    .default("unknown")
+    .describe("Whether each seam can be proven on its own or only together."),
+};
+
+export const routingPreflightSchema = z.object(routingPreflightShape);
+
+/**
+ * The parsed card is exactly the evaluator's input; every field has a default, so
+ * an attached card is always complete before evaluation.
+ */
+export type RoutingPreflightInput = z.infer<typeof routingPreflightSchema>;
+
+/**
+ * The single conversion point from validated protocol input to evaluator input.
+ * Identity at runtime; its value is the compile-time proof that the advertised
+ * card and the pure evaluator cannot drift apart.
+ */
+export function asRoutingCard(input: RoutingPreflightInput): RoutingPreflightCard {
+  return input;
+}
 
 /**
  * The task contract the parent orchestrator fills in when delegating.
@@ -206,6 +273,13 @@ export const delegateTaskInputShape = {
     .max(7200)
     .optional()
     .describe("Optional per-turn wall-clock budget; otherwise use configured default."),
+
+  routingPreflight: z
+    .object(routingPreflightShape)
+    .optional()
+    .describe(
+      "Optional routing declaration for this call; advisory except that an empty seam list is refused.",
+    ),
 };
 
 export const delegateTaskInputSchema = z.object(delegateTaskInputShape);
@@ -227,12 +301,29 @@ export const continueTaskInputShape = {
 export const continueTaskInputSchema = z.object(continueTaskInputShape);
 export type ContinueTaskInput = z.input<typeof continueTaskInputSchema>;
 
-/** Deterministic budgets for the always-advertised input metadata. */
+/**
+ * Deterministic budgets for the always-advertised input metadata.
+ *
+ * Every entry is checked against the schema the MCP server actually advertises,
+ * so `delegateTask`, `delegateTasks` and `advertisedCombined` include the routing
+ * card the parent is really sent. The `*Contract` and `routingCard*` entries are
+ * diagnostics for the same bytes split by owner: they answer "did the delegation
+ * contract itself grow?" and "what does routing cost?" without either of them
+ * standing in for the advertised total. No ceiling here is reached by subtracting
+ * one advertised surface from another.
+ */
 export const INPUT_METADATA_SIZE_BUDGETS = {
-  delegateTask: 2_500,
+  delegateTask: 3_100,
   continueTask: 450,
-  delegateTasks: 2_900,
-  combined: 5_700,
+  delegateTasks: 3_500,
+  routingPreflightTool: 850,
+  advertisedCombined: 7_950,
+  delegateTaskContract: 2_500,
+  delegateTasksContract: 2_900,
+  contractCombined: 5_700,
+  routingCardDelegateTask: 1_100,
+  routingCardDelegateTasks: 1_100,
+  routingCombined: 3_000,
 } as const;
 
 /**
@@ -609,6 +700,10 @@ export const delegateTasksInputShape = {
     .describe(
       "Parallel only: automatically recover each eligible failed task once after the initial worker window; default true. Set false to return initial failures unchanged.",
     ),
+
+  routingPreflight: delegateTaskInputShape.routingPreflight.describe(
+    "Optional call-level routing declaration; advisory except for the structural gates, which parallel mode enforces before any worktree exists.",
+  ),
 };
 
 export const delegateTasksInputSchema = z.object(delegateTasksInputShape);
@@ -628,12 +723,32 @@ function withoutFieldDescriptions<T extends z.ZodRawShape>(shape: T): T {
   ) as unknown as T;
 }
 
+/**
+ * The one thing the advertised card must say for itself.
+ *
+ * Per-field prose is stripped like every other advertised field, but the card as
+ * a whole cannot be: it is the only optional input in this protocol that can turn
+ * an otherwise valid delegation into a refusal, so a parent choosing whether to
+ * attach it has to be able to see that from the schema alone.
+ */
+export const ROUTING_CARD_DESCRIPTION =
+  "Optional advisory routing declaration. Solo advice never blocks execution; declarations " +
+  "gate: every surface refuses empty seams, parallel also refuses mutable sharedState, " +
+  'shared-core coreOverlap, or tasks > seams. "unknown" biases advice solo, never refuses.';
+
+/** Nested card copy with per-field prose removed; semantics live in the card. */
+const routingPreflightMcpSchema = z
+  .object(withoutFieldDescriptions(routingPreflightShape))
+  .optional()
+  .describe(ROUTING_CARD_DESCRIPTION);
+
 export const delegateTaskMcpInputShape = {
   ...withoutFieldDescriptions(delegateTaskInputShape),
   contextCapsule: z.object(withoutFieldDescriptions(contextCapsuleShape)).optional(),
   previousAttempts: z
     .array(z.object(withoutFieldDescriptions(previousAttemptShape)))
     .default([]),
+  routingPreflight: routingPreflightMcpSchema,
 };
 export const continueTaskMcpInputShape = withoutFieldDescriptions(continueTaskInputShape);
 const batchTaskMcpSchema = z.object({
@@ -656,24 +771,66 @@ const batchTaskMcpSchema = z.object({
 export const delegateTasksMcpInputShape = {
   ...withoutFieldDescriptions(delegateTasksInputShape),
   tasks: z.array(batchTaskMcpSchema).min(1).max(MAX_BATCH_SIZE),
+  routingPreflight: routingPreflightMcpSchema,
 };
 
+/** The advisory tool takes the card and nothing else. */
+export const routingPreflightMcpInputShape =
+  withoutFieldDescriptions(routingPreflightShape);
+
+/**
+ * Measure the advertised input metadata.
+ *
+ * `delegateTask`, `delegateTasks`, `continueTask` and `routingPreflightTool` are
+ * the schemas the server really registers, and `advertisedCombined` is their sum
+ * — the whole input-schema cost of a session, with nothing excluded. The
+ * `*Contract` and `routingCard*` fields attribute those same bytes to the
+ * delegation contract and to routing respectively, so a regression can be
+ * located; they are diagnostics, never the total.
+ */
 export function inputMetadataSizeReport(): {
   delegateTask: number;
   continueTask: number;
   delegateTasks: number;
-  combined: number;
+  routingPreflightTool: number;
+  advertisedCombined: number;
+  delegateTaskContract: number;
+  delegateTasksContract: number;
+  contractCombined: number;
+  routingCardDelegateTask: number;
+  routingCardDelegateTasks: number;
+  routingCombined: number;
 } {
   const size = (shape: z.ZodRawShape): number =>
     JSON.stringify(z.toJSONSchema(z.object(shape))).length;
-  const report = {
-    delegateTask: size(delegateTaskMcpInputShape),
-    continueTask: size(continueTaskMcpInputShape),
-    delegateTasks: size(delegateTasksMcpInputShape),
-    combined: 0,
+  const withoutCard = (shape: z.ZodRawShape): z.ZodRawShape => {
+    const { routingPreflight: _routingPreflight, ...rest } = shape;
+    return rest;
   };
-  report.combined = report.delegateTask + report.continueTask + report.delegateTasks;
-  return report;
+  const delegateTask = size(delegateTaskMcpInputShape);
+  const delegateTasks = size(delegateTasksMcpInputShape);
+  const continueTask = size(continueTaskMcpInputShape);
+  const routingPreflightTool = size(routingPreflightMcpInputShape);
+  const delegateTaskContract = size(withoutCard(delegateTaskMcpInputShape));
+  const delegateTasksContract = size(withoutCard(delegateTasksMcpInputShape));
+  return {
+    delegateTask,
+    continueTask,
+    delegateTasks,
+    routingPreflightTool,
+    advertisedCombined:
+      delegateTask + continueTask + delegateTasks + routingPreflightTool,
+    delegateTaskContract,
+    delegateTasksContract,
+    contractCombined: delegateTaskContract + continueTask + delegateTasksContract,
+    routingCardDelegateTask: delegateTask - delegateTaskContract,
+    routingCardDelegateTasks: delegateTasks - delegateTasksContract,
+    routingCombined:
+      delegateTask -
+      delegateTaskContract +
+      (delegateTasks - delegateTasksContract) +
+      routingPreflightTool,
+  };
 }
 
 const delegateTaskOutputObject = z.object(delegateTaskOutputShape);

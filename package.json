@@ -59,7 +59,7 @@
     "dev": "tsx src/server.ts",
     "format": "prettier --write \"src/**/*.ts\" \"*.md\" \"docs/*.md\" \"bench/*.md\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"*.md\" \"docs/*.md\" \"bench/*.md\"",
-    "test": "npm run build && node --test dist/selftest.js dist/security.test.js dist/parallel.test.js dist/cli.test.js dist/bench.test.js dist/bench/credits.test.js dist/bench/v3-analysis.test.js dist/activity.test.js dist/activity-watch.test.js dist/activity-config.test.js dist/prompt.test.js dist/evidence.test.js dist/guidance.test.js",
+    "test": "npm run build && node --test dist/selftest.js dist/security.test.js dist/parallel.test.js dist/routing.test.js dist/cli.test.js dist/bench.test.js dist/bench/credits.test.js dist/bench/v3-analysis.test.js dist/activity.test.js dist/activity-watch.test.js dist/activity-config.test.js dist/prompt.test.js dist/evidence.test.js dist/guidance.test.js",
     "smoke:cli": "npm run build && node dist/smoke-cli.js",
     "smoke": "npm run build && node dist/smoke-protocol.js",
     "smoke:live": "npm run build && node dist/smoke-live.js",
