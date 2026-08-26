@@ -34,6 +34,7 @@ import {
   INPUT_METADATA_SIZE_BUDGETS,
   inputMetadataSizeReport,
   asRoutingCard,
+  COMPUTE_POLICY_DESCRIPTION,
   ROUTING_CARD_DESCRIPTION,
   routingPreflightMcpInputShape,
   routingPreflightShape,
@@ -107,6 +108,105 @@ test("thin metadata stays within deterministic budgets", () => {
   assert.ok(inputs.contractCombined <= INPUT_METADATA_SIZE_BUDGETS.contractCombined);
 });
 
+/**
+ * A ceiling nobody is near is not a budget.
+ *
+ * The upper bounds above catch metadata growth. They cannot catch a budget
+ * quietly raised further than the growth required, which is how a tight ratchet
+ * turns into a slack pocket that absorbs the next few unreviewed additions
+ * silently. Every budget must stay within `MAX_BUDGET_SLACK` of what the
+ * surface actually measures, so raising one is a deliberate, reviewable act.
+ */
+const MAX_BUDGET_SLACK = 0.06;
+
+test("metadata budgets stay tight against the surfaces they measure", () => {
+  const report = metadataSizeReport();
+  const inputs = inputMetadataSizeReport();
+  const { inputSchemas: _nested, ...topLevel } = report;
+  const measured: Record<string, number> = {
+    ...topLevel,
+    ...Object.fromEntries(
+      Object.entries(inputs).map(([key, value]) => [`input:${key}`, value]),
+    ),
+  };
+  const budgets: Record<string, number> = {
+    ...METADATA_SIZE_BUDGETS,
+    ...Object.fromEntries(
+      Object.entries(INPUT_METADATA_SIZE_BUDGETS).map(([key, value]) => [
+        `input:${key}`,
+        value,
+      ]),
+    ),
+  };
+
+  const slack: string[] = [];
+  for (const [key, budget] of Object.entries(budgets)) {
+    const actual = measured[key];
+    assert.equal(typeof actual, "number", `${key} has no measured counterpart`);
+    if ((actual as number) < budget * (1 - MAX_BUDGET_SLACK)) {
+      slack.push(
+        `${key}: ${actual} measured against a ${budget} budget ` +
+          `(${(((budget - (actual as number)) / budget) * 100).toFixed(1)}% slack)`,
+      );
+    }
+  }
+  assert.deepEqual(
+    slack,
+    [],
+    `Budgets exceed the permitted ${MAX_BUDGET_SLACK * 100}% slack. Lower them` +
+      ` to the measured size rather than leaving room for unreviewed growth: ` +
+      slack.join("; "),
+  );
+});
+
+/**
+ * Every test file runs in the gate.
+ *
+ * Both `npm test` and CI once enumerated test files by hand, in lists that had
+ * already drifted apart, and a new suite could be committed passing while
+ * running nowhere. `npm test` is now the single list and CI defers to it; this
+ * asserts the list is complete.
+ */
+test("every test file is wired into the deterministic gate", async () => {
+  const manifest = JSON.parse(await readDoc("package.json")) as {
+    scripts: Record<string, string>;
+  };
+  const script = manifest.scripts.test ?? "";
+  assert.match(script, /node --test/, "the test script must run node --test");
+
+  const sources = await fs.readdir(path.join(ROOT_DIR, "src"), {
+    recursive: true,
+    withFileTypes: true,
+  });
+  const suites = sources
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".test.ts"))
+    .map((entry) =>
+      path
+        .relative(path.join(ROOT_DIR, "src"), path.join(entry.parentPath, entry.name))
+        .split(path.sep)
+        .join("/")
+        .replace(/\.test\.ts$/, ".test.js"),
+    );
+  assert.ok(suites.length > 0, "no test files were found to check");
+
+  const missing = suites.filter((suite) => !script.includes(`dist/${suite}`));
+  assert.deepEqual(
+    missing,
+    [],
+    `Test files exist but never run. Add them to the "test" script in` +
+      ` package.json: ${missing.join("; ")}`,
+  );
+
+  for (const workflow of ["ci.yml", "publish.yml"]) {
+    const text = await readDoc(`.github/workflows/${workflow}`);
+    assert.match(
+      text,
+      /run: npm test/,
+      `${workflow} must defer to the npm test list rather than duplicating it`,
+    );
+  }
+});
+
 test("advertised schemas retain runtime validation and defaults without prose", () => {
   const single = {
     ...BASE_INPUT,
@@ -145,15 +245,18 @@ test("advertised schemas retain runtime validation and defaults without prose", 
       objective: "too short",
     }),
   );
-  // Per-field prose is stripped from every advertised field. The routing card is
-  // the single deliberate exception: it can refuse a delegation, so the parent
-  // must be able to see that from the schema. Nothing else may reintroduce prose.
+  // Per-field prose is stripped from every advertised field. Exactly two cards
+  // are deliberate exceptions, on the same ground: each can turn an otherwise
+  // valid delegation into a refusal, so a parent choosing whether to attach one
+  // has to see that from the schema. Nothing else may reintroduce prose.
   const advertised = JSON.stringify(z.toJSONSchema(z.object(delegateTasksMcpInputShape)));
   assert.equal(
     (advertised.match(/"description"/g) ?? []).length,
-    1,
-    "only the routing card may carry advertised prose",
+    2,
+    "only the routing and compute cards may carry advertised prose",
   );
+  assert.ok(advertised.includes(ROUTING_CARD_DESCRIPTION.slice(0, 40)));
+  assert.ok(advertised.includes(COMPUTE_POLICY_DESCRIPTION.slice(0, 40)));
   assert.match(advertised, /"description":"Optional advisory routing declaration\./);
 });
 
@@ -264,7 +367,10 @@ test("bounded repair guidance and schemas keep parent control and the one-turn l
   assert.match(delegateTaskOutputShape.repair.description ?? "", /failure evidence/i);
 
   const rules = await readDoc("SOL_RULES.md");
-  assert.match(rules, /exactly one[\s\S]*same-thread repair/i);
+  // Bounded on purpose: an unbounded `[\s\S]*` here once matched across a whole
+  // section spliced into the middle of this sentence, leaving the rule corrupted
+  // and the gate green. At most one line break may separate the two phrases.
+  assert.match(rules, /exactly one[^\n]*\n?[^\n]*same-thread repair/i);
   assert.match(rules, /Manual[\s\S]*continue_task[\s\S]*never chains into repair/i);
 });
 
@@ -747,7 +853,7 @@ test("acceptance ledger owns the current release baseline", async () => {
   const acceptance = await readDoc("docs/FEATURE_ACCEPTANCE.md");
   assert.match(acceptance, /package version is `0\.10\.0`/i);
   assert.match(acceptance, /current main runtime is its release baseline/i);
-  assert.match(acceptance, /\*\*603\/606 tests passed\*\*/);
+  assert.match(acceptance, /\*\*638\/641 tests passed\*\*/);
   assert.match(acceptance, /## Current capability matrix/);
   assert.match(
     acceptance,

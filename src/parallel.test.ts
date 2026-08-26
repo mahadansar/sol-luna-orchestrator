@@ -29,6 +29,7 @@ import {
   WORKTREE_DIR,
   clampParallel,
 } from "./config.js";
+import { DEFAULT_COMPUTE_POLICY } from "./policy.js";
 import {
   delegateTaskInputSchema,
   type BatchOutput,
@@ -2894,6 +2895,184 @@ test("parallel recovery runs independent failures concurrently and never retries
     assert.equal(successfulSibling.recovery?.classification, "already-successful");
     assert.equal(successfulSibling.failureDecision?.classification, "success");
     assert.equal(successfulSibling.failureDecision?.automaticRetryCount, 0);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("compute policy bounds the initial worker window and is what gets reported", async () => {
+  const repo = await makeRepo();
+  try {
+    let peak = 0;
+    const result = await runProductionBatch(
+      [
+        makeTask({
+          objective: "Bound the alpha stream.",
+          allowedFiles: ["src/alpha/**"],
+        }),
+        makeTask({ objective: "Bound the beta stream.", allowedFiles: ["src/beta/**"] }),
+        makeTask({
+          objective: "Bound the gamma stream.",
+          allowedFiles: ["src/gamma/**"],
+        }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        computePolicy: {
+          ...DEFAULT_COMPUTE_POLICY,
+          maxConcurrency: 1,
+        },
+        executor: fakeExecutor({
+          onConcurrency: (active) => {
+            peak = Math.max(peak, active);
+          },
+          writes: (task) => ({ [`src/${moduleOf(task)}/mod.ts`]: "x\n" }),
+          delayMs: 40,
+        }),
+      },
+    );
+
+    assert.equal(result.passed, 3, describeBatch(result));
+    assert.equal(peak, 1, `policy permitted one worker at a time; peak was ${peak}`);
+    // The reported figure is the resolved envelope, not the installation ceiling
+    // and not whatever the caller happened to ask for.
+    assert.equal(result.maxParallel, 1, describeBatch(result));
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("compute policy never reports or runs more concurrency than the runtime allows", async () => {
+  const repo = await makeRepo();
+  try {
+    let peak = 0;
+    const result = await runProductionBatch(
+      [
+        makeTask({
+          objective: "Clamp the alpha stream.",
+          allowedFiles: ["src/alpha/**"],
+        }),
+        makeTask({ objective: "Clamp the beta stream.", allowedFiles: ["src/beta/**"] }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        // An envelope resolved above the installation ceiling should be
+        // impossible; if one ever reaches the scheduler it must not be believed.
+        computePolicy: {
+          ...DEFAULT_COMPUTE_POLICY,
+          maxConcurrency: 999 as unknown as number,
+        },
+        executor: fakeExecutor({
+          onConcurrency: (active) => {
+            peak = Math.max(peak, active);
+          },
+          writes: (task) => ({ [`src/${moduleOf(task)}/mod.ts`]: "x\n" }),
+          delayMs: 30,
+        }),
+      },
+    );
+
+    assert.equal(result.passed, 2, describeBatch(result));
+    assert.ok(
+      peak <= MAX_PARALLEL,
+      `the process-wide worker limit must still hold; peak was ${peak}`,
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("compute policy also bounds the bounded recovery pass, not just the first window", async () => {
+  const repo = await makeRepo();
+  const calls = new Map<string, number>();
+  let activeRecovery = 0;
+  let peakRecovery = 0;
+  try {
+    // Same shape as the concurrent-recovery test above, which observes a peak of
+    // 2. With the envelope narrowed to one worker the recovery wave has to
+    // serialize too: it queues behind the batch's semaphore, not a fresh one.
+    const result = await runProductionBatch(
+      [
+        makeTask({
+          objective: "First failed stream recovers once.",
+          allowedFiles: ["src/two/**"],
+        }),
+        makeTask({
+          objective: "Second failed stream recovers once.",
+          allowedFiles: ["src/three/**"],
+        }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        computePolicy: { ...DEFAULT_COMPUTE_POLICY, maxConcurrency: 1 },
+        executor: async (input, options) => {
+          const key = moduleOf(input);
+          const count = (calls.get(key) ?? 0) + 1;
+          calls.set(key, count);
+          if (count === 1) throw new Error("Codex Exec exited with code 1");
+          activeRecovery += 1;
+          peakRecovery = Math.max(peakRecovery, activeRecovery);
+          await new Promise((resolve) => setTimeout(resolve, 40));
+          activeRecovery -= 1;
+          const relative = `src/${key}/value.ts`;
+          const target = path.join(options.workingDirectory, ...relative.split("/"));
+          await fs.mkdir(path.dirname(target), { recursive: true });
+          await fs.writeFile(target, "recovered\n", "utf8");
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [{ path: relative, kind: "add", why: "test", observed: true }],
+          });
+        },
+      },
+    );
+
+    assert.equal(calls.get("two"), 2, describeBatch(result));
+    assert.equal(calls.get("three"), 2, describeBatch(result));
+    assert.equal(
+      peakRecovery,
+      1,
+      `recovery must honour the same limit as the initial window; peak was ${peakRecovery}`,
+    );
+    assert.equal(result.passed, 2, describeBatch(result));
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("a batch task carries the envelope its batch was admitted under", async () => {
+  const repo = await makeRepo();
+  try {
+    const seen: Array<DelegateTaskInput["computePolicy"]> = [];
+    // The delegation boundary attaches the resolved envelope to every task, and
+    // that is what failure classification later reads. Verify the batch runner
+    // carries it through to the worker contract unchanged, so a narrowed batch
+    // cannot silently fall back to the installation baseline downstream.
+    const attached = { ...DEFAULT_COMPUTE_POLICY, allowEffortEscalation: false };
+    await runProductionBatch(
+      [
+        makeTask({
+          objective: "Observe the attached envelope.",
+          allowedFiles: ["src/a/**"],
+          computePolicy: attached,
+        }),
+      ],
+      {
+        mode: "sequential",
+        workingDirectory: repo,
+        computePolicy: attached,
+        executor: async (input) => {
+          seen.push(input.computePolicy);
+          return makeOutput({ effort: input.effort, filesChanged: [] });
+        },
+      },
+    );
+
+    assert.equal(seen.length, 1);
+    assert.deepEqual(seen[0], attached);
+    assert.equal(seen[0]?.allowEffortEscalation, false);
   } finally {
     await cleanupRepo(repo);
   }

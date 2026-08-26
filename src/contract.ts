@@ -15,6 +15,7 @@ import {
   VERIFICATIONS,
   type RoutingPreflightCard,
 } from "./routing.js";
+import { computePolicyNarrowingShape, computePolicySchema } from "./policy.js";
 
 /** Coarse shape of the delegated work. Helps the parent reason about effort. */
 export const TASK_CATEGORIES = [
@@ -358,6 +359,17 @@ export const delegateTaskInputShape = {
     .describe(
       "Optional routing declaration for this call; advisory except that an empty seam list is refused.",
     ),
+
+  /**
+   * Compute envelope for this call.
+   *
+   * Any subset of the envelope, and narrowing only — the runtime intersects it
+   * with the operator-owned baseline before anything runs. The advertised copy
+   * exposes just the bounds a supervisor may declare (see
+   * `computePolicyNarrowingShape`); the wider partial here is what the resolved
+   * envelope the runtime attaches to the task validates against.
+   */
+  computePolicy: computePolicySchema.partial().optional(),
 };
 
 export const delegateTaskInputSchema = z.object(delegateTaskInputShape);
@@ -391,17 +403,17 @@ export type ContinueTaskInput = z.input<typeof continueTaskInputSchema>;
  * one advertised surface from another.
  */
 export const INPUT_METADATA_SIZE_BUDGETS = {
-  delegateTask: 3_100,
-  continueTask: 450,
-  delegateTasks: 3_500,
-  routingPreflightTool: 850,
-  advertisedCombined: 7_950,
+  delegateTask: 3_550,
+  continueTask: 390,
+  delegateTasks: 3_990,
+  routingPreflightTool: 810,
+  advertisedCombined: 8_740,
   delegateTaskContract: 2_500,
-  delegateTasksContract: 2_900,
-  contractCombined: 5_700,
-  routingCardDelegateTask: 1_100,
-  routingCardDelegateTasks: 1_100,
-  routingCombined: 3_000,
+  delegateTasksContract: 2_940,
+  contractCombined: 5_820,
+  routingCardDelegateTask: 1_060,
+  routingCardDelegateTasks: 1_060,
+  routingCombined: 2_920,
 } as const;
 
 /**
@@ -852,6 +864,8 @@ export const delegateTasksInputShape = {
   routingPreflight: delegateTaskInputShape.routingPreflight.describe(
     "Optional call-level routing declaration; advisory except for the structural gates, which parallel mode enforces before any worktree exists.",
   ),
+
+  computePolicy: delegateTaskInputShape.computePolicy,
 };
 
 export const delegateTasksInputSchema = z.object(delegateTasksInputShape);
@@ -890,6 +904,22 @@ const routingPreflightMcpSchema = z
   .optional()
   .describe(ROUTING_CARD_DESCRIPTION);
 
+/**
+ * The one thing the advertised compute card must say for itself.
+ *
+ * Per-field prose is stripped like everywhere else, but a supervisor that
+ * cannot see the direction of travel might read this field as a grant. It is
+ * the opposite, and that has to be legible from the schema alone.
+ */
+export const COMPUTE_POLICY_DESCRIPTION =
+  "Optional per-call compute envelope. Narrows this installation's operator-owned " +
+  "baseline only and can never widen it. Omit to use the baseline.";
+
+const computePolicyMcpSchema = z
+  .object(computePolicyNarrowingShape)
+  .optional()
+  .describe(COMPUTE_POLICY_DESCRIPTION);
+
 export const delegateTaskMcpInputShape = {
   ...withoutFieldDescriptions(delegateTaskInputShape),
   contextCapsule: z.object(withoutFieldDescriptions(contextCapsuleShape)).optional(),
@@ -897,6 +927,7 @@ export const delegateTaskMcpInputShape = {
     .array(z.object(withoutFieldDescriptions(previousAttemptShape)))
     .default([]),
   routingPreflight: routingPreflightMcpSchema,
+  computePolicy: computePolicyMcpSchema,
 };
 export const continueTaskMcpInputShape = withoutFieldDescriptions(continueTaskInputShape);
 const batchTaskMcpSchema = z.object({
@@ -920,6 +951,7 @@ export const delegateTasksMcpInputShape = {
   ...withoutFieldDescriptions(delegateTasksInputShape),
   tasks: z.array(batchTaskMcpSchema).min(1).max(MAX_BATCH_SIZE),
   routingPreflight: routingPreflightMcpSchema,
+  computePolicy: computePolicyMcpSchema,
 };
 
 /** The advisory tool takes the card and nothing else. */

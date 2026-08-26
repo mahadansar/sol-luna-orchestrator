@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import {
   DEFAULT_TIMEOUT_SECONDS,
+  EFFORTS,
   LUNA_MODEL,
   MAX_PARALLEL,
   ORCHESTRATOR_SERVER_NAME,
@@ -33,6 +34,7 @@ import type {
   WorkerFailureCause,
   WorkerReport,
 } from "./contract.js";
+import { resolveComputePolicy } from "./policy.js";
 import { STATUSES, WORKER_FAILURE_CAUSES, workerOutputJsonSchema } from "./contract.js";
 import { verificationCommandsEquivalent } from "./command.js";
 import { buildWorkerPrompt } from "./prompt.js";
@@ -52,7 +54,7 @@ import {
  * failing: a queued task is far less annoying than a spurious error, and the
  * MCP tool timeout still bounds the wait.
  */
-class Semaphore {
+export class Semaphore {
   private available: number;
   private readonly waiting: Array<() => void> = [];
 
@@ -1556,19 +1558,38 @@ export function classifyFailureDecision(
         "The completed, trustworthy result identifies an implementation failure. A same-effort retry is warranted only after the parent confirms the immutable contract is sound.",
       );
     }
-    const nextEffort = NEXT_EFFORT[input.effort] as Effort | null;
+    // The effort ladder, then the executor ladder, then the parent — strictly in
+    // that order of cost. Compute policy can shorten this ladder but must never
+    // reorder it: refusing the cheap next step can only ever move the decision
+    // toward parent takeover, never past it to a costlier executor.
+    const policy = resolveComputePolicy(input.computePolicy);
+    const nextEffort = policy.allowEffortEscalation
+      ? (EFFORTS.slice(EFFORTS.indexOf(input.effort) + 1).find((effort) =>
+          policy.allowedEfforts.includes(effort),
+        ) ?? null)
+      : null;
     if (nextEffort) {
       return decide(
         "effort",
         "effort-escalation",
-        "A prior failed execution is declared and the current completed evidence again identifies intrinsic implementation difficulty; escalate one effort step without changing the executor or contract.",
+        "A prior failed execution is declared and the current completed evidence again identifies intrinsic implementation difficulty; escalate to the next permitted effort without changing the executor or contract.",
         nextEffort,
+      );
+    }
+    const effortExhausted = NEXT_EFFORT[input.effort] === null;
+    if (effortExhausted && policy.allowStrongerFallback) {
+      return decide(
+        "capability",
+        "stronger-executor-fallback",
+        "Repeated trustworthy implementation failure at max effort warrants a stronger-executor fallback recommendation; P1.2 must authorize and select any executor.",
       );
     }
     return decide(
       "capability",
-      "stronger-executor-fallback",
-      "Repeated trustworthy implementation failure at max effort warrants a stronger-executor fallback recommendation; P1.2 must authorize and select any executor.",
+      "parent-takeover",
+      effortExhausted
+        ? "Repeated trustworthy implementation failure at max effort, and compute policy permits no stronger-executor fallback."
+        : "Repeated trustworthy implementation failure, and compute policy permits no further effort escalation; a stronger executor would cost more than the step it withheld.",
     );
   }
 

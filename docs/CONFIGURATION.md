@@ -212,25 +212,29 @@ authoritative presentation of the required keys, values, and failure rationale.
 
 ### Environment variables
 
-| Variable                          | Default                 | Purpose                                                           |
-| --------------------------------- | ----------------------- | ----------------------------------------------------------------- |
-| `LUNA_MODEL`                      | `gpt-5.6-luna`          | Worker model                                                      |
-| `LUNA_TIMEOUT_SECONDS`            | `1800`                  | Wall-clock budget per worker turn                                 |
-| `LUNA_VERIFY_TIMEOUT_SECONDS`     | `600`                   | Wall-clock budget per independently rerun verification command    |
-| `LUNA_SANDBOX`                    | `workspace-write`       | Codex sandbox mode for workers                                    |
-| `LUNA_NETWORK_ACCESS`             | off                     | `1` allows workers network access                                 |
-| `SOL_LUNA_MAX_PARALLEL`           | `3`                     | Concurrent workers; hard ceiling 8                                |
-| `SOL_LUNA_WORKTREE_LINK`          | `node_modules`          | Directories linked into each worktree                             |
-| `SOL_LUNA_KEEP_WORKTREES`         | `onFailure`             | Parallel-task retention: `always`, `never`, or `onFailure`        |
-| `SOL_LUNA_ALLOW_DIRTY`            | off                     | `1` permits parallel batches over uncommitted in-scope changes    |
-| `SOL_LUNA_VERIFY_MODE`            | `allowlist`             | `allowlist`, `off`, or `shell` — see [Security](../SECURITY.md)   |
-| `SOL_LUNA_VERIFY_ALLOW`           | —                       | Extra permitted executables, comma separated                      |
-| `SOL_LUNA_VERIFY_ENV_PASSTHROUGH` | off                     | `1` stops withholding credential-shaped env vars                  |
-| `SOL_LUNA_ALLOWED_ROOTS`          | —                       | Confine delegation to these directory trees                       |
-| `SOL_LUNA_SERVER_NAME`            | `sol-luna-orchestrator` | **Must match** the name registered in Codex                       |
-| `SOL_LUNA_WORKER`                 | set per worker          | Internal marker; a server seeing it registers zero tools          |
-| `SOL_LUNA_EVENTS`                 | set by `init`           | Structured JSONL activity log, read by `activity`. Unset = no log |
-| `SOL_LUNA_LOG`                    | set by `init`           | Human-readable diagnostics log. Unset in the server env = no log  |
+| Variable                           | Default                 | Purpose                                                           |
+| ---------------------------------- | ----------------------- | ----------------------------------------------------------------- |
+| `LUNA_MODEL`                       | `gpt-5.6-luna`          | Worker model                                                      |
+| `LUNA_TIMEOUT_SECONDS`             | `1800`                  | Wall-clock budget per worker turn                                 |
+| `LUNA_VERIFY_TIMEOUT_SECONDS`      | `600`                   | Wall-clock budget per independently rerun verification command    |
+| `LUNA_SANDBOX`                     | `workspace-write`       | Codex sandbox mode for workers                                    |
+| `LUNA_NETWORK_ACCESS`              | off                     | `1` allows workers network access                                 |
+| `SOL_LUNA_MAX_PARALLEL`            | `3`                     | Concurrent workers; hard ceiling 8                                |
+| `SOL_LUNA_MAX_WORKERS_PER_BATCH`   | `12`                    | Workers one batch may enlist, either mode; hard ceiling 12        |
+| `SOL_LUNA_ALLOWED_EFFORTS`         | all four                | Permitted efforts, comma separated, e.g. `medium,high`            |
+| `SOL_LUNA_ALLOW_EFFORT_ESCALATION` | on                      | `0` stops the runtime recommending a higher effort                |
+| `SOL_LUNA_ALLOW_STRONGER_FALLBACK` | on                      | `0` stops the runtime recommending a stronger executor            |
+| `SOL_LUNA_WORKTREE_LINK`           | `node_modules`          | Directories linked into each worktree                             |
+| `SOL_LUNA_KEEP_WORKTREES`          | `onFailure`             | Parallel-task retention: `always`, `never`, or `onFailure`        |
+| `SOL_LUNA_ALLOW_DIRTY`             | off                     | `1` permits parallel batches over uncommitted in-scope changes    |
+| `SOL_LUNA_VERIFY_MODE`             | `allowlist`             | `allowlist`, `off`, or `shell` — see [Security](../SECURITY.md)   |
+| `SOL_LUNA_VERIFY_ALLOW`            | —                       | Extra permitted executables, comma separated                      |
+| `SOL_LUNA_VERIFY_ENV_PASSTHROUGH`  | off                     | `1` stops withholding credential-shaped env vars                  |
+| `SOL_LUNA_ALLOWED_ROOTS`           | —                       | Confine delegation to these directory trees                       |
+| `SOL_LUNA_SERVER_NAME`             | `sol-luna-orchestrator` | **Must match** the name registered in Codex                       |
+| `SOL_LUNA_WORKER`                  | set per worker          | Internal marker; a server seeing it registers zero tools          |
+| `SOL_LUNA_EVENTS`                  | set by `init`           | Structured JSONL activity log, read by `activity`. Unset = no log |
+| `SOL_LUNA_LOG`                     | set by `init`           | Human-readable diagnostics log. Unset in the server env = no log  |
 
 `LUNA_SANDBOX` accepts `read-only`, `workspace-write` and
 `danger-full-access`. Keep the default `workspace-write` for normal use.
@@ -252,6 +256,42 @@ and rejected again at runtime. `SOL_LUNA_MAX_PARALLEL` is a different thing:
 sequential mode runs one task at a time whatever the batch size, and parallel
 mode runs at most `SOL_LUNA_MAX_PARALLEL` at once — default 3, hard ceiling 8 —
 and queues the rest. A 12-task batch never means 12 simultaneous workers.
+
+### Compute policy
+
+The five variables above form this installation's compute envelope: which worker
+model is authorized, which efforts are permitted, how many workers one batch may
+enlist, how many may run at once, and whether the failure ladder may raise
+effort or recommend a stronger executor.
+
+The envelope is yours, not the model's. It is read from the environment the
+server was launched with and cannot be raised from inside a call. Every default
+reproduces the pre-policy runtime exactly, so an installation that sets none of
+these behaves as it always did. `SOL_LUNA_MAX_WORKERS_PER_BATCH` applies to
+sequential batches too — they enlist as many workers, they only stagger them.
+
+`sol-luna-orchestrator status` and `sol-luna-orchestrator doctor` print the
+resolved envelope, so you can confirm what a registered server will actually
+allow rather than what your current shell happens to say.
+
+A supervisor may attach an optional `computePolicy` to `delegate_task` or
+`delegate_tasks` to narrow the envelope for one call — fewer concurrent workers,
+fewer workers per batch, no effort escalation, no stronger-executor fallback.
+Narrowing is the only direction available: limits take the lower value and
+permissions AND together. Model and effort ranges are not declarable per call,
+so a supervisor cannot refuse its own call by naming a model wrong. A request
+that does not fit is refused before any worktree, thread, or worker exists, and
+the refusal names what was permitted.
+
+Two consequences worth knowing before you narrow anything:
+
+- Effort is a defaulted field. If `SOL_LUNA_ALLOWED_EFFORTS` excludes `high`,
+  the default effort becomes the cheapest permitted one rather than being
+  refused on every call that omitted it.
+- Capping effort also caps the executor. A stronger-executor fallback is only
+  ever recommended once the effort ladder is genuinely exhausted, so an
+  installation that forbids `max` will not see that recommendation — refusing
+  the cheap step never promotes the run to a costlier one.
 
 ### Automatic recovery
 

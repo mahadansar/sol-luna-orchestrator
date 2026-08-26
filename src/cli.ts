@@ -19,6 +19,7 @@ import { describeEventsSource, resolveEventsPath } from "./cli/events-path.js";
 import { initCommand } from "./cli/init.js";
 import { codexConfigPath, installLocation, packageVersion } from "./cli/paths.js";
 import { resolveRegisteredServerConfig } from "./cli/server-config.js";
+import { describeComputePolicy } from "./policy.js";
 import { SERVER_NAME, inspectSettings } from "./cli/settings.js";
 import { findTable, fromTomlValue } from "./cli/toml-edit.js";
 import { bold, dim, errOut, out, symbols, table } from "./cli/ui.js";
@@ -80,6 +81,7 @@ function statusCommand(): number {
     ],
     ["Worker model", serverConfig.workerModel],
     ["Max workers", String(serverConfig.maxParallel)],
+    ["Compute policy", describeComputePolicy(serverConfig.computePolicy)],
     ["Verification", serverConfig.verificationMode],
     ["Workspace roots", serverConfig.allowedRoots ?? "any existing directory"],
     [

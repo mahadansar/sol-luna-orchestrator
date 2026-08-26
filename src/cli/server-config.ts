@@ -1,12 +1,17 @@
 import {
+  clampBatchWorkers,
   clampParallel,
   DEFAULT_LUNA_MODEL,
   DEFAULT_MAX_PARALLEL,
   DEFAULT_ORCHESTRATOR_SERVER_NAME,
   DEFAULT_VERIFY_MODE,
+  MAX_BATCH_SIZE,
+  parseAllowedEfforts,
+  parseOptOutFlag,
   VERIFY_MODES,
   type VerifyMode,
 } from "../config.js";
+import { buildComputePolicy, type ComputePolicy } from "../policy.js";
 import { serverEnvTable } from "./settings.js";
 import { fromTomlValue, readKey } from "./toml-edit.js";
 
@@ -16,6 +21,8 @@ export interface RegisteredServerConfig {
   verificationMode: VerifyMode;
   allowedRoots: string | null;
   recursionDisableTarget: string;
+  /** The operator-owned compute baseline this registration resolves to. */
+  computePolicy: ComputePolicy;
 }
 
 const configuredEnv = (configText: string, key: string): string | null => {
@@ -40,15 +47,36 @@ export function resolveRegisteredServerConfig(
     ? (rawVerifyMode as VerifyMode)
     : "allowlist";
 
+  const workerModel = configuredEnv(configText, "LUNA_MODEL") ?? DEFAULT_LUNA_MODEL;
+  const maxParallel = clampParallel(
+    Number(configuredEnv(configText, "SOL_LUNA_MAX_PARALLEL") ?? DEFAULT_MAX_PARALLEL),
+  );
+
   return {
-    workerModel: configuredEnv(configText, "LUNA_MODEL") ?? DEFAULT_LUNA_MODEL,
-    maxParallel: clampParallel(
-      Number(configuredEnv(configText, "SOL_LUNA_MAX_PARALLEL") ?? DEFAULT_MAX_PARALLEL),
-    ),
+    workerModel,
+    maxParallel,
     verificationMode,
     allowedRoots: configuredEnv(configText, "SOL_LUNA_ALLOWED_ROOTS"),
     recursionDisableTarget:
       configuredEnv(configText, "SOL_LUNA_SERVER_NAME") ??
       DEFAULT_ORCHESTRATOR_SERVER_NAME,
+    computePolicy: buildComputePolicy({
+      model: workerModel,
+      allowedEfforts: parseAllowedEfforts(
+        configuredEnv(configText, "SOL_LUNA_ALLOWED_EFFORTS"),
+      ),
+      maxConcurrency: maxParallel,
+      maxWorkersPerBatch: clampBatchWorkers(
+        Number(
+          configuredEnv(configText, "SOL_LUNA_MAX_WORKERS_PER_BATCH") ?? MAX_BATCH_SIZE,
+        ),
+      ),
+      allowEffortEscalation: parseOptOutFlag(
+        configuredEnv(configText, "SOL_LUNA_ALLOW_EFFORT_ESCALATION"),
+      ),
+      allowStrongerFallback: parseOptOutFlag(
+        configuredEnv(configText, "SOL_LUNA_ALLOW_STRONGER_FALLBACK"),
+      ),
+    }),
   };
 }

@@ -18,6 +18,7 @@ import type {
   TaskState,
 } from "./contract.js";
 import { asRoutingCard } from "./contract.js";
+import { DEFAULT_COMPUTE_POLICY, type ComputePolicy } from "./policy.js";
 import { declaredRoutingFields, describeRefusal, evaluateRouting } from "./routing.js";
 import {
   activityFailureReason,
@@ -41,6 +42,7 @@ import {
   UNCLAIMED_FILE,
   mergeUsage,
   workerSlots,
+  Semaphore,
 } from "./worker.js";
 import { findScopeViolations } from "./scope.js";
 import {
@@ -170,12 +172,27 @@ export async function runBatch(
      * evaluated and behavior is exactly what it was before preflight existed.
      */
     routingPreflight?: RoutingPreflightInput;
+    /**
+     * The already-resolved compute envelope for this batch.
+     *
+     * Resolved once at the delegation boundary, never re-derived here: this is
+     * the narrowed policy, so every bound below is safe to use directly.
+     * Omitted only by internal callers, which get the operator baseline.
+     */
+    computePolicy?: ComputePolicy;
   },
 ): Promise<BatchOutput> {
   const batchId = options.batchId ?? makeBatchId();
   const startedAt = Date.now();
   const mode = options.mode;
   const emit = options.eventEmitter ?? emitEvent;
+  const computePolicy = options.computePolicy ?? DEFAULT_COMPUTE_POLICY;
+  // Parallel mode is the only mode with concurrency to bound; sequential runs
+  // one task at a time whatever the policy says.
+  const maxParallel = mode === "parallel" ? computePolicy.maxConcurrency : 1;
+  // One semaphore for the batch, not one per worker window: the bounded
+  // recovery pass has to queue behind the same limit the initial wave did.
+  const policySlots = new Semaphore(maxParallel);
 
   if (tasks.length === 0) {
     throw new BatchRejectedError("A batch needs at least one task.");
@@ -222,7 +239,8 @@ export async function runBatch(
     batchId,
     mode,
     taskCount: tasks.length,
-    maxParallel: mode === "parallel" ? MAX_PARALLEL : 1,
+    maxParallel,
+    computePolicy,
     automaticRecovery: options.automaticRecovery ?? true,
   });
   for (const task of running) {
@@ -371,6 +389,7 @@ export async function runBatch(
           options.signal,
           options.protectedWorktreePaths,
           options.leaseMaintainer,
+          policySlots,
         )),
       );
     }
@@ -401,6 +420,7 @@ export async function runBatch(
       options.signal,
       options.automaticRecovery ?? true,
       initialConflicts,
+      policySlots,
     );
   }
 
@@ -748,7 +768,7 @@ export async function runBatch(
   return {
     batchId,
     mode,
-    maxParallel: mode === "parallel" ? MAX_PARALLEL : 1,
+    maxParallel,
     taskCount: running.length,
     passed,
     failed,
@@ -828,6 +848,7 @@ async function runParallel(
   signal?: AbortSignal,
   protectedWorktreePaths: Iterable<string> = [],
   leaseMaintainer: typeof maintainWorktreeLease = maintainWorktreeLease,
+  policySlots: Semaphore = new Semaphore(MAX_PARALLEL),
 ): Promise<string[]> {
   const warnings: string[] = [];
 
@@ -896,10 +917,12 @@ async function runParallel(
 
   // --- Execution: the expensive part, genuinely concurrent -----------------
   //
-  // Each task takes a slot from the shared semaphore, so this respects
-  // SOL_LUNA_MAX_PARALLEL without a second scheduler. Every workspace already
-  // exists, so workers start together instead of queueing behind each other's
-  // setup.
+  // Two bounds, always acquired in the same order: this batch's compute-policy
+  // limit, then the process-wide worker limit. A consistent order is what keeps
+  // nesting two semaphores deadlock-free, and the policy semaphore is owned by
+  // the batch rather than this window so the bounded recovery pass queues
+  // behind the same limit. Every workspace already exists, so workers start
+  // together instead of queueing behind each other's setup.
   await Promise.all(
     running.map(async (task) => {
       const worktree = task.worktree;
@@ -909,6 +932,7 @@ async function runParallel(
         markCancelled(batchId, task, emit);
         return;
       }
+      const policyRelease = await policySlots.acquire();
       const release = await workerSlots.acquire();
       try {
         if (signal?.aborted) {
@@ -989,6 +1013,7 @@ async function runParallel(
         });
       } finally {
         release();
+        policyRelease();
       }
     }),
   );
@@ -1240,6 +1265,7 @@ async function recoverParallel(
   signal: AbortSignal | undefined,
   enabled: boolean,
   integrationConflicts: IntegrationConflict[],
+  policySlots: Semaphore,
 ): Promise<void> {
   const candidates: Array<{ task: RunningTask; decision: RecoveryDecision }> = [];
   for (const task of running) {
@@ -1287,6 +1313,7 @@ async function recoverParallel(
       const predecessorExecutionId = task.result.attempts?.at(-1)?.executionId ?? null;
       const executionId = createExecutionId();
       const startedAt = Date.now();
+      const policyRelease = await policySlots.acquire();
       const release = await workerSlots.acquire();
       try {
         task.recovery = { ...decision, recoveryAttempt: attempt };
@@ -1472,6 +1499,7 @@ async function recoverParallel(
         });
       } finally {
         release();
+        policyRelease();
       }
     }),
   );

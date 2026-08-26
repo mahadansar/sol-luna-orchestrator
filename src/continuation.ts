@@ -185,5 +185,22 @@ function cloneTaskInput(input: DelegateTaskInput): DelegateTaskInput {
     verificationCommands: [...input.verificationCommands],
     previousAttempts: input.previousAttempts.map((attempt) => ({ ...attempt })),
     contextCapsule: input.contextCapsule ? { ...input.contextCapsule } : undefined,
+    // A continuation runs under the envelope its original delegation was
+    // admitted under, so the resolved policy is retained rather than re-derived.
+    // Spread conditionally: adding a `computePolicy: undefined` key to a
+    // contract that never carried one would break contract-identity checks.
+    ...(input.computePolicy
+      ? {
+          computePolicy: {
+            ...input.computePolicy,
+            ...(input.computePolicy.allowedModels
+              ? { allowedModels: [...input.computePolicy.allowedModels] }
+              : {}),
+            ...(input.computePolicy.allowedEfforts
+              ? { allowedEfforts: [...input.computePolicy.allowedEfforts] }
+              : {}),
+          },
+        }
+      : {}),
   };
 }

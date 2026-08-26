@@ -297,11 +297,52 @@ another automatic action. A generic runtime exception, counter availability, or
 worker claim alone never authorizes retry.
 
 A completed trustworthy implementation failure may recommend a same-effort
-retry. Repeated implementation evidence may recommend exactly one next effort
-step; repeated failure at `max` may recommend a stronger executor. The latter is
-advice only: P1.2 owns executor/model authorization, selection, and compute-policy
-enforcement. Every decision names its source execution ids and reports the
-automatic retry count/limit without altering attempts or aggregate usage.
+retry. Repeated implementation evidence may recommend the next effort step the
+compute policy permits; repeated failure once the effort ladder is exhausted may
+recommend a stronger executor. The latter is advice only:
+P1.2 owns executor/model authorization and selection. Every decision names its
+source execution ids and reports the automatic retry count/limit without
+altering attempts or aggregate usage.
+
+## Compute policy
+
+Every delegation runs inside a compute envelope: which worker model is
+authorized, which efforts are permitted, how many workers one batch may enlist,
+how many may run at once, and whether the failure ladder may raise effort or
+recommend a stronger executor.
+
+The baseline is operator-owned. It comes from the environment the server was
+launched with, never from the model, and it cannot exceed the runtime's own hard
+ceilings. `sol-luna-orchestrator status` and `doctor` report the resolved
+baseline. See `docs/CONFIGURATION.md` for the variables.
+
+A supervisor may attach `computePolicy` to `delegate_task` or `delegate_tasks`
+to narrow that baseline for one call — fewer concurrent workers, fewer workers
+per batch, no effort escalation, no stronger-executor fallback. Narrowing is the
+only direction available: bounds intersect, limits take the lower value, and
+permissions AND together, so no declaration can widen what the operator
+permitted. The model and effort ranges are operator-owned and not declarable per
+call. Omitting the field uses the baseline unchanged.
+
+Admission happens before any worktree, thread, or worker exists. A disallowed
+effort, an unauthorized model, or more workers than the batch limit is refused
+without spending a turn; the refusal names what was permitted so the parent can
+resubmit or proceed solo. The worker-count bound applies to sequential batches
+too — they enlist as many workers, they only stagger them.
+
+Precedence between the two gates differs by surface, and deliberately.
+`delegate_task` applies the structural routing gate first, so an attached card
+is always recorded. `delegate_tasks` applies compute admission first, because
+its routing gates are evaluated together with the scope comparison once the
+batch is admitted. Both orders refuse before anything is created.
+
+Enforcement is not advisory. Concurrency is bounded by the resolved envelope for
+the initial worker window and for the bounded recovery pass alike, and the
+envelope a batch was admitted under is what its failure decisions are bounded
+by. Narrowing can only ever move a decision toward parent takeover: refusing an
+effort step never promotes the run to a costlier executor instead. Each batch
+records its resolved envelope in the event stream, so a withheld escalation is
+explainable after the fact.
 
 ## Evidence and review
 

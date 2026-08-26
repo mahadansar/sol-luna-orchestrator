@@ -8,6 +8,7 @@ import type {
   UsageUnavailableReason,
 } from "./contract.js";
 import { sanitizeForLog } from "./log.js";
+import type { ComputePolicy } from "./policy.js";
 import type {
   CoreOverlap,
   DeclaredRoutingFields,
@@ -32,6 +33,13 @@ export type OrchestratorEvent =
       taskCount: number;
       maxParallel: number;
       automaticRecovery?: boolean;
+      /**
+       * The compute envelope this batch actually ran under, after the
+       * operator baseline and any per-call narrowing were resolved. Recorded
+       * so a reader can tell why an escalation was withheld, or why a run was
+       * less concurrent than the installation's ceiling allows.
+       */
+      computePolicy?: ComputePolicy;
     }
   | {
       type: "batch.completed";

@@ -108,22 +108,33 @@ prompts. Routing may choose solo, a worker, a batch, continuation, repair,
 retry, an authorised stronger executor, or parent takeover, based on evidence
 and within that envelope.
 
-Its first implemented slice is Cheap Routing Eligibility / Preflight. This is
-an incremental part of P1.2, not the whole feature. Deterministic eligibility
-is separated from expensive architecture: a pure synchronous evaluator decides
-obvious solo cases from a small declared card before any repository exploration,
-worktree, thread, or worker exists.
+Two slices are now implemented:
+
+1. **Cheap Routing Eligibility / Preflight**: Deterministic eligibility
+   is separated from expensive architecture: a pure synchronous evaluator decides
+   obvious solo cases from a small declared card before any repository exploration,
+   worktree, thread, or worker exists.
+2. **User-Owned Compute Policy and Runtime Enforcement**: A canonical policy
+   envelope names the authorised worker model, the permitted effort levels, the
+   concurrency and worker-count limits, and whether effort escalation or a
+   stronger-executor fallback may be recommended. The baseline is operator-owned,
+   read from the environment and bounded by the runtime's own ceilings; a call
+   may narrow it and can never widen it. Enforcement is at admission for model,
+   effort, and worker count; on the resolved envelope for concurrency, across
+   both the initial worker window and the bounded recovery pass; and on the
+   failure ladder, which a narrowed envelope can only shorten toward parent
+   takeover. Each batch records the envelope it ran under.
 
 Future P1.2 work still includes:
 
 - Solo vs delegation decisions
 - decomposition/seam decisions
 - sequential vs parallel choice
-- worker count
+- worker count selection
 - authorised worker/model selection
 - effort selection
-- concurrency decisions
-- runtime enforcement of user-owned compute policy
+- concurrency decisions within the enforced envelope
+- full adaptive routing algorithm
 
 **Constraints.** The supervisor cannot expand permissions. Routing must preserve
 scope, isolation, independent verification, evidence handling, bounded retries,

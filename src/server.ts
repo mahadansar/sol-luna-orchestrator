@@ -52,6 +52,7 @@ import {
   emitEvent,
   type EventEmitter,
 } from "./events.js";
+import { admitCompute, cloneComputePolicy } from "./policy.js";
 import {
   declaredRoutingFields,
   describeRefusal,
@@ -716,11 +717,11 @@ export const METADATA_SIZE_BUDGETS = {
   serverInstructions: 1_100,
   delegateTaskDescription: 1_700,
   delegateTasksDescription: 2_150,
-  continueTaskDescription: 700,
-  routingPreflightDescription: 900,
-  advertisedTotal: 14_300,
-  delegationContract: 10_300,
-  routingCombined: 3_950,
+  continueTaskDescription: 690,
+  routingPreflightDescription: 800,
+  advertisedTotal: 15_150,
+  delegationContract: 11_450,
+  routingCombined: 3_700,
 } as const;
 
 /**
@@ -825,9 +826,27 @@ function registerDelegateTask(): void {
       inputSchema: delegateTaskMcpInputShape,
     },
     async (input, extra) => {
-      const task = input as DelegateTaskInput;
+      const rawTask = input as DelegateTaskInput;
       const batchId = makeSingleBatchId();
       const taskId = "t1";
+
+      // Resolving the envelope is total and cheap, so it happens before any
+      // gate: the started event should record what this call would have run
+      // under even when a gate then refuses it. Deciding whether the request
+      // fits inside that envelope is the separate, refusable step below.
+      const admission = admitCompute({
+        requested: rawTask.computePolicy,
+        model: LUNA_MODEL,
+        efforts: [rawTask.effort],
+        workerCount: 1,
+      });
+      // The task the runtime actually executes carries its resolved envelope,
+      // so failure classification and any later continuation read the same
+      // narrowed policy this call was admitted under.
+      const task: DelegateTaskInput = {
+        ...rawTask,
+        computePolicy: cloneComputePolicy(admission.policy),
+      };
       const logicalAttempt = task.previousAttempts.length + 1;
       const startedAt = Date.now();
       let workerStarted = false;
@@ -843,10 +862,12 @@ function registerDelegateTask(): void {
         mode: "single",
         taskCount: 1,
         maxParallel: 1,
+        computePolicy: admission.policy,
       });
 
-      // Before the worker, the workspace, or anything else: the only refusal a
-      // single delegation's declaration can earn is having declared no seam.
+      // Structural routing gates come first on both delegation surfaces: a call
+      // that declared no seam is malformed, and admitting compute for it would
+      // be answering the wrong question. Compute policy is the second gate.
       const routingRefusal = refuseSingleDelegation(task.routingPreflight, batchId);
       if (routingRefusal) {
         emitEvent({ type: "batch.rejected", batchId, reason: routingRefusal });
@@ -856,6 +877,16 @@ function registerDelegateTask(): void {
           isError: true,
         };
       }
+
+      if (admission.refusal) {
+        emitEvent({ type: "batch.rejected", batchId, reason: admission.refusal });
+        log(`delegate_task refused: ${admission.refusal}`);
+        return {
+          content: [{ type: "text" as const, text: admission.refusal }],
+          isError: true,
+        };
+      }
+
       const routingAdvisory = routingAdvisoryLine(task.routingPreflight, {
         mode: "single",
         taskCount: 1,
@@ -1310,8 +1341,58 @@ function registerDelegateTasks(): void {
         allowOverlappingScopes: batch.allowOverlappingScopes,
       });
 
+      // The same admission gate the single surface uses, so the two tools cannot
+      // drift on which bounds they check or how they word a refusal.
+      //
+      // Precedence differs from the single surface by necessity, and the
+      // difference is documented in SOL_RULES.md rather than left implicit: a
+      // batch's structural routing gates are entangled with the scope
+      // comparison inside runBatch and emit the `routing.declared` record as
+      // they go, so re-running them here to gate compute first would either
+      // duplicate that telemetry or fork the evaluation. Compute admission
+      // therefore leads on this surface. Both orders still refuse before any
+      // worktree, thread, or worker exists, which is the property that matters.
+      //
+      // Worker count is bounded in both modes: a sequential batch enlists just
+      // as many workers, it only staggers them.
+      const admission = admitCompute({
+        requested: batch.computePolicy,
+        model: LUNA_MODEL,
+        efforts: batch.tasks.map((task) => task.effort),
+        workerCount: batch.tasks.length,
+      });
+      if (admission.refusal) {
+        const refusedBatchId = makeSingleBatchId();
+        emitEvent({
+          type: "batch.started",
+          batchId: refusedBatchId,
+          mode: batch.mode,
+          taskCount: batch.tasks.length,
+          maxParallel: batch.mode === "parallel" ? admission.policy.maxConcurrency : 1,
+          computePolicy: admission.policy,
+        });
+        emitEvent({
+          type: "batch.rejected",
+          batchId: refusedBatchId,
+          reason: admission.refusal,
+        });
+        log(`delegate_tasks refused: ${admission.refusal}`);
+        return {
+          content: [{ type: "text" as const, text: admission.refusal }],
+          isError: true,
+        };
+      }
+
+      // Every task carries the batch's resolved envelope, so a per-task failure
+      // decision is bounded by the policy this batch was admitted under rather
+      // than by the installation baseline it may have narrowed.
+      const admittedTasks = (batch.tasks as DelegateTaskInput[]).map((task) => ({
+        ...task,
+        computePolicy: cloneComputePolicy(admission.policy),
+      }));
+
       try {
-        const result = await runBatch(batch.tasks as DelegateTaskInput[], {
+        const result = await runBatch(admittedTasks, {
           mode: batch.mode,
           workingDirectory: batch.workingDirectory,
           allowOverlappingScopes: batch.allowOverlappingScopes,
@@ -1321,6 +1402,7 @@ function registerDelegateTasks(): void {
           continuationRegistrar: registerContinuation,
           protectedWorktreePaths: continuationStore.protectedWorkingDirectories(),
           routingPreflight: batch.routingPreflight,
+          computePolicy: admission.policy,
         });
         log(
           `batch done: ${result.passed}/${result.taskCount} passed in ` +

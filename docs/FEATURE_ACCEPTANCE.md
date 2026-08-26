@@ -13,7 +13,7 @@ parallel recovery baseline described below. Shipped history belongs in
 - **Runtime baseline:** commit-relative current main for v0.10.0 after the Thin
   Supervisor work above. Package and lockfile versions are `0.10.0`.
 - **Latest full deterministic validation:** `npm run verify` passed on
-  2026-08-26 with **609/612 tests passed**, no failures and three expected
+  2026-08-26 with **638/641 tests passed**, no failures and three expected
   platform-specific Windows skips, plus typecheck and the deterministic MCP
   protocol smoke test.
 - **Current native platform evidence:** deterministic CI covers Windows, Linux,
@@ -52,6 +52,7 @@ parallel recovery baseline described below. Shipped history belongs in
 | P1.0 parent/pricing foundation                          | PASS     | PASS          | N/A           | Strong        |
 | P1.0 per-execution failure and usage evidence           | PASS     | DEEP PASS     | N/A           | Strong        |
 | P1.1 reasoned retry and effort escalation decisions     | PASS     | DEEP PASS     | N/A           | Strong        |
+| P1.2 user-owned compute policy and enforcement          | PASS     | PASS          | N/A           | Strong        |
 | `failureCauses` and verification contradiction handling | PASS     | PASS          | PASS          | Strong        |
 
 Dates, provenance, dependencies, and retest triggers are recorded below. A live

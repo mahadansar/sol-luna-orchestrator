@@ -45,7 +45,62 @@ export const IS_WORKER_PROCESS = process.env[WORKER_MARKER_ENV] === "1";
 export const EFFORTS = ["medium", "high", "xhigh", "max"] as const;
 export type Effort = (typeof EFFORTS)[number];
 
-export const DEFAULT_EFFORT: Effort = "high";
+/**
+ * Efforts this installation permits, narrowing `EFFORTS`.
+ *
+ * Part of the operator-owned compute policy baseline (see `policy.ts`). Comma
+ * separated, order-insensitive; unrecognised entries are dropped and an empty
+ * or wholly invalid list falls back to the full range rather than bricking
+ * delegation. The advertised schema still offers every effort in `EFFORTS`, so
+ * a narrowed installation refuses a disallowed effort before spending a turn
+ * instead of silently substituting one.
+ */
+const splitEffortList = (raw: string | null | undefined): string[] =>
+  (raw ?? "")
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+
+export function parseAllowedEfforts(raw: string | null | undefined): readonly Effort[] {
+  const entries = splitEffortList(raw);
+  if (entries.length === 0) return [...EFFORTS];
+  const permitted = EFFORTS.filter((effort) => entries.includes(effort));
+  return permitted.length > 0 ? permitted : [...EFFORTS];
+}
+
+export function allowedEffortsInvalid(raw: string | null | undefined): boolean {
+  const entries = splitEffortList(raw);
+  return (
+    entries.length > 0 &&
+    entries.some((entry) => !(EFFORTS as readonly string[]).includes(entry))
+  );
+}
+
+/**
+ * Opt-out flags: absent or anything other than `0` means permitted, so an
+ * installation that sets nothing keeps its pre-policy behaviour exactly.
+ */
+export const parseOptOutFlag = (raw: string | null | undefined): boolean => raw !== "0";
+
+export const ALLOWED_EFFORTS: readonly Effort[] = parseAllowedEfforts(
+  process.env.SOL_LUNA_ALLOWED_EFFORTS,
+);
+
+/** Whether SOL_LUNA_ALLOWED_EFFORTS held entries we could not use as given. */
+export const ALLOWED_EFFORTS_INVALID = allowedEffortsInvalid(
+  process.env.SOL_LUNA_ALLOWED_EFFORTS,
+);
+
+/**
+ * Default effort, kept inside the operator's allowed set.
+ *
+ * `effort` is a defaulted input, so a baseline that excludes the default would
+ * otherwise refuse every call that omitted the field. Prefer `high`; failing
+ * that take the cheapest permitted effort.
+ */
+export const DEFAULT_EFFORT: Effort = ALLOWED_EFFORTS.includes("high")
+  ? "high"
+  : (ALLOWED_EFFORTS[0] as Effort);
 
 /**
  * The Codex TypeScript SDK types `modelReasoningEffort` as
@@ -169,6 +224,44 @@ export const MAX_PARALLEL = clampParallel(
 export const MAX_PARALLEL_CLAMPED =
   process.env.SOL_LUNA_MAX_PARALLEL !== undefined &&
   String(MAX_PARALLEL) !== process.env.SOL_LUNA_MAX_PARALLEL.trim();
+
+/**
+ * Most workers one batch may enlist, narrowing `MAX_BATCH_SIZE`.
+ *
+ * Separate from the advertised `maxItems` ceiling on purpose: the schema keeps
+ * publishing the protocol's `MAX_BATCH_SIZE` so tool metadata stays identical
+ * across installations, and this baseline refuses an oversized batch at
+ * admission instead. Applies to sequential batches too — they enlist just as
+ * many workers, one at a time.
+ */
+export function clampBatchWorkers(value: number): number {
+  if (!Number.isFinite(value) || value < 1) return MAX_BATCH_SIZE;
+  return Math.min(Math.floor(value), MAX_BATCH_SIZE);
+}
+
+export const MAX_WORKERS_PER_BATCH = clampBatchWorkers(
+  Number(process.env.SOL_LUNA_MAX_WORKERS_PER_BATCH ?? MAX_BATCH_SIZE),
+);
+
+/** Whether SOL_LUNA_MAX_WORKERS_PER_BATCH held a value we could not use as given. */
+export const MAX_WORKERS_PER_BATCH_CLAMPED =
+  process.env.SOL_LUNA_MAX_WORKERS_PER_BATCH !== undefined &&
+  String(MAX_WORKERS_PER_BATCH) !== process.env.SOL_LUNA_MAX_WORKERS_PER_BATCH.trim();
+
+/**
+ * Whether the runtime may recommend raising effort, or reaching for a stronger
+ * executor, after a repeated trustworthy implementation failure.
+ *
+ * Both default on, preserving pre-policy behaviour. Set to `0` to cap the
+ * escalation ladder: the decision then stops at parent takeover, which is the
+ * conservative direction — never a costlier action than the one refused.
+ */
+export const ALLOW_EFFORT_ESCALATION = parseOptOutFlag(
+  process.env.SOL_LUNA_ALLOW_EFFORT_ESCALATION,
+);
+export const ALLOW_STRONGER_FALLBACK = parseOptOutFlag(
+  process.env.SOL_LUNA_ALLOW_STRONGER_FALLBACK,
+);
 
 /**
  * Directory holding per-task git worktrees, relative to the repository root.

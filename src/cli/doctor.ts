@@ -18,6 +18,7 @@ import {
   inspectDiscoveryHint,
   readDiscoveryInstructions,
 } from "./discovery-hint.js";
+import { describeComputePolicy } from "../policy.js";
 import { SERVER_NAME, inspectSettings, serverTable } from "./settings.js";
 import { fromTomlValue, readKey } from "./toml-edit.js";
 import { resolveRegisteredServerConfig } from "./server-config.js";
@@ -188,6 +189,12 @@ export async function collectChecks(): Promise<Check[]> {
     name: "Maximum workers",
     status: "ok",
     detail: String(serverConfig.maxParallel),
+  });
+
+  checks.push({
+    name: "Compute policy",
+    status: "ok",
+    detail: describeComputePolicy(serverConfig.computePolicy),
   });
 
   const disableTargetMatches = serverConfig.recursionDisableTarget === SERVER_NAME;
