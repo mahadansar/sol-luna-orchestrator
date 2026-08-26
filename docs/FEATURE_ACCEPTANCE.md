@@ -13,7 +13,7 @@ parallel recovery baseline described below. Shipped history belongs in
 - **Runtime baseline:** commit-relative current main for v0.10.0 after the Thin
   Supervisor work above. Package and lockfile versions are `0.10.0`.
 - **Latest full deterministic validation:** `npm run verify` passed on
-  2026-08-26 with **686/689 tests passed**, no failures and three expected
+  2026-08-27 with **717/720 tests passed**, no failures and three expected
   platform-specific Windows skips, plus typecheck and the deterministic MCP
   protocol smoke test.
 - **Current native platform evidence:** deterministic CI covers Windows, Linux,
@@ -54,6 +54,7 @@ parallel recovery baseline described below. Shipped history belongs in
 | P1.1 reasoned retry and effort escalation decisions     | PASS     | DEEP PASS     | N/A           | Strong        |
 | P1.2 user-owned compute policy and enforcement          | PASS     | PASS          | N/A           | Strong        |
 | P1.2 decomposition and seam planning (internal)         | PARTIAL  | PASS          | N/A           | Moderate      |
+| P1.2 selection policy (internal)                        | PARTIAL  | PASS          | N/A           | Moderate      |
 | `failureCauses` and verification contradiction handling | PASS     | PASS          | PASS          | Strong        |
 
 Dates, provenance, dependencies, and retest triggers are recorded below. A live
@@ -108,6 +109,28 @@ feed the produced card straight into `evaluateRouting`, so a drift between the t
 layers fails a test. Coverage is nonetheless PARTIAL and live evidence N/A because
 no tool surface, server handler, or batch path calls `planSeams` yet: the module is
 internal, and exposing it is named P1.2 work in `ROADMAP.md`.
+
+P1.2 selection policy (`src/selection.ts`, `src/selection.test.ts`) is also recorded
+as **PARTIAL** coverage with **Moderate** confidence. The selector is pure and
+deterministically covered by 31 cases, including two cross-product sweeps: one
+asserting that every action, evidence and envelope combination selects only a
+permitted executor and a permitted effort, and one asserting that a starting effort
+is never raised above what routing asked for. Three properties are pinned by
+name — a solo or zero-worker shape and any action authorising no worker turn select
+nothing at all; effort climbs exactly one permitted rung, so `xhigh` and `max` are
+reachable only by climbing or from an envelope with no lower level; and executor and
+effort stay separate decisions, so escalation never changes the executor and an
+executor decision never resets effort. A transitive-import test proves `config.ts`,
+the one module that reads the process environment, is off the selector's runtime
+graph, so the envelope is an argument rather than an ambient read.
+
+The stronger-executor fallback is deliberately reported rather than resolved:
+`allowedModels` is a membership set with no operator-declared ordering, so
+list-order regression cases assert that a permitted fallback retains the executor
+that already ran whatever order the envelope lists. Coverage is PARTIAL because the
+module is internal — no tool surface, server handler, or batch path calls
+`selectCompute` yet — and because resolving a fallback needs an operator-declared
+executor ordering that does not exist; both are named as P1.2 work in `ROADMAP.md`.
 
 The terminal handoff protocol defaults clean verified PASS responses to compact
 text without `structuredContent`. A batch reruns the deduplicated declared checks

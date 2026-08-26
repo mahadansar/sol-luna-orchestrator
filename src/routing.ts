@@ -461,7 +461,7 @@ function routeNeutralAdvisories(
  * A new effort level is a compile error here rather than an unranked value that
  * silently compares as `undefined` and sorts to the bottom.
  */
-const EFFORT_RANK = {
+export const EFFORT_RANK = {
   medium: 0,
   high: 1,
   xhigh: 2,
@@ -492,7 +492,10 @@ const SEAM_SIZE_EFFORT = {
  * available. Returns null only for an empty list, which the policy schema forbids
  * and which this function still declines to invent a value for.
  */
-function boundEffort(preferred: Effort, allowed: readonly Effort[]): Effort | null {
+export function boundEffort(
+  preferred: Effort,
+  allowed: readonly Effort[],
+): Effort | null {
   let atOrBelow: Effort | null = null;
   let floor: Effort | null = null;
   for (const effort of allowed) {

@@ -108,7 +108,7 @@ prompts. Routing may choose solo, a worker, a batch, continuation, repair,
 retry, an authorised stronger executor, or parent takeover, based on evidence
 and within that envelope.
 
-Four slices are now implemented:
+Five slices are now implemented:
 
 1. **Cheap Routing Eligibility / Preflight**: Deterministic eligibility
    is separated from expensive architecture: a pure synchronous evaluator decides
@@ -149,13 +149,39 @@ Four slices are now implemented:
    has. It names no mechanism, effort, worker count, or concurrency: those stay in
    route planning above. Currently an internal module with deterministic coverage;
    it is not yet exposed on a tool surface or consumed by the runtime.
+5. **Selection Policy**: The step after the failure ladder. Route planning names a
+   shape and failure classification names one next action; neither names the
+   executor and effort a next worker turn would actually run at, and a pure
+   synchronous selector is that last step. It starts at the envelope's authorised
+   executor and routing's conservative starting effort, and it may only ever lower
+   what routing asked for. Executor and effort stay two decisions: continuity picks
+   the executor — the one the last turn ran under, whenever the envelope still
+   permits it — and escalation moves effort exactly one permitted rung above the
+   evidenced level, so `xhigh` and `max` are reachable only by climbing to them or
+   from an envelope that leaves no lower level at all. It reads one prior execution
+   in the canonical evidence record's own field names, never a history depth or a
+   cross-call trend, and it honours P1.1's `nextEffort` without ever raising or
+   originating one. `allowEffortEscalation` and `allowStrongerFallback` are enforced
+   here as well as on the ladder, a solo or zero-worker shape and any action that
+   authorises no worker turn select nothing at all, and every output carries a
+   reason code. Currently an internal module with deterministic coverage; it is not
+   yet exposed on a tool surface or consumed by the runtime.
+
+   One thing it deliberately does not do: resolve a stronger-executor fallback.
+   `allowedModels` is a membership set — `admitCompute` reads it with `includes`,
+   narrowing intersects it and discards the caller's order, and the operator
+   baseline is the single `LUNA_MODEL` — so no operator surface declares that one
+   authorised executor is stronger than another. A permitted, earned fallback is
+   therefore reported and handed to the parent rather than resolved by reading list
+   position as strength, which would be the model hierarchy the constraints below
+   forbid.
 
 Future P1.2 work still includes:
 
-- exposing seam planning on the routing surface and feeding its card into live
-  delegation decisions
-- authorised worker/model selection
-- effort selection from execution evidence rather than a declared seam size
+- an operator-declared executor ordering, without which a stronger-executor
+  fallback can be authorised and reported but never resolved
+- exposing seam planning and selection on the routing surface, and feeding them
+  into live delegation decisions
 - recording the recommended shape in routing telemetry
 - full adaptive routing algorithm
 
