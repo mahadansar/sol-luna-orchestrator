@@ -8,6 +8,15 @@ All notable changes to this project are documented here. Format follows
 
 ### Added
 
+- Added canonical per-execution attempt evidence to task and batch results, with
+  stable execution identity, logical ordinal, repair/continuation/recovery
+  lineage, requested model and effort, thread facts, worker and verification
+  timing, termination origin, claimed outcome, authoritative verification, and
+  explicitly reported or unavailable usage. New `attempt.started` and
+  `attempt.completed` events make multiple executions independently observable
+  without putting prompts, source, or verification/subprocess output into the
+  activity stream. Post-execution cleanup and lifecycle failures now return
+  `needs-supervisor` with completed task and sibling evidence retained.
 - Added a cheap routing eligibility preflight. An optional `routing_preflight`
   advisory tool and an optional `routingPreflight` card on `delegate_task` and
   `delegate_tasks` let the parent test a delegation before paying for it. A pure
@@ -41,6 +50,13 @@ All notable changes to this project are documented here. Format follows
   engineering fixtures, hidden references, evaluator-only routing categories,
   Solo/Adaptive campaign support, pricing revalidation, checkpoint-compatible
   evidence, and routing/economic analysis. No model-backed V3 campaign was run.
+
+### Fixed
+
+- Corrected aggregate usage truthfulness across repair and recovery executions.
+  A top-level total is now present only when every constituent execution has
+  authoritative Codex `turn.completed` usage; known constituent usage remains
+  visible in its own attempt evidence when the aggregate is unknown.
 
 ## [0.10.0] - 2026-08-25
 

@@ -5,6 +5,8 @@ import {
   type ThreadOptions,
   type TurnOptions,
 } from "@openai/codex-sdk";
+import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import {
   DEFAULT_TIMEOUT_SECONDS,
   LUNA_MODEL,
@@ -18,9 +20,13 @@ import {
 } from "./config.js";
 import { resolveWorkspace } from "./workspace.js";
 import type {
+  AttemptEvidence,
+  AttemptRole,
+  AttemptTermination,
   DelegateTaskInput,
   DelegateTaskOutput,
   Status,
+  UsageUnavailableReason,
   WorkerFailureCause,
   WorkerReport,
 } from "./contract.js";
@@ -85,7 +91,23 @@ export interface ObservedRun {
   usage: DelegateTaskOutput["usage"];
   timedOut: boolean;
   cancelled: boolean;
+  termination: AttemptTermination;
+  terminationMessage: string | null;
 }
+
+export interface AttemptStartEvidence {
+  executionId: string;
+  logicalAttempt: number;
+  role: AttemptRole;
+  predecessorExecutionId: string | null;
+  requestedModel: string;
+  requestedEffort: string;
+  threadOperation: "start" | "resume";
+  startedAt: string;
+  timeoutMs: number;
+}
+
+export const createExecutionId = (): string => `exec_${randomUUID()}`;
 
 interface WorkerThread {
   readonly id: string | null;
@@ -116,6 +138,18 @@ async function runWorkerThread(
     codex?: WorkerCodex;
   } = {},
 ): Promise<ObservedRun> {
+  const observed: ObservedRun = {
+    threadId: null,
+    finalResponse: "",
+    filesChanged: [],
+    errors: [],
+    usage: null,
+    timedOut: false,
+    cancelled: false,
+    termination: "completed",
+    terminationMessage: null,
+  };
+
   // Two independent guards stop a worker from delegating recursively:
   //
   //  1. Disable this orchestrator for the worker's Codex process. The SDK
@@ -132,15 +166,6 @@ async function runWorkerThread(
   }
   workerEnv[WORKER_MARKER_ENV] = "1";
 
-  const codex: WorkerCodex =
-    options.codex ??
-    new Codex({
-      env: workerEnv,
-      config: {
-        mcp_servers: { [ORCHESTRATOR_SERVER_NAME]: { enabled: false } },
-      },
-    });
-
   const threadOptions: ThreadOptions = {
     model: LUNA_MODEL,
     modelReasoningEffort: asSdkEffort(input.effort),
@@ -151,20 +176,6 @@ async function runWorkerThread(
     // The worker runs unattended: there is no human to answer a prompt.
     approvalPolicy: "never",
   };
-  const thread = options.resumeThreadId
-    ? codex.resumeThread(options.resumeThreadId, threadOptions)
-    : codex.startThread(threadOptions);
-
-  const observed: ObservedRun = {
-    threadId: null,
-    finalResponse: "",
-    filesChanged: [],
-    errors: [],
-    usage: null,
-    timedOut: false,
-    cancelled: false,
-  };
-
   const seenPaths = new Set<string>();
   const controller = new AbortController();
   const timer = setTimeout(() => {
@@ -183,7 +194,20 @@ async function runWorkerThread(
     else externalSignal.addEventListener("abort", onExternalAbort, { once: true });
   }
 
+  let thread: WorkerThread | null = null;
   try {
+    const codex: WorkerCodex =
+      options.codex ??
+      new Codex({
+        env: workerEnv,
+        config: {
+          mcp_servers: { [ORCHESTRATOR_SERVER_NAME]: { enabled: false } },
+        },
+      });
+    thread = options.resumeThreadId
+      ? codex.resumeThread(options.resumeThreadId, threadOptions)
+      : codex.startThread(threadOptions);
+
     const { events } = await thread.runStreamed(
       buildWorkerPrompt(input, workingDirectory, options.continuationInstruction),
       { outputSchema: workerOutputJsonSchema, signal: controller.signal },
@@ -225,10 +249,14 @@ async function runWorkerThread(
           break;
 
         case "turn.failed":
+          observed.termination = "turn-failed";
+          observed.terminationMessage = event.error.message;
           observed.errors.push(`Turn failed: ${event.error.message}`);
           break;
 
         case "error":
+          observed.termination = "stream-error";
+          observed.terminationMessage = event.message;
           observed.errors.push(event.message);
           break;
 
@@ -237,19 +265,28 @@ async function runWorkerThread(
       }
     }
   } catch (error) {
+    const message = (error as Error).message;
     if (observed.timedOut) {
-      observed.errors.push(
-        `Worker exceeded its ${timeoutSeconds}s budget and was aborted.`,
-      );
+      observed.termination = "timed-out";
+      observed.terminationMessage = `Worker exceeded its ${timeoutSeconds}s budget and was aborted.`;
+      observed.errors.push(observed.terminationMessage);
     } else if (observed.cancelled) {
+      observed.termination = "cancelled";
+      observed.terminationMessage = "Worker was cancelled before it finished.";
       observed.errors.push("Worker was cancelled before it finished.");
+    } else if (/^Codex Exec exited with (?:signal|code)\b/i.test(message)) {
+      observed.termination = "process-exit";
+      observed.terminationMessage = message;
+      observed.errors.push(`Worker process error: ${message}`);
     } else {
-      observed.errors.push(`Worker thread error: ${(error as Error).message}`);
+      observed.termination = "runtime-error";
+      observed.terminationMessage = message;
+      observed.errors.push(`Worker thread error: ${message}`);
     }
   } finally {
     clearTimeout(timer);
     externalSignal?.removeEventListener("abort", onExternalAbort);
-    observed.threadId ??= thread.id;
+    observed.threadId ??= thread?.id ?? null;
   }
 
   return observed;
@@ -413,6 +450,7 @@ export interface AnalysisParams {
   /** Results of the orchestrator re-running the verification commands. */
   orchestratorRuns: VerificationRun[];
   durationSeconds: number;
+  logicalAttempt?: number;
 }
 
 /**
@@ -428,6 +466,7 @@ export function buildDelegationResult({
   observed,
   orchestratorRuns,
   durationSeconds,
+  logicalAttempt,
 }: AnalysisParams): DelegateTaskOutput {
   const report = parseWorkerReport(observed.finalResponse);
   // The schema default keeps legacy callers safe even if they construct an
@@ -646,11 +685,16 @@ export function buildDelegationResult({
     trustworthy: discrepancies.length === 0 && errors.length === 0,
     workerThreadId: observed.threadId,
     continuationReference: null,
+    continuationState: {
+      status: "unavailable",
+      reason: "Continuation availability has not yet been evaluated.",
+    },
     repair: null,
     model: LUNA_MODEL,
     effort: input.effort,
     effortReason: input.effortReason,
-    attempt: input.previousAttempts.length + 1,
+    attempt: logicalAttempt ?? input.previousAttempts.length + 1,
+    attempts: [],
     summary: report?.summary ?? truncate(observed.finalResponse) ?? "",
     notes: report?.notes ?? "",
     followUps: report?.followUps ?? [],
@@ -886,25 +930,37 @@ export interface ExecuteOptions {
   /** Directory the worker runs in. Already validated by the caller. */
   workingDirectory: string;
   signal?: AbortSignal;
-  onVerificationStart?: (commandCount: number) => void;
+  onVerificationStart?: (
+    commandCount: number,
+    attribution: Pick<AttemptStartEvidence, "executionId" | "logicalAttempt" | "role">,
+  ) => void;
   /** Existing Codex thread to resume; omitted for a fresh delegation. */
   resumeThreadId?: string;
   /** Explicit follow-up instruction for a resumed thread. */
   continuationInstruction?: string;
+  /** Stable execution identity and lineage supplied by an enclosing runner. */
+  executionId?: string;
+  logicalAttempt?: number;
+  role?: AttemptRole;
+  predecessorExecutionId?: string | null;
   /** Test seam for the worker lifecycle; production creates the SDK client. */
   codex?: WorkerCodex;
   /** Manual continuation disables this even when the original contract opted in. */
   allowAutomaticRepair?: boolean;
-  onRepairStart?: (classification: string) => void;
-  onRepairComplete?: (verdict: Status) => void;
+  onRepairStart?: (classification: string, executionId: string) => void;
+  onRepairComplete?: (verdict: Status, executionId: string) => void;
+  onAttemptStart?: (evidence: AttemptStartEvidence) => void;
+  onAttemptComplete?: (evidence: AttemptEvidence) => void;
 }
 
 /** Optional lifecycle hooks used by the single-task MCP surface. */
 export interface DelegateHooks {
   onStarted?: (workingDirectory: string) => void;
-  onVerificationStart?: (commandCount: number) => void;
-  onRepairStart?: (classification: string) => void;
-  onRepairComplete?: (verdict: Status) => void;
+  onVerificationStart?: ExecuteOptions["onVerificationStart"];
+  onRepairStart?: ExecuteOptions["onRepairStart"];
+  onRepairComplete?: ExecuteOptions["onRepairComplete"];
+  onAttemptStart?: ExecuteOptions["onAttemptStart"];
+  onAttemptComplete?: ExecuteOptions["onAttemptComplete"];
 }
 
 /**
@@ -917,16 +973,40 @@ interface TaskTurn {
   observed: ObservedRun;
   orchestratorRuns: VerificationRun[];
   durationSeconds: number;
+  evidence: AttemptEvidence;
+}
+
+function unavailableUsageReason(observed: ObservedRun): UsageUnavailableReason {
+  return observed.termination === "completed"
+    ? "no-turn-completed"
+    : observed.termination;
 }
 
 async function executeTaskTurn(
   input: DelegateTaskInput,
   options: ExecuteOptions,
 ): Promise<TaskTurn> {
-  const startedAt = Date.now();
+  const startedAt = new Date();
+  const startedTick = performance.now();
   const timeoutSeconds = input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS;
   const { workingDirectory, signal } = options;
+  const executionId = options.executionId ?? createExecutionId();
+  const logicalAttempt = options.logicalAttempt ?? input.previousAttempts.length + 1;
+  const role = options.role ?? "initial";
+  const startEvidence: AttemptStartEvidence = {
+    executionId,
+    logicalAttempt,
+    role,
+    predecessorExecutionId: options.predecessorExecutionId ?? null,
+    requestedModel: LUNA_MODEL,
+    requestedEffort: input.effort,
+    threadOperation: options.resumeThreadId ? "resume" : "start",
+    startedAt: startedAt.toISOString(),
+    timeoutMs: timeoutSeconds * 1000,
+  };
+  options.onAttemptStart?.(startEvidence);
 
+  const workerStartedTick = performance.now();
   const observed = await runWorkerThread(
     input,
     workingDirectory,
@@ -938,23 +1018,75 @@ async function executeTaskTurn(
       codex: options.codex,
     },
   );
+  const workerElapsedMs = Math.max(0, performance.now() - workerStartedTick);
 
   // Re-run the checks ourselves, after the worker has exited, so a PASS is
   // falsifiable rather than self-certified. Skipped when the run was cancelled:
   // there is nothing meaningful to verify and the caller is shutting down.
   let orchestratorRuns: VerificationRun[] = [];
+  let verificationElapsedMs = 0;
   if (input.verificationCommands.length > 0 && !observed.cancelled) {
-    options.onVerificationStart?.(input.verificationCommands.length);
-    orchestratorRuns = await runVerifications(
-      input.verificationCommands,
-      workingDirectory,
-    );
+    const verificationStartedTick = performance.now();
+    options.onVerificationStart?.(input.verificationCommands.length, {
+      executionId,
+      logicalAttempt,
+      role,
+    });
+    try {
+      orchestratorRuns = await runVerifications(
+        input.verificationCommands,
+        workingDirectory,
+      );
+    } catch (error) {
+      const message = `Independent verification failed unexpectedly: ${(error as Error).message}`;
+      observed.errors.push(message);
+      observed.termination = "runtime-error";
+      observed.terminationMessage = message;
+    } finally {
+      verificationElapsedMs = Math.max(0, performance.now() - verificationStartedTick);
+    }
   }
+  const elapsedMs = Math.max(0, performance.now() - startedTick);
+  const report = parseWorkerReport(observed.finalResponse);
+  const evidence: AttemptEvidence = {
+    ...startEvidence,
+    threadId: observed.threadId,
+    threadIdentityMatched: options.resumeThreadId
+      ? observed.threadId === null
+        ? null
+        : observed.threadId === options.resumeThreadId
+      : null,
+    finishedAt: new Date().toISOString(),
+    elapsedMs: Math.round(elapsedMs),
+    workerElapsedMs: Math.round(workerElapsedMs),
+    verificationElapsedMs: Math.round(verificationElapsedMs),
+    termination: {
+      kind: observed.termination,
+      message: observed.terminationMessage
+        ? truncate(observed.terminationMessage, 4_000)
+        : null,
+    },
+    usage: observed.usage
+      ? {
+          status: "reported",
+          source: "codex-turn.completed",
+          value: { ...observed.usage },
+        }
+      : { status: "unavailable", reason: unavailableUsageReason(observed) },
+    workerClaimedStatus: report?.status ?? null,
+    workerClaimedFailureCauses: [...(report?.failureCauses ?? [])],
+    verification: orchestratorRuns.map((run) => ({
+      ...run,
+      source: "orchestrator" as const,
+    })),
+  };
+  options.onAttemptComplete?.(evidence);
 
   return {
     observed,
     orchestratorRuns,
-    durationSeconds: Math.round((Date.now() - startedAt) / 1000),
+    durationSeconds: Math.round(elapsedMs / 1000),
+    evidence,
   };
 }
 
@@ -1119,8 +1251,10 @@ export function mergeUsage(
   first: DelegateTaskOutput["usage"],
   second: DelegateTaskOutput["usage"],
 ): DelegateTaskOutput["usage"] {
-  if (!first) return second;
-  if (!second) return first;
+  // This is a complete aggregate, not a known-minimum subtotal. If either
+  // constituent turn has no authoritative `turn.completed` usage, the total is
+  // unknown; each known constituent remains available in attempt evidence.
+  if (!first || !second) return null;
   const cacheWriteInputTokens =
     first.cacheWriteInputTokens === undefined ||
     second.cacheWriteInputTokens === undefined
@@ -1145,17 +1279,98 @@ function mergeRepairReport(firstResponse: string, repairResponse: string): strin
   return JSON.stringify({ ...repair, filesChanged: [...files.values()] });
 }
 
+/** Preserve completed execution evidence if result reconciliation itself fails. */
+function buildRuntimeFailureResult(
+  input: DelegateTaskInput,
+  turn: TaskTurn,
+  error: unknown,
+): DelegateTaskOutput {
+  const report = parseWorkerReport(turn.observed.finalResponse);
+  const detail = `Result evidence reconciliation failed: ${(error as Error).message}`;
+  return {
+    changeIntent: input.changeIntent ?? "required",
+    verdict: "FAILED",
+    workerClaimedStatus: report?.status ?? "FAILED",
+    workerClaimedFailureCauses: report?.failureCauses ?? ["unclassified"],
+    trustworthy: false,
+    workerThreadId: turn.observed.threadId,
+    continuationReference: null,
+    continuationState: {
+      status: "unavailable",
+      reason:
+        "Continuation availability was not evaluated after result reconciliation failed.",
+    },
+    repair: null,
+    recovery: null,
+    model: LUNA_MODEL,
+    effort: input.effort,
+    effortReason: input.effortReason,
+    attempt: turn.evidence.logicalAttempt,
+    attempts: [turn.evidence],
+    summary: report?.summary ?? truncate(turn.observed.finalResponse),
+    notes: report?.notes ?? "",
+    followUps: report?.followUps ?? [],
+    filesChanged: turn.observed.filesChanged.map((file) => ({
+      path: file.path,
+      kind: normalizeKind(file.kind),
+      why: UNCLAIMED_FILE,
+      observed: true,
+    })),
+    verification: [
+      ...turn.orchestratorRuns.map((run) => ({
+        ...run,
+        source: "orchestrator" as const,
+      })),
+      ...(report?.verification ?? []).map((run) => ({
+        command: run.command,
+        source: "worker" as const,
+        execution: "reported" as const,
+        exitCode: run.exitCode ?? null,
+        passed: run.passed,
+        output: truncate(run.evidence ?? ""),
+      })),
+    ],
+    verificationMode: VERIFY_MODE,
+    scopeViolations: [],
+    discrepancies: [detail],
+    reviewChecklist: [
+      "Treat this result as failed: runtime evidence exists, but normal reconciliation did not complete.",
+      "Inspect the retained execution and verification evidence before deciding any follow-up.",
+    ],
+    escalationAdvice:
+      "Result evidence reconciliation failed after worker execution. Preserve the evidence and repair the runtime path before retrying.",
+    durationSeconds: turn.durationSeconds,
+    usage: turn.observed.usage,
+    errors: [...turn.observed.errors, detail],
+  };
+}
+
+function buildTurnResult(
+  input: DelegateTaskInput,
+  workingDirectory: string,
+  turn: TaskTurn,
+): DelegateTaskOutput {
+  try {
+    const result = buildDelegationResult({
+      input,
+      workingDirectory,
+      ...turn,
+      logicalAttempt: turn.evidence.logicalAttempt,
+    });
+    result.attempts = [turn.evidence];
+    return result;
+  } catch (error) {
+    return buildRuntimeFailureResult(input, turn, error);
+  }
+}
+
 /** Execute a fresh or resumed task, with at most one opted-in automatic repair. */
 export async function executeTask(
   input: DelegateTaskInput,
   options: ExecuteOptions,
 ): Promise<DelegateTaskOutput> {
   const initialTurn = await executeTaskTurn(input, options);
-  const initial = buildDelegationResult({
-    input,
-    workingDirectory: options.workingDirectory,
-    ...initialTurn,
-  });
+  const initial = buildTurnResult(input, options.workingDirectory, initialTurn);
   const allowRepair = options.allowAutomaticRepair ?? input.automaticRepair ?? false;
   if (!allowRepair) return initial;
 
@@ -1165,12 +1380,17 @@ export async function executeTask(
     return initial;
   }
 
-  options.onRepairStart?.(decision.classification);
+  const repairExecutionId = createExecutionId();
+  options.onRepairStart?.(decision.classification, repairExecutionId);
   const repairTurn = await executeTaskTurn(input, {
     ...options,
     allowAutomaticRepair: false,
     resumeThreadId: initial.workerThreadId,
     continuationInstruction: buildRepairInstruction(decision),
+    executionId: repairExecutionId,
+    logicalAttempt: initial.attempt,
+    role: "automatic-repair",
+    predecessorExecutionId: initialTurn.evidence.executionId,
   });
   const observed: ObservedRun = {
     ...repairTurn.observed,
@@ -1190,13 +1410,14 @@ export async function executeTask(
       "Automatic repair did not preserve the original worker thread identity.",
     );
   }
-  const repaired = buildDelegationResult({
-    input,
-    workingDirectory: options.workingDirectory,
+  const repairedTurn: TaskTurn = {
     observed,
     orchestratorRuns: repairTurn.orchestratorRuns,
     durationSeconds: initialTurn.durationSeconds + repairTurn.durationSeconds,
-  });
+    evidence: repairTurn.evidence,
+  };
+  const repaired = buildTurnResult(input, options.workingDirectory, repairedTurn);
+  repaired.attempts = [initialTurn.evidence, repairTurn.evidence];
   repaired.repair = {
     ...decision,
     attempted: true,
@@ -1205,7 +1426,7 @@ export async function executeTask(
         ? "The one automatic repair turn completed and normal classification passed."
         : "The one automatic repair turn completed without passing; the repair limit is exhausted and control returns to the parent.",
   };
-  options.onRepairComplete?.(repaired.verdict);
+  options.onRepairComplete?.(repaired.verdict, repairExecutionId);
   return repaired;
 }
 
@@ -1231,6 +1452,8 @@ export async function delegateToLuna(
       onVerificationStart: hooks?.onVerificationStart,
       onRepairStart: hooks?.onRepairStart,
       onRepairComplete: hooks?.onRepairComplete,
+      onAttemptStart: hooks?.onAttemptStart,
+      onAttemptComplete: hooks?.onAttemptComplete,
     });
   } finally {
     release();
@@ -1247,6 +1470,8 @@ export async function continueToLuna(
     signal?: AbortSignal;
     hooks?: DelegateHooks;
     codex?: WorkerCodex;
+    predecessorExecutionId?: string | null;
+    logicalAttempt?: number;
   },
 ): Promise<DelegateTaskOutput> {
   const workingDirectory = resolveWorkspace(options.workingDirectory);
@@ -1257,8 +1482,13 @@ export async function continueToLuna(
       workingDirectory,
       signal: options.signal,
       onVerificationStart: options.hooks?.onVerificationStart,
+      onAttemptStart: options.hooks?.onAttemptStart,
+      onAttemptComplete: options.hooks?.onAttemptComplete,
       resumeThreadId: options.threadId,
       continuationInstruction: options.instruction,
+      logicalAttempt: options.logicalAttempt,
+      role: "manual-continuation",
+      predecessorExecutionId: options.predecessorExecutionId ?? null,
       codex: options.codex,
       allowAutomaticRepair: false,
     });

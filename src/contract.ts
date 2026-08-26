@@ -80,6 +80,47 @@ export const WORKER_FAILURE_CAUSES = [
 ] as const;
 export type WorkerFailureCause = (typeof WORKER_FAILURE_CAUSES)[number];
 
+/** Factual role of one concrete worker execution within a logical task. */
+export const ATTEMPT_ROLES = [
+  "initial",
+  "automatic-repair",
+  "manual-continuation",
+  "timeout-recovery",
+  "process-retry",
+] as const;
+export type AttemptRole = (typeof ATTEMPT_ROLES)[number];
+
+/** Runtime-observed termination facts. These are evidence, not P1.1 policy. */
+export const ATTEMPT_TERMINATIONS = [
+  "completed",
+  "timed-out",
+  "cancelled",
+  "turn-failed",
+  "stream-error",
+  "process-exit",
+  "runtime-error",
+] as const;
+export type AttemptTermination = (typeof ATTEMPT_TERMINATIONS)[number];
+
+export const USAGE_UNAVAILABLE_REASONS = [
+  "no-turn-completed",
+  "timed-out",
+  "cancelled",
+  "turn-failed",
+  "stream-error",
+  "process-exit",
+  "runtime-error",
+] as const;
+export type UsageUnavailableReason = (typeof USAGE_UNAVAILABLE_REASONS)[number];
+
+export const CONTINUATION_STATES = [
+  "issued",
+  "not-eligible",
+  "consumed",
+  "unavailable",
+] as const;
+export type ContinuationState = (typeof CONTINUATION_STATES)[number];
+
 const contextCapsuleShape = {
   relevantContext: z
     .string()
@@ -424,6 +465,70 @@ export interface WorkerReport {
 }
 
 /** Shape of what `delegate_task` returns to the parent orchestrator. */
+const usageShape = {
+  inputTokens: z.number(),
+  cachedInputTokens: z.number(),
+  cacheWriteInputTokens: z.number().optional(),
+  outputTokens: z.number(),
+  reasoningOutputTokens: z.number(),
+};
+
+const verificationEvidenceShape = {
+  command: z.string(),
+  source: z
+    .enum(["orchestrator", "worker"])
+    .describe(
+      "Result provenance. Orchestrator rows authoritatively record execution, " +
+        "refusal, or skipping; worker rows are self-reported.",
+    ),
+  execution: z
+    .enum(["argv", "shell", "rejected", "skipped", "reported"])
+    .describe(
+      "argv or shell = executed here; rejected = refused; skipped = disabled; " +
+        "reported = worker-only. Only successful executed rows prove a command.",
+    ),
+  exitCode: z.number().nullable(),
+  passed: z.boolean(),
+  output: z.string(),
+};
+
+export const attemptEvidenceSchema = z.object({
+  executionId: z.string(),
+  logicalAttempt: z.number(),
+  role: z.enum(ATTEMPT_ROLES),
+  predecessorExecutionId: z.string().nullable(),
+  requestedModel: z.string(),
+  requestedEffort: z.string(),
+  threadId: z.string().nullable(),
+  threadOperation: z.enum(["start", "resume"]),
+  threadIdentityMatched: z.boolean().nullable(),
+  startedAt: z.string(),
+  finishedAt: z.string(),
+  elapsedMs: z.number(),
+  workerElapsedMs: z.number(),
+  verificationElapsedMs: z.number(),
+  timeoutMs: z.number(),
+  termination: z.object({
+    kind: z.enum(ATTEMPT_TERMINATIONS),
+    message: z.string().nullable(),
+  }),
+  usage: z.discriminatedUnion("status", [
+    z.object({
+      status: z.literal("reported"),
+      source: z.literal("codex-turn.completed"),
+      value: z.object(usageShape),
+    }),
+    z.object({
+      status: z.literal("unavailable"),
+      reason: z.enum(USAGE_UNAVAILABLE_REASONS),
+    }),
+  ]),
+  workerClaimedStatus: z.enum(STATUSES).nullable(),
+  workerClaimedFailureCauses: z.array(z.enum(WORKER_FAILURE_CAUSES)),
+  verification: z.array(z.object(verificationEvidenceShape)),
+});
+export type AttemptEvidence = z.infer<typeof attemptEvidenceSchema>;
+
 export const delegateTaskOutputShape = {
   changeIntent: z
     .enum(CHANGE_INTENTS)
@@ -463,6 +568,15 @@ export const delegateTaskOutputShape = {
     .describe(
       "Opaque, single-use, server-lifetime reference for one explicit continuation; " +
         "null when this result cannot be continued or the bound was consumed.",
+    ),
+  continuationState: z
+    .object({
+      status: z.enum(CONTINUATION_STATES),
+      reason: z.string(),
+    })
+    .optional()
+    .describe(
+      "Factual bounded-continuation availability. Optional only for historical compatibility.",
     ),
   repair: z
     .object({
@@ -524,6 +638,12 @@ export const delegateTaskOutputShape = {
   attempt: z
     .number()
     .describe("Attempt number for this objective, from `previousAttempts`."),
+  attempts: z
+    .array(attemptEvidenceSchema)
+    .optional()
+    .describe(
+      "Immutable per-execution evidence. Current runtime results populate it; omission denotes a historical result.",
+    ),
   summary: z.string().describe("Worker's summary of what it did."),
   notes: z.string(),
   followUps: z.array(z.string()),
@@ -543,26 +663,7 @@ export const delegateTaskOutputShape = {
         "the runtime recorded no matching patch.",
     ),
   verification: z
-    .array(
-      z.object({
-        command: z.string(),
-        source: z
-          .enum(["orchestrator", "worker"])
-          .describe(
-            "Result provenance. Orchestrator rows authoritatively record execution, " +
-              "refusal, or skipping; worker rows are self-reported.",
-          ),
-        execution: z
-          .enum(["argv", "shell", "rejected", "skipped", "reported"])
-          .describe(
-            "argv or shell = executed here; rejected = refused; skipped = disabled; " +
-              "reported = worker-only. Only successful executed rows prove a command.",
-          ),
-        exitCode: z.number().nullable(),
-        passed: z.boolean(),
-        output: z.string(),
-      }),
-    )
+    .array(z.object(verificationEvidenceShape))
     .describe(
       "Verification outcomes with provenance and execution status; use orchestrator " +
         "rows to determine what actually ran.",
@@ -595,15 +696,7 @@ export const delegateTaskOutputShape = {
         "whether raising effort is actually justified.",
     ),
   durationSeconds: z.number(),
-  usage: z
-    .object({
-      inputTokens: z.number(),
-      cachedInputTokens: z.number(),
-      cacheWriteInputTokens: z.number().optional(),
-      outputTokens: z.number(),
-      reasoningOutputTokens: z.number(),
-    })
-    .nullable(),
+  usage: z.object(usageShape).nullable(),
   errors: z.array(z.string()).describe("Runtime errors surfaced during the turn."),
 };
 
@@ -864,6 +957,12 @@ export const batchTaskResultSchema = z.object({
     .optional()
     .describe(
       "Stable task attempt ordinal; recovery uses the same taskId and increments this once.",
+    ),
+  attempts: z
+    .array(attemptEvidenceSchema)
+    .optional()
+    .describe(
+      "Per-execution evidence retained even when no final task result was built.",
     ),
   recovery: delegateTaskOutputShape.recovery,
 });

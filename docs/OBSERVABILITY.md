@@ -50,12 +50,31 @@ failure, refusal, skip, or incompleteness evidence for targeted diagnosis.
 
 Records are appended as the run progresses: batch started, completed, cancelled
 or rejected; task queued; worker started, completed, failed, cancelled or timed
-out; worktree created, removed or retained; verification started and completed;
+out; canonical attempt started and completed; worktree created, removed or
+retained; verification started and completed;
 scope conflicts; integration conflicts, applied file counts, and completed,
 not-attempted, partial or failed integration; final-workspace verification
 started and completed; bounded repair started and completed; bounded recovery
 skipped, started, and completed; and cheap routing preflight, declaration, and
 contradiction records.
+
+Every execution for which the runtime invokes the worker SDK has a unique
+`executionId` and emits `attempt.started` before invocation. Unless the host
+process itself dies, exactly one `attempt.completed` follows. The terminal event
+records the logical attempt ordinal, role (`initial`, `automatic-repair`,
+`manual-continuation`, `timeout-recovery`, or `process-retry`), predecessor,
+requested model/effort, thread operation and identity match when knowable,
+timestamps, elapsed worker/verification time, configured timeout, factual
+termination, usage status, claimed outcome, and authoritative verification
+counts. A real host crash may leave only the start event; that is truthful
+incomplete evidence rather than a fabricated completion.
+
+Attempt termination is a runtime fact, not a derived P1.1 diagnosis. Known
+categories are `completed`, `timed-out`, `cancelled`, `turn-failed`,
+`stream-error`, `process-exit`, and `runtime-error`. Untyped SDK exceptions stay
+`runtime-error`; their text is not promoted to a network, transport, provider,
+or implementation classification. Terminal messages and verification output
+remain in structured tool-result evidence, not attempt activity events.
 
 Parallel recovery keeps the original batchId/taskId and emits an explicit attempt
 ordinal. Its classification and concise evidence identify a timeout continuation
@@ -65,6 +84,15 @@ are made before integration and cleanup; an opted-out or ineligible task emits a
 skipped decision rather than another worker turn. The JSON activity snapshot keeps
 the recovery attempt, classification, evidence, initial/recovery usage and duration;
 the human view labels running and completed recovery turns.
+
+The structured task result carries the same canonical `attempts` history. Repair,
+manual continuation, timeout recovery, and process retry append records linked to
+their predecessor; they do not overwrite the earlier execution. A batch task also
+retains this history when no nested final result could be built, so completed
+siblings remain independently attributable. Post-execution continuation,
+worktree, integration, or cleanup failure changes the batch to
+`needs-supervisor` and retains completed evidence rather than rejecting the whole
+result. Historical results and event streams without `attempts` remain readable.
 
 Worktree events describe the outcome after configured cleanup, not merely why a
 worktree might have been useful. `worktree.removed` carries the historical
@@ -98,6 +126,8 @@ Carried on those records:
 - Optional explicit `activityLabel` (never derived from the objective)
 - Batch mode, task count and configured concurrency
 - Attempt ordinal and bounded recovery classification/evidence when applicable
+- Per-execution identity, role, predecessor, lifecycle timing, termination, and
+  reported/unavailable usage status
 - Raw declared routing values, seam and unknown counts, route, gates and signals
 
 Deliberately **not** written to this stream:
@@ -105,6 +135,7 @@ Deliberately **not** written to this stream:
 - Worker objectives and prompts
 - Task context (`context`, `contextCapsule`)
 - Source code
+- Attempt termination messages and sensitive subprocess output
 - Verification command output — only a short failure reason may surface
 - Routing seam labels, routing rationale, routing scores, and cost estimates
 
@@ -219,8 +250,11 @@ always carried it.
   same latest run as machine-readable JSON — not the raw event lines. It is the
   fuller projection: it does include the task, batch and thread ids, worktree
   paths, per-worker token usage and the verification and integration breakdowns,
-  including retained-worktree diagnostics. Older records use truthful unknown
-  or empty defaults for fields introduced later.
+  including retained-worktree diagnostics. Its per-worker `attempts` history
+  keeps execution lineage and reported/unavailable usage independently; legacy
+  worker events are still reduced for compatibility but do not duplicate a
+  canonical attempt. Older records use truthful unknown or empty defaults for
+  fields introduced later.
 
 `--watch` and `--json` cannot be combined; the CLI rejects the pair rather than
 guessing which was meant.
@@ -261,8 +295,11 @@ do not break.
 
 ## Usage data
 
-Per-worker usage is recorded exactly as the Codex SDK reports it on
-`turn.completed`:
+Authoritative worker usage comes only from an observed Codex SDK
+`turn.completed` event. Each execution record carries either
+`{ status: "reported", source: "codex-turn.completed", value: ... }` or
+`{ status: "unavailable", reason: ... }`; elapsed time, another execution, and
+error text are never used to estimate tokens.
 
 | Field                   | Meaning                                                                                               |
 | ----------------------- | ----------------------------------------------------------------------------------------------------- |
@@ -274,12 +311,22 @@ Per-worker usage is recorded exactly as the Codex SDK reports it on
 | `model`, `effort`       | Which model and effort that worker ran at                                                             |
 | `durationSeconds`       | Wall-clock for that worker                                                                            |
 
-**Anything unavailable is written as `null`, never as `0`.** A cancelled or
-crashed worker produces no usage at all, and `null` means exactly that: not
-measured. The additive `cacheWriteInputTokens` field is omitted when the SDK or
-historical event record does not provide it; repair-turn totals only add it when
-both turns report it, otherwise the aggregate field remains omitted. Reading
-missing data as zero would turn unknown usage into free work.
+**Anything unavailable is written as `null`, never as `0`.** A timeout,
+cancellation, failed turn, stream/runtime error, or abnormal process exit may
+produce no `turn.completed` event; in that case exact usage is fundamentally
+unavailable to this runtime. A later repair or recovery cannot reconstruct it.
+The attempt retains the factual unavailable reason and any other evidence that
+was already observed.
+
+Top-level task usage is a complete aggregate, not a known-minimum subtotal. It
+is non-null only when every constituent execution being aggregated has reported
+authoritative usage: known + known is summed, while known + unknown and unknown
+
+- unknown are `null`. Known constituent usage remains visible in its own attempt
+  record. Within an otherwise complete aggregate, the additive
+  `cacheWriteInputTokens` field is included only when every constituent reported
+  that optional meter; omitting that one meter does not erase the other complete
+  token totals. Historical records without attempt evidence remain readable.
 
 The parent's own usage is not among these fields and cannot be: Codex does not
 report the parent turn to an MCP server it launched, so the snapshot's

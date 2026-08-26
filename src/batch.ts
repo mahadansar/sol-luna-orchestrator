@@ -9,6 +9,8 @@ import {
 import type {
   BatchOutput,
   BatchTaskResult,
+  AttemptEvidence,
+  AttemptRole,
   DelegateTaskInput,
   DelegateTaskOutput,
   RecoveryClassification,
@@ -17,7 +19,13 @@ import type {
 } from "./contract.js";
 import { asRoutingCard } from "./contract.js";
 import { declaredRoutingFields, describeRefusal, evaluateRouting } from "./routing.js";
-import { activityFailureReason, emitEvent, type EventEmitter } from "./events.js";
+import {
+  activityFailureReason,
+  emitAttemptCompleted,
+  emitAttemptStarted,
+  emitEvent,
+  type EventEmitter,
+} from "./events.js";
 import {
   findIntegrationConflicts,
   findScopeConflicts,
@@ -25,6 +33,7 @@ import {
 } from "./overlap.js";
 import {
   executeTask,
+  createExecutionId,
   reconcileParallelWorktreeEvidence,
   resultWasCancelled,
   UNCLAIMED_FILE,
@@ -199,6 +208,7 @@ export async function runBatch(
         error: null,
         warnings: [],
         attempt: input.previousAttempts.length + 1,
+        attempts: [],
         recovery: null,
       },
       recovery: null,
@@ -521,7 +531,7 @@ export async function runBatch(
     integrationVerification.every(
       (run) => (run.execution === "argv" || run.execution === "shell") && run.passed,
     );
-  const completionState: BatchOutput["completionState"] =
+  let completionState: BatchOutput["completionState"] =
     integrated && running.every(isCleanTask) && finalVerificationPassed
       ? "verified-complete"
       : "needs-supervisor";
@@ -544,13 +554,24 @@ export async function runBatch(
   for (const task of running) {
     if (!task.worktree) {
       if (task.result.result && options.continuationRegistrar) {
-        task.result.result.continuationReference = await options.continuationRegistrar(
-          task.input,
-          task.result.result,
-          workspace,
-          false,
-          null,
-        );
+        try {
+          task.result.result.continuationReference = await options.continuationRegistrar(
+            task.input,
+            task.result.result,
+            workspace,
+            false,
+            null,
+          );
+        } catch (error) {
+          const detail = `Continuation registration failed after execution: ${(error as Error).message}`;
+          task.result.error ??= detail;
+          task.result.warnings.push(detail);
+          task.result.result.continuationState = {
+            status: "unavailable",
+            reason: detail,
+          };
+          lifecycleError ??= error;
+        }
       }
       continue;
     }
@@ -605,6 +626,7 @@ export async function runBatch(
       }
       if (cleanup.error) {
         task.result.warnings.push(`Worktree cleanup incomplete: ${cleanup.error}`);
+        lifecycleError ??= new Error(cleanup.error);
       }
 
       let retainedLease = false;
@@ -663,9 +685,14 @@ export async function runBatch(
               task.result.result.continuationReference = reference;
               retainedLease = Boolean(reference && worktreeLease);
             } catch (error) {
+              lifecycleError ??= error;
               task.result.warnings.push(
                 `Continuation registration failed: ${(error as Error).message}`,
               );
+              task.result.result.continuationState = {
+                status: "unavailable",
+                reason: `Continuation registration failed: ${(error as Error).message}`,
+              };
             }
           }
         }
@@ -675,12 +702,21 @@ export async function runBatch(
       }
     } catch (error) {
       lifecycleError ??= error;
+      const detail = `Worktree lifecycle cleanup failed after execution: ${(error as Error).message}`;
+      task.result.error ??= detail;
+      task.result.warnings.push(detail);
     } finally {
       releaseWorktreeOwnership(task.worktree);
     }
   }
 
-  if (lifecycleError) throw lifecycleError;
+  if (lifecycleError) {
+    completionState = "needs-supervisor";
+    warnings.push(
+      `Post-execution lifecycle cleanup was incomplete: ${(lifecycleError as Error).message}. ` +
+        "Completed worker and sibling evidence has been retained.",
+    );
+  }
 
   const durationSeconds = Math.round((Date.now() - startedAt) / 1000);
   const passed = running.filter((task) => task.result.result?.verdict === "PASS").length;
@@ -913,6 +949,31 @@ async function runParallel(
             attempt: task.result.attempt ?? 1,
           });
         }
+      } catch (error) {
+        const detail = `Post-execution evidence lifecycle failed: ${(error as Error).message}`;
+        task.state = "failed";
+        task.result.state = "failed";
+        task.result.error ??= detail;
+        task.result.warnings.push(detail);
+        if (task.result.result) {
+          task.result.result.verdict = "FAILED";
+          task.result.result.trustworthy = false;
+          if (!task.result.result.errors.includes(detail)) {
+            task.result.result.errors.push(detail);
+          }
+          task.result.result.continuationReference = null;
+          task.result.result.continuationState = {
+            status: "unavailable",
+            reason: detail,
+          };
+        }
+        emit({
+          type: "worker.failed",
+          batchId,
+          taskId: task.taskId,
+          reason: detail,
+          attempt: task.result.attempt ?? 1,
+        });
       } finally {
         release();
       }
@@ -1089,11 +1150,13 @@ function mergeRecoveredResult(
   initial: DelegateTaskOutput | null,
   recovered: DelegateTaskOutput,
   metadata: RecoveryDecision,
+  attempts: AttemptEvidence[],
 ): void {
   const attempt = (initial?.attempt ?? 1) + 1;
   recovered.attempt = attempt;
   recovered.durationSeconds = (initial?.durationSeconds ?? 0) + recovered.durationSeconds;
   recovered.usage = mergeUsage(initial?.usage ?? null, recovered.usage);
+  recovered.attempts = [...attempts];
   recovered.recovery = metadata;
 }
 
@@ -1150,6 +1213,8 @@ async function recoverParallel(
 
       const initial = task.result.result;
       const attempt = decision.initialAttempt + 1;
+      const predecessorExecutionId = task.result.attempts?.at(-1)?.executionId ?? null;
+      const executionId = createExecutionId();
       const startedAt = Date.now();
       const release = await workerSlots.acquire();
       try {
@@ -1166,6 +1231,8 @@ async function recoverParallel(
           attempt,
           classification: decision.classification,
           evidence: decision.evidence,
+          executionId,
+          predecessorExecutionId,
         });
 
         await runOne(batchId, task, task.worktree!.path, run, emit, signal, false, {
@@ -1176,6 +1243,12 @@ async function recoverParallel(
               : undefined,
           continuationInstruction: recoveryInstruction(decision),
           allowAutomaticRepair: false,
+          executionId,
+          role:
+            decision.classification === "timeout-continuation"
+              ? "timeout-recovery"
+              : "process-retry",
+          predecessorExecutionId,
         });
 
         const outcome = await readWorktreeOutcome(task.worktree!);
@@ -1201,10 +1274,16 @@ async function recoverParallel(
         }
 
         const recoveryDurationSeconds = Math.round((Date.now() - startedAt) / 1000);
+        const recoveryEvidence = task.result.attempts?.find(
+          (entry) => entry.executionId === executionId,
+        );
         task.recovery = {
           ...task.recovery!,
           recoveryDurationSeconds,
-          recoveryUsage: task.result.result?.usage ?? null,
+          recoveryUsage:
+            recoveryEvidence?.usage.status === "reported"
+              ? recoveryEvidence.usage.value
+              : null,
         };
         if (outcome.error) {
           task.worktreeOutcomeError = outcome.error;
@@ -1214,17 +1293,29 @@ async function recoverParallel(
         } else if (task.result.result) {
           emitWorkerCompleted(batchId, task, emit, { attempt });
           if (task.state !== "cancelled") task.result.state = task.state;
-          mergeRecoveredResult(initial, task.result.result, task.recovery);
+          mergeRecoveredResult(
+            initial,
+            task.result.result,
+            task.recovery,
+            task.result.attempts ?? [],
+          );
         } else if (initial) {
           // A failed recovery must not erase the trustworthy initial timeout
           // result. The batch-level error and recovery metadata describe the
           // second attempt while the original result preserves its evidence.
-          task.result.result = initial;
-          initial.attempt = attempt;
-          initial.recovery = task.recovery;
-          if (task.result.error && !initial.errors.includes(task.result.error)) {
-            initial.errors.push(task.result.error);
-          }
+          const recoveryErrors = task.result.error
+            ? initial.errors.includes(task.result.error)
+              ? initial.errors
+              : [...initial.errors, task.result.error]
+            : initial.errors;
+          task.result.result = {
+            ...initial,
+            attempts: [...(task.result.attempts ?? initial.attempts ?? [])],
+            recovery: task.recovery,
+            errors: recoveryErrors,
+            durationSeconds: initial.durationSeconds + recoveryDurationSeconds,
+            usage: mergeUsage(initial.usage, task.recovery.recoveryUsage),
+          };
         }
         task.result.recovery = task.recovery;
         if (task.result.result) task.result.result.recovery = task.recovery;
@@ -1237,8 +1328,76 @@ async function recoverParallel(
           evidence: task.recovery.evidence,
           verdict: task.result.result?.verdict ?? "FAILED",
           durationSeconds: recoveryDurationSeconds,
-          threadId: task.result.result?.workerThreadId ?? null,
+          threadId: recoveryEvidence?.threadId ?? null,
           usage: task.recovery.recoveryUsage,
+          executionId,
+          predecessorExecutionId,
+        });
+      } catch (error) {
+        const detail = `Post-recovery evidence lifecycle failed: ${(error as Error).message}`;
+        const recoveryDurationSeconds = Math.round((Date.now() - startedAt) / 1000);
+        const recoveryEvidence = task.result.attempts?.find(
+          (entry) => entry.executionId === executionId,
+        );
+        task.recovery = {
+          ...(task.recovery ?? decision),
+          attempted: true,
+          recoveryAttempt: attempt,
+          recoveryDurationSeconds,
+          recoveryUsage:
+            recoveryEvidence?.usage.status === "reported"
+              ? recoveryEvidence.usage.value
+              : null,
+        };
+        task.state = "failed";
+        task.result.state = "failed";
+        task.result.error = detail;
+        task.result.warnings.push(detail);
+        if (task.result.result) {
+          task.result.result.verdict = "FAILED";
+          task.result.result.trustworthy = false;
+          if (!task.result.result.errors.includes(detail)) {
+            task.result.result.errors.push(detail);
+          }
+          mergeRecoveredResult(
+            initial,
+            task.result.result,
+            task.recovery,
+            task.result.attempts ?? [],
+          );
+        } else if (initial) {
+          task.result.result = {
+            ...initial,
+            attempts: [...(task.result.attempts ?? initial.attempts ?? [])],
+            recovery: task.recovery,
+            errors: initial.errors.includes(detail)
+              ? initial.errors
+              : [...initial.errors, detail],
+            durationSeconds: initial.durationSeconds + recoveryDurationSeconds,
+            usage: mergeUsage(initial.usage, task.recovery.recoveryUsage),
+          };
+        }
+        task.result.recovery = task.recovery;
+        emit({
+          type: "worker.failed",
+          batchId,
+          taskId: task.taskId,
+          reason: detail,
+          attempt,
+        });
+        emit({
+          type: "recovery.completed",
+          batchId,
+          taskId: task.taskId,
+          attempt,
+          classification: task.recovery.classification,
+          evidence: task.recovery.evidence,
+          verdict: "FAILED",
+          durationSeconds: recoveryDurationSeconds,
+          threadId: recoveryEvidence?.threadId ?? null,
+          usage: task.recovery.recoveryUsage,
+          executionId,
+          predecessorExecutionId,
         });
       } finally {
         release();
@@ -1282,6 +1441,35 @@ interface RunAttemptOptions {
   resumeThreadId?: string;
   continuationInstruction?: string;
   allowAutomaticRepair?: boolean;
+  executionId?: string;
+  role?: AttemptRole;
+  predecessorExecutionId?: string | null;
+}
+
+function emitCanonicalAttemptCompletion(
+  emit: EventEmitter,
+  batchId: string,
+  taskId: string,
+  evidence: AttemptEvidence,
+): void {
+  emitAttemptCompleted(emit, batchId, taskId, evidence);
+  if (evidence.verification.length === 0) return;
+  const executed = evidence.verification.filter(
+    (run) => run.execution === "argv" || run.execution === "shell",
+  );
+  emit({
+    type: "verification.completed",
+    batchId,
+    taskId,
+    passed: executed.filter((run) => run.passed).length,
+    failed: executed.filter((run) => !run.passed).length,
+    refused: evidence.verification.filter(
+      (run) => run.execution === "rejected" || run.execution === "skipped",
+    ).length,
+    executionId: evidence.executionId,
+    attempt: evidence.logicalAttempt,
+    role: evidence.role,
+  });
 }
 
 async function runOne(
@@ -1294,6 +1482,23 @@ async function runOne(
   emitCompletion = true,
   attemptOptions: RunAttemptOptions = { attempt: 1 },
 ): Promise<void> {
+  const executionId = attemptOptions.executionId ?? createExecutionId();
+  const role = attemptOptions.role ?? "initial";
+  const startedAt = new Date();
+  const startedMs = Date.now();
+  const emittedAttemptStarts = new Set<string>();
+  emitAttemptStarted(emit, batchId, task.taskId, {
+    executionId,
+    logicalAttempt: attemptOptions.attempt,
+    role,
+    predecessorExecutionId: attemptOptions.predecessorExecutionId ?? null,
+    requestedModel: LUNA_MODEL,
+    requestedEffort: task.input.effort,
+    threadOperation: attemptOptions.resumeThreadId ? "resume" : "start",
+    startedAt: startedAt.toISOString(),
+    timeoutMs: (task.input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000,
+  });
+  emittedAttemptStarts.add(executionId);
   task.state = "running";
   task.result.state = "running";
   emit({
@@ -1318,62 +1523,111 @@ async function runOne(
       signal,
       resumeThreadId: attemptOptions.resumeThreadId,
       continuationInstruction: attemptOptions.continuationInstruction,
+      executionId,
+      logicalAttempt: attemptOptions.attempt,
+      role,
+      predecessorExecutionId: attemptOptions.predecessorExecutionId ?? null,
       ...(attemptOptions.allowAutomaticRepair === undefined
         ? {}
         : { allowAutomaticRepair: attemptOptions.allowAutomaticRepair }),
-      onVerificationStart: (commandCount) =>
+      onVerificationStart: (commandCount, attribution) =>
         emit({
           type: "verification.started",
           batchId,
           taskId: task.taskId,
           commandCount,
+          executionId: attribution.executionId,
+          attempt: attribution.logicalAttempt,
+          role: attribution.role,
         }),
-      onRepairStart: (classification) => {
-        emit({
-          type: "verification.completed",
-          batchId,
-          taskId: task.taskId,
-          passed: Math.max(0, task.input.verificationCommands.length - 1),
-          failed: 1,
-          refused: 0,
-        });
+      onRepairStart: (classification, repairExecutionId) => {
         emit({
           type: "repair.started",
           batchId,
           taskId: task.taskId,
           classification,
           turn: 1,
+          executionId: repairExecutionId,
         });
       },
-      onRepairComplete: (verdict) =>
+      onRepairComplete: (verdict, repairExecutionId) =>
         emit({
           type: "repair.completed",
           batchId,
           taskId: task.taskId,
           verdict,
           turn: 1,
+          executionId: repairExecutionId,
         }),
+      onAttemptStart: (evidence) => {
+        if (emittedAttemptStarts.has(evidence.executionId)) return;
+        emittedAttemptStarts.add(evidence.executionId);
+        emitAttemptStarted(emit, batchId, task.taskId, evidence);
+      },
+      onAttemptComplete: (evidence) => {
+        task.result.attempts ??= [];
+        task.result.attempts.push(evidence);
+        emitCanonicalAttemptCompletion(emit, batchId, task.taskId, evidence);
+      },
     });
 
-    task.result.result = result;
-
-    const orchestratorRuns = result.verification.filter(
-      (run) => run.source === "orchestrator",
-    );
-    if (orchestratorRuns.length > 0) {
-      emit({
-        type: "verification.completed",
-        batchId,
-        taskId: task.taskId,
-        passed: orchestratorRuns.filter((run) => run.passed).length,
-        failed: orchestratorRuns.filter(
-          (run) => !run.passed && (run.execution === "argv" || run.execution === "shell"),
-        ).length,
-        refused: orchestratorRuns.filter(
-          (run) => run.execution === "rejected" || run.execution === "skipped",
-        ).length,
-      });
+    if (!task.result.attempts?.some((entry) => entry.executionId === executionId)) {
+      const timedOut = result.errors.some((error) =>
+        /exceeded its .* budget/.test(error),
+      );
+      const cancelled = resultWasCancelled(result);
+      const runtimeError = result.errors[0] ?? null;
+      const termination = timedOut
+        ? "timed-out"
+        : cancelled
+          ? "cancelled"
+          : runtimeError
+            ? "runtime-error"
+            : "completed";
+      const authoritative = result.verification.filter(
+        (run) => run.source === "orchestrator",
+      );
+      const evidence: AttemptEvidence = {
+        executionId,
+        logicalAttempt: attemptOptions.attempt,
+        role,
+        predecessorExecutionId: attemptOptions.predecessorExecutionId ?? null,
+        requestedModel: result.model,
+        requestedEffort: result.effort,
+        threadId: result.workerThreadId,
+        threadOperation: attemptOptions.resumeThreadId ? "resume" : "start",
+        threadIdentityMatched: attemptOptions.resumeThreadId
+          ? result.workerThreadId === null
+            ? null
+            : result.workerThreadId === attemptOptions.resumeThreadId
+          : null,
+        startedAt: startedAt.toISOString(),
+        finishedAt: new Date().toISOString(),
+        elapsedMs: Math.max(0, Date.now() - startedMs),
+        workerElapsedMs: Math.max(0, Date.now() - startedMs),
+        verificationElapsedMs: 0,
+        timeoutMs: (task.input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000,
+        termination: { kind: termination, message: runtimeError },
+        usage: result.usage
+          ? {
+              status: "reported",
+              source: "codex-turn.completed",
+              value: { ...result.usage },
+            }
+          : {
+              status: "unavailable",
+              reason: termination === "completed" ? "no-turn-completed" : termination,
+            },
+        workerClaimedStatus: result.workerClaimedStatus,
+        workerClaimedFailureCauses: [...(result.workerClaimedFailureCauses ?? [])],
+        verification: authoritative.map((run) => ({ ...run })),
+      };
+      task.result.attempts ??= [];
+      task.result.attempts.push(evidence);
+      emitCanonicalAttemptCompletion(emit, batchId, task.taskId, evidence);
     }
+    result.attempts = [...(task.result.attempts ?? result.attempts ?? [])];
+    task.result.result = result;
 
     // Cancellation only applies when the worker was actually interrupted. A
     // task that ran to completion keeps its result even if the batch was
@@ -1420,6 +1674,37 @@ async function runOne(
 
     if (emitCompletion) emitWorkerCompleted(batchId, task, emit, attemptOptions);
   } catch (error) {
+    if (!task.result.attempts?.some((entry) => entry.executionId === executionId)) {
+      const message = (error as Error).message;
+      const termination = /^Codex Exec exited with (?:signal|code)\b/i.test(message)
+        ? "process-exit"
+        : "runtime-error";
+      const evidence: AttemptEvidence = {
+        executionId,
+        logicalAttempt: attemptOptions.attempt,
+        role,
+        predecessorExecutionId: attemptOptions.predecessorExecutionId ?? null,
+        requestedModel: LUNA_MODEL,
+        requestedEffort: task.input.effort,
+        threadId: null,
+        threadOperation: attemptOptions.resumeThreadId ? "resume" : "start",
+        threadIdentityMatched: null,
+        startedAt: startedAt.toISOString(),
+        finishedAt: new Date().toISOString(),
+        elapsedMs: Math.max(0, Date.now() - startedMs),
+        workerElapsedMs: Math.max(0, Date.now() - startedMs),
+        verificationElapsedMs: 0,
+        timeoutMs: (task.input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000,
+        termination: { kind: termination, message },
+        usage: { status: "unavailable", reason: termination },
+        workerClaimedStatus: null,
+        workerClaimedFailureCauses: [],
+        verification: [],
+      };
+      task.result.attempts ??= [];
+      task.result.attempts.push(evidence);
+      emitCanonicalAttemptCompletion(emit, batchId, task.taskId, evidence);
+    }
     task.state = "failed";
     task.result.state = "failed";
     task.result.error = (error as Error).message;

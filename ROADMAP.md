@@ -24,20 +24,20 @@ Cost matters, but it is not the primary objective. The orchestrator should use p
 
 ## Priorities at a glance
 
-| Priority | Item                                                   | Status / dependency                                                           |
-| -------- | ------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| P0       | Context Capsule v2; Compact Evidence Packets           | Shipped in v0.7.0                                                             |
-| P0.2a    | Explicit Change Intent Contracts                       | Shipped in v0.9.0                                                             |
-| P0.3     | Worker Continuation                                    | Shipped in v0.9.0; depends on P0.2a                                           |
-| P0.4     | Bounded Repair Loop                                    | Shipped in v0.9.0; depends on P0.3 and P0.2a                                  |
-| P1.0     | Parent Identity, Billing, and Post-Hoc Cost Foundation | Shipped in v0.9.0; hardening pending                                          |
-| P1.1     | Reasoned Retry and Effort Escalation                   | Depends on P0.4 and P1.0 hardening                                            |
-| P1.2     | Adaptive Worker Routing and Compute Policy             | In Progress (preflight slice); full policy depends on P1.0 hardening and P1.1 |
-| P1.3     | Automatic Context Lifecycle Management                 | Depends on P0.1, P0.2, and P0.3                                               |
-| P2.1     | Optional Explorer                                      | Depends on P1.2                                                               |
-| P2.2     | Lightweight Cross-Session Handoff                      | Depends on P1.3                                                               |
-| P2.3     | End-to-End Automated Workflow                          | Depends on P1.2, P1.3, P2.1, and P2.2                                         |
-| P2.4     | Mature Benchmark and Acceptance Pass                   | Depends on P2.3                                                               |
+| Priority | Item                                                   | Status / dependency                                        |
+| -------- | ------------------------------------------------------ | ---------------------------------------------------------- |
+| P0       | Context Capsule v2; Compact Evidence Packets           | Shipped in v0.7.0                                          |
+| P0.2a    | Explicit Change Intent Contracts                       | Shipped in v0.9.0                                          |
+| P0.3     | Worker Continuation                                    | Shipped in v0.9.0; depends on P0.2a                        |
+| P0.4     | Bounded Repair Loop                                    | Shipped in v0.9.0; depends on P0.3 and P0.2a               |
+| P1.0     | Parent Identity, Billing, and Post-Hoc Cost Foundation | Shipped in v0.9.0; attempt-evidence hardening implemented  |
+| P1.1     | Reasoned Retry and Effort Escalation                   | Depends on P0.4 and completed P1.0 hardening               |
+| P1.2     | Adaptive Worker Routing and Compute Policy             | In Progress (preflight slice); full policy depends on P1.1 |
+| P1.3     | Automatic Context Lifecycle Management                 | Depends on P0.1, P0.2, and P0.3                            |
+| P2.1     | Optional Explorer                                      | Depends on P1.2                                            |
+| P2.2     | Lightweight Cross-Session Handoff                      | Depends on P1.3                                            |
+| P2.3     | End-to-End Automated Workflow                          | Depends on P1.2, P1.3, P2.1, and P2.2                      |
+| P2.4     | Mature Benchmark and Acceptance Pass                   | Depends on P2.3                                            |
 
 The order is intentional: continuation, repair, failure classification, and
 policy discovery should precede stronger-executor routing. Explorer, handoff,
@@ -58,8 +58,9 @@ is maintained in [`CHANGELOG.md`](CHANGELOG.md):
   may receive one automatic same-thread repair before returning to the parent.
 - **Parent Identity, Billing, and Post-Hoc Cost Foundation (P1.0).** The foundation
   shipped in v0.9.0 and keeps identity and billing evidence explicit without inventing
-  estimates. Follow-up hardening remains for complete failed/timeout execution
-  evidence, which is a prerequisite to P1.1 reasoned failure decisions.
+  estimates. Attempt-evidence hardening adds immutable per-execution lineage,
+  factual termination and timing, authoritative-or-unavailable usage, and
+  retained post-start failure evidence as inputs for later P1.1 decisions.
 - **Thin Supervisor.** A supporting architectural milestone shipped in v0.10.0.
 
 See the implementation, tests, [`SOL_RULES.md`](SOL_RULES.md),

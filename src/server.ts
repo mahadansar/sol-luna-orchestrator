@@ -27,6 +27,7 @@ import {
   delegateTasksMcpInputShape,
   routingPreflightMcpInputShape,
   type BatchOutput,
+  type AttemptEvidence,
   type ContinueTaskInput,
   type DelegateTaskInput,
   type DelegateTaskOutput,
@@ -43,7 +44,13 @@ import {
 } from "./worker.js";
 import { collectWorktreeChanges, type WorktreeChanges } from "./git.js";
 import { WorkspaceError } from "./workspace.js";
-import { activityFailureReason, emitEvent, type EventEmitter } from "./events.js";
+import {
+  activityFailureReason,
+  emitAttemptCompleted,
+  emitAttemptStarted,
+  emitEvent,
+  type EventEmitter,
+} from "./events.js";
 import {
   declaredRoutingFields,
   describeRefusal,
@@ -90,14 +97,35 @@ function registerContinuation(
   reconcileFinalGit = false,
   worktreeLease: WorktreeLease | null = null,
 ): string | null {
-  if (!result.workerThreadId || resultWasCancelled(result)) return null;
-  return continuationStore.issue(
+  if (!result.workerThreadId) {
+    result.continuationState = {
+      status: "not-eligible",
+      reason: "No worker thread identity was observed.",
+    };
+    return null;
+  }
+  if (resultWasCancelled(result)) {
+    result.continuationState = {
+      status: "not-eligible",
+      reason: "Cancellation is terminal for bounded continuation.",
+    };
+    return null;
+  }
+  const predecessorExecutionId = result.attempts?.at(-1)?.executionId ?? null;
+  const reference = continuationStore.issue(
     input,
     result.workerThreadId,
     workingDirectory,
     reconcileFinalGit,
     worktreeLease,
+    predecessorExecutionId,
+    result.attempt + 1,
   );
+  result.continuationState = {
+    status: "issued",
+    reason: "One bounded continuation reference was issued for this worker thread.",
+  };
+  return reference;
 }
 
 function continuationError(result: ContinuationConsumeResult): string {
@@ -283,36 +311,20 @@ function emitSingleCompletion(
   const timedOut = result.errors.some((error) => /exceeded its .* budget/.test(error));
 
   if (cancelled) {
-    emit({ type: "worker.cancelled", batchId, taskId });
+    emit({ type: "worker.cancelled", batchId, taskId, attempt: result.attempt });
     emit({
       type: "batch.cancelled",
       batchId,
       reason: "worker cancelled",
     });
   } else {
-    const orchestratorRuns = result.verification.filter(
-      (run) => run.source === "orchestrator",
-    );
-    if (orchestratorRuns.length > 0) {
-      emit({
-        type: "verification.completed",
-        batchId,
-        taskId,
-        passed: orchestratorRuns.filter((run) => run.passed).length,
-        failed: orchestratorRuns.filter(
-          (run) => !run.passed && (run.execution === "argv" || run.execution === "shell"),
-        ).length,
-        refused: orchestratorRuns.filter(
-          (run) => run.execution === "rejected" || run.execution === "skipped",
-        ).length,
-      });
-    }
     if (timedOut) {
       emit({
         type: "worker.timedOut",
         batchId,
         taskId,
         timeoutSeconds,
+        attempt: result.attempt,
       });
     }
     // Keep the existing completion record for compatibility. The activity
@@ -330,6 +342,7 @@ function emitSingleCompletion(
       changedFiles: result.filesChanged.filter((file) => file.observed).length,
       failureReason: activityFailureReason(result),
       usage: result.usage,
+      attempt: result.attempt,
     });
     emit({
       type: "batch.completed",
@@ -339,6 +352,32 @@ function emitSingleCompletion(
       failed: result.verdict === "PASS" ? 0 : 1,
     });
   }
+}
+
+function emitCanonicalAttemptCompletion(
+  emit: EventEmitter,
+  batchId: string,
+  taskId: string,
+  evidence: AttemptEvidence,
+): void {
+  emitAttemptCompleted(emit, batchId, taskId, evidence);
+  if (evidence.verification.length === 0) return;
+  const executed = evidence.verification.filter(
+    (run) => run.execution === "argv" || run.execution === "shell",
+  );
+  emit({
+    type: "verification.completed",
+    batchId,
+    taskId,
+    passed: executed.filter((run) => run.passed).length,
+    failed: executed.filter((run) => !run.passed).length,
+    refused: evidence.verification.filter(
+      (run) => run.execution === "rejected" || run.execution === "skipped",
+    ).length,
+    executionId: evidence.executionId,
+    attempt: evidence.logicalAttempt,
+    role: evidence.role,
+  });
 }
 
 export const TOOL_DESCRIPTION = `Delegate ONE substantial, bounded executable seam to ${LUNA_MODEL}; no second seam is required. Keep small, simple, or tightly coupled work solo. Tasks may be implementation, tests, bug fixing, refactoring, investigation, or chores. The parent owns architecture, decomposition, unresolved design, sequencing, interfaces, scope, acceptance, and final judgement. Luna owns scoped exploration, implementation, verification, and bounded repair; it cannot see the conversation or delegate.
@@ -370,6 +409,16 @@ export function compactResult(result: DelegateTaskOutput): DelegateTaskOutput {
     verification: result.verification.map((run) =>
       run.passed ? { ...run, output: "" } : run,
     ),
+    ...(result.attempts
+      ? {
+          attempts: result.attempts.map((attempt) => ({
+            ...attempt,
+            verification: attempt.verification.map((run) =>
+              run.passed ? { ...run, output: "" } : run,
+            ),
+          })),
+        }
+      : {}),
   };
 }
 
@@ -762,6 +811,7 @@ function registerDelegateTask(): void {
       const task = input as DelegateTaskInput;
       const batchId = makeSingleBatchId();
       const taskId = "t1";
+      const logicalAttempt = task.previousAttempts.length + 1;
       const startedAt = Date.now();
       let workerStarted = false;
       let workerDirectory: string | null = null;
@@ -802,6 +852,7 @@ function registerDelegateTask(): void {
         category: task.taskCategory,
         activityLabel: task.activityLabel,
         model: LUNA_MODEL,
+        attempt: logicalAttempt,
       });
 
       try {
@@ -816,47 +867,58 @@ function registerDelegateTask(): void {
               effort: task.effort,
               workingDirectory,
               model: LUNA_MODEL,
+              attempt: logicalAttempt,
             });
           },
-          onVerificationStart: (commandCount) =>
+          onVerificationStart: (commandCount, attribution) =>
             emitEvent({
               type: "verification.started",
               batchId,
               taskId,
               commandCount,
+              executionId: attribution.executionId,
+              attempt: attribution.logicalAttempt,
+              role: attribution.role,
             }),
-          onRepairStart: (classification) => {
-            emitEvent({
-              type: "verification.completed",
-              batchId,
-              taskId,
-              passed: Math.max(0, task.verificationCommands.length - 1),
-              failed: 1,
-              refused: 0,
-            });
+          onRepairStart: (classification, executionId) => {
             emitEvent({
               type: "repair.started",
               batchId,
               taskId,
               classification,
               turn: 1,
+              executionId,
             });
           },
-          onRepairComplete: (verdict) =>
+          onRepairComplete: (verdict, executionId) =>
             emitEvent({
               type: "repair.completed",
               batchId,
               taskId,
               verdict,
               turn: 1,
+              executionId,
             }),
+          onAttemptStart: (evidence) =>
+            emitAttemptStarted(emitEvent, batchId, taskId, evidence),
+          onAttemptComplete: (evidence) =>
+            emitCanonicalAttemptCompletion(emitEvent, batchId, taskId, evidence),
         });
         if (workerDirectory) {
-          result.continuationReference = registerContinuation(
-            task,
-            result,
-            workerDirectory,
-          );
+          try {
+            result.continuationReference = registerContinuation(
+              task,
+              result,
+              workerDirectory,
+            );
+          } catch (error) {
+            const detail = `Continuation registration failed after execution: ${(error as Error).message}`;
+            result.verdict = "FAILED";
+            result.trustworthy = false;
+            result.errors.push(detail);
+            result.continuationReference = null;
+            result.continuationState = { status: "unavailable", reason: detail };
+          }
         }
         emitSingleCompletion(
           batchId,
@@ -897,14 +959,25 @@ function registerDelegateTask(): void {
         if (workerStarted) {
           const durationSeconds = Math.round((Date.now() - startedAt) / 1000);
           if (extra?.signal?.aborted) {
-            emitEvent({ type: "worker.cancelled", batchId, taskId });
+            emitEvent({
+              type: "worker.cancelled",
+              batchId,
+              taskId,
+              attempt: logicalAttempt,
+            });
             emitEvent({
               type: "batch.cancelled",
               batchId,
               reason: "worker cancelled",
             });
           } else {
-            emitEvent({ type: "worker.failed", batchId, taskId, reason: message });
+            emitEvent({
+              type: "worker.failed",
+              batchId,
+              taskId,
+              reason: message,
+              attempt: logicalAttempt,
+            });
             emitEvent({
               type: "batch.completed",
               batchId,
@@ -1003,6 +1076,7 @@ export async function handleContinueTask(
   const taskId = "t1";
   const startedAt = Date.now();
   let workerStarted = false;
+  let worktreeLeaseFinalized = false;
   log(
     `continue_task: thread=${entry.threadId} instruction="${request.instruction.slice(0, 80)}..."`,
   );
@@ -1022,6 +1096,7 @@ export async function handleContinueTask(
     category: entry.input.taskCategory,
     activityLabel: entry.input.activityLabel,
     model: LUNA_MODEL,
+    attempt: entry.logicalAttempt,
   });
 
   try {
@@ -1040,20 +1115,59 @@ export async function handleContinueTask(
             effort: entry.input.effort,
             workingDirectory,
             model: LUNA_MODEL,
+            attempt: entry.logicalAttempt,
           });
         },
-        onVerificationStart: (commandCount) =>
+        onVerificationStart: (commandCount, attribution) =>
           dependencies.emit({
             type: "verification.started",
             batchId,
             taskId,
             commandCount,
+            executionId: attribution.executionId,
+            attempt: attribution.logicalAttempt,
+            role: attribution.role,
           }),
+        onAttemptStart: (evidence) =>
+          emitAttemptStarted(dependencies.emit, batchId, taskId, evidence),
+        onAttemptComplete: (evidence) =>
+          emitCanonicalAttemptCompletion(dependencies.emit, batchId, taskId, evidence),
       },
+      predecessorExecutionId: entry.predecessorExecutionId,
+      logicalAttempt: entry.logicalAttempt,
     });
     if (entry.reconcileFinalGit) {
-      result = await dependencies.reconcile(entry.input, result, entry.workingDirectory);
+      try {
+        result = await dependencies.reconcile(
+          entry.input,
+          result,
+          entry.workingDirectory,
+        );
+      } catch (error) {
+        const detail = `Continuation evidence reconciliation failed after execution: ${(error as Error).message}`;
+        result.verdict = "FAILED";
+        result.trustworthy = false;
+        result.errors.push(detail);
+        result.discrepancies.push(detail);
+      }
     }
+    if (entry.worktreeLease) {
+      try {
+        await dependencies.releaseLease(entry.worktreeLease);
+      } catch (error) {
+        const detail = `Continuation worktree lease cleanup failed after execution: ${(error as Error).message}`;
+        result.verdict = "FAILED";
+        result.trustworthy = false;
+        result.errors.push(detail);
+      } finally {
+        worktreeLeaseFinalized = true;
+      }
+    }
+    result.continuationReference = null;
+    result.continuationState = {
+      status: "consumed",
+      reason: "The single-use continuation bound was consumed by this execution.",
+    };
     emitSingleCompletion(batchId, taskId, timeoutSeconds, result, dependencies.emit);
     dependencies.record(result);
     const structuredContent = structuredResultForDetail(
@@ -1083,14 +1197,25 @@ export async function handleContinueTask(
     if (workerStarted) {
       const durationSeconds = Math.round((Date.now() - startedAt) / 1000);
       if (signal?.aborted) {
-        dependencies.emit({ type: "worker.cancelled", batchId, taskId });
+        dependencies.emit({
+          type: "worker.cancelled",
+          batchId,
+          taskId,
+          attempt: entry.logicalAttempt,
+        });
         dependencies.emit({
           type: "batch.cancelled",
           batchId,
           reason: "worker cancelled",
         });
       } else {
-        dependencies.emit({ type: "worker.failed", batchId, taskId, reason: message });
+        dependencies.emit({
+          type: "worker.failed",
+          batchId,
+          taskId,
+          reason: message,
+          attempt: entry.logicalAttempt,
+        });
         dependencies.emit({
           type: "batch.completed",
           batchId,
@@ -1115,7 +1240,13 @@ export async function handleContinueTask(
     };
   } finally {
     dependencies.store.release(request.continuationReference);
-    if (entry.worktreeLease) await dependencies.releaseLease(entry.worktreeLease);
+    if (entry.worktreeLease && !worktreeLeaseFinalized) {
+      try {
+        await dependencies.releaseLease(entry.worktreeLease);
+      } catch (error) {
+        log(`Continuation worktree lease cleanup failed: ${(error as Error).message}`);
+      }
+    }
   }
 }
 

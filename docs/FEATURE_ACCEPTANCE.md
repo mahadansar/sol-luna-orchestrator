@@ -2,18 +2,20 @@
 
 This is the authoritative current capability, evidence, freshness, and
 confidence ledger for the repository. The package version is `0.10.0`, and the
-current main runtime is its release baseline. This release incorporates the Thin
-Supervisor handoff, terminal batch verification, and bounded parallel recovery
-work described below. Shipped history belongs in `CHANGELOG.md`; future work
-belongs in `ROADMAP.md`.
+current main runtime is its release baseline. The current development tree adds
+P1.0 attempt-usage and failure-evidence hardening to the Thin Supervisor,
+terminal batch verification, and bounded parallel recovery baseline described
+below. Shipped history belongs in `CHANGELOG.md`; future work belongs in
+`ROADMAP.md`.
 
 ## Current baseline
 
 - **Runtime baseline:** commit-relative current main for v0.10.0 after the Thin
   Supervisor work above. Package and lockfile versions are `0.10.0`.
 - **Latest full deterministic validation:** `npm run verify` passed on
-  2026-08-25 with **518/518 tests passed**, no failures or skips, plus typecheck
-  and the deterministic MCP protocol smoke test.
+  2026-08-26 with **603/606 tests passed**, no failures and three expected
+  platform-specific Windows skips, plus typecheck and the deterministic MCP
+  protocol smoke test.
 - **Current native platform evidence:** deterministic CI covers Windows, Linux,
   and macOS. Focused Linux/POSIX symlink, dependency-link, and process-group
   paths passed natively. Live Codex delegation has representative Windows and
@@ -48,6 +50,7 @@ belongs in `ROADMAP.md`.
 | Bounded Repair                                          | PASS     | PASS          | DEEP PASS     | Strong        |
 | Bounded parallel automatic recovery                     | PASS     | PASS          | PASS          | Strong        |
 | P1.0 parent/pricing foundation                          | PASS     | PASS          | N/A           | Strong        |
+| P1.0 per-execution failure and usage evidence           | PASS     | DEEP PASS     | N/A           | Strong        |
 | `failureCauses` and verification contradiction handling | PASS     | PASS          | PASS          | Strong        |
 
 Dates, provenance, dependencies, and retest triggers are recorded below. A live
@@ -67,6 +70,17 @@ the runtime preserved two successful parallel streams, retried only the failed
 task in its owned worktree, passed final verification, and exposed the missing
 failed-attempt usage as unknown. The 475-second run is evidence that recovery
 works and that timeout latency and accounting remain open problems.
+
+Current P1.0 hardening makes each worker SDK invocation independently
+attributable through an append-only attempt record and canonical lifecycle
+events. Deterministic cases cover success, reported failure, verification
+failure, timeout, cancellation, stream/runtime/process failure, partial
+messages/files, repair, manual continuation, timeout recovery, fresh-process
+retry, failed recovery, sibling preservation, and post-execution lifecycle
+failure. Aggregate usage now fails closed whenever any constituent lacks
+authoritative `turn.completed` usage; the known constituent remains visible.
+This is factual evidence only and introduces no P1.1 retry, escalation,
+environment classification, executor-selection, or takeover policy.
 
 The terminal handoff protocol defaults clean verified PASS responses to compact
 text without `structuredContent`. A batch reruns the deduplicated declared checks
@@ -94,7 +108,8 @@ universal savings.
   optional observations are not required for Strong confidence.
 - No fresh whole-system native coverage report was produced after the v0.9.1
   runtime changes. The latest coverage percentages belong to the earlier v0.9.0
-  campaign; the current 518-test deterministic suite is green.
+  campaign; the current 606-test deterministic suite is green with three
+  expected platform-specific Windows skips.
 - Raw transcripts, diagnostic logs, event streams, and some structured live
   results are session-local and intentionally uncommitted. The ledger preserves
   their reviewed conclusions, not durable raw artifacts.
@@ -104,6 +119,11 @@ universal savings.
 - Retention modes, continuation expiry, verification refusal/timeout, and
   deceptive worker-claim variants have broader deterministic than live coverage.
   These are evidence limits, not known product defects.
+- Exact token usage remains fundamentally unavailable when a started execution
+  never emits Codex `turn.completed`, including some timeout, cancellation,
+  failed-turn, stream/runtime, and abnormal-exit paths. The runtime now records
+  that unknown explicitly; no test or local timing can recover the missing
+  provider fact.
 
 **Confirmed current product defects:** none. **Product-validation blockers from
 the completed v0.9.1 hardening work:** none. Optional future work remains in
@@ -540,7 +560,9 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   credential-shaped environment variables are withheld.
 - Activity is append-only local telemetry. Objectives, prompts, source, and
   verification output are excluded from the activity stream; unavailable usage
-  is `null`, never zero. Diagnostic logs remain more sensitive.
+  is `null`, never zero. Canonical attempt events exclude termination messages
+  and sensitive subprocess output while retaining attribution, factual lifecycle,
+  usage status, and verification counts. Diagnostic logs remain more sensitive.
 - Parent review is risk-based: a clean verified result can be reviewed
   proportionally, while suspicious, failed, contradictory, scope-violating,
   unverified, or integration-conflicted evidence demands deeper inspection.
@@ -953,8 +975,10 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
 
 ### P1.0 parent/pricing foundation
 
-- **Implementation/tests:** `src/cost.ts`, `src/worker.ts`, `src/contract.ts`;
-  `src/selftest.ts`, `src/guidance.test.ts`, `src/activity.test.ts`.
+- **Implementation/tests:** `src/cost.ts`, `src/worker.ts`, `src/contract.ts`,
+  `src/events.ts`, `src/server.ts`, `src/batch.ts`, `src/continuation.ts`,
+  `src/cli/activity-reducer.ts`; `src/selftest.ts`, `src/guidance.test.ts`,
+  `src/activity.test.ts`, `src/evidence.test.ts`, `src/parallel.test.ts`.
 - **Authority/history:** `ROADMAP.md` P1.0 (foundation implemented for v0.9.0),
   `docs/CONFIGURATION.md`, `SOL_RULES.md`; `2d6e4c6` (2026-08-23).
 - **Evidence:** Coverage and deterministic execution **PASS** on 2026-08-24 for
@@ -965,8 +989,19 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   acceptance is **N/A** for these pure post-hoc primitives: real campaign usage
   was observed, but no production rate-card lookup, billing-account consumer,
   routing consumer, or cost-calculation API exists.
+- **Attempt-evidence hardening:** Targeted deterministic execution **DEEP PASS**
+  on 2026-08-26 for authoritative success usage; `turn.failed`; stream and
+  abnormal-process errors; failure before `thread.started`; timeout and external
+  cancellation; partial message/file retention; exactly one terminal record per
+  start; non-1 ordinals; attributed verification; immutable automatic-repair,
+  manual-continuation, timeout-recovery, and process-retry lineage; successful
+  sibling preservation; post-execution lifecycle failure; activity compatibility
+  and privacy; compact/full/handoff projection; and complete versus incomplete
+  aggregate usage. No model-backed benchmark or live worker call was used.
 - **Dependencies/retest triggers:** cost-input schema, rate-card applicability,
-  usage projection, identity provenance, or any future routing/policy consumer.
+  usage projection, attempt/result/event schema, worker lifecycle, repair,
+  continuation, recovery, activity reduction, identity provenance, or any future
+  routing/policy consumer.
   **Gap:** no retrieval, account lookup, prediction, routing, or measured saving
   is implemented; the foundation remains limited to post-hoc evidence.
 - **Confidence:** **Strong** for the shipped bounded foundation, not future P1.1

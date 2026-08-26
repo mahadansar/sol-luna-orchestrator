@@ -7,7 +7,8 @@ import {
 } from "./cli/activity-reducer.js";
 import { renderHumanLines } from "./cli/activity.js";
 import { symbols } from "./cli/ui.js";
-import { activityFailureReason, renderEvent } from "./events.js";
+import { activityFailureReason, emitAttemptCompleted, renderEvent } from "./events.js";
+import type { AttemptEvidence } from "./contract.js";
 import { mergeUsage } from "./worker.js";
 
 // ========================================================================
@@ -101,6 +102,54 @@ test("event rendering omits prompt objectives while sanitizing other strings", (
   assert.doesNotMatch(rendered, /\n/);
   assert.match(rendered, /b1 forged/);
   assert.match(rendered, /Update auth retries/);
+});
+
+test("attempt telemetry keeps attribution and counts without sensitive evidence text", () => {
+  const evidence: AttemptEvidence = {
+    executionId: "exec-private",
+    logicalAttempt: 2,
+    role: "manual-continuation",
+    predecessorExecutionId: "exec-before",
+    requestedModel: "gpt-5.6-luna",
+    requestedEffort: "high",
+    threadId: "thread-private",
+    threadOperation: "resume",
+    threadIdentityMatched: true,
+    startedAt: "2024-01-01T00:00:00Z",
+    finishedAt: "2024-01-01T00:00:01Z",
+    elapsedMs: 1_000,
+    workerElapsedMs: 900,
+    verificationElapsedMs: 100,
+    timeoutMs: 30_000,
+    termination: { kind: "runtime-error", message: "SUBPROCESS_PRIVATE_SENTINEL" },
+    usage: { status: "unavailable", reason: "runtime-error" },
+    workerClaimedStatus: "FAILED",
+    workerClaimedFailureCauses: ["environment-tooling"],
+    verification: [
+      {
+        command: "npm test",
+        source: "orchestrator",
+        execution: "argv",
+        exitCode: 1,
+        passed: false,
+        output: "VERIFICATION_PRIVATE_SENTINEL",
+      },
+    ],
+  };
+  let rendered = "";
+  emitAttemptCompleted(
+    (event) => {
+      rendered = renderEvent(event);
+    },
+    "b-private",
+    "t-private",
+    evidence,
+  );
+
+  assert.match(rendered, /exec-private/);
+  assert.match(rendered, /"verificationFailed":1/);
+  assert.doesNotMatch(rendered, /SUBPROCESS_PRIVATE_SENTINEL/);
+  assert.doesNotMatch(rendered, /VERIFICATION_PRIVATE_SENTINEL|npm test/);
 });
 
 test("labeled activity is reduced and exposed in JSON while legacy records stay readable", () => {
@@ -344,6 +393,142 @@ test("repair usage merge sums cache writes only when every turn reports them", (
     outputTokens: 6,
     reasoningOutputTokens: 2,
   });
+  assert.equal(
+    mergeUsage({ ...base }, null),
+    null,
+    "a known constituent must not make an incomplete aggregate look complete",
+  );
+  assert.equal(mergeUsage(null, { ...base }), null);
+  assert.equal(mergeUsage(null, null), null);
+});
+
+test("canonical attempt activity retains lineage without double-counting legacy events", () => {
+  const common = {
+    batchId: "b-attempt-history",
+    taskId: "t1",
+    model: "gpt-5.6-luna",
+    effort: "high",
+    timeoutMs: 30_000,
+  } as const;
+  const events: TimestampedEvent[] = [
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: common.batchId,
+      mode: "single",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "worker.started",
+      batchId: common.batchId,
+      taskId: common.taskId,
+      effort: common.effort,
+      model: common.model,
+      workingDirectory: "w",
+      attempt: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "attempt.started",
+      ...common,
+      executionId: "exec-initial",
+      logicalAttempt: 1,
+      role: "initial",
+      predecessorExecutionId: null,
+      threadOperation: "start",
+      startedAt: "2024-01-01T10:00:01Z",
+    },
+    {
+      timestamp: "2024-01-01T10:00:02Z",
+      type: "attempt.completed",
+      ...common,
+      executionId: "exec-initial",
+      logicalAttempt: 1,
+      role: "initial",
+      predecessorExecutionId: null,
+      threadId: "thread-1",
+      threadOperation: "start",
+      threadIdentityMatched: null,
+      startedAt: "2024-01-01T10:00:01Z",
+      finishedAt: "2024-01-01T10:00:02Z",
+      elapsedMs: 1_000,
+      workerElapsedMs: 900,
+      verificationElapsedMs: 100,
+      termination: "turn-failed",
+      usageStatus: "unavailable",
+      usageUnavailableReason: "turn-failed",
+      usage: null,
+      claimed: "FAILED",
+      claimedFailureCauses: ["verification"],
+      verificationPassed: 0,
+      verificationFailed: 1,
+      verificationRefused: 0,
+    },
+    {
+      timestamp: "2024-01-01T10:00:03Z",
+      type: "attempt.started",
+      ...common,
+      executionId: "exec-repair",
+      logicalAttempt: 1,
+      role: "automatic-repair",
+      predecessorExecutionId: "exec-initial",
+      threadOperation: "resume",
+      startedAt: "2024-01-01T10:00:03Z",
+    },
+    {
+      timestamp: "2024-01-01T10:00:04Z",
+      type: "attempt.completed",
+      ...common,
+      executionId: "exec-repair",
+      logicalAttempt: 1,
+      role: "automatic-repair",
+      predecessorExecutionId: "exec-initial",
+      threadId: "thread-1",
+      threadOperation: "resume",
+      threadIdentityMatched: true,
+      startedAt: "2024-01-01T10:00:03Z",
+      finishedAt: "2024-01-01T10:00:04Z",
+      elapsedMs: 1_000,
+      workerElapsedMs: 1_000,
+      verificationElapsedMs: 0,
+      termination: "completed",
+      usageStatus: "reported",
+      usage: {
+        inputTokens: 4,
+        cachedInputTokens: 1,
+        outputTokens: 2,
+        reasoningOutputTokens: 1,
+      },
+      claimed: "PASS",
+      claimedFailureCauses: [],
+      verificationPassed: 0,
+      verificationFailed: 0,
+      verificationRefused: 0,
+    },
+    {
+      timestamp: "2024-01-01T10:00:05Z",
+      type: "worker.completed",
+      batchId: common.batchId,
+      taskId: common.taskId,
+      verdict: "PASS",
+      claimed: "PASS",
+      durationSeconds: 4,
+      threadId: "thread-1",
+      model: common.model,
+      effort: common.effort,
+      usage: null,
+      attempt: 1,
+    },
+  ];
+
+  const snapshot = reduceEvents(events);
+  assert.equal(snapshot.workers[0]?.attempts.length, 2);
+  assert.equal(snapshot.workers[0]?.attempts[0]?.executionId, "exec-initial");
+  assert.equal(snapshot.workers[0]?.attempts[1]?.predecessorExecutionId, "exec-initial");
+  assert.equal(snapshot.workers[0]?.attempts[0]?.usageStatus, "unavailable");
+  assert.equal(snapshot.workers[0]?.attempts[1]?.usageStatus, "reported");
 });
 
 test("repair activity is visible during the turn and after completion", () => {

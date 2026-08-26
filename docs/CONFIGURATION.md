@@ -320,7 +320,12 @@ reports the registered server's value rather than only this shell's.
 
 ### Cost
 
-- **Token counts are measured.** They come from the API, per turn, per worker.
+- **Token counts are authoritative only when reported.** They come from observed
+  Codex `turn.completed` events, per execution. Timeout, cancellation, stream,
+  runtime, and process failures can leave exact usage unavailable; it remains
+  explicitly unknown and is never estimated from time or another execution.
+  Aggregate task usage is present only when every constituent execution reports
+  usage, while known constituent values remain in per-attempt evidence.
 - **P1.0 provides a pure, post-hoc calculation foundation.** The calculation
   applies a caller-supplied rate card to explicitly supplied, billing-ready
   observed usage. The caller must provide complete uncached-input, cached-input,

@@ -1,6 +1,12 @@
 import { appendFileSync } from "node:fs";
 import { EVENTS_FILE } from "./config.js";
-import type { DelegateTaskOutput } from "./contract.js";
+import type {
+  AttemptEvidence,
+  AttemptRole,
+  AttemptTermination,
+  DelegateTaskOutput,
+  UsageUnavailableReason,
+} from "./contract.js";
 import { sanitizeForLog } from "./log.js";
 import type {
   CoreOverlap,
@@ -36,6 +42,49 @@ export type OrchestratorEvent =
     }
   | { type: "batch.cancelled"; batchId: string; reason: string }
   | { type: "batch.rejected"; batchId: string; reason: string }
+  | {
+      type: "attempt.started";
+      batchId: string;
+      taskId: string;
+      executionId: string;
+      logicalAttempt: number;
+      role: AttemptRole;
+      predecessorExecutionId: string | null;
+      model: string;
+      effort: string;
+      threadOperation: "start" | "resume";
+      startedAt: string;
+      timeoutMs: number;
+    }
+  | {
+      type: "attempt.completed";
+      batchId: string;
+      taskId: string;
+      executionId: string;
+      logicalAttempt: number;
+      role: AttemptRole;
+      predecessorExecutionId: string | null;
+      model: string;
+      effort: string;
+      threadId: string | null;
+      threadOperation: "start" | "resume";
+      threadIdentityMatched: boolean | null;
+      startedAt: string;
+      finishedAt: string;
+      elapsedMs: number;
+      workerElapsedMs: number;
+      verificationElapsedMs: number;
+      timeoutMs: number;
+      termination: AttemptTermination;
+      usageStatus: "reported" | "unavailable";
+      usageUnavailableReason?: UsageUnavailableReason;
+      usage: DelegateTaskOutput["usage"];
+      claimed: string | null;
+      claimedFailureCauses: string[];
+      verificationPassed: number;
+      verificationFailed: number;
+      verificationRefused: number;
+    }
   | {
       type: "task.queued";
       batchId: string;
@@ -125,6 +174,8 @@ export type OrchestratorEvent =
       attempt: number;
       classification: string;
       evidence: string;
+      executionId?: string;
+      predecessorExecutionId?: string | null;
     }
   | {
       type: "recovery.skipped";
@@ -133,6 +184,8 @@ export type OrchestratorEvent =
       attempt: number;
       classification: string;
       evidence: string;
+      executionId?: string;
+      predecessorExecutionId?: string | null;
     }
   | {
       type: "recovery.completed";
@@ -151,6 +204,8 @@ export type OrchestratorEvent =
         outputTokens: number;
         reasoningOutputTokens: number;
       } | null;
+      executionId?: string;
+      predecessorExecutionId?: string | null;
     }
   | {
       type: "repair.started";
@@ -158,6 +213,7 @@ export type OrchestratorEvent =
       taskId: string;
       classification: string;
       turn: 1;
+      executionId?: string;
     }
   | {
       type: "repair.completed";
@@ -165,6 +221,7 @@ export type OrchestratorEvent =
       taskId: string;
       verdict: string;
       turn: 1;
+      executionId?: string;
     }
   | { type: "worktree.created"; batchId: string; taskId: string; path: string }
   | { type: "worktree.removed"; batchId: string; taskId: string; kept: boolean }
@@ -173,6 +230,9 @@ export type OrchestratorEvent =
       batchId: string;
       taskId: string;
       commandCount: number;
+      executionId?: string;
+      attempt?: number;
+      role?: AttemptRole;
     }
   | {
       type: "verification.completed";
@@ -181,6 +241,9 @@ export type OrchestratorEvent =
       passed: number;
       failed: number;
       refused: number;
+      executionId?: string;
+      attempt?: number;
+      role?: AttemptRole;
     }
   | { type: "scope.conflict"; batchId: string; detail: string }
   | { type: "integration.conflict"; batchId: string; path: string; tasks: string[] }
@@ -294,6 +357,83 @@ export type OrchestratorEvent =
     };
 
 export type EventEmitter = (event: OrchestratorEvent) => void;
+
+export function emitAttemptStarted(
+  emit: EventEmitter,
+  batchId: string,
+  taskId: string,
+  evidence: {
+    executionId: string;
+    logicalAttempt: number;
+    role: AttemptRole;
+    predecessorExecutionId: string | null;
+    requestedModel: string;
+    requestedEffort: string;
+    threadOperation: "start" | "resume";
+    startedAt: string;
+    timeoutMs: number;
+  },
+): void {
+  emit({
+    type: "attempt.started",
+    batchId,
+    taskId,
+    executionId: evidence.executionId,
+    logicalAttempt: evidence.logicalAttempt,
+    role: evidence.role,
+    predecessorExecutionId: evidence.predecessorExecutionId,
+    model: evidence.requestedModel,
+    effort: evidence.requestedEffort,
+    threadOperation: evidence.threadOperation,
+    startedAt: evidence.startedAt,
+    timeoutMs: evidence.timeoutMs,
+  });
+}
+
+export function emitAttemptCompleted(
+  emit: EventEmitter,
+  batchId: string,
+  taskId: string,
+  evidence: AttemptEvidence,
+): void {
+  const executed = evidence.verification.filter(
+    (run) => run.execution === "argv" || run.execution === "shell",
+  );
+  const refused = evidence.verification.filter(
+    (run) => run.execution === "rejected" || run.execution === "skipped",
+  );
+  emit({
+    type: "attempt.completed",
+    batchId,
+    taskId,
+    executionId: evidence.executionId,
+    logicalAttempt: evidence.logicalAttempt,
+    role: evidence.role,
+    predecessorExecutionId: evidence.predecessorExecutionId,
+    model: evidence.requestedModel,
+    effort: evidence.requestedEffort,
+    threadId: evidence.threadId,
+    threadOperation: evidence.threadOperation,
+    threadIdentityMatched: evidence.threadIdentityMatched,
+    startedAt: evidence.startedAt,
+    finishedAt: evidence.finishedAt,
+    elapsedMs: evidence.elapsedMs,
+    workerElapsedMs: evidence.workerElapsedMs,
+    verificationElapsedMs: evidence.verificationElapsedMs,
+    timeoutMs: evidence.timeoutMs,
+    termination: evidence.termination.kind,
+    usageStatus: evidence.usage.status,
+    ...(evidence.usage.status === "unavailable"
+      ? { usageUnavailableReason: evidence.usage.reason }
+      : {}),
+    usage: evidence.usage.status === "reported" ? evidence.usage.value : null,
+    claimed: evidence.workerClaimedStatus,
+    claimedFailureCauses: evidence.workerClaimedFailureCauses,
+    verificationPassed: executed.filter((run) => run.passed).length,
+    verificationFailed: executed.filter((run) => !run.passed).length,
+    verificationRefused: refused.length,
+  });
+}
 
 /** Strip control characters from every string so events cannot forge log lines. */
 function sanitizeEvent(event: OrchestratorEvent): Record<string, unknown> {

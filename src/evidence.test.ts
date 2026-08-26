@@ -487,6 +487,47 @@ test("compact mode removes passing stdout from every model-visible surface", () 
   assert.ok(!surfaces.includes("Success."), "the rest of that output leaked too");
 });
 
+test("compact mode also removes passing output nested in attempt evidence", () => {
+  const result = mockResult();
+  result.attempts = [
+    {
+      executionId: "exec-compact",
+      logicalAttempt: 1,
+      role: "initial",
+      predecessorExecutionId: null,
+      requestedModel: result.model,
+      requestedEffort: result.effort,
+      threadId: result.workerThreadId,
+      threadOperation: "start",
+      threadIdentityMatched: null,
+      startedAt: "2024-01-01T10:00:00Z",
+      finishedAt: "2024-01-01T10:00:10Z",
+      elapsedMs: 10_000,
+      workerElapsedMs: 9_000,
+      verificationElapsedMs: 1_000,
+      timeoutMs: 900_000,
+      termination: { kind: "completed", message: null },
+      usage: {
+        status: "reported",
+        source: "codex-turn.completed",
+        value: { ...result.usage! },
+      },
+      workerClaimedStatus: "PASS",
+      workerClaimedFailureCauses: [],
+      verification: result.verification.map((run) => ({ ...run })),
+    },
+  ];
+
+  const compacted = compactResult(result);
+  assert.equal(compacted.attempts?.[0]?.verification[0]?.output, "");
+  assert.equal(
+    result.attempts[0]?.verification[0]?.output,
+    PASSING_STDOUT + "\nSuccess.",
+    "compaction must preserve the immutable source evidence",
+  );
+  assert.ok(!JSON.stringify(compacted).includes(PASSING_STDOUT));
+});
+
 test("compact mode does not substitute a placeholder for removed output", () => {
   const compacted = compactResult(mockResult());
   assert.equal(compacted.verification[0]?.output, "");

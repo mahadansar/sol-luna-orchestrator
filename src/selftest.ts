@@ -90,7 +90,15 @@ test("continuation references are opaque, single-use, and deterministically expi
   });
 
   const continuationDirectory = path.resolve("/tmp/workspace");
-  const issued = store.issue(input, "thread-original", continuationDirectory, true);
+  const issued = store.issue(
+    input,
+    "thread-original",
+    continuationDirectory,
+    true,
+    null,
+    "exec-original",
+    5,
+  );
   assert.match(issued, /^ctr_[A-Za-z0-9_-]{32,}$/);
   assert.deepEqual(store.protectedWorkingDirectories(), [continuationDirectory]);
   const ready = store.consume(issued);
@@ -101,6 +109,8 @@ test("continuation references are opaque, single-use, and deterministically expi
     assert.deepEqual(ready.entry.input.forbiddenFiles, ["src/secrets/**"]);
     assert.equal(ready.entry.input.changeIntent, "forbidden");
     assert.equal(ready.entry.reconcileFinalGit, true);
+    assert.equal(ready.entry.predecessorExecutionId, "exec-original");
+    assert.equal(ready.entry.logicalAttempt, 5);
   }
   assert.deepEqual(
     store.protectedWorkingDirectories(),
@@ -144,6 +154,9 @@ test("continuation resumes the exact thread and reruns verification under the or
   };
   let resumedThreadId: string | null = null;
   let prompt = "";
+  let verificationExecutionId: string | null = null;
+  const attemptStarts: string[] = [];
+  const attemptCompletions: string[] = [];
   const events = async function* (): AsyncGenerator<ThreadEvent> {
     yield {
       type: "item.completed",
@@ -190,6 +203,15 @@ test("continuation resumes the exact thread and reruns verification under the or
     threadId: "thread-original",
     instruction: "Re-check the upload notes and record the remaining evidence.",
     codex: fakeCodex,
+    predecessorExecutionId: "exec-predecessor",
+    logicalAttempt: 4,
+    hooks: {
+      onVerificationStart: (_count, attribution) => {
+        verificationExecutionId = attribution.executionId;
+      },
+      onAttemptStart: (evidence) => attemptStarts.push(evidence.executionId),
+      onAttemptComplete: (evidence) => attemptCompletions.push(evidence.executionId),
+    },
   });
 
   assert.equal(resumedThreadId, "thread-original");
@@ -207,6 +229,14 @@ test("continuation resumes the exact thread and reruns verification under the or
   assert.doesNotMatch(prompt, /src\/secrets\/\*\*/);
   assert.doesNotMatch(prompt, /Selected intent:/i);
   assert.equal(result.repair, null, "manual continuation must not trigger auto repair");
+  assert.equal(result.attempt, 4);
+  assert.equal(result.attempts?.length, 1);
+  assert.equal(result.attempts?.[0]?.role, "manual-continuation");
+  assert.equal(result.attempts?.[0]?.predecessorExecutionId, "exec-predecessor");
+  assert.equal(result.attempts?.[0]?.threadOperation, "resume");
+  assert.equal(result.attempts?.[0]?.threadIdentityMatched, true);
+  assert.equal(verificationExecutionId, result.attempts?.[0]?.executionId);
+  assert.deepEqual(attemptStarts, attemptCompletions);
 });
 
 test("fresh task execution still starts a new thread", async () => {
@@ -253,6 +283,184 @@ test("fresh task execution still starts a new thread", async () => {
   assert.equal(starts, 1);
   assert.equal(result.workerThreadId, "thread-fresh");
   assert.equal(result.verdict, "PASS");
+});
+
+test("attempt evidence records authoritative success and factual runtime failures", async () => {
+  const input = delegateTaskInputSchema.parse({
+    objective:
+      "Exercise deterministic worker lifecycle evidence without changing the repository.",
+    effortReason: "The cases validate factual attempt termination evidence.",
+    acceptanceCriteria: ["Each execution records one factual terminal state."],
+    changeIntent: "optional",
+  });
+  const report: WorkerReport = {
+    status: "PASS",
+    failureCauses: [],
+    summary: "Lifecycle fixture completed.",
+    filesChanged: [],
+    verification: [],
+    notes: "",
+    followUps: [],
+  };
+  const usage = {
+    input_tokens: 11,
+    cached_input_tokens: 3,
+    cache_write_input_tokens: 2,
+    output_tokens: 5,
+    reasoning_output_tokens: 1,
+  };
+  const run = async (events: () => AsyncGenerator<ThreadEvent>, startError?: Error) => {
+    const starts: string[] = [];
+    const completions: string[] = [];
+    const result = await executeTask(input, {
+      workingDirectory: process.cwd(),
+      logicalAttempt: 3,
+      codex: {
+        startThread: () => {
+          if (startError) throw startError;
+          return {
+            id: "thread-lifecycle",
+            runStreamed: async () => ({ events: events() }),
+          };
+        },
+        resumeThread: () => {
+          throw new Error("fixture must start a fresh thread");
+        },
+      },
+      onAttemptStart: (evidence) => starts.push(evidence.executionId),
+      onAttemptComplete: (evidence) => completions.push(evidence.executionId),
+    });
+    assert.equal(starts.length, 1);
+    assert.deepEqual(
+      completions,
+      starts,
+      "each start must have exactly one terminal record",
+    );
+    assert.equal(result.attempt, 3);
+    assert.equal(result.attempts?.length, 1);
+    return result;
+  };
+
+  const success = await run(async function* () {
+    yield {
+      type: "item.completed",
+      item: { id: "message", type: "agent_message", text: JSON.stringify(report) },
+    };
+    yield { type: "turn.completed", usage };
+  });
+  assert.equal(success.attempts?.[0]?.termination.kind, "completed");
+  assert.equal(success.attempts?.[0]?.usage.status, "reported");
+  assert.deepEqual(success.usage, {
+    inputTokens: 11,
+    cachedInputTokens: 3,
+    cacheWriteInputTokens: 2,
+    outputTokens: 5,
+    reasoningOutputTokens: 1,
+  });
+
+  const turnFailed = await run(async function* () {
+    yield { type: "turn.failed", error: { message: "controlled turn failure" } };
+  });
+  assert.equal(turnFailed.attempts?.[0]?.termination.kind, "turn-failed");
+  assert.deepEqual(turnFailed.attempts?.[0]?.usage, {
+    status: "unavailable",
+    reason: "turn-failed",
+  });
+
+  const streamFailed = await run(async function* () {
+    yield { type: "error", message: "controlled stream failure" };
+  });
+  assert.equal(streamFailed.attempts?.[0]?.termination.kind, "stream-error");
+  assert.deepEqual(streamFailed.attempts?.[0]?.usage, {
+    status: "unavailable",
+    reason: "stream-error",
+  });
+
+  const processFailed = await run(async function* () {
+    yield {
+      type: "item.completed",
+      item: {
+        id: "partial-change",
+        type: "file_change",
+        status: "completed",
+        changes: [{ path: "src/partial.ts", kind: "add" }],
+      },
+    };
+    yield {
+      type: "item.completed",
+      item: {
+        id: "partial-message",
+        type: "agent_message",
+        text: JSON.stringify(report),
+      },
+    };
+    throw new Error("Codex Exec exited with code 17");
+  });
+  assert.equal(processFailed.attempts?.[0]?.termination.kind, "process-exit");
+  assert.equal(processFailed.filesChanged[0]?.path, "src/partial.ts");
+  assert.equal(processFailed.summary, report.summary);
+
+  const beforeThread = await run(async function* () {
+    return;
+  }, new Error("controlled thread construction failure"));
+  assert.equal(beforeThread.attempts?.[0]?.termination.kind, "runtime-error");
+  assert.equal(beforeThread.attempts?.[0]?.threadId, null);
+  assert.deepEqual(beforeThread.attempts?.[0]?.usage, {
+    status: "unavailable",
+    reason: "runtime-error",
+  });
+});
+
+test("timeout and external cancellation retain distinct terminal evidence", async () => {
+  const base = {
+    objective:
+      "Wait for a deterministic abort so the runtime can retain lifecycle evidence.",
+    effortReason: "The fixture exercises timeout and cancellation separately.",
+    acceptanceCriteria: ["The terminal origin remains factual."],
+    changeIntent: "optional" as const,
+  };
+  const abortingCodex = (): WorkerCodex => ({
+    startThread: () => ({
+      id: "thread-abort",
+      runStreamed: async (_prompt, options) => {
+        const events = async function* (): AsyncGenerator<ThreadEvent> {
+          await new Promise<never>((_resolve, reject) => {
+            const onAbort = (): void => reject(new Error("controlled abort"));
+            if (options?.signal?.aborted) onAbort();
+            else options?.signal?.addEventListener("abort", onAbort, { once: true });
+          });
+        };
+        return { events: events() };
+      },
+    }),
+    resumeThread: () => {
+      throw new Error("fixture must start a fresh thread");
+    },
+  });
+
+  const timedOut = await executeTask(
+    delegateTaskInputSchema.parse({ ...base, timeoutSeconds: 1 }),
+    { workingDirectory: process.cwd(), codex: abortingCodex() },
+  );
+  assert.equal(timedOut.attempts?.[0]?.termination.kind, "timed-out");
+  assert.deepEqual(timedOut.attempts?.[0]?.usage, {
+    status: "unavailable",
+    reason: "timed-out",
+  });
+
+  const controller = new AbortController();
+  const cancelledPromise = executeTask(delegateTaskInputSchema.parse(base), {
+    workingDirectory: process.cwd(),
+    signal: controller.signal,
+    codex: abortingCodex(),
+  });
+  setImmediate(() => controller.abort());
+  const cancelled = await cancelledPromise;
+  assert.equal(cancelled.attempts?.[0]?.termination.kind, "cancelled");
+  assert.deepEqual(cancelled.attempts?.[0]?.usage, {
+    status: "unavailable",
+    reason: "cancelled",
+  });
 });
 
 test("continuation failure causes come from the new turn", async () => {
@@ -348,6 +556,16 @@ test("one automatic repair reuses the thread, passes exact evidence, and reruns 
         type: "item.completed",
         item: { id: "message", type: "agent_message", text: JSON.stringify(report) },
       };
+      yield {
+        type: "turn.completed",
+        usage: {
+          input_tokens: 7,
+          cached_input_tokens: 2,
+          cache_write_input_tokens: 1,
+          output_tokens: 3,
+          reasoning_output_tokens: 1,
+        },
+      };
     };
     const fakeCodex: WorkerCodex = {
       startThread: () => {
@@ -387,6 +605,23 @@ test("one automatic repair reuses the thread, passes exact evidence, and reruns 
     assert.equal(starts, 1);
     assert.deepEqual(resumed, ["thread-repair"]);
     assert.equal(result.workerThreadId, "thread-repair");
+    assert.equal(result.attempts?.length, 2);
+    assert.equal(result.attempts?.[0]?.role, "initial");
+    assert.equal(result.attempts?.[1]?.role, "automatic-repair");
+    assert.equal(
+      result.attempts?.[1]?.predecessorExecutionId,
+      result.attempts?.[0]?.executionId,
+    );
+    assert.notEqual(result.attempts?.[0]?.executionId, result.attempts?.[1]?.executionId);
+    assert.equal(result.attempts?.[0]?.verification[0]?.passed, false);
+    assert.equal(result.attempts?.[1]?.verification[0]?.passed, true);
+    assert.deepEqual(result.usage, {
+      inputTokens: 14,
+      cachedInputTokens: 4,
+      cacheWriteInputTokens: 2,
+      outputTokens: 6,
+      reasoningOutputTokens: 2,
+    });
     assert.equal(verificationStarts, 2);
     assert.equal(repairStarts, 1);
     assert.match(prompts[1] ?? "", /node repair-check\.mjs/);
@@ -424,7 +659,8 @@ test("automatic repair stops after its single resumed turn", async () => {
       followUps: [],
     };
     let resumes = 0;
-    const events = async function* (): AsyncGenerator<ThreadEvent> {
+    let turns = 0;
+    const events = async function* (includeUsage: boolean): AsyncGenerator<ThreadEvent> {
       yield {
         type: "item.completed",
         item: {
@@ -438,10 +674,22 @@ test("automatic repair stops after its single resumed turn", async () => {
         type: "item.completed",
         item: { id: "message", type: "agent_message", text: JSON.stringify(report) },
       };
+      if (includeUsage) {
+        yield {
+          type: "turn.completed",
+          usage: {
+            input_tokens: 5,
+            cached_input_tokens: 1,
+            cache_write_input_tokens: 0,
+            output_tokens: 2,
+            reasoning_output_tokens: 1,
+          },
+        };
+      }
     };
     const thread = {
       id: "thread-limit",
-      runStreamed: async () => ({ events: events() }),
+      runStreamed: async () => ({ events: events(++turns === 2) }),
     };
     const result = await executeTask(input, {
       workingDirectory: workspace,
@@ -456,6 +704,9 @@ test("automatic repair stops after its single resumed turn", async () => {
     assert.equal(result.verdict, "FAILED");
     assert.equal(resumes, 1);
     assert.equal(result.repair?.attempted, true);
+    assert.equal(result.attempts?.[0]?.usage.status, "unavailable");
+    assert.equal(result.attempts?.[1]?.usage.status, "reported");
+    assert.equal(result.usage, null, "known plus unknown usage must remain unknown");
     assert.match(result.repair?.reason ?? "", /limit is exhausted/i);
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });
@@ -758,6 +1009,8 @@ const makeObserved = (
   usage: null,
   timedOut: false,
   cancelled: false,
+  termination: "completed",
+  terminationMessage: null,
   ...overrides,
 });
 

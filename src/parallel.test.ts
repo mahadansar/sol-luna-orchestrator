@@ -1238,35 +1238,35 @@ test("batch renewal failure releases local ownership but preserves the bounded l
   );
 
   try {
-    await assert.rejects(
-      runBatch(
-        [
-          makeTask({
-            allowedFiles: ["src/renewal/**"],
-            timeoutSeconds: 1,
-          }),
-        ],
-        {
-          mode: "parallel",
-          workingDirectory: repo,
-          integrate: false,
-          keepWorktrees: "onfailure",
-          batchId,
-          executor: fakeExecutor({
-            writes: () => ({ "src/renewal/value.ts": "x\n" }),
-          }),
-          leaseMaintainer: () => ({
-            assertHealthy: () => undefined,
-            whenUnhealthy: Promise.resolve(renewalError),
-            stop: async () => {
-              throw renewalError;
-            },
-          }),
-        },
-      ),
-      /fixture batch renewal failure/i,
+    const result = await runBatch(
+      [
+        makeTask({
+          allowedFiles: ["src/renewal/**"],
+          timeoutSeconds: 1,
+        }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        integrate: false,
+        keepWorktrees: "onfailure",
+        batchId,
+        executor: fakeExecutor({
+          writes: () => ({ "src/renewal/value.ts": "x\n" }),
+        }),
+        leaseMaintainer: () => ({
+          assertHealthy: () => undefined,
+          whenUnhealthy: Promise.resolve(renewalError),
+          stop: async () => {
+            throw renewalError;
+          },
+        }),
+      },
     );
-
+    assert.equal(result.completionState, "needs-supervisor");
+    assert.ok(result.tasks[0]?.result, "completed worker evidence must survive cleanup");
+    assert.equal(result.tasks[0]?.attempts?.length, 1);
+    assert.match(result.warnings.join("\n"), /fixture batch renewal failure/i);
     assert.ok(await fs.stat(worktreePath).catch(() => null));
     assert.deepEqual(await pruneStaleWorktrees(repo), []);
 
@@ -1958,6 +1958,27 @@ test("one worker failing does not discard the others", async () => {
       result.tasks.find((task) => task.state === "failed")?.error ?? "",
       /exploded/,
     );
+    assert.ok(result.tasks.every((task) => (task.attempts?.length ?? 0) >= 1));
+    assert.equal(
+      new Set(
+        result.tasks.flatMap((task) => task.attempts?.map((a) => a.executionId) ?? []),
+      ).size,
+      result.tasks.reduce((count, task) => count + (task.attempts?.length ?? 0), 0),
+      "siblings must remain independently attributable",
+    );
+    assert.deepEqual(
+      result.tasks.find((task) => task.state === "failed")?.attempts?.[0]?.usage,
+      { status: "unavailable", reason: "runtime-error" },
+    );
+    assert.ok(
+      result.tasks
+        .filter((task) => task.state === "completed")
+        .every(
+          (task) =>
+            task.result?.attempts?.length === 1 && task.attempts?.[0]?.role === "initial",
+        ),
+      "successful sibling evidence must survive another worker's failure",
+    );
     assert.deepEqual(finalCommands, [["node --version one", "node --version three"]]);
 
     // The successful work is still integrated.
@@ -2634,6 +2655,20 @@ test("parallel timeout recovery resumes the same thread and integrates final evi
           return makeOutput({
             effort: input.effort,
             workerThreadId: "thread-timeout",
+            usage:
+              calls.length === 1
+                ? {
+                    inputTokens: 10,
+                    cachedInputTokens: 2,
+                    outputTokens: 4,
+                    reasoningOutputTokens: 1,
+                  }
+                : {
+                    inputTokens: 5,
+                    cachedInputTokens: 1,
+                    outputTokens: 2,
+                    reasoningOutputTokens: 1,
+                  },
             verdict: calls.length === 1 ? "FAILED" : "PASS",
             workerClaimedStatus: calls.length === 1 ? "FAILED" : "PASS",
             errors:
@@ -2658,11 +2693,24 @@ test("parallel timeout recovery resumes the same thread and integrates final evi
     assert.equal(calls[1]?.resumeThreadId, "thread-timeout");
     assert.equal(result.tasks[0]?.attempt, 2);
     assert.equal(result.tasks[0]?.result?.attempt, 2);
+    assert.equal(result.tasks[0]?.attempts?.length, 2);
+    assert.equal(result.tasks[0]?.attempts?.[0]?.role, "initial");
+    assert.equal(result.tasks[0]?.attempts?.[1]?.role, "timeout-recovery");
+    assert.equal(
+      result.tasks[0]?.attempts?.[1]?.predecessorExecutionId,
+      result.tasks[0]?.attempts?.[0]?.executionId,
+    );
     assert.equal(
       result.tasks[0]?.result?.recovery?.classification,
       "timeout-continuation",
     );
     assert.equal(result.tasks[0]?.result?.recovery?.recoveryAttempt, 2);
+    assert.deepEqual(result.tasks[0]?.result?.usage, {
+      inputTokens: 15,
+      cachedInputTokens: 3,
+      outputTokens: 6,
+      reasoningOutputTokens: 2,
+    });
     assert.equal(result.integrated, true);
     assert.equal(
       await fs.readFile(path.join(repo, "src", "recovered", "value.ts"), "utf8"),
@@ -2671,6 +2719,17 @@ test("parallel timeout recovery resumes the same thread and integrates final evi
     const recoveryDone = events.findIndex((event) => event.type === "recovery.completed");
     const integration = events.findIndex(
       (event) => event.type === "integration.completed",
+    );
+    const attemptStarts = events.filter((event) => event.type === "attempt.started");
+    const attemptCompletions = events.filter(
+      (event) => event.type === "attempt.completed",
+    );
+    assert.equal(attemptStarts.length, 2);
+    assert.equal(attemptCompletions.length, 2);
+    assert.deepEqual(
+      new Set(attemptCompletions.map((event) => event.executionId)),
+      new Set(attemptStarts.map((event) => event.executionId)),
+      "each started recovery execution must emit exactly one terminal event",
     );
     assert.ok(recoveryDone >= 0 && integration > recoveryDone);
   } finally {
@@ -2715,6 +2774,8 @@ test("parallel worker-process failures get one fresh retry in the same worktree"
       "worker-process-retry",
     );
     assert.equal(result.tasks[0]?.result?.attempt, 2);
+    assert.equal(result.tasks[0]?.attempts?.length, 2);
+    assert.equal(result.tasks[0]?.attempts?.[1]?.role, "process-retry");
     assert.equal(result.passed, 1);
   } finally {
     await cleanupRepo(repo);
@@ -2813,6 +2874,12 @@ test("parallel recovery does not retry contract discrepancies and stops after on
             return makeOutput({
               verdict: "FAILED",
               workerClaimedStatus: "FAILED",
+              usage: {
+                inputTokens: 9,
+                cachedInputTokens: 2,
+                outputTokens: 3,
+                reasoningOutputTokens: 1,
+              },
               errors: ["Worker exceeded its 1s budget and was aborted."],
             });
           }
@@ -2833,7 +2900,18 @@ test("parallel recovery does not retry contract discrepancies and stops after on
     );
     const timeout = result.tasks.find((task) => task.taskId === "t3")!;
     assert.equal(timeout.result?.verdict, "FAILED");
-    assert.equal(timeout.result?.attempt, 2);
+    assert.equal(timeout.result?.attempt, 1);
+    assert.equal(timeout.attempts?.length, 2);
+    assert.equal(timeout.result?.attempts?.length, 2);
+    assert.equal(timeout.attempts?.[0]?.logicalAttempt, 1);
+    assert.equal(timeout.attempts?.[1]?.logicalAttempt, 2);
+    assert.equal(timeout.attempts?.[0]?.usage.status, "reported");
+    assert.equal(timeout.attempts?.[1]?.usage.status, "unavailable");
+    assert.equal(timeout.result?.usage, null);
+    assert.equal(
+      timeout.attempts?.[1]?.predecessorExecutionId,
+      timeout.attempts?.[0]?.executionId,
+    );
     assert.equal(timeout.result?.recovery?.classification, "timeout-continuation");
     assert.ok(
       timeout.result?.errors.some((error) =>

@@ -35,6 +35,77 @@ const timestampedEventSchema = z.discriminatedUnion("type", [
   z.object({ ...eventBase, type: z.literal("batch.rejected"), reason: eventString }),
   z.object({
     ...eventBase,
+    type: z.literal("attempt.started"),
+    taskId: eventString,
+    executionId: eventString,
+    logicalAttempt: z.number().finite(),
+    role: z.enum([
+      "initial",
+      "automatic-repair",
+      "manual-continuation",
+      "timeout-recovery",
+      "process-retry",
+    ]),
+    predecessorExecutionId: eventString.nullable(),
+    model: eventString,
+    effort: eventString,
+    threadOperation: z.enum(["start", "resume"]),
+    startedAt: eventString,
+    timeoutMs: z.number().finite(),
+  }),
+  z.object({
+    ...eventBase,
+    type: z.literal("attempt.completed"),
+    taskId: eventString,
+    executionId: eventString,
+    logicalAttempt: z.number().finite(),
+    role: z.enum([
+      "initial",
+      "automatic-repair",
+      "manual-continuation",
+      "timeout-recovery",
+      "process-retry",
+    ]),
+    predecessorExecutionId: eventString.nullable(),
+    model: eventString,
+    effort: eventString,
+    threadId: eventString.nullable(),
+    threadOperation: z.enum(["start", "resume"]),
+    threadIdentityMatched: z.boolean().nullable(),
+    startedAt: eventString,
+    finishedAt: eventString,
+    elapsedMs: z.number().finite(),
+    workerElapsedMs: z.number().finite(),
+    verificationElapsedMs: z.number().finite(),
+    timeoutMs: z.number().finite(),
+    termination: z.enum([
+      "completed",
+      "timed-out",
+      "cancelled",
+      "turn-failed",
+      "stream-error",
+      "process-exit",
+      "runtime-error",
+    ]),
+    usageStatus: z.enum(["reported", "unavailable"]),
+    usageUnavailableReason: optionalEventString,
+    usage: z
+      .object({
+        inputTokens: z.number().finite(),
+        cachedInputTokens: z.number().finite(),
+        cacheWriteInputTokens: z.number().finite().optional(),
+        outputTokens: z.number().finite(),
+        reasoningOutputTokens: z.number().finite(),
+      })
+      .nullable(),
+    claimed: optionalEventString.nullable().catch(undefined),
+    claimedFailureCauses: z.array(eventString),
+    verificationPassed: z.number().finite(),
+    verificationFailed: z.number().finite(),
+    verificationRefused: z.number().finite(),
+  }),
+  z.object({
+    ...eventBase,
     type: z.literal("task.queued"),
     taskId: eventString,
     effort: optionalEventString,
@@ -115,6 +186,8 @@ const timestampedEventSchema = z.discriminatedUnion("type", [
     attempt: z.number().finite(),
     classification: eventString,
     evidence: eventString,
+    executionId: optionalEventString,
+    predecessorExecutionId: optionalEventString.nullable().catch(undefined),
   }),
   z.object({
     ...eventBase,
@@ -123,6 +196,8 @@ const timestampedEventSchema = z.discriminatedUnion("type", [
     attempt: z.number().finite(),
     classification: eventString,
     evidence: eventString,
+    executionId: optionalEventString,
+    predecessorExecutionId: optionalEventString.nullable().catch(undefined),
   }),
   z.object({
     ...eventBase,
@@ -144,6 +219,8 @@ const timestampedEventSchema = z.discriminatedUnion("type", [
       })
       .nullable()
       .catch(null),
+    executionId: optionalEventString,
+    predecessorExecutionId: optionalEventString.nullable().catch(undefined),
   }),
   z.object({
     ...eventBase,
@@ -151,6 +228,7 @@ const timestampedEventSchema = z.discriminatedUnion("type", [
     taskId: eventString,
     classification: eventString,
     turn: z.literal(1),
+    executionId: optionalEventString,
   }),
   z.object({
     ...eventBase,
@@ -158,6 +236,7 @@ const timestampedEventSchema = z.discriminatedUnion("type", [
     taskId: eventString,
     verdict: eventString,
     turn: z.literal(1),
+    executionId: optionalEventString,
   }),
   z.object({
     ...eventBase,
@@ -176,6 +255,9 @@ const timestampedEventSchema = z.discriminatedUnion("type", [
     type: z.literal("verification.started"),
     taskId: eventString,
     commandCount: optionalEventNumber,
+    executionId: optionalEventString,
+    attempt: optionalEventNumber,
+    role: optionalEventString,
   }),
   z.object({
     ...eventBase,
@@ -184,6 +266,9 @@ const timestampedEventSchema = z.discriminatedUnion("type", [
     passed: z.number().finite().catch(0),
     failed: z.number().finite().catch(0),
     refused: z.number().finite().catch(0),
+    executionId: optionalEventString,
+    attempt: optionalEventNumber,
+    role: optionalEventString,
   }),
   z.object({ ...eventBase, type: z.literal("scope.conflict"), detail: eventString }),
   z.object({
@@ -267,6 +352,31 @@ export type WorkerState =
   | "cancelled"
   | "timedOut";
 
+export interface AttemptActivity {
+  executionId: string;
+  logicalAttempt: number;
+  role: string;
+  predecessorExecutionId: string | null;
+  model: string;
+  effort: string;
+  threadId: string | null;
+  threadOperation: "start" | "resume";
+  threadIdentityMatched: boolean | null;
+  startedAt: string;
+  finishedAt: string | null;
+  elapsedMs: number | null;
+  workerElapsedMs: number | null;
+  verificationElapsedMs: number | null;
+  timeoutMs: number;
+  termination: string | null;
+  usageStatus: "pending" | "reported" | "unavailable";
+  usageUnavailableReason: string | null;
+  usage: WorkerActivity["usage"];
+  claimed: string | null;
+  claimedFailureCauses: string[];
+  verification: { passed: number; failed: number; refused: number } | null;
+}
+
 export interface WorkerActivity {
   taskId: string;
   activityLabel: string | null;
@@ -275,6 +385,7 @@ export interface WorkerActivity {
   category: string | null;
   effort: string;
   attempt: number;
+  attempts: AttemptActivity[];
   model: string | null;
   workingDirectory: string | null;
   state: WorkerState;
@@ -679,6 +790,7 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
         category: null,
         effort: "unknown",
         attempt: 1,
+        attempts: [],
         model: null,
         workingDirectory: null,
         state: "queued",
@@ -703,6 +815,91 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
     }
 
     switch (event.type) {
+      case "attempt.started": {
+        if (
+          !worker.attempts.some((attempt) => attempt.executionId === event.executionId)
+        ) {
+          worker.attempts.push({
+            executionId: event.executionId,
+            logicalAttempt: event.logicalAttempt,
+            role: event.role,
+            predecessorExecutionId: event.predecessorExecutionId,
+            model: event.model,
+            effort: event.effort,
+            threadId: null,
+            threadOperation: event.threadOperation,
+            threadIdentityMatched: null,
+            startedAt: event.startedAt,
+            finishedAt: null,
+            elapsedMs: null,
+            workerElapsedMs: null,
+            verificationElapsedMs: null,
+            timeoutMs: event.timeoutMs,
+            termination: null,
+            usageStatus: "pending",
+            usageUnavailableReason: null,
+            usage: null,
+            claimed: null,
+            claimedFailureCauses: [],
+            verification: null,
+          });
+        }
+        worker.attempt = event.logicalAttempt;
+        worker.model = event.model;
+        worker.effort = event.effort;
+        break;
+      }
+      case "attempt.completed": {
+        let attempt = worker.attempts.find(
+          (candidate) => candidate.executionId === event.executionId,
+        );
+        if (!attempt) {
+          attempt = {
+            executionId: event.executionId,
+            logicalAttempt: event.logicalAttempt,
+            role: event.role,
+            predecessorExecutionId: event.predecessorExecutionId,
+            model: event.model,
+            effort: event.effort,
+            threadId: null,
+            threadOperation: event.threadOperation,
+            threadIdentityMatched: null,
+            startedAt: event.startedAt,
+            finishedAt: null,
+            elapsedMs: null,
+            workerElapsedMs: null,
+            verificationElapsedMs: null,
+            timeoutMs: event.timeoutMs,
+            termination: null,
+            usageStatus: "pending",
+            usageUnavailableReason: null,
+            usage: null,
+            claimed: null,
+            claimedFailureCauses: [],
+            verification: null,
+          };
+          worker.attempts.push(attempt);
+        }
+        attempt.threadId = event.threadId;
+        attempt.threadIdentityMatched = event.threadIdentityMatched;
+        attempt.finishedAt = event.finishedAt;
+        attempt.elapsedMs = event.elapsedMs;
+        attempt.workerElapsedMs = event.workerElapsedMs;
+        attempt.verificationElapsedMs = event.verificationElapsedMs;
+        attempt.termination = event.termination;
+        attempt.usageStatus = event.usageStatus;
+        attempt.usageUnavailableReason = event.usageUnavailableReason ?? null;
+        attempt.usage = event.usage;
+        attempt.claimed = event.claimed ?? null;
+        attempt.claimedFailureCauses = [...event.claimedFailureCauses];
+        attempt.verification = {
+          passed: event.verificationPassed,
+          failed: event.verificationFailed,
+          refused: event.verificationRefused,
+        };
+        worker.attempt = event.logicalAttempt;
+        break;
+      }
       case "task.queued":
         worker.effort = event.effort ?? worker.effort;
         worker.category = event.category ?? worker.category;

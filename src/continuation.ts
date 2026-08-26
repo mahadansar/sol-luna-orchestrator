@@ -13,6 +13,8 @@ interface ContinuationRecord {
   workingDirectory: string;
   reconcileFinalGit: boolean;
   worktreeLease: WorktreeLease | null;
+  predecessorExecutionId: string | null;
+  logicalAttempt: number;
   expiresAt: number;
 }
 
@@ -29,6 +31,9 @@ export interface ContinuationEntry {
   reconcileFinalGit: boolean;
   /** Exact persistent owner for a retained parallel worktree, when applicable. */
   worktreeLease: WorktreeLease | null;
+  /** Factual in-process lineage; never persisted across server sessions. */
+  predecessorExecutionId: string | null;
+  logicalAttempt: number;
 }
 
 export type ContinuationConsumeResult =
@@ -71,6 +76,8 @@ export class ContinuationStore {
     workingDirectory: string,
     reconcileFinalGit = false,
     worktreeLease: WorktreeLease | null = null,
+    predecessorExecutionId: string | null = null,
+    logicalAttempt = input.previousAttempts.length + 2,
   ): string {
     const now = this.now();
     this.prune(now);
@@ -86,6 +93,8 @@ export class ContinuationStore {
       workingDirectory,
       reconcileFinalGit,
       worktreeLease: worktreeLease ? { ...worktreeLease } : null,
+      predecessorExecutionId,
+      logicalAttempt,
       expiresAt: now + CONTINUATION_TTL_MS,
     });
     return reference;
@@ -118,6 +127,8 @@ export class ContinuationStore {
           workingDirectory: record.workingDirectory,
           reconcileFinalGit: record.reconcileFinalGit,
           worktreeLease: record.worktreeLease ? { ...record.worktreeLease } : null,
+          predecessorExecutionId: record.predecessorExecutionId,
+          logicalAttempt: record.logicalAttempt,
         },
       };
     }

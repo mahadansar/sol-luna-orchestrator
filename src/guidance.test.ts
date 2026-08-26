@@ -723,7 +723,7 @@ test("acceptance ledger owns the current release baseline", async () => {
   const acceptance = await readDoc("docs/FEATURE_ACCEPTANCE.md");
   assert.match(acceptance, /package version is `0\.10\.0`/i);
   assert.match(acceptance, /current main runtime is its release baseline/i);
-  assert.match(acceptance, /\*\*518\/518 tests passed\*\*/);
+  assert.match(acceptance, /\*\*603\/606 tests passed\*\*/);
   assert.match(acceptance, /## Current capability matrix/);
   assert.match(
     acceptance,
