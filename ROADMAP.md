@@ -12,23 +12,32 @@ handling, and reproducible evidence. It does not optimise for agent count,
 delegating whenever possible, fixed user-selected routes, or automatic Git
 actions.
 
+The project priority is:
+
+1. Correctness and trustworthy verified output
+2. Reliability and conservative failure handling
+3. Effective parallel execution
+4. Latency/context efficiency
+5. Cost efficiency
+
+Cost matters, but it is not the primary objective. The orchestrator should use parallelism when it improves execution, while staying Solo when delegation would hurt correctness or efficiency.
+
 ## Priorities at a glance
 
-| Priority | Item                                                   | Status / dependency                          |
-| -------- | ------------------------------------------------------ | -------------------------------------------- |
-| P0       | Context Capsule v2; Compact Evidence Packets           | Shipped in v0.7.0                            |
-| P0.2a    | Explicit Change Intent Contracts                       | Shipped in v0.9.0                            |
-| P0.3     | Worker Continuation                                    | Shipped in v0.9.0; depends on P0.2a          |
-| P0.4     | Bounded Repair Loop                                    | Shipped in v0.9.0; depends on P0.3 and P0.2a |
-| P1.0     | Parent Identity, Billing, and Post-Hoc Cost Foundation | Shipped in v0.9.0                            |
-| P1.1     | Reasoned Retry and Effort Escalation                   | Depends on P0.4                              |
-| P1.2a    | Cheap Routing Eligibility / Preflight                  | Shipped unreleased                           |
-| P1.2     | Adaptive Worker Routing and Compute Policy             | Depends on P1.0 and P1.1                     |
-| P1.3     | Automatic Context Lifecycle Management                 | Depends on P0.1, P0.2, and P0.3              |
-| P2.1     | Optional Explorer                                      | Depends on P1.2                              |
-| P2.2     | Lightweight Cross-Session Handoff                      | Depends on P1.3                              |
-| P2.3     | End-to-End Automated Workflow                          | Depends on P1.2, P1.3, P2.1, and P2.2        |
-| P2.4     | Mature Benchmark and Acceptance Pass                   | Depends on P2.3                              |
+| Priority | Item                                                   | Status / dependency                                                           |
+| -------- | ------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| P0       | Context Capsule v2; Compact Evidence Packets           | Shipped in v0.7.0                                                             |
+| P0.2a    | Explicit Change Intent Contracts                       | Shipped in v0.9.0                                                             |
+| P0.3     | Worker Continuation                                    | Shipped in v0.9.0; depends on P0.2a                                           |
+| P0.4     | Bounded Repair Loop                                    | Shipped in v0.9.0; depends on P0.3 and P0.2a                                  |
+| P1.0     | Parent Identity, Billing, and Post-Hoc Cost Foundation | Shipped in v0.9.0; hardening pending                                          |
+| P1.1     | Reasoned Retry and Effort Escalation                   | Depends on P0.4 and P1.0 hardening                                            |
+| P1.2     | Adaptive Worker Routing and Compute Policy             | In Progress (preflight slice); full policy depends on P1.0 hardening and P1.1 |
+| P1.3     | Automatic Context Lifecycle Management                 | Depends on P0.1, P0.2, and P0.3                                               |
+| P2.1     | Optional Explorer                                      | Depends on P1.2                                                               |
+| P2.2     | Lightweight Cross-Session Handoff                      | Depends on P1.3                                                               |
+| P2.3     | End-to-End Automated Workflow                          | Depends on P1.2, P1.3, P2.1, and P2.2                                         |
+| P2.4     | Mature Benchmark and Acceptance Pass                   | Depends on P2.3                                                               |
 
 The order is intentional: continuation, repair, failure classification, and
 policy discovery should precede stronger-executor routing. Explorer, handoff,
@@ -47,8 +56,11 @@ is maintained in [`CHANGELOG.md`](CHANGELOG.md):
   single-use continuation for an explicit follow-up in the same worker thread.
 - **Bounded Repair Loop (P0.4).** A narrowly classified local verification defect
   may receive one automatic same-thread repair before returning to the parent.
-- **Parent Identity, Billing, and Post-Hoc Cost Foundation (P1.0).** The runtime
-  keeps identity and billing evidence explicit and does not invent estimates.
+- **Parent Identity, Billing, and Post-Hoc Cost Foundation (P1.0).** The foundation
+  shipped in v0.9.0 and keeps identity and billing evidence explicit without inventing
+  estimates. Follow-up hardening remains for complete failed/timeout execution
+  evidence, which is a prerequisite to P1.1 reasoned failure decisions.
+- **Thin Supervisor.** A supporting architectural milestone shipped in v0.10.0.
 
 See the implementation, tests, [`SOL_RULES.md`](SOL_RULES.md),
 [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md), and
@@ -62,38 +74,45 @@ distinguish contract, implementation, verification, timeout, environment,
 scope/conflict, effort, and capability failures, and must not retry merely because
 a counter permits it.
 
+Remaining P1.1-related work includes:
+
+- failure classification
+- straggler/deadline control
+- reasoned repair / continuation / retry / takeover decisions
+- effort escalation
+- stronger authorised executor fallback where policy permits
+
 **Constraints.** Keep classification conservative; specification and environment
 failures should return to the supervisor rather than burn another worker turn.
 
 **Not decided.** The derived classifier schema and which responses are automatic
 versus recommendations. Depends on P0.4.
 
-## P1.2a Cheap Routing Eligibility / Preflight
-
-**Shipped (unreleased).** Deterministic eligibility is now separated from
-expensive architecture: a pure synchronous evaluator decides obvious solo cases
-from a small declared card before any repository exploration, worktree, thread,
-or worker exists. Raw declarations feed a few structural gates; conservatively
-resolved values feed advice only. Uncertainty biases advice toward solo and can
-never refuse.
-
-This is deliberately _not_ P1.2. It owns no compute policy: it reads no effort,
-recommends no worker count, and changes no concurrency. `parallelEligible` is a
-structural boolean, not a plan. Routing rules are declaration-driven and carry no
-score, threshold, or benchmark-derived tuning, and the V3 routing holdout remains
-isolated from runtime logic.
-
-**Not decided.** Whether observed-versus-declared contradictions should ever
-become enforcement rather than telemetry, and whether the card should later carry
-anything the parent does not already know.
-
 ## P1.2 Adaptive Worker Routing and Compute Policy
 
-Separate user-owned compute policy from supervisor routing. A future policy will
-authorize worker models, effort ceilings, concurrency, and cross-model escalation;
-the runtime must enforce it rather than relying on prompts. Routing may choose
-solo, a worker, a batch, continuation, repair, retry, an authorised stronger
-executor, or parent takeover, based on evidence and within that envelope.
+**In Progress.** Separate user-owned compute policy from supervisor routing. A
+future policy will authorize worker models, effort ceilings, concurrency, and
+cross-model escalation; the runtime must enforce it rather than relying on
+prompts. Routing may choose solo, a worker, a batch, continuation, repair,
+retry, an authorised stronger executor, or parent takeover, based on evidence
+and within that envelope.
+
+Its first implemented slice is Cheap Routing Eligibility / Preflight. This is
+an incremental part of P1.2, not the whole feature. Deterministic eligibility
+is separated from expensive architecture: a pure synchronous evaluator decides
+obvious solo cases from a small declared card before any repository exploration,
+worktree, thread, or worker exists.
+
+Future P1.2 work still includes:
+
+- Solo vs delegation decisions
+- decomposition/seam decisions
+- sequential vs parallel choice
+- worker count
+- authorised worker/model selection
+- effort selection
+- concurrency decisions
+- runtime enforcement of user-owned compute policy
 
 **Constraints.** The supervisor cannot expand permissions. Routing must preserve
 scope, isolation, independent verification, evidence handling, bounded retries,
@@ -101,9 +120,8 @@ and conservative concurrency; no model hierarchy is assumed. Cost is quantitativ
 only when applicable billing evidence is known; otherwise it remains qualitative.
 
 **Not decided.** Policy storage and CLI shape, how effective policy reaches the
-supervisor, routing rules, and representation of uncertain cost. Depends on P1.0,
-P1.1, and the preceding P0 chain. The cheap preflight in P1.2a is a deliberate
-subset: it decides eligibility, never policy.
+supervisor, routing rules, and representation of uncertain cost. Full policy
+depends on P1.0 hardening and P1.1.
 
 ## P1.3 Automatic Context Lifecycle Management
 
@@ -152,6 +170,12 @@ Measure quality, latency, context and token use, routing, retries, and cost only
 when the applicable billing schedule is known. Preserve evidence, treat zero
 workers as valid, and report unknown or incomparable cost rather than estimating.
 Depends on P2.3 and the completed routing, context, and handoff primitives.
+
+Benchmark V3 is frozen as a future holdout/evaluation asset. Do not run or tune
+against V3 during active feature development. Major model-backed benchmark
+campaigns should wait until P2.4 / mature acceptance after the planned feature
+chain is substantially complete. Targeted deterministic tests, runtime tests,
+smoke tests, and security tests still happen as each feature lands.
 
 ## Research and platform work
 
