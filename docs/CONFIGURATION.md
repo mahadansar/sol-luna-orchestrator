@@ -228,9 +228,11 @@ authoritative presentation of the required keys, values, and failure rationale.
 | `LUNA_NETWORK_ACCESS`              | off                     | `1` allows workers network access                                 |
 | `SOL_LUNA_MAX_PARALLEL`            | `3`                     | Concurrent workers; hard ceiling 8                                |
 | `SOL_LUNA_MAX_WORKERS_PER_BATCH`   | `12`                    | Workers one batch may enlist, either mode; hard ceiling 12        |
+| `SOL_LUNA_ALLOWED_MODELS`          | `LUNA_MODEL`            | Additional authorised worker models, comma separated              |
 | `SOL_LUNA_ALLOWED_EFFORTS`         | all four                | Permitted efforts, comma separated, e.g. `medium,high`            |
 | `SOL_LUNA_ALLOW_EFFORT_ESCALATION` | on                      | `0` stops the runtime recommending a higher effort                |
 | `SOL_LUNA_ALLOW_STRONGER_FALLBACK` | on                      | `0` stops the runtime recommending a stronger executor            |
+| `SOL_LUNA_EXECUTOR_ORDER`          | —                       | Complete executor hierarchy, weakest to strongest                 |
 | `SOL_LUNA_WORKTREE_LINK`           | `node_modules`          | Directories linked into each worktree                             |
 | `SOL_LUNA_KEEP_WORKTREES`          | `onFailure`             | Parallel-task retention: `always`, `never`, or `onFailure`        |
 | `SOL_LUNA_ALLOW_DIRTY`             | off                     | `1` permits parallel batches over uncommitted in-scope changes    |
@@ -266,10 +268,11 @@ and queues the rest. A 12-task batch never means 12 simultaneous workers.
 
 ### Compute policy
 
-The five variables above form this installation's compute envelope: which worker
-model is authorized, which efforts are permitted, how many workers one batch may
-enlist, how many may run at once, and whether the failure ladder may raise
-effort or recommend a stronger executor.
+The variables above form this installation's compute envelope: which worker
+models are authorized, the explicit operator-declared executor hierarchy (if any),
+which efforts are permitted, how many workers one batch may enlist, how many may
+run at once, and whether the failure ladder may raise effort or recommend a stronger
+executor.
 
 The envelope is yours, not the model's. It is read from the environment the
 server was launched with and cannot be raised from inside a call. Every default
@@ -299,6 +302,24 @@ Two consequences worth knowing before you narrow anything:
   ever recommended once the effort ladder is genuinely exhausted, so an
   installation that forbids `max` will not see that recommendation — refusing
   the cheap step never promotes the run to a costlier one.
+- Model strength is never inferred from list position. Only an explicit operator
+  declaration via `SOL_LUNA_EXECUTOR_ORDER` orders executors for stronger fallback
+  resolution. It grants no authorization: every entry must already be in
+  `SOL_LUNA_ALLOWED_MODELS`. The order is used only when it is a complete,
+  duplicate-free ordering of the authorized set and starts with `LUNA_MODEL`;
+  missing, partial, conflicting, or malformed orderings are ignored. Without a
+  usable order, multiple authorized models leave selection unresolved. A
+  server-issued next-action handoff is required before a later call can use prior
+  execution evidence to advance along this ordering. Caller history alone never
+  authorizes a stronger model.
+
+An eligible first bounded retry, effort-escalation, or stronger-executor decision returns an opaque
+`hdf_...` handoff reference. It is single-use, expires after 15 minutes, and is
+stored only in the issuing server process. Consumption restores the original
+task contract and factual attempt lineage; fields supplied alongside the
+reference cannot replace that contract. Restarting the MCP server deliberately
+forgets every outstanding handoff, so a reference from the prior process fails
+as unknown and no escalation runs. Delegate a fresh task if work is still needed.
 
 ### Automatic recovery
 
@@ -316,9 +337,13 @@ Every current task outcome carries a `failureDecision` with one conservative
 classification/action, the execution ids used, any recommended next effort, the
 automatic handler that already ran, and the automatic retry count and limit.
 `automaticRepair` runs before this batch recovery stage; recovery explicitly
-disables repair, and neither mechanism chains after its single bound. Retry,
-effort escalation, and stronger-executor fallback are otherwise recommendations.
-P1.2 owns actual executor selection and compute-policy enforcement.
+disables repair, and neither mechanism chains after its single bound. An eligible
+first retry may issue one server-authoritative handoff that bootstraps factual
+predecessor lineage; a later failure cannot earn another same-effort retry.
+Effort escalation and stronger-executor fallback handoffs require that
+authenticated lineage, so caller-declared history alone is insufficient. The
+handoff does not add an automatic loop and cannot bypass compute admission,
+scope, or verification gates.
 
 ### Worktree retention
 

@@ -12,10 +12,13 @@ import type { ComputePolicy } from "./policy.js";
 import type {
   CoreOverlap,
   DeclaredRoutingFields,
+  ExecutionMechanism,
   RoutingGate,
   RoutingRoute,
   RoutingSignal,
 } from "./routing.js";
+import type { Effort } from "./config.js";
+import type { SelectionReason } from "./selection.js";
 
 /**
  * Structured run telemetry.
@@ -308,6 +311,13 @@ export type OrchestratorEvent =
       gates: RoutingGate[];
       signals: RoutingSignal[];
       parallelEligible: boolean;
+      recommendedMechanism?: ExecutionMechanism;
+      recommendedWorkerCount?: number;
+      recommendedConcurrency?: number;
+      recommendedEffort?: Effort | null;
+      selectedModel?: string | null;
+      selectedEffort?: Effort | null;
+      selectionReason?: SelectionReason;
     } & DeclaredRoutingFields)
   | ({
       /** What a real delegation call declared, and what routing did with it. */
@@ -323,6 +333,13 @@ export type OrchestratorEvent =
       signals: RoutingSignal[];
       refusedGate: RoutingGate | null;
       parallelEligible: boolean;
+      recommendedMechanism?: ExecutionMechanism;
+      recommendedWorkerCount?: number;
+      recommendedConcurrency?: number;
+      recommendedEffort?: Effort | null;
+      selectedModel?: string | null;
+      selectedEffort?: Effort | null;
+      selectionReason?: SelectionReason;
     } & DeclaredRoutingFields)
   | {
       /**

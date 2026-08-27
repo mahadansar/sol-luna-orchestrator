@@ -53,8 +53,7 @@ parallel recovery baseline described below. Shipped history belongs in
 | P1.0 per-execution failure and usage evidence           | PASS     | DEEP PASS     | N/A           | Strong        |
 | P1.1 reasoned retry and effort escalation decisions     | PASS     | DEEP PASS     | N/A           | Strong        |
 | P1.2 user-owned compute policy and enforcement          | PASS     | PASS          | N/A           | Strong        |
-| P1.2 decomposition and seam planning (internal)         | PARTIAL  | PASS          | N/A           | Moderate      |
-| P1.2 selection policy (internal)                        | PARTIAL  | PASS          | N/A           | Moderate      |
+| P1.2 adaptive routing and compute selection             | PASS     | PASS          | N/A           | Strong        |
 | `failureCauses` and verification contradiction handling | PASS     | PASS          | PASS          | Strong        |
 
 Dates, provenance, dependencies, and retest triggers are recorded below. A live
@@ -92,45 +91,36 @@ effort, capability, and evidence failure. It proves repair-before-recovery
 precedence, one-turn bounds, no retry from counter availability alone, one-step
 effort escalation, stronger-executor recommendation without selection, lineage
 and truthful usage preservation, terminal cancellation, and successful sibling
-preservation. No model-backed P1.1 campaign was run; executor authorization and
-selection remain P1.2 work.
+preservation. No model-backed P1.1 campaign was run; the later P1.2 closure adds
+executor authorization and server-authoritative selection.
 
-P1.2 decomposition and seam planning (`src/seam-plan.ts`, `src/seam-plan.test.ts`)
-is deliberately recorded as **PARTIAL** coverage with **Moderate** confidence. The
-planner itself is complete, pure, and deterministically covered: 29 cases pin that
-a split is earned only by declared evidence or by structure derived from it, that
-undeclared coupling keeps work whole with every unstated field left `unknown`, that
-overlapping declared scopes outrank an optimistic declaration, that a shared
-verification command is a proof boundary and not a dependency, that shared
-directories are not coupling, that disjoint read-only work is independent by
-default, that the seam count is never trimmed to a worker budget, and that the plan
-names no mechanism, effort, worker count, or concurrency. Several of those cases
-feed the produced card straight into `evaluateRouting`, so a drift between the two
-layers fails a test. Coverage is nonetheless PARTIAL and live evidence N/A because
-no tool surface, server handler, or batch path calls `planSeams` yet: the module is
-internal, and exposing it is named P1.2 work in `ROADMAP.md`.
-
-P1.2 selection policy (`src/selection.ts`, `src/selection.test.ts`) is also recorded
-as **PARTIAL** coverage with **Moderate** confidence. The selector is pure and
-deterministically covered by 31 cases, including two cross-product sweeps: one
-asserting that every action, evidence and envelope combination selects only a
-permitted executor and a permitted effort, and one asserting that a starting effort
-is never raised above what routing asked for. Three properties are pinned by
-name — a solo or zero-worker shape and any action authorising no worker turn select
-nothing at all; effort climbs exactly one permitted rung, so `xhigh` and `max` are
-reachable only by climbing or from an envelope with no lower level; and executor and
-effort stay separate decisions, so escalation never changes the executor and an
-executor decision never resets effort. A transitive-import test proves `config.ts`,
-the one module that reads the process environment, is off the selector's runtime
-graph, so the envelope is an argument rather than an ambient read.
-
-The stronger-executor fallback is deliberately reported rather than resolved:
-`allowedModels` is a membership set with no operator-declared ordering, so
-list-order regression cases assert that a permitted fallback retains the executor
-that already ran whatever order the envelope lists. Coverage is PARTIAL because the
-module is internal — no tool surface, server handler, or batch path calls
-`selectCompute` yet — and because resolving a fallback needs an operator-declared
-executor ordering that does not exist; both are named as P1.2 work in `ROADMAP.md`.
+P1.2 adaptive routing and compute selection (`src/adaptive.ts`, `src/seam-plan.ts`,
+`src/selection.ts`, `src/routing.ts`, `src/policy.ts`, `src/adaptive-routing.test.ts`,
+`src/selection.test.ts`, `src/seam-plan.test.ts`, `src/routing.test.ts`, `src/policy.test.ts`)
+is recorded with **PASS** deterministic coverage and **Strong** confidence.
+The unified pipeline wires decomposition, routing evaluation, shape recommendation,
+compute selection, explicit operator-declared executor ordering, and telemetry
+into one pure, synchronous flow. Seam planning decides whether work stays whole or
+splits based strictly on declared evidence, with undeclared coupling keeping work
+whole. Route evaluation computes the execution shape inside the policy envelope.
+Compute selection determines the starting model and effort, ascending rungs only
+with evidence. An explicit operator hierarchy (`SOL_LUNA_EXECUTOR_ORDER` / `executorOrder`)
+allows stronger-executor fallback resolution (`stronger-executor-selected` / `exhausted`)
+without treating `allowedModels` list position as an inferred strength order. Telemetry
+in single delegation, preflight, and batch execution records recommended mechanism,
+worker count, concurrency, effort, selected model, selected effort, and selection reason;
+existing worker lifecycle and attempt records remain the authority on actual execution.
+The production single and batch surfaces now pass selected model and effort into
+the Codex SDK turn, and continuation retains the model/effort lineage it actually
+resumes. An eligible P1.1 bounded retry can bootstrap authenticated lineage,
+after which effort-escalation and stronger-executor decisions can issue an
+opaque, single-use, 15-minute in-memory handoff. Consumption restores the
+authoritative task contract and factual predecessor evidence; caller history or
+replacement fields cannot create escalation authority. Deterministic coverage
+includes concurrent double consumption, expiry/replay/malformed refusal, exact
+contract restoration, batch sibling preservation, and selected SDK thread options.
+Restart loss is intentionally fail-closed and no model-backed P1.2 campaign is
+claimed.
 
 The terminal handoff protocol defaults clean verified PASS responses to compact
 text without `structuredContent`. A batch reruns the deduplicated declared checks
@@ -158,7 +148,7 @@ universal savings.
   optional observations are not required for Strong confidence.
 - No fresh whole-system native coverage report was produced after the v0.9.1
   runtime changes. The latest coverage percentages belong to the earlier v0.9.0
-  campaign; the current 689-test deterministic suite is green with three
+  campaign; the current 738-test deterministic suite is green with three
   expected platform-specific Windows skips.
 - Raw transcripts, diagnostic logs, event streams, and some structured live
   results are session-local and intentionally uncommitted. The ledger preserves

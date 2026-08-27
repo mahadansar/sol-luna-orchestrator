@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { DelegateTaskInput } from "./contract.js";
+import { LUNA_MODEL } from "./config.js";
 import type { WorktreeLease } from "./worktree.js";
 
 /** How long an unused continuation remains valid in one server process. */
@@ -15,6 +16,7 @@ interface ContinuationRecord {
   worktreeLease: WorktreeLease | null;
   predecessorExecutionId: string | null;
   logicalAttempt: number;
+  model: string;
   expiresAt: number;
 }
 
@@ -34,6 +36,8 @@ export interface ContinuationEntry {
   /** Factual in-process lineage; never persisted across server sessions. */
   predecessorExecutionId: string | null;
   logicalAttempt: number;
+  /** Executor that owns the thread and must be used when resuming it. */
+  model: string;
 }
 
 export type ContinuationConsumeResult =
@@ -78,6 +82,7 @@ export class ContinuationStore {
     worktreeLease: WorktreeLease | null = null,
     predecessorExecutionId: string | null = null,
     logicalAttempt = input.previousAttempts.length + 2,
+    model = LUNA_MODEL,
   ): string {
     const now = this.now();
     this.prune(now);
@@ -95,6 +100,7 @@ export class ContinuationStore {
       worktreeLease: worktreeLease ? { ...worktreeLease } : null,
       predecessorExecutionId,
       logicalAttempt,
+      model,
       expiresAt: now + CONTINUATION_TTL_MS,
     });
     return reference;
@@ -129,6 +135,7 @@ export class ContinuationStore {
           worktreeLease: record.worktreeLease ? { ...record.worktreeLease } : null,
           predecessorExecutionId: record.predecessorExecutionId,
           logicalAttempt: record.logicalAttempt,
+          model: record.model,
         },
       };
     }
@@ -198,6 +205,9 @@ function cloneTaskInput(input: DelegateTaskInput): DelegateTaskInput {
               : {}),
             ...(input.computePolicy.allowedEfforts
               ? { allowedEfforts: [...input.computePolicy.allowedEfforts] }
+              : {}),
+            ...(input.computePolicy.executorOrder
+              ? { executorOrder: [...input.computePolicy.executorOrder] }
               : {}),
           },
         }

@@ -32,7 +32,7 @@ Cost matters, but it is not the primary objective. The orchestrator should use p
 | P0.4     | Bounded Repair Loop                                    | Shipped in v0.9.0; depends on P0.3 and P0.2a                                  |
 | P1.0     | Parent Identity, Billing, and Post-Hoc Cost Foundation | Shipped foundation in v0.9.0; attempt-evidence hardening complete, unreleased |
 | P1.1     | Reasoned Retry and Effort Escalation                   | Complete, unreleased; built on P0.4 and completed P1.0 hardening              |
-| P1.2     | Adaptive Worker Routing and Compute Policy             | In Progress (preflight slice); full policy depends on P1.1                    |
+| P1.2     | Adaptive Worker Routing and Compute Policy             | Complete, unreleased                                                          |
 | P1.3     | Automatic Context Lifecycle Management                 | Depends on P0.1, P0.2, and P0.3                                               |
 | P2.1     | Optional Explorer                                      | Depends on P1.2                                                               |
 | P2.2     | Lightweight Cross-Session Handoff                      | Depends on P1.3                                                               |
@@ -101,98 +101,75 @@ failures should return to the supervisor rather than burn another worker turn.
 
 ## P1.2 Adaptive Worker Routing and Compute Policy
 
-**In Progress.** Separate user-owned compute policy from supervisor routing. A
-future policy will authorize worker models, effort ceilings, concurrency, and
-cross-model escalation; the runtime must enforce it rather than relying on
-prompts. Routing may choose solo, a worker, a batch, continuation, repair,
-retry, an authorised stronger executor, or parent takeover, based on evidence
-and within that envelope.
+**Complete, unreleased.**
 
-Five slices are now implemented:
+Separate user-owned compute policy from supervisor routing. Compute policy
+authorizes worker models, explicit executor ordering, effort ceilings, concurrency,
+and cross-model escalation; the runtime enforces it rather than relying on
+prompts. Routing chooses solo, a worker, a sequential batch, a parallel batch,
+continuation, repair, retry, an authorised stronger executor, or parent takeover,
+based on evidence and within that envelope.
+
+The delivered capabilities provide:
 
 1. **Cheap Routing Eligibility / Preflight**: Deterministic eligibility
    is separated from expensive architecture: a pure synchronous evaluator decides
    obvious solo cases from a small declared card before any repository exploration,
    worktree, thread, or worker exists.
 2. **User-Owned Compute Policy and Runtime Enforcement**: A canonical policy
-   envelope names the authorised worker model, the permitted effort levels, the
-   concurrency and worker-count limits, and whether effort escalation or a
-   stronger-executor fallback may be recommended. The baseline is operator-owned,
-   read from the environment and bounded by the runtime's own ceilings; a call
-   may narrow it and can never widen it. Enforcement is at admission for model,
-   effort, and worker count; on the resolved envelope for concurrency, across
-   both the initial worker window and the bounded recovery pass; and on the
-   failure ladder, which a narrowed envelope can only shorten toward parent
-   takeover. Each batch records the envelope it ran under.
-3. **Adaptive Route Planning**: The same cheap preflight now also recommends one
-   bounded execution shape for work the parent has already declared: solo versus
-   delegate, the mechanism (single, sequential, parallel), a conservative starting
-   effort, and the worker and concurrency counts the active compute policy
-   permits. The shape follows the route — a `solo` route yields the `solo`
-   mechanism and zero workers — and sequential versus parallel is decided from
-   cautiously resolved values, so an undeclared hazard is staggered rather than
-   raced. It stays advisory, refuses nothing, expands no permission, and the
-   evaluator still reaches nothing outside its arguments: the envelope is passed
-   in, and the policy module is not imported.
-4. **Decomposition and Seam Planning**: The step before routing. A pure
-   synchronous planner decides whether work the parent has already described stays
-   one unit or becomes several, and emits the result as a routing preflight card,
-   so route planning consumes a decomposition instead of assuming one. A split has
-   to be earned by declared evidence or by structure derivable from it —
-   overlapping declared scopes are a real collision, and read-only work writes
-   nothing and so cannot race — while undeclared coupling keeps the work whole and
-   leaves every unstated field `unknown` rather than inventing a safe one. Shared
-   verification commands are recorded as a shared proof boundary, never as a
-   dependency; shared directories and path adjacency are not read as coupling at
-   all; and no compute envelope reaches the planner, because how many workers a
-   policy permits bounds execution rather than redefining how many seams the work
-   has. It names no mechanism, effort, worker count, or concurrency: those stay in
-   route planning above. Currently an internal module with deterministic coverage;
-   it is not yet exposed on a tool surface or consumed by the runtime.
-5. **Selection Policy**: The step after the failure ladder. Route planning names a
-   shape and failure classification names one next action; neither names the
-   executor and effort a next worker turn would actually run at, and a pure
-   synchronous selector is that last step. It starts at the envelope's authorised
-   executor and routing's conservative starting effort, and it may only ever lower
-   what routing asked for. Executor and effort stay two decisions: continuity picks
-   the executor — the one the last turn ran under, whenever the envelope still
-   permits it — and escalation moves effort exactly one permitted rung above the
-   evidenced level, so `xhigh` and `max` are reachable only by climbing to them or
-   from an envelope that leaves no lower level at all. It reads one prior execution
-   in the canonical evidence record's own field names, never a history depth or a
-   cross-call trend, and it honours P1.1's `nextEffort` without ever raising or
-   originating one. `allowEffortEscalation` and `allowStrongerFallback` are enforced
-   here as well as on the ladder, a solo or zero-worker shape and any action that
-   authorises no worker turn select nothing at all, and every output carries a
-   reason code. Currently an internal module with deterministic coverage; it is not
-   yet exposed on a tool surface or consumed by the runtime.
+   envelope names the authorised worker models, operator-declared executor ordering
+   (`SOL_LUNA_EXECUTOR_ORDER`), permitted effort levels, concurrency and worker-count
+   limits, and whether effort escalation or a stronger-executor fallback may be
+   recommended. The baseline is operator-owned, read from the environment and
+   bounded by the runtime's own ceilings; a call may narrow it and can never widen it.
+   Enforcement is at admission for model, effort, and worker count; on the resolved
+   envelope for concurrency, across both the initial worker window and the bounded
+   recovery pass; and on the failure ladder, which a narrowed envelope can only shorten
+   toward parent takeover.
+3. **Adaptive Route Planning**: The same cheap preflight recommends one bounded
+   execution shape for work the parent has declared: solo versus delegate, the
+   mechanism (single, sequential, parallel), a conservative starting effort, and
+   the worker and concurrency counts the active compute policy permits. The shape
+   follows the route — a `solo` route yields the `solo` mechanism and zero workers.
+4. **Decomposition and Seam Planning**: A pure synchronous planner decides whether
+   work the parent has described stays one unit or becomes several, and emits the
+   result as a routing preflight card. A split has to be earned by declared evidence
+   or by structure derivable from it, while undeclared coupling keeps the work whole.
+5. **Selection Policy**: A pure synchronous selector computes the exact model and
+   effort for a turn. It starts at the envelope's authorised executor and routing's
+   starting effort, climbing rungs only with evidence.
+6. **Explicit Operator Executor Ordering and Fallback**: Resolves stronger-executor
+   fallback along an explicit operator-declared ordering ladder, returning
+   `stronger-executor-selected` or `stronger-executor-exhausted`. Model list position
+   in `allowedModels` is never treated as a strength hierarchy.
+7. **Unified Adaptive Routing Pipeline and Telemetry**: Pure synchronous pipeline
+   (`routeAdaptiveTask`, `routeAdaptiveCard`) chaining seam planning -> routing
+   evaluation -> shape recommendation -> compute selection. Telemetry in single
+   delegation, preflight, and batch execution emits recommended mechanism, worker
+   count, concurrency, effort, selected model, selected effort, and selection reason.
+   Factual worker lifecycle and attempt records separately name what actually runs,
+   so advisory selection cannot be mistaken for execution.
+8. **Semantic Task-Contract Seam Planning**: Derives real `SeamCandidate` units directly from actual
+   `DelegateTaskInput` contracts without synthesizing artificial seams from `allowedFiles`
+   globs, feeding them directly into the pure seam planning -> routing -> selection pipeline.
+9. **Evidence-Earned Next-Action Handoff**: Server-lifetime, single-use, TTL-bounded (`hdf_...`)
+   reference issued for an earned P1.1 bounded retry, effort escalation, or stronger-executor fallback. Consuming
+   the handoff strictly restores the immutable contract fields (`objective`, `allowedFiles`,
+   `forbiddenFiles`, `changeIntent`, `acceptanceCriteria`, `verificationCommands`) and truthful
+   predecessor lineage (`predecessorExecutionId`, incremented `logicalAttempt`, `model`, `effort`,
+   `failureDecision`). Caller-supplied `previousAttempts` without a valid server handoff cannot
+   authorize escalation or stronger executors.
+10. **Live Adaptive Compute Integration**: Directly wired into authoritative
+    `delegate_task` and `delegate_tasks` lifecycles without parallel façades or dual retry loops.
+    Mechanism recommendations remain advisory and supervisor-owned; pure/preflight solo and
+    zero-worker routes create no worktree, thread, or worker. Once the supervisor selects a
+    delegation surface, selected model and effort reach worker turns, `AttemptEvidence`, and batch
+    results, preserving truthful attempt evidence and continuation lineage.
 
-   One thing it deliberately does not do: resolve a stronger-executor fallback.
-   `allowedModels` is a membership set — `admitCompute` reads it with `includes`,
-   narrowing intersects it and discards the caller's order, and the operator
-   baseline is the single `LUNA_MODEL` — so no operator surface declares that one
-   authorised executor is stronger than another. A permitted, earned fallback is
-   therefore reported and handed to the parent rather than resolved by reading list
-   position as strength, which would be the model hierarchy the constraints below
-   forbid.
-
-Future P1.2 work still includes:
-
-- an operator-declared executor ordering, without which a stronger-executor
-  fallback can be authorised and reported but never resolved
-- exposing seam planning and selection on the routing surface, and feeding them
-  into live delegation decisions
-- recording the recommended shape in routing telemetry
-- full adaptive routing algorithm
-
-**Constraints.** The supervisor cannot expand permissions. Routing must preserve
+**Constraints.** The supervisor cannot expand permissions. Routing preserves
 scope, isolation, independent verification, evidence handling, bounded retries,
 and conservative concurrency; no model hierarchy is assumed. Cost is quantitative
 only when applicable billing evidence is known; otherwise it remains qualitative.
-
-**Not decided.** Policy storage and CLI shape, how effective policy reaches the
-supervisor, routing rules, and representation of uncertain cost. Full policy
-depends on P1.0 hardening and P1.1.
 
 ## P1.3 Automatic Context Lifecycle Management
 

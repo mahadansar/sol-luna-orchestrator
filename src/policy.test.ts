@@ -243,10 +243,91 @@ test("operator settings narrow the baseline and cannot raise the hard ceilings",
   assert.equal(greedy.maxWorkersPerBatch, MAX_BATCH_SIZE);
 });
 
+test("buildComputePolicy populates allowedModels and retains executorOrder when declared", () => {
+  const policy = buildComputePolicy({
+    model: "base-model",
+    allowedModels: ["base-model", "stronger-model", "strongest-model"],
+    allowedEfforts: ["medium", "high"],
+    maxConcurrency: 2,
+    maxWorkersPerBatch: 3,
+    allowEffortEscalation: true,
+    allowStrongerFallback: true,
+    executorOrder: ["base-model", "stronger-model", "strongest-model"],
+  });
+  assert.deepEqual(policy.allowedModels, [
+    "base-model",
+    "stronger-model",
+    "strongest-model",
+  ]);
+  assert.deepEqual(policy.executorOrder, [
+    "base-model",
+    "stronger-model",
+    "strongest-model",
+  ]);
+});
+
+test("executorOrder never authorises models and incomplete or conflicting orders are discarded", () => {
+  const cases = [
+    ["base-model", "stronger-model"],
+    ["base-model", "stronger-model", "stronger-model"],
+    ["stronger-model", "base-model", "strongest-model"],
+    ["base-model", "stronger-model", "unauthorised-model"],
+  ];
+  for (const executorOrder of cases) {
+    const policy = buildComputePolicy({
+      model: "base-model",
+      allowedModels: ["base-model", "stronger-model", "strongest-model"],
+      allowedEfforts: ["high"],
+      maxConcurrency: 1,
+      maxWorkersPerBatch: 1,
+      allowEffortEscalation: true,
+      allowStrongerFallback: true,
+      executorOrder,
+    });
+    assert.deepEqual(policy.allowedModels, [
+      "base-model",
+      "stronger-model",
+      "strongest-model",
+    ]);
+    assert.equal(policy.executorOrder, undefined);
+  }
+
+  const orderOnly = buildComputePolicy({
+    model: "base-model",
+    allowedEfforts: ["high"],
+    maxConcurrency: 1,
+    maxWorkersPerBatch: 1,
+    allowEffortEscalation: true,
+    allowStrongerFallback: true,
+    executorOrder: ["base-model", "stronger-model"],
+  });
+  assert.deepEqual(orderOnly.allowedModels, ["base-model"]);
+  assert.equal(orderOnly.executorOrder, undefined);
+});
+
+test("narrowPolicy filters executorOrder based on remaining allowedModels", () => {
+  const parent: ComputePolicy = {
+    allowedModels: ["a", "b", "c"],
+    allowedEfforts: ["high"],
+    maxConcurrency: 2,
+    maxWorkersPerBatch: 2,
+    allowEffortEscalation: true,
+    allowStrongerFallback: true,
+    executorOrder: ["a", "b", "c"],
+  };
+  const narrowed = narrowPolicy(parent, { allowedModels: ["a", "c"] });
+  assert.deepEqual(narrowed.allowedModels, ["a", "c"]);
+  assert.deepEqual(narrowed.executorOrder, ["a", "c"]);
+});
+
 test("cloneComputePolicy copies the lists rather than aliasing them", () => {
-  const clone = cloneComputePolicy(permissive);
+  const clone = cloneComputePolicy({
+    ...permissive,
+    executorOrder: ["worker-a", "worker-b"],
+  });
   clone.allowedModels.push("smuggled");
   clone.allowedEfforts.pop();
+  clone.executorOrder?.push("smuggled-order");
   assert.deepEqual(permissive.allowedModels, ["worker-a", "worker-b"]);
   assert.equal(permissive.allowedEfforts.length, 4);
 });

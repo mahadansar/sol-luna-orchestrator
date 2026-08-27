@@ -320,10 +320,15 @@ worker claim alone never authorizes retry.
 A completed trustworthy implementation failure may recommend a same-effort
 retry. Repeated implementation evidence may recommend the next effort step the
 compute policy permits; repeated failure once the effort ladder is exhausted may
-recommend a stronger executor. The latter is advice only:
-P1.2 owns executor/model authorization and selection. Every decision names its
-source execution ids and reports the automatic retry count/limit without
-altering attempts or aggregate usage.
+recommend a stronger executor. P1.2 owns executor/model authorization and
+selection. An eligible first retry can return one opaque, single-use in-memory
+handoff; consuming it restores the immutable contract and authentic predecessor
+lineage. Only a turn reached through that server-issued lineage can earn a later
+effort or stronger-executor handoff. Caller-declared `previousAttempts` alone
+never grants that authority. Handoffs expire after 15 minutes, fail closed after
+server restart, and never run automatically. Every decision names its source
+execution ids and reports the automatic retry count/limit without altering
+attempts or aggregate usage.
 
 ## Compute policy
 

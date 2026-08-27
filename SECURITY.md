@@ -169,6 +169,7 @@ They hold different things, which matters when deciding what is safe to share:
   objective previews for single delegations, paths, thread ids, verdicts and
   errors. Verification command output is returned in tool-result evidence, not
   copied into this file. Treat the log as sensitive even without command output.
+
 - **`SOL_LUNA_EVENTS`** is the structured stream `activity` reads, and the
   deliberately less sensitive of the two. Its schema carries opaque task and
   batch ids, effort, category, verdicts, model, durations, token counts,
@@ -179,6 +180,13 @@ They hold different things, which matters when deciding what is safe to share:
   command output; only a short failure reason may surface from a failed check.
   Paths, labels and failure reasons may themselves be revealing.
   [Observability](docs/OBSERVABILITY.md) documents the full shapes.
+
+Opaque continuation and next-action handoff references are bearer-like process
+capabilities. They are returned only in the directly related tool result and are
+not written to diagnostic logs, telemetry events, usage records, or activity
+history. Both are single-use and TTL-bounded in memory; restarting the server
+invalidates them rather than reconstructing authority from retained logs or
+caller-supplied history.
 
 Current activity writers exclude objectives and task context. Historical JSONL
 retained from pre-hardening versions may still contain older schema fields,

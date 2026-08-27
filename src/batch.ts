@@ -18,8 +18,16 @@ import type {
   TaskState,
 } from "./contract.js";
 import { asRoutingCard } from "./contract.js";
-import { DEFAULT_COMPUTE_POLICY, type ComputePolicy } from "./policy.js";
-import { declaredRoutingFields, describeRefusal, evaluateRouting } from "./routing.js";
+import { evaluateAdaptiveCard } from "./adaptive.js";
+import {
+  DEFAULT_COMPUTE_POLICY,
+  cloneComputePolicy,
+  narrowPolicy,
+  type ComputePolicy,
+} from "./policy.js";
+import { declaredRoutingFields, describeRefusal } from "./routing.js";
+import { HandoffStore, handoffError, registerHandoff } from "./handoff.js";
+import { selectCompute, type PriorExecution } from "./selection.js";
 import {
   activityFailureReason,
   emitAttemptCompleted,
@@ -88,6 +96,10 @@ function makeBatchId(): string {
 interface RunningTask {
   taskId: string;
   input: DelegateTaskInput;
+  model: string;
+  predecessorExecutionId?: string | null;
+  logicalAttempt?: number;
+  authoritativePrior: boolean;
   state: TaskState;
   worktree: TaskWorktree | null;
   leaseRenewal: { stop: () => Promise<void> } | null;
@@ -159,6 +171,16 @@ export async function runBatch(
       reconcileFinalGit: boolean,
       worktreeLease: WorktreeLease | null,
     ) => string | null | Promise<string | null>;
+    /**
+     * Register an eligible result for server-authoritative next-action handoff
+     * (bounded retry, effort escalation, or stronger-executor fallback).
+     */
+    handoffRegistrar?: (
+      input: DelegateTaskInput,
+      result: DelegateTaskOutput,
+    ) => string | null;
+    /** In-memory store for resolving task handoff references. */
+    handoffStore?: HandoffStore;
     /** Worktrees still referenced by unused or in-flight continuations. */
     protectedWorktreePaths?: Iterable<string>;
     /** Deterministic lifecycle seam for tests; production always generates one. */
@@ -206,11 +228,87 @@ export async function runBatch(
 
   const run = options.executor ?? executeTask;
 
+  // --- Cheap routing: evaluate before running tasks are initialized --------
+  const card = options.routingPreflight ? asRoutingCard(options.routingPreflight) : null;
+  const adaptive = card
+    ? evaluateAdaptiveCard({
+        card,
+        context: {
+          mode,
+          taskCount: tasks.length,
+          allowOverlappingScopes: options.allowOverlappingScopes,
+        },
+        policy: computePolicy,
+      })
+    : null;
+  const routing = adaptive?.evaluation ?? null;
+  const selection = adaptive?.selection ?? null;
+
   const running: RunningTask[] = tasks.map((input, index) => {
     const taskId = makeTaskId(index);
+    let resolvedInput: DelegateTaskInput = {
+      ...input,
+      effort: selection?.effort ?? input.effort,
+    };
+    let model = selection?.model ?? computePolicy.allowedModels[0] ?? LUNA_MODEL;
+    let predecessorExecutionId: string | null = null;
+    let logicalAttempt = input.previousAttempts.length + 1;
+    let authoritativePrior = false;
+
+    if (input.handoffReference && options.handoffStore) {
+      const consumed = options.handoffStore.consume(input.handoffReference);
+      if (consumed.status !== "ready") {
+        throw new BatchRejectedError(
+          `Task ${taskId} handoff rejected: ${handoffError(consumed)}`,
+        );
+      }
+      resolvedInput = {
+        ...consumed.entry.input,
+        computePolicy: consumed.entry.input.computePolicy
+          ? narrowPolicy(computePolicy, consumed.entry.input.computePolicy)
+          : cloneComputePolicy(computePolicy),
+        previousAttempts: [
+          ...consumed.entry.input.previousAttempts,
+          {
+            effort: consumed.entry.effort,
+            verdict: "FAILED" as const,
+            whatWentWrong: consumed.entry.failureDecision.reason,
+          },
+        ],
+      };
+      predecessorExecutionId = consumed.entry.predecessorExecutionId;
+      logicalAttempt = consumed.entry.logicalAttempt;
+      authoritativePrior = true;
+      const priorEvidence: PriorExecution = {
+        requestedModel: consumed.entry.model,
+        requestedEffort: consumed.entry.effort,
+        failureDecision: consumed.entry.failureDecision,
+      };
+      const shape = routing?.shape ?? {
+        mechanism:
+          mode === "parallel" ? "delegate_tasks_parallel" : "delegate_tasks_sequential",
+        effort: resolvedInput.effort,
+        workerCount: tasks.length,
+        concurrency: maxParallel,
+        conditional: false,
+        seamsOverCap: 0,
+      };
+      const taskSelection = selectCompute({
+        shape,
+        policy: computePolicy,
+        evidence: priorEvidence,
+      });
+      if (taskSelection.model) model = taskSelection.model;
+      if (taskSelection.effort) resolvedInput.effort = taskSelection.effort;
+    }
+
     return {
       taskId,
-      input,
+      input: resolvedInput,
+      model,
+      predecessorExecutionId,
+      logicalAttempt,
+      authoritativePrior,
       state: "queued" as TaskState,
       worktree: null,
       leaseRenewal: null,
@@ -218,17 +316,20 @@ export async function runBatch(
       result: {
         taskId,
         state: "queued",
-        objective: input.objective,
-        effort: input.effort,
-        effortReason: input.effortReason,
+        objective: resolvedInput.objective,
+        effort: resolvedInput.effort,
+        effortReason: resolvedInput.effortReason,
         result: null,
         changedFiles: [],
         worktreePath: null,
         error: null,
         warnings: [],
-        attempt: input.previousAttempts.length + 1,
+        attempt: logicalAttempt,
         attempts: [],
         recovery: null,
+        failureDecision: undefined,
+        handoffReference: null,
+        handoffState: undefined,
       },
       recovery: null,
     };
@@ -251,7 +352,7 @@ export async function runBatch(
       effort: task.input.effort,
       category: task.input.taskCategory,
       activityLabel: task.input.activityLabel,
-      model: LUNA_MODEL,
+      model: task.model,
       attempt: task.result.attempt,
     });
   }
@@ -263,6 +364,25 @@ export async function runBatch(
     const reason = (error as Error).message;
     emit({ type: "batch.rejected", batchId, reason });
     throw new BatchRejectedError(reason);
+  }
+
+  for (const task of running) {
+    if (!task.authoritativePrior) continue;
+    let authoritativeWorkspace: string;
+    try {
+      authoritativeWorkspace = resolveWorkspace(task.input.workingDirectory);
+    } catch (error) {
+      const reason = `Task ${task.taskId} handoff rejected: ${(error as Error).message}`;
+      emit({ type: "batch.rejected", batchId, reason });
+      throw new BatchRejectedError(reason);
+    }
+    if (path.relative(workspace, authoritativeWorkspace) !== "") {
+      const reason =
+        `Task ${task.taskId} handoff rejected: the authoritative workspace ` +
+        "does not match this batch workspace.";
+      emit({ type: "batch.rejected", batchId, reason });
+      throw new BatchRejectedError(reason);
+    }
   }
 
   // --- Scope conflicts, before anything is created -------------------------
@@ -287,14 +407,6 @@ export async function runBatch(
   // batch first; refusal happens below, after the observed scope gate, so a real
   // same-file race keeps precedence over a claim about the caller's own
   // decomposition. Both sit before any worktree, thread, or worker exists.
-  const card = options.routingPreflight ? asRoutingCard(options.routingPreflight) : null;
-  const routing = card
-    ? evaluateRouting(card, {
-        mode,
-        taskCount: tasks.length,
-        allowOverlappingScopes: options.allowOverlappingScopes,
-      })
-    : null;
   if (!card || !routing) {
     emit({
       type: "routing.declared",
@@ -317,6 +429,13 @@ export async function runBatch(
       signals: routing.signals,
       refusedGate: routing.refusedGate,
       parallelEligible: routing.parallelEligible,
+      recommendedMechanism: routing.shape?.mechanism,
+      recommendedWorkerCount: routing.shape?.workerCount,
+      recommendedConcurrency: routing.shape?.concurrency,
+      recommendedEffort: routing.shape?.effort,
+      selectedModel: selection?.model,
+      selectedEffort: selection?.effort,
+      selectionReason: selection?.reason,
       ...declaredRoutingFields(card),
     });
 
@@ -751,6 +870,33 @@ export async function runBatch(
     );
   }
 
+  // Issue next-action authority only from the final task classification. Final
+  // integration, verification, or lifecycle evidence can conservatively replace
+  // an earlier provisional retry/escalation with parent takeover.
+  if (options.handoffStore || options.handoffRegistrar) {
+    for (const task of running) {
+      if (task.result.result) {
+        if (options.handoffRegistrar) {
+          const ref = options.handoffRegistrar(task.input, task.result.result);
+          task.result.handoffReference = ref;
+          task.result.handoffState = task.result.result.handoffState;
+        } else if (options.handoffStore) {
+          const ref = registerHandoff(
+            task.input,
+            task.result.result,
+            options.handoffStore,
+            {
+              authoritativePrior: task.authoritativePrior,
+              workingDirectory: workspace,
+            },
+          );
+          task.result.handoffReference = ref;
+          task.result.handoffState = task.result.result.handoffState;
+        }
+      }
+    }
+  }
+
   const durationSeconds = Math.round((Date.now() - startedAt) / 1000);
   const passed = running.filter((task) => task.result.result?.verdict === "PASS").length;
   const failed = running.length - passed;
@@ -831,6 +977,7 @@ async function runSequential(
     try {
       await runOne(batchId, task, workspace, run, emit, signal, true, {
         attempt: task.result.attempt ?? 1,
+        predecessorExecutionId: task.predecessorExecutionId ?? null,
       });
     } finally {
       release();
@@ -942,6 +1089,7 @@ async function runParallel(
 
         await runOne(batchId, task, worktree.path, run, emit, signal, false, {
           attempt: task.result.attempt ?? 1,
+          predecessorExecutionId: task.predecessorExecutionId ?? null,
         });
 
         const outcome = await readWorktreeOutcome(worktree);
@@ -1583,6 +1731,7 @@ async function runOne(
 ): Promise<void> {
   const executionId = attemptOptions.executionId ?? createExecutionId();
   const role = attemptOptions.role ?? "initial";
+  const taskModel = task.model ?? LUNA_MODEL;
   const startedAt = new Date();
   const startedMs = Date.now();
   const emittedAttemptStarts = new Set<string>();
@@ -1591,7 +1740,7 @@ async function runOne(
     logicalAttempt: attemptOptions.attempt,
     role,
     predecessorExecutionId: attemptOptions.predecessorExecutionId ?? null,
-    requestedModel: LUNA_MODEL,
+    requestedModel: taskModel,
     requestedEffort: task.input.effort,
     threadOperation: attemptOptions.resumeThreadId ? "resume" : "start",
     startedAt: startedAt.toISOString(),
@@ -1606,7 +1755,7 @@ async function runOne(
     taskId: task.taskId,
     effort: task.input.effort,
     workingDirectory,
-    model: LUNA_MODEL,
+    model: taskModel,
     attempt: attemptOptions.attempt,
     ...(task.recovery
       ? {
@@ -1619,6 +1768,7 @@ async function runOne(
   try {
     const result = await run(task.input, {
       workingDirectory,
+      model: taskModel,
       signal,
       resumeThreadId: attemptOptions.resumeThreadId,
       continuationInstruction: attemptOptions.continuationInstruction,
@@ -1783,7 +1933,7 @@ async function runOne(
         logicalAttempt: attemptOptions.attempt,
         role,
         predecessorExecutionId: attemptOptions.predecessorExecutionId ?? null,
-        requestedModel: LUNA_MODEL,
+        requestedModel: taskModel,
         requestedEffort: task.input.effort,
         threadId: null,
         threadOperation: attemptOptions.resumeThreadId ? "resume" : "start",

@@ -6,7 +6,9 @@ import {
   DEFAULT_ORCHESTRATOR_SERVER_NAME,
   DEFAULT_VERIFY_MODE,
   MAX_BATCH_SIZE,
+  parseAllowedModels,
   parseAllowedEfforts,
+  parseExecutorOrder,
   parseOptOutFlag,
   VERIFY_MODES,
   type VerifyMode,
@@ -62,6 +64,10 @@ export function resolveRegisteredServerConfig(
       DEFAULT_ORCHESTRATOR_SERVER_NAME,
     computePolicy: buildComputePolicy({
       model: workerModel,
+      allowedModels: parseAllowedModels(
+        configuredEnv(configText, "SOL_LUNA_ALLOWED_MODELS"),
+        workerModel,
+      ),
       allowedEfforts: parseAllowedEfforts(
         configuredEnv(configText, "SOL_LUNA_ALLOWED_EFFORTS"),
       ),
@@ -76,6 +82,9 @@ export function resolveRegisteredServerConfig(
       ),
       allowStrongerFallback: parseOptOutFlag(
         configuredEnv(configText, "SOL_LUNA_ALLOW_STRONGER_FALLBACK"),
+      ),
+      executorOrder: parseExecutorOrder(
+        configuredEnv(configText, "SOL_LUNA_EXECUTOR_ORDER"),
       ),
     }),
   };

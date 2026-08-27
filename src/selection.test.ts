@@ -413,6 +413,81 @@ test("selection - an envelope withholding the fallback is enforced here too", ()
   assert.equal(result.reason, "stronger-executor-not-permitted");
 });
 
+test("selection - operator-declared executor ordering resolves the baseline and fallback ladder", () => {
+  const orderedPolicy: ComputePolicy = {
+    ...MULTI_MODEL,
+    executorOrder: ["worker-a", "worker-b", "worker-c"],
+  };
+
+  // Baseline selection takes the first operator-declared model
+  const baseline = selectCompute({ shape: DELEGATING, policy: orderedPolicy });
+  assert.equal(baseline.model, "worker-a");
+  assert.equal(baseline.reason, "conservative-baseline");
+
+  // Fallback from worker-a climbs to worker-b while preserving effort
+  const step1 = selectCompute({
+    shape: DELEGATING,
+    policy: orderedPolicy,
+    evidence: prior("worker-a", "high", failure("stronger-executor-fallback")),
+  });
+  assert.equal(step1.model, "worker-b");
+  assert.equal(step1.effort, "high");
+  assert.equal(step1.reason, "stronger-executor-selected");
+
+  // Fallback from worker-b climbs to worker-c while preserving effort
+  const step2 = selectCompute({
+    shape: DELEGATING,
+    policy: orderedPolicy,
+    evidence: prior("worker-b", "high", failure("stronger-executor-fallback")),
+  });
+  assert.equal(step2.model, "worker-c");
+  assert.equal(step2.effort, "high");
+  assert.equal(step2.reason, "stronger-executor-selected");
+
+  // Fallback from worker-c is exhausted, retaining worker-c
+  const step3 = selectCompute({
+    shape: DELEGATING,
+    policy: orderedPolicy,
+    evidence: prior("worker-c", "high", failure("stronger-executor-fallback")),
+  });
+  assert.equal(step3.model, "worker-c");
+  assert.equal(step3.effort, "high");
+  assert.equal(step3.reason, "stronger-executor-exhausted");
+
+  // Allowed models order has zero impact when executorOrder is declared
+  const reversedAllowed: ComputePolicy = {
+    ...orderedPolicy,
+    allowedModels: ["worker-c", "worker-b", "worker-a"],
+  };
+  const step1Reversed = selectCompute({
+    shape: DELEGATING,
+    policy: reversedAllowed,
+    evidence: prior("worker-a", "high", failure("stronger-executor-fallback")),
+  });
+  assert.equal(step1Reversed.model, "worker-b");
+  assert.equal(step1Reversed.reason, "stronger-executor-selected");
+});
+
+test("selection - malformed or partial executor ordering is never used", () => {
+  for (const executorOrder of [
+    ["worker-a", "worker-b"],
+    ["worker-a", "worker-b", "worker-b"],
+    ["worker-a", "worker-b", "outside-policy"],
+  ]) {
+    const policy: ComputePolicy = { ...MULTI_MODEL, executorOrder };
+    const baseline = selectCompute({ shape: DELEGATING, policy });
+    assert.equal(baseline.model, null);
+
+    const fallback = selectCompute({
+      shape: DELEGATING,
+      policy,
+      evidence: prior("worker-a", "high", failure("stronger-executor-fallback")),
+    });
+    assert.equal(fallback.model, "worker-a");
+    assert.equal(fallback.reason, "stronger-executor-unresolvable");
+  }
+});
+
 // --- Evidence bounded by the envelope ----------------------------------------
 
 test("selection - an executor the envelope no longer permits is not continued", () => {

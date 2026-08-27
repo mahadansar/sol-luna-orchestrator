@@ -138,6 +138,7 @@ async function runWorkerThread(
   timeoutSeconds: number,
   externalSignal?: AbortSignal,
   options: {
+    model?: string;
     resumeThreadId?: string;
     continuationInstruction?: string;
     codex?: WorkerCodex;
@@ -172,7 +173,7 @@ async function runWorkerThread(
   workerEnv[WORKER_MARKER_ENV] = "1";
 
   const threadOptions: ThreadOptions = {
-    model: LUNA_MODEL,
+    model: options.model ?? LUNA_MODEL,
     modelReasoningEffort: asSdkEffort(input.effort),
     sandboxMode: WORKER_SANDBOX,
     workingDirectory,
@@ -456,6 +457,8 @@ export interface AnalysisParams {
   orchestratorRuns: VerificationRun[];
   durationSeconds: number;
   logicalAttempt?: number;
+  /** Executor the runtime actually requested for this turn. */
+  model?: string;
 }
 
 /**
@@ -472,6 +475,7 @@ export function buildDelegationResult({
   orchestratorRuns,
   durationSeconds,
   logicalAttempt,
+  model = LUNA_MODEL,
 }: AnalysisParams): DelegateTaskOutput {
   const report = parseWorkerReport(observed.finalResponse);
   // The schema default keeps legacy callers safe even if they construct an
@@ -695,7 +699,7 @@ export function buildDelegationResult({
       reason: "Continuation availability has not yet been evaluated.",
     },
     repair: null,
-    model: LUNA_MODEL,
+    model,
     effort: input.effort,
     effortReason: input.effortReason,
     attempt: logicalAttempt ?? input.previousAttempts.length + 1,
@@ -936,6 +940,8 @@ export function reconcileParallelWorktreeEvidence(
 export interface ExecuteOptions {
   /** Directory the worker runs in. Already validated by the caller. */
   workingDirectory: string;
+  /** Authorised executor selected for this run. */
+  model?: string;
   signal?: AbortSignal;
   onVerificationStart?: (
     commandCount: number,
@@ -1000,12 +1006,13 @@ async function executeTaskTurn(
   const executionId = options.executionId ?? createExecutionId();
   const logicalAttempt = options.logicalAttempt ?? input.previousAttempts.length + 1;
   const role = options.role ?? "initial";
+  const model = options.model ?? LUNA_MODEL;
   const startEvidence: AttemptStartEvidence = {
     executionId,
     logicalAttempt,
     role,
     predecessorExecutionId: options.predecessorExecutionId ?? null,
-    requestedModel: LUNA_MODEL,
+    requestedModel: model,
     requestedEffort: input.effort,
     threadOperation: options.resumeThreadId ? "resume" : "start",
     startedAt: startedAt.toISOString(),
@@ -1023,6 +1030,7 @@ async function executeTaskTurn(
       resumeThreadId: options.resumeThreadId,
       continuationInstruction: options.continuationInstruction,
       codex: options.codex,
+      model,
     },
   );
   const workerElapsedMs = Math.max(0, performance.now() - workerStartedTick);
@@ -1682,7 +1690,7 @@ function buildRuntimeFailureResult(
     },
     repair: null,
     recovery: null,
-    model: LUNA_MODEL,
+    model: turn.evidence.requestedModel,
     effort: input.effort,
     effortReason: input.effortReason,
     attempt: turn.evidence.logicalAttempt,
@@ -1737,6 +1745,7 @@ function buildTurnResult(
       workingDirectory,
       ...turn,
       logicalAttempt: turn.evidence.logicalAttempt,
+      model: turn.evidence.requestedModel,
     });
   } catch (error) {
     result = buildRuntimeFailureResult(input, turn, error);
@@ -1824,6 +1833,9 @@ export async function delegateToLuna(
   input: DelegateTaskInput,
   signal?: AbortSignal,
   hooks?: DelegateHooks,
+  model: string = LUNA_MODEL,
+  predecessorExecutionId?: string | null,
+  logicalAttempt?: number,
 ): Promise<DelegateTaskOutput> {
   // Validate and canonicalise before the worker gets write access to it.
   const workingDirectory = resolveWorkspace(input.workingDirectory);
@@ -1832,7 +1844,10 @@ export async function delegateToLuna(
     hooks?.onStarted?.(workingDirectory);
     return await executeTask(input, {
       workingDirectory,
+      model,
       signal,
+      logicalAttempt: logicalAttempt ?? input.previousAttempts.length + 1,
+      predecessorExecutionId: predecessorExecutionId ?? null,
       onVerificationStart: hooks?.onVerificationStart,
       onRepairStart: hooks?.onRepairStart,
       onRepairComplete: hooks?.onRepairComplete,
@@ -1856,6 +1871,7 @@ export async function continueToLuna(
     codex?: WorkerCodex;
     predecessorExecutionId?: string | null;
     logicalAttempt?: number;
+    model?: string;
   },
 ): Promise<DelegateTaskOutput> {
   const workingDirectory = resolveWorkspace(options.workingDirectory);
@@ -1864,6 +1880,7 @@ export async function continueToLuna(
     options.hooks?.onStarted?.(workingDirectory);
     return await executeTask(input, {
       workingDirectory,
+      model: options.model ?? LUNA_MODEL,
       signal: options.signal,
       onVerificationStart: options.hooks?.onVerificationStart,
       onAttemptStart: options.hooks?.onAttemptStart,

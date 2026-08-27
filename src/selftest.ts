@@ -258,6 +258,8 @@ test("fresh task execution still starts a new thread", async () => {
     followUps: [],
   };
   let starts = 0;
+  let requestedModel: string | null = null;
+  let requestedEffort: string | null = null;
   const events = async function* (): AsyncGenerator<ThreadEvent> {
     yield {
       type: "item.completed",
@@ -265,8 +267,10 @@ test("fresh task execution still starts a new thread", async () => {
     };
   };
   const fakeCodex: WorkerCodex = {
-    startThread: () => {
+    startThread: (options) => {
       starts += 1;
+      requestedModel = options.model ?? null;
+      requestedEffort = options.modelReasoningEffort ?? null;
       return {
         id: "thread-fresh",
         runStreamed: async () => ({ events: events() }),
@@ -280,11 +284,16 @@ test("fresh task execution still starts a new thread", async () => {
   const result = await executeTask(input, {
     workingDirectory: process.cwd(),
     codex: fakeCodex,
+    model: "operator-authorised-model",
   });
 
   assert.equal(starts, 1);
   assert.equal(result.workerThreadId, "thread-fresh");
   assert.equal(result.verdict, "PASS");
+  assert.equal(requestedModel, "operator-authorised-model");
+  assert.equal(requestedEffort, input.effort);
+  assert.equal(result.model, "operator-authorised-model");
+  assert.equal(result.attempts?.[0]?.requestedModel, "operator-authorised-model");
 });
 
 test("attempt evidence records authoritative success and factual runtime failures", async () => {

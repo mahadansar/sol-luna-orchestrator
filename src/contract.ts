@@ -159,6 +159,14 @@ export const CONTINUATION_STATES = [
 ] as const;
 export type ContinuationState = (typeof CONTINUATION_STATES)[number];
 
+export const HANDOFF_STATES = [
+  "issued",
+  "not-eligible",
+  "consumed",
+  "unavailable",
+] as const;
+export type HandoffState = (typeof HANDOFF_STATES)[number];
+
 const contextCapsuleShape = {
   relevantContext: z
     .string()
@@ -358,6 +366,20 @@ export const delegateTaskInputShape = {
     .optional()
     .describe(
       "Optional routing declaration for this call; advisory except that an empty seam list is refused.",
+    ),
+
+  /**
+   * Optional server-issued handoff reference for an earned bounded retry,
+   * effort escalation, or stronger-executor fallback. Restores the immutable
+   * contract and authentic predecessor execution lineage.
+   */
+  handoffReference: z
+    .string()
+    .min(1)
+    .max(128)
+    .optional()
+    .describe(
+      "Optional opaque single-use handoff reference from an earned bounded retry, effort escalation, or stronger-executor fallback; restores the immutable contract and authentic predecessor execution evidence.",
     ),
 
   /**
@@ -639,6 +661,22 @@ export const delegateTaskOutputShape = {
     .describe(
       "Factual bounded-continuation availability. Optional only for historical compatibility.",
     ),
+  handoffReference: z
+    .string()
+    .nullable()
+    .optional()
+    .describe(
+      "Opaque, single-use, server-lifetime handoff reference for an earned bounded retry, effort escalation, or stronger-executor fallback; null when no handoff is earned or available.",
+    ),
+  handoffState: z
+    .object({
+      status: z.enum(HANDOFF_STATES),
+      reason: z.string(),
+    })
+    .optional()
+    .describe(
+      "Factual bounded next-action handoff availability. Optional only for historical compatibility.",
+    ),
   repair: z
     .object({
       requested: z.boolean(),
@@ -799,6 +837,7 @@ const batchTaskShape = z.object({
   context: delegateTaskInputShape.context,
   contextCapsule: delegateTaskInputShape.contextCapsule,
   previousAttempts: delegateTaskInputShape.previousAttempts,
+  handoffReference: delegateTaskInputShape.handoffReference,
   timeoutSeconds: delegateTaskInputShape.timeoutSeconds,
 });
 
@@ -945,6 +984,7 @@ const batchTaskMcpSchema = z.object({
   context: delegateTaskMcpInputShape.context,
   contextCapsule: delegateTaskMcpInputShape.contextCapsule,
   previousAttempts: delegateTaskMcpInputShape.previousAttempts,
+  handoffReference: delegateTaskMcpInputShape.handoffReference,
   timeoutSeconds: delegateTaskMcpInputShape.timeoutSeconds,
 });
 export const delegateTasksMcpInputShape = {
@@ -1053,6 +1093,8 @@ export const batchTaskResultSchema = z.object({
     ),
   recovery: delegateTaskOutputShape.recovery,
   failureDecision: delegateTaskOutputShape.failureDecision,
+  handoffReference: delegateTaskOutputShape.handoffReference,
+  handoffState: delegateTaskOutputShape.handoffState,
 });
 
 export type BatchTaskResult = z.infer<typeof batchTaskResultSchema>;

@@ -23,6 +23,7 @@ import {
 } from "./server.js";
 import { BatchRejectedError, runBatch as runProductionBatch } from "./batch.js";
 import { CONTINUATION_TTL_MS, ContinuationStore } from "./continuation.js";
+import { HandoffStore } from "./handoff.js";
 import {
   MAX_PARALLEL,
   MAX_PARALLEL_LIMIT,
@@ -3602,6 +3603,7 @@ test("final workspace verification deduplicates declared checks and closes the b
 test("failed final workspace verification expands evidence for targeted diagnosis", async () => {
   const repo = await makeRepo();
   try {
+    const handoffStore = new HandoffStore();
     const task = makeTask({
       allowedFiles: ["src/one/**"],
       verificationCommands: ["node --test test/final.test.js"],
@@ -3612,6 +3614,19 @@ test("failed final workspace verification expands evidence for targeted diagnosi
       executor: fakeExecutor({
         writes: () => ({ "src/one/mod.ts": "export {}\n" }),
         output: () => ({
+          verdict: "FAILED",
+          workerClaimedStatus: "FAILED",
+          workerClaimedFailureCauses: ["implementation"],
+          failureDecision: {
+            classification: "implementation",
+            action: "retry",
+            reason: "Provisional retry before final verification.",
+            evidenceExecutionIds: [],
+            nextEffort: null,
+            automaticHandler: null,
+            automaticRetryCount: 0,
+            automaticRetryLimit: 1,
+          },
           verification: [
             {
               command: task.verificationCommands[0]!,
@@ -3632,11 +3647,14 @@ test("failed final workspace verification expands evidence for targeted diagnosi
           output: "FINAL_INTEGRATION_FAILURE",
           execution: "argv" as const,
         })),
+      handoffStore,
     });
 
     assert.equal(result.completionState, "needs-supervisor");
     assert.equal(result.tasks[0]?.failureDecision?.classification, "verification");
     assert.equal(result.tasks[0]?.failureDecision?.action, "parent-takeover");
+    assert.equal(result.tasks[0]?.handoffReference, null);
+    assert.equal(result.tasks[0]?.handoffState?.status, "not-eligible");
     assert.match(result.warnings.join("\n"), /did not pass completely/i);
     assert.match(renderBatch(result), /FINAL_INTEGRATION_FAILURE/);
   } finally {

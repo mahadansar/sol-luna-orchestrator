@@ -81,7 +81,9 @@ export const SELECTION_REASONS = [
   "effort-escalated",
   "effort-escalation-not-permitted",
   "effort-escalation-exhausted",
+  "stronger-executor-selected",
   "stronger-executor-not-permitted",
+  "stronger-executor-exhausted",
   "stronger-executor-unresolvable",
 ] as const;
 export type SelectionReason = (typeof SELECTION_REASONS)[number];
@@ -179,20 +181,40 @@ function isEffort(value: string): value is Effort {
   return Object.hasOwn(EFFORT_RANK, value);
 }
 
+/** Return a usable operator ladder only when it completely orders authorization. */
+function validExecutorOrder(policy: ComputePolicy): readonly string[] {
+  const order = policy.executorOrder ?? [];
+  if (
+    order.length !== policy.allowedModels.length ||
+    new Set(order).size !== order.length ||
+    !order.every((model) => policy.allowedModels.includes(model))
+  ) {
+    return [];
+  }
+  return order;
+}
+
 /**
  * The executor an envelope selects on its own, with no execution to continue.
  *
  * One permitted executor is a selection the envelope itself makes. Several are
  * equally authorised, and choosing among them would need an ordering no operator
- * surface declares, so the choice is left open.
+ * surface declares, so the choice is left open unless an explicit operator ordering exists.
  */
 function unambiguousModel(policy: ComputePolicy): string | null {
+  const order = validExecutorOrder(policy);
+  if (order.length > 0) return order[0] ?? null;
   return policy.allowedModels.length === 1 ? (policy.allowedModels[0] ?? null) : null;
 }
 
 /** Sentence naming the selected executor, or explaining an open choice. */
 function describeModel(model: string | null, policy: ComputePolicy): string {
-  if (model !== null) return `Selected the permitted executor '${model}'.`;
+  if (model !== null) {
+    if (validExecutorOrder(policy).length > 1) {
+      return `Selected baseline executor '${model}' from operator-declared ordering.`;
+    }
+    return `Selected the permitted executor '${model}'.`;
+  }
   return (
     `The envelope authorises ${policy.allowedModels.length} executors and declares no ` +
     `ordering among them, so the parent names which one runs.`
@@ -351,20 +373,44 @@ export function selectCompute(input: SelectionInput): SelectionDecision {
             `Retaining executor '${continuedModel}' at effort '${evidencedEffort}'.`,
         );
       }
-      // Permitted, earned, and still unresolvable: authorisation is a set, not a
-      // ladder, and inventing a ladder is the one thing this module will not do.
+
+      const order = validExecutorOrder(policy);
+
+      if (order.length <= 1 || !order.includes(continuedModel)) {
+        return decide(
+          continuedModel,
+          evidencedEffort,
+          "stronger-executor-unresolvable",
+          (policy.allowedModels.length === 1
+            ? `A stronger-executor fallback was recommended and is permitted, but the envelope ` +
+              `authorises only executor '${continuedModel}'. `
+            : `A stronger-executor fallback was recommended and is permitted, but the envelope ` +
+              `authorises ${policy.allowedModels.length} executors as a set and declares no ` +
+              `strength ordering among them, so none of them is known to be the stronger one. `) +
+            `Retaining executor '${continuedModel}' at effort '${evidencedEffort}'; the parent ` +
+            `selects any stronger executor.`,
+        );
+      }
+
+      const currentIndex = order.indexOf(continuedModel);
+      const nextModel = order[currentIndex + 1];
+      if (!nextModel) {
+        return decide(
+          continuedModel,
+          evidencedEffort,
+          "stronger-executor-exhausted",
+          `A stronger-executor fallback was recommended, but the operator-declared executor ordering ` +
+            `offers no stronger permitted executor above '${continuedModel}'. Retaining executor ` +
+            `'${continuedModel}' at effort '${evidencedEffort}'.`,
+        );
+      }
+
       return decide(
-        continuedModel,
+        nextModel,
         evidencedEffort,
-        "stronger-executor-unresolvable",
-        (policy.allowedModels.length === 1
-          ? `A stronger-executor fallback was recommended and is permitted, but the envelope ` +
-            `authorises only executor '${continuedModel}'. `
-          : `A stronger-executor fallback was recommended and is permitted, but the envelope ` +
-            `authorises ${policy.allowedModels.length} executors as a set and declares no ` +
-            `strength ordering among them, so none of them is known to be the stronger one. `) +
-          `Retaining executor '${continuedModel}' at effort '${evidencedEffort}'; the parent ` +
-          `selects any stronger executor.`,
+        "stronger-executor-selected",
+        `Escalated to stronger executor '${nextModel}' from operator-declared ordering while retaining ` +
+          `effort '${evidencedEffort}'.`,
       );
     }
 

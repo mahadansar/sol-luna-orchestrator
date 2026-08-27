@@ -19,7 +19,9 @@ import {
   ALLOW_EFFORT_ESCALATION,
   ALLOW_STRONGER_FALLBACK,
   ALLOWED_EFFORTS,
+  ALLOWED_MODELS,
   EFFORTS,
+  EXECUTOR_ORDER,
   LUNA_MODEL,
   MAX_BATCH_SIZE,
   MAX_PARALLEL,
@@ -36,6 +38,7 @@ export const computePolicyShape = {
   maxWorkersPerBatch: z.number().int().min(1).max(MAX_BATCH_SIZE),
   allowEffortEscalation: z.boolean(),
   allowStrongerFallback: z.boolean(),
+  executorOrder: z.array(z.string().min(1)).optional(),
 };
 
 export const computePolicySchema = z.object(computePolicyShape);
@@ -89,6 +92,13 @@ export function narrowPolicy(
     );
   }
 
+  const parentOrder = parent.executorOrder ?? [];
+  const narrowedOrder = narrowed.executorOrder;
+  const rawOrder = narrowedOrder
+    ? parentOrder.filter((m) => narrowedOrder.includes(m))
+    : parentOrder;
+  const executorOrder = rawOrder.filter((m) => allowedModels.includes(m));
+
   return {
     allowedModels,
     allowedEfforts,
@@ -106,17 +116,20 @@ export function narrowPolicy(
     allowStrongerFallback:
       parent.allowStrongerFallback &&
       (narrowed.allowStrongerFallback ?? parent.allowStrongerFallback),
+    ...(executorOrder.length > 0 ? { executorOrder } : {}),
   };
 }
 
 /** The operator-owned inputs that define one installation's baseline. */
 export interface ComputePolicyEnvironment {
   model: string;
+  allowedModels?: readonly string[];
   allowedEfforts: readonly Effort[];
   maxConcurrency: number;
   maxWorkersPerBatch: number;
   allowEffortEscalation: boolean;
   allowStrongerFallback: boolean;
+  executorOrder?: readonly string[];
 }
 
 /**
@@ -129,14 +142,23 @@ export interface ComputePolicyEnvironment {
  * report the baseline of a *registered* server rather than of its own shell.
  */
 export function buildComputePolicy(env: ComputePolicyEnvironment): ComputePolicy {
+  const allowedModels = [...new Set(env.allowedModels ?? [env.model])];
+  const requestedOrder = env.executorOrder ? [...env.executorOrder] : [];
+  const orderIsComplete =
+    requestedOrder.length === allowedModels.length &&
+    new Set(requestedOrder).size === requestedOrder.length &&
+    requestedOrder[0] === env.model &&
+    requestedOrder.every((model) => allowedModels.includes(model));
+  const executorOrder = orderIsComplete ? requestedOrder : [];
   return narrowPolicy(
     {
-      allowedModels: [env.model],
+      allowedModels,
       allowedEfforts: [...EFFORTS],
       maxConcurrency: MAX_PARALLEL_LIMIT,
       maxWorkersPerBatch: MAX_BATCH_SIZE,
       allowEffortEscalation: true,
       allowStrongerFallback: true,
+      ...(executorOrder.length > 0 ? { executorOrder } : {}),
     },
     {
       allowedEfforts: [...env.allowedEfforts],
@@ -157,11 +179,13 @@ export function buildComputePolicy(env: ComputePolicyEnvironment): ComputePolicy
  */
 export const DEFAULT_COMPUTE_POLICY: ComputePolicy = buildComputePolicy({
   model: LUNA_MODEL,
+  allowedModels: ALLOWED_MODELS,
   allowedEfforts: ALLOWED_EFFORTS,
   maxConcurrency: MAX_PARALLEL,
   maxWorkersPerBatch: MAX_WORKERS_PER_BATCH,
   allowEffortEscalation: ALLOW_EFFORT_ESCALATION,
   allowStrongerFallback: ALLOW_STRONGER_FALLBACK,
+  executorOrder: EXECUTOR_ORDER,
 });
 
 /** Deep copy, so a resolved envelope attached to a task cannot be aliased. */
@@ -170,6 +194,7 @@ export function cloneComputePolicy(policy: ComputePolicy): ComputePolicy {
     ...policy,
     allowedModels: [...policy.allowedModels],
     allowedEfforts: [...policy.allowedEfforts],
+    ...(policy.executorOrder ? { executorOrder: [...policy.executorOrder] } : {}),
   };
 }
 
@@ -264,11 +289,15 @@ export function admitCompute(request: {
 
 /** Compact one-line rendering for status output and diagnostics. */
 export function describeComputePolicy(policy: ComputePolicy): string {
-  return [
+  const parts = [
     `efforts ${policy.allowedEfforts.join("/")}`,
     `max ${policy.maxConcurrency} concurrent`,
     `${policy.maxWorkersPerBatch} per batch`,
     `escalation ${policy.allowEffortEscalation ? "on" : "off"}`,
     `fallback ${policy.allowStrongerFallback ? "on" : "off"}`,
-  ].join(", ");
+  ];
+  if (policy.executorOrder && policy.executorOrder.length > 0) {
+    parts.push(`order ${policy.executorOrder.join("->")}`);
+  }
+  return parts.join(", ");
 }

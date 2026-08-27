@@ -52,11 +52,18 @@ import {
   emitEvent,
   type EventEmitter,
 } from "./events.js";
-import { admitCompute, cloneComputePolicy, DEFAULT_COMPUTE_POLICY } from "./policy.js";
+import {
+  admitCompute,
+  cloneComputePolicy,
+  DEFAULT_COMPUTE_POLICY,
+  type ComputePolicy,
+} from "./policy.js";
+import { evaluateAdaptiveCard, routeLiveTask } from "./adaptive.js";
+import { HandoffStore, handoffError, registerHandoff } from "./handoff.js";
+import { type PriorExecution } from "./selection.js";
 import {
   declaredRoutingFields,
   describeRefusal,
-  evaluateRouting,
   renderRoutingAdvisory,
   renderRoutingPreflight,
 } from "./routing.js";
@@ -91,6 +98,7 @@ const log = createLogger(LOG_FILE);
 
 /** Deliberately in-memory: references die with this server process. */
 const continuationStore = new ContinuationStore();
+const handoffStore = new HandoffStore();
 
 function registerContinuation(
   input: DelegateTaskInput,
@@ -124,6 +132,7 @@ function registerContinuation(
     worktreeLease,
     predecessorExecutionId,
     result.attempt + 1,
+    result.model,
   );
   result.continuationState = {
     status: "issued",
@@ -252,9 +261,12 @@ export function routingAdvisoryLine(
     taskCount: number;
     allowOverlappingScopes?: boolean;
   },
+  policy: ComputePolicy = DEFAULT_COMPUTE_POLICY,
 ): string | null {
   if (!card) return null;
-  return renderRoutingAdvisory(evaluateRouting(asRoutingCard(card), context));
+  return renderRoutingAdvisory(
+    evaluateAdaptiveCard({ card: asRoutingCard(card), context, policy }).evaluation,
+  );
 }
 
 /**
@@ -268,6 +280,7 @@ export function refuseSingleDelegation(
   card: RoutingPreflightInput | undefined,
   batchId: string,
   emit: EventEmitter = emitEvent,
+  policy: ComputePolicy = DEFAULT_COMPUTE_POLICY,
 ): string | null {
   if (!card) {
     emit({
@@ -280,7 +293,11 @@ export function refuseSingleDelegation(
     return null;
   }
   const routingCard = asRoutingCard(card);
-  const routing = evaluateRouting(routingCard, { mode: "single", taskCount: 1 });
+  const { evaluation: routing, selection } = evaluateAdaptiveCard({
+    card: routingCard,
+    context: { mode: "single", taskCount: 1 },
+    policy,
+  });
   emit({
     type: "routing.declared",
     batchId,
@@ -294,6 +311,13 @@ export function refuseSingleDelegation(
     signals: routing.signals,
     refusedGate: routing.refusedGate,
     parallelEligible: routing.parallelEligible,
+    recommendedMechanism: routing.shape?.mechanism,
+    recommendedWorkerCount: routing.shape?.workerCount,
+    recommendedConcurrency: routing.shape?.concurrency,
+    recommendedEffort: routing.shape?.effort,
+    selectedModel: selection.model,
+    selectedEffort: selection.effort,
+    selectionReason: selection.reason,
     ...declaredRoutingFields(routingCard),
   });
   return routing.refusedGate ? describeRefusal(routing.refusedGate) : null;
@@ -460,6 +484,9 @@ function renderRichResult(result: DelegateTaskOutput): string {
   lines.push(`CHANGE INTENT: ${result.changeIntent ?? "required"}`);
   if (result.continuationReference) {
     lines.push(`CONTINUATION REFERENCE: ${result.continuationReference}`);
+  }
+  if (result.handoffReference) {
+    lines.push(`HANDOFF REFERENCE: ${result.handoffReference}`);
   }
   if (result.repair) {
     lines.push(
@@ -691,6 +718,7 @@ export function renderResult(
   }
   if (result.continuationReference)
     lines.push(`CONTINUATION: ${result.continuationReference}`);
+  if (result.handoffReference) lines.push(`HANDOFF: ${result.handoffReference}`);
   const risks = [result.notes.trim(), ...result.followUps].filter(Boolean);
   lines.push(`RISKS: ${risks.length > 0 ? risks.join("; ") : "none"}`);
   lines.push("TERMINAL: VERIFIED_COMPLETE");
@@ -830,29 +858,100 @@ function registerDelegateTask(): void {
       const batchId = makeSingleBatchId();
       const taskId = "t1";
 
-      // Resolving the envelope is total and cheap, so it happens before any
-      // gate: the started event should record what this call would have run
-      // under even when a gate then refuses it. Deciding whether the request
-      // fits inside that envelope is the separate, refusable step below.
-      const admission = admitCompute({
-        requested: rawTask.computePolicy,
+      let predecessorExecutionId: string | null = null;
+      let logicalAttempt = rawTask.previousAttempts.length + 1;
+      let priorEvidence: PriorExecution | undefined = undefined;
+      let resolvedTask = rawTask;
+
+      if (rawTask.handoffReference) {
+        const consumed = handoffStore.consume(rawTask.handoffReference);
+        if (consumed.status !== "ready") {
+          const message = handoffError(consumed);
+          emitEvent({ type: "batch.rejected", batchId, reason: message });
+          log(`delegate_task handoff rejected: ${message}`);
+          return {
+            content: [{ type: "text" as const, text: message }],
+            isError: true,
+          };
+        }
+        resolvedTask = {
+          ...consumed.entry.input,
+          previousAttempts: [
+            ...consumed.entry.input.previousAttempts,
+            {
+              effort: consumed.entry.effort,
+              verdict: "FAILED" as const,
+              whatWentWrong: consumed.entry.failureDecision.reason,
+            },
+          ],
+        };
+        predecessorExecutionId = consumed.entry.predecessorExecutionId;
+        logicalAttempt = consumed.entry.logicalAttempt;
+        priorEvidence = {
+          requestedModel: consumed.entry.model,
+          requestedEffort: consumed.entry.effort,
+          failureDecision: consumed.entry.failureDecision,
+        };
+      }
+
+      const initialAdmission = admitCompute({
+        requested: resolvedTask.computePolicy,
         model: LUNA_MODEL,
-        efforts: [rawTask.effort],
+        efforts: [resolvedTask.effort],
         workerCount: 1,
       });
-      // The task the runtime actually executes carries its resolved envelope,
-      // so failure classification and any later continuation read the same
-      // narrowed policy this call was admitted under.
+
+      const liveRouting = routeLiveTask(resolvedTask, {
+        policy: initialAdmission.policy,
+        evidence: priorEvidence,
+      });
+
+      if (
+        liveRouting.selection.reason === "no-authorised-next-execution" ||
+        (priorEvidence && liveRouting.selectedModel === null)
+      ) {
+        emitEvent({
+          type: "batch.rejected",
+          batchId,
+          reason: liveRouting.selection.detail,
+        });
+        log(`delegate_task selection refused: ${liveRouting.selection.detail}`);
+        return {
+          content: [{ type: "text" as const, text: liveRouting.selection.detail }],
+          isError: true,
+        };
+      }
+
+      let targetModel = liveRouting.selectedModel;
+      if (!targetModel) {
+        if (initialAdmission.policy.allowedModels.length === 1) {
+          targetModel = initialAdmission.policy.allowedModels[0]!;
+        } else if (initialAdmission.policy.allowedModels.includes(LUNA_MODEL)) {
+          targetModel = LUNA_MODEL;
+        } else {
+          targetModel = initialAdmission.policy.allowedModels[0]!;
+        }
+      }
+
+      const targetEffort = liveRouting.selectedEffort ?? resolvedTask.effort;
+
+      const admission = admitCompute({
+        requested: resolvedTask.computePolicy,
+        model: targetModel,
+        efforts: [targetEffort],
+        workerCount: 1,
+      });
+
       const task: DelegateTaskInput = {
-        ...rawTask,
+        ...resolvedTask,
+        effort: targetEffort,
         computePolicy: cloneComputePolicy(admission.policy),
       };
-      const logicalAttempt = task.previousAttempts.length + 1;
       const startedAt = Date.now();
       let workerStarted = false;
       let workerDirectory: string | null = null;
       log(
-        `delegate_task: effort=${task.effort} cwd=${task.workingDirectory ?? process.cwd()} ` +
+        `delegate_task: model=${targetModel} effort=${task.effort} cwd=${task.workingDirectory ?? process.cwd()} ` +
           `objective="${task.objective.slice(0, 80)}..."`,
       );
 
@@ -868,7 +967,12 @@ function registerDelegateTask(): void {
       // Structural routing gates come first on both delegation surfaces: a call
       // that declared no seam is malformed, and admitting compute for it would
       // be answering the wrong question. Compute policy is the second gate.
-      const routingRefusal = refuseSingleDelegation(task.routingPreflight, batchId);
+      const routingRefusal = refuseSingleDelegation(
+        task.routingPreflight,
+        batchId,
+        emitEvent,
+        admission.policy,
+      );
       if (routingRefusal) {
         emitEvent({ type: "batch.rejected", batchId, reason: routingRefusal });
         log(`delegate_task refused: ${routingRefusal}`);
@@ -887,10 +991,14 @@ function registerDelegateTask(): void {
         };
       }
 
-      const routingAdvisory = routingAdvisoryLine(task.routingPreflight, {
-        mode: "single",
-        taskCount: 1,
-      });
+      const routingAdvisory = routingAdvisoryLine(
+        task.routingPreflight,
+        {
+          mode: "single",
+          taskCount: 1,
+        },
+        admission.policy,
+      );
 
       emitEvent({
         type: "task.queued",
@@ -899,59 +1007,66 @@ function registerDelegateTask(): void {
         effort: task.effort,
         category: task.taskCategory,
         activityLabel: task.activityLabel,
-        model: LUNA_MODEL,
+        model: targetModel,
         attempt: logicalAttempt,
       });
 
       try {
-        const result = await delegateToLuna(task, extra?.signal, {
-          onStarted: (workingDirectory) => {
-            workerStarted = true;
-            workerDirectory = workingDirectory;
-            emitEvent({
-              type: "worker.started",
-              batchId,
-              taskId,
-              effort: task.effort,
-              workingDirectory,
-              model: LUNA_MODEL,
-              attempt: logicalAttempt,
-            });
+        const result = await delegateToLuna(
+          task,
+          extra?.signal,
+          {
+            onStarted: (workingDirectory) => {
+              workerStarted = true;
+              workerDirectory = workingDirectory;
+              emitEvent({
+                type: "worker.started",
+                batchId,
+                taskId,
+                effort: task.effort,
+                workingDirectory,
+                model: targetModel,
+                attempt: logicalAttempt,
+              });
+            },
+            onVerificationStart: (commandCount, attribution) =>
+              emitEvent({
+                type: "verification.started",
+                batchId,
+                taskId,
+                commandCount,
+                executionId: attribution.executionId,
+                attempt: attribution.logicalAttempt,
+                role: attribution.role,
+              }),
+            onRepairStart: (classification, executionId) => {
+              emitEvent({
+                type: "repair.started",
+                batchId,
+                taskId,
+                classification,
+                turn: 1,
+                executionId,
+              });
+            },
+            onRepairComplete: (verdict, executionId) =>
+              emitEvent({
+                type: "repair.completed",
+                batchId,
+                taskId,
+                verdict,
+                turn: 1,
+                executionId,
+              }),
+            onAttemptStart: (evidence) =>
+              emitAttemptStarted(emitEvent, batchId, taskId, evidence),
+            onAttemptComplete: (evidence) =>
+              emitCanonicalAttemptCompletion(emitEvent, batchId, taskId, evidence),
           },
-          onVerificationStart: (commandCount, attribution) =>
-            emitEvent({
-              type: "verification.started",
-              batchId,
-              taskId,
-              commandCount,
-              executionId: attribution.executionId,
-              attempt: attribution.logicalAttempt,
-              role: attribution.role,
-            }),
-          onRepairStart: (classification, executionId) => {
-            emitEvent({
-              type: "repair.started",
-              batchId,
-              taskId,
-              classification,
-              turn: 1,
-              executionId,
-            });
-          },
-          onRepairComplete: (verdict, executionId) =>
-            emitEvent({
-              type: "repair.completed",
-              batchId,
-              taskId,
-              verdict,
-              turn: 1,
-              executionId,
-            }),
-          onAttemptStart: (evidence) =>
-            emitAttemptStarted(emitEvent, batchId, taskId, evidence),
-          onAttemptComplete: (evidence) =>
-            emitCanonicalAttemptCompletion(emitEvent, batchId, taskId, evidence),
-        });
+          targetModel,
+          predecessorExecutionId,
+          logicalAttempt,
+        );
         if (workerDirectory) {
           try {
             result.continuationReference = registerContinuation(
@@ -969,6 +1084,10 @@ function registerDelegateTask(): void {
             applyFailureDecision(task, result);
           }
         }
+        result.handoffReference = registerHandoff(task, result, handoffStore, {
+          authoritativePrior: priorEvidence !== undefined,
+          workingDirectory: workerDirectory ?? undefined,
+        });
         emitSingleCompletion(
           batchId,
           taskId,
@@ -1144,7 +1263,7 @@ export async function handleContinueTask(
     effort: entry.input.effort,
     category: entry.input.taskCategory,
     activityLabel: entry.input.activityLabel,
-    model: LUNA_MODEL,
+    model: entry.model,
     attempt: entry.logicalAttempt,
   });
 
@@ -1163,7 +1282,7 @@ export async function handleContinueTask(
             taskId,
             effort: entry.input.effort,
             workingDirectory,
-            model: LUNA_MODEL,
+            model: entry.model,
             attempt: entry.logicalAttempt,
           });
         },
@@ -1184,6 +1303,7 @@ export async function handleContinueTask(
       },
       predecessorExecutionId: entry.predecessorExecutionId,
       logicalAttempt: entry.logicalAttempt,
+      model: entry.model,
     });
     if (entry.reconcileFinalGit) {
       try {
@@ -1218,6 +1338,9 @@ export async function handleContinueTask(
       reason: "The single-use continuation bound was consumed by this execution.",
     };
     applyFailureDecision(entry.input, result);
+    result.handoffReference = registerHandoff(entry.input, result, handoffStore, {
+      workingDirectory: entry.workingDirectory,
+    });
     emitSingleCompletion(batchId, taskId, timeoutSeconds, result, dependencies.emit);
     dependencies.record(result);
     const structuredContent = structuredResultForDetail(
@@ -1335,12 +1458,6 @@ function registerDelegateTasks(): void {
           `efforts=[${batch.tasks.map((task) => task.effort).join(",")}]`,
       );
 
-      const routingAdvisory = routingAdvisoryLine(batch.routingPreflight, {
-        mode: batch.mode,
-        taskCount: batch.tasks.length,
-        allowOverlappingScopes: batch.allowOverlappingScopes,
-      });
-
       // The same admission gate the single surface uses, so the two tools cannot
       // drift on which bounds they check or how they word a refusal.
       //
@@ -1383,6 +1500,16 @@ function registerDelegateTasks(): void {
         };
       }
 
+      const routingAdvisory = routingAdvisoryLine(
+        batch.routingPreflight,
+        {
+          mode: batch.mode,
+          taskCount: batch.tasks.length,
+          allowOverlappingScopes: batch.allowOverlappingScopes,
+        },
+        admission.policy,
+      );
+
       // Every task carries the batch's resolved envelope, so a per-task failure
       // decision is bounded by the policy this batch was admitted under rather
       // than by the installation baseline it may have narrowed.
@@ -1400,6 +1527,7 @@ function registerDelegateTasks(): void {
           automaticRecovery: batch.automaticRecovery,
           signal: extra?.signal,
           continuationRegistrar: registerContinuation,
+          handoffStore,
           protectedWorktreePaths: continuationStore.protectedWorkingDirectories(),
           routingPreflight: batch.routingPreflight,
           computePolicy: admission.policy,
@@ -1465,9 +1593,10 @@ function registerRoutingPreflight(): void {
       // The operator baseline, passed in rather than read by routing itself, so
       // the shape it recommends is bounded by the envelope this installation
       // would actually run — and so the evaluator keeps depending on nothing.
-      const evaluation = evaluateRouting(card, {
-        mode: "preflight",
-        envelope: DEFAULT_COMPUTE_POLICY,
+      const { evaluation, selection } = evaluateAdaptiveCard({
+        card,
+        context: { mode: "preflight" },
+        policy: DEFAULT_COMPUTE_POLICY,
       });
       emitEvent({
         type: "routing.preflight",
@@ -1478,6 +1607,13 @@ function registerRoutingPreflight(): void {
         gates: evaluation.gates,
         signals: evaluation.signals,
         parallelEligible: evaluation.parallelEligible,
+        recommendedMechanism: evaluation.shape?.mechanism,
+        recommendedWorkerCount: evaluation.shape?.workerCount,
+        recommendedConcurrency: evaluation.shape?.concurrency,
+        recommendedEffort: evaluation.shape?.effort,
+        selectedModel: selection.model,
+        selectedEffort: selection.effort,
+        selectionReason: selection.reason,
         ...declaredRoutingFields(card),
       });
       log(
@@ -1561,6 +1697,9 @@ function renderRichBatch(batch: BatchOutput): string {
     }
     if (result?.continuationReference) {
       lines.push(`    continuation: ${result.continuationReference}`);
+    }
+    if (result?.handoffReference) {
+      lines.push(`    handoff: ${result.handoffReference}`);
     }
     const failureDecision = task.failureDecision ?? result?.failureDecision;
     if (failureDecision) {
@@ -1679,6 +1818,7 @@ export function renderBatch(batch: BatchOutput): string {
     if (risks.length > 0) lines.push(`  risks: ${risks.join("; ")}`);
     if (result.continuationReference)
       lines.push(`  continuation: ${result.continuationReference}`);
+    if (result.handoffReference) lines.push(`  handoff: ${result.handoffReference}`);
   }
   lines.push(`INTEGRATION: ${batch.integrationSummary}`);
   const finalPassed = batch.integrationVerification.filter((run) => run.passed).length;

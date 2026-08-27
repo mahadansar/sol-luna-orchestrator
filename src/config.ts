@@ -264,6 +264,48 @@ export const ALLOW_STRONGER_FALLBACK = parseOptOutFlag(
 );
 
 /**
+ * Worker models this installation authorises.
+ *
+ * `LUNA_MODEL` remains authorised because it is the configured baseline worker.
+ * Extra entries only grant membership; their position carries no preference or
+ * strength meaning.
+ */
+export function parseAllowedModels(
+  raw: string | null | undefined,
+  baselineModel: string,
+): readonly string[] {
+  const entries = (raw ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return [...new Set([baselineModel, ...entries])];
+}
+
+export const ALLOWED_MODELS: readonly string[] = parseAllowedModels(
+  process.env.SOL_LUNA_ALLOWED_MODELS,
+  LUNA_MODEL,
+);
+
+/**
+ * Optional operator-declared executor preference/strength ladder.
+ *
+ * Comma-separated list of model names in ascending capability/strength order:
+ * [base, ..., stronger, strongest].
+ * When unset, no ordering is declared and fallback recommendations remain unresolvable
+ * (reported to the parent rather than guessed by list position).
+ */
+export function parseExecutorOrder(raw: string | null | undefined): readonly string[] {
+  return (raw ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+export const EXECUTOR_ORDER: readonly string[] = parseExecutorOrder(
+  process.env.SOL_LUNA_EXECUTOR_ORDER,
+);
+
+/**
  * Directory holding per-task git worktrees, relative to the repository root.
  * Kept inside the repo so relative tooling still resolves, and excluded from
  * git via `.git/info/exclude` rather than the user's tracked `.gitignore`.

@@ -52,6 +52,14 @@ next effort, any automatic repair/recovery handler already used, and the bounded
 automatic retry count/limit. This is result evidence, not a separate activity
 event. It contains no prompt, source, command output, or new usage estimate.
 
+An eligible failed result may return an opaque `handoffReference` directly to
+that caller. The token is deliberately absent from diagnostic logs, the event
+stream, usage records, and activity history; those surfaces record only routing
+recommendations, selections, and factual execution. Handoffs live in memory for
+15 minutes and are single-use. A server restart loses them, and later consumption
+fails conservatively as unknown rather than reconstructing authority from logs or
+caller-supplied history.
+
 ## What the event stream contains
 
 Records are appended as the run progresses: batch started, completed, cancelled
@@ -135,6 +143,8 @@ Carried on those records:
 - Per-execution identity, role, predecessor, lifecycle timing, termination, and
   reported/unavailable usage status
 - Raw declared routing values, seam and unknown counts, route, gates and signals
+- Recommended routing shape and compute selection; factual worker lifecycle
+  records separately carry the model and effort that actually ran
 
 Deliberately **not** written to this stream:
 
@@ -170,10 +180,10 @@ operator warning.
 
 `routing.preflight` records one advisory `routing_preflight` call. It carries a
 `preflightId`, the route, seam count, unknown count, gates, signals, and
-`parallelEligible`, plus the five raw declared values. It has **no** `batchId`,
-because no batch exists at that point. The recommended execution shape is not
-part of the record: it is derived from those same declared values and the
-operator's own envelope, and persisting it is future work.
+`parallelEligible`, plus the five raw declared values. It also records the bounded
+recommended mechanism, worker count, concurrency and effort, followed by the
+selector's model, effort and reason. It has **no** `batchId` and no actual execution
+fields because no batch or worker exists at that point.
 
 `routing.declared` records what a real delegation call declared. It always
 carries `batchId`, `declaration` (`attached` or `absent`), `mode`, and
@@ -181,6 +191,11 @@ carries `batchId`, `declaration` (`attached` or `absent`), `mode`, and
 `unknownCount`, `route`, `gates`, `signals`, `refusedGate` (or `null`), the raw
 declared values, and `parallelEligible`. An absent declaration carries none of
 those: nothing was evaluated, so no route or eligibility is claimed for it.
+Attached declarations also carry the same recommended/selected fields as preflight.
+They deliberately do not claim what executed: a later gate may still refuse the
+call. Factual `task.queued`, `worker.started`, per-attempt, and `worker.completed`
+records carry the model and effort actually requested or observed. Those values may
+differ because routing advice is advisory and never rewrites an admitted task contract.
 
 `routing.contradiction` records that the runtime's own already-computed evidence
 disagrees with the declaration — `declared-disjoint-core-scopes-overlap` when

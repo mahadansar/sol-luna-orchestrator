@@ -32,6 +32,7 @@ import {
   resolveEventsPath,
 } from "./cli/events-path.js";
 import { serverEnvTable } from "./cli/settings.js";
+import { resolveRegisteredServerConfig } from "./cli/server-config.js";
 import { fromTomlValue, readKey, toTomlValue, upsertKey } from "./cli/toml-edit.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -59,6 +60,26 @@ startup_timeout_sec = 15
 [mcp_servers.context7.env]
 CONTEXT7_TOKEN = "keep-me"
 `;
+
+test("registered policy keeps model authorization separate from executor order", () => {
+  let config = REALISTIC;
+  config = upsertKey(config, serverEnvTable(), "LUNA_MODEL", "base-model");
+  config = upsertKey(
+    config,
+    serverEnvTable(),
+    "SOL_LUNA_ALLOWED_MODELS",
+    "base-model,stronger-model",
+  );
+  config = upsertKey(
+    config,
+    serverEnvTable(),
+    "SOL_LUNA_EXECUTOR_ORDER",
+    "base-model,stronger-model",
+  );
+  const resolved = resolveRegisteredServerConfig(config).computePolicy;
+  assert.deepEqual(resolved.allowedModels, ["base-model", "stronger-model"]);
+  assert.deepEqual(resolved.executorOrder, ["base-model", "stronger-model"]);
+});
 
 /** What a v0.6.0 install looks like: registered, configured, no event path. */
 const V060 = `[mcp_servers.sol-luna-orchestrator]
