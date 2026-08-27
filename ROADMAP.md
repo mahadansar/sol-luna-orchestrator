@@ -33,7 +33,7 @@ Cost matters, but it is not the primary objective. The orchestrator should use p
 | P1.0     | Parent Identity, Billing, and Post-Hoc Cost Foundation | Shipped foundation in v0.9.0; attempt-evidence hardening complete, unreleased |
 | P1.1     | Reasoned Retry and Effort Escalation                   | Complete, unreleased; built on P0.4 and completed P1.0 hardening              |
 | P1.2     | Adaptive Worker Routing and Compute Policy             | Complete, unreleased                                                          |
-| P1.3     | Automatic Context Lifecycle Management                 | Depends on P0.1, P0.2, and P0.3                                               |
+| P1.3     | Automatic Context Lifecycle Management                 | P1.3A Core complete, unreleased; depends on P0.1, P0.2, and P0.3              |
 | P2.1     | Optional Explorer                                      | Depends on P1.2                                                               |
 | P2.2     | Lightweight Cross-Session Handoff                      | Depends on P1.3                                                               |
 | P2.3     | End-to-End Automated Workflow                          | Depends on P1.2, P1.3, P2.1, and P2.2                                         |
@@ -173,9 +173,19 @@ only when applicable billing evidence is known; otherwise it remains qualitative
 
 ## P1.3 Automatic Context Lifecycle Management
 
+**P1.3A Core complete, unreleased.**
+
 Compact repeated tool output, logs, worker turns, and stale context at safe
 handoff, continuation, repair, retry, and review boundaries while retaining
 requirements, decisions, constraints, and verification evidence.
+
+The implemented P1.3A scope is the pure, deterministic structured retention and
+compaction primitive in `src/context.ts`, with deterministic acceptance coverage
+in `src/context.test.ts`. It is not connected to live delegation lifecycles and
+does not trigger automatically.
+
+**Remaining P1.3 work.** Automatic context-pressure triggers, threshold heuristics,
+and live runtime integration across delegation lifecycles.
 
 **Constraints.** Compaction must be bounded and observable and must not discard
 acceptance criteria, failure or conflict evidence, scope, or the distinction

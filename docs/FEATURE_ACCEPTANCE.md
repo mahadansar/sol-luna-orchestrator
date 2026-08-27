@@ -54,6 +54,7 @@ parallel recovery baseline described below. Shipped history belongs in
 | P1.1 reasoned retry and effort escalation decisions     | PASS     | DEEP PASS     | N/A           | Strong        |
 | P1.2 user-owned compute policy and enforcement          | PASS     | PASS          | N/A           | Strong        |
 | P1.2 adaptive routing and compute selection             | PASS     | PASS          | N/A           | Strong        |
+| P1.3A Context retention and compaction core             | PASS     | PASS          | N/A           | Strong        |
 | `failureCauses` and verification contradiction handling | PASS     | PASS          | PASS          | Strong        |
 
 Dates, provenance, dependencies, and retest triggers are recorded below. A live
@@ -121,6 +122,24 @@ includes concurrent double consumption, expiry/replay/malformed refusal, exact
 contract restoration, batch sibling preservation, and selected SDK thread options.
 Restart loss is intentionally fail-closed and no model-backed P1.2 campaign is
 claimed.
+
+P1.3A context retention and compaction core (`src/context.ts`, `src/context.test.ts`)
+is recorded with **PASS** deterministic coverage and **Strong** confidence. The
+pure synchronous primitive accepts single delegations, batch delegations, continuations,
+and preflight turns, and produces a redacted compact projection without mutating the
+authoritative context. It preserves complete contract arrays, distinct decisions,
+constraints, blockers, attempt lineage, failure/conflict/refusal evidence, per-task batch
+claims, observed changes, and authoritative verification facts. Turn bounding is a soft
+target that removes only stale clean history; protected evidence may explicitly exceed
+it. Clean verified PASS paths omit only successful command output while retaining the
+command outcome, provenance, counts, changed files, and risks. Capability references are
+reported only when their latest recorded state is issued and no recorded consumption
+follows; live registry expiry validation remains runtime-integration work. Privacy
+redaction is deterministic, and direct structural idempotence is covered
+(`compact(compact(ctx)) === compact(ctx)`). This is P1.3A core coverage only: no automatic
+pressure trigger or live runtime compaction is claimed.
+Compaction statistics expose every clean-history/summary omission, privacy redaction,
+soft-limit overrun, and the exact UTF-8 input/output size delta.
 
 The terminal handoff protocol defaults clean verified PASS responses to compact
 text without `structuredContent`. A batch reruns the deduplicated declared checks
