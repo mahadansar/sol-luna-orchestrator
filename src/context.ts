@@ -42,7 +42,9 @@ import {
 export const MAX_RETAINED_TURNS = 100;
 
 const SECRET_ASSIGNMENT =
-  /\b(api[_-]?key|access[_-]?token|token|secret|password|passwd|credential)\b(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;]+)/gi;
+  /\b(api[_-]?key|access[_-]?token|secret|password|passwd|credential)\b(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;]+)/gi;
+const TOKEN_ASSIGNMENT =
+  /\b(token)\b(\s*[:=]\s*)("[A-Za-z0-9_.-]{12,}"|'[A-Za-z0-9_.-]{12,}'|[A-Za-z0-9_.-]{12,})/gi;
 const BEARER_HEADER = /\bBearer\s+([A-Za-z0-9_.-]{8,})/gi;
 const PREFIXED_SECRET =
   /\b(?:sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9_-]{10,})\b/g;
@@ -57,6 +59,16 @@ export function scrubSensitiveText(text: string): { scrubbed: string; count: num
   });
   scrubbed = scrubbed.replace(
     SECRET_ASSIGNMENT,
+    (_match, name: string, separator: string, value: string) => {
+      count++;
+      const quote = value.startsWith('"') ? '"' : value.startsWith("'") ? "'" : "";
+      return quote
+        ? `${name}${separator}${quote}[REDACTED_SECRET]${quote}`
+        : `${name}${separator}[REDACTED_SECRET]`;
+    },
+  );
+  scrubbed = scrubbed.replace(
+    TOKEN_ASSIGNMENT,
     (_match, name: string, separator: string, value: string) => {
       count++;
       const quote = value.startsWith('"') ? '"' : value.startsWith("'") ? "'" : "";
@@ -220,6 +232,19 @@ export interface OrchestrationContext {
   readonly blockers: readonly ContextBlocker[];
   readonly lineage: readonly ContextLineageEntry[];
   readonly turns: readonly ContextTurn[];
+  /**
+   * Trust origin of the top-level resumable task description. Imported context
+   * is caller-supplied history and is never canonical execution evidence.
+   */
+  readonly contextProvenance?: "current-session" | "imported-informational";
+  /** Opaque imported packet retained separately from current-session evidence. */
+  readonly importedHistory?: {
+    readonly provenance: "imported-informational";
+    readonly schemaVersion: string;
+    readonly handoffId: string;
+    readonly exportedAt: string;
+    readonly artifact: unknown;
+  };
   /** Latest authoritative turn included in a compact projection, when any. */
   readonly lastCompactedTurnNumber?: number;
 }
@@ -445,6 +470,8 @@ export function createOrchestrationContext(params: {
   blockers?: ContextBlocker[];
   lineage?: ContextLineageEntry[];
   turns?: ContextTurn[];
+  contextProvenance?: "current-session" | "imported-informational";
+  importedHistory?: OrchestrationContext["importedHistory"];
 }): OrchestrationContext {
   return {
     objective: params.objective,
@@ -458,6 +485,10 @@ export function createOrchestrationContext(params: {
     blockers: params.blockers ? structuredClone(params.blockers) : [],
     lineage: params.lineage ? structuredClone(params.lineage) : [],
     turns: params.turns ? structuredClone(params.turns) : [],
+    contextProvenance: params.contextProvenance ?? "current-session",
+    importedHistory: params.importedHistory
+      ? structuredClone(params.importedHistory)
+      : undefined,
   };
 }
 
@@ -470,6 +501,7 @@ export function recordDecision(
 ): OrchestrationContext {
   return {
     ...context,
+    contextProvenance: "current-session",
     decisions: [
       ...context.decisions,
       {
@@ -490,6 +522,7 @@ export function recordConstraint(
 ): OrchestrationContext {
   return {
     ...context,
+    contextProvenance: "current-session",
     constraints: [
       ...context.constraints,
       {
@@ -507,6 +540,7 @@ export function recordBlocker(
 ): OrchestrationContext {
   return {
     ...context,
+    contextProvenance: "current-session",
     blockers: [
       ...context.blockers,
       {
@@ -638,11 +672,23 @@ export function ingestDelegationTurn(
     timestamp?: string;
   },
 ): OrchestrationContext {
-  const id = turn.id ?? `turn_${context.turns.length + 1}`;
-  assertUniqueTurnId(context, id);
+  const currentContext =
+    context.contextProvenance === "imported-informational"
+      ? createOrchestrationContext({
+          objective: turn.input.objective,
+          acceptanceCriteria: [...turn.input.acceptanceCriteria],
+          allowedFiles: [...turn.input.allowedFiles],
+          forbiddenFiles: [...turn.input.forbiddenFiles],
+          changeIntent: turn.input.changeIntent,
+          taskCategory: turn.input.taskCategory,
+          importedHistory: context.importedHistory,
+        })
+      : context;
+  const id = turn.id ?? `turn_${currentContext.turns.length + 1}`;
+  assertUniqueTurnId(currentContext, id);
   const taskId = turn.taskId ?? "t1";
   const capsule = turn.input.contextCapsule;
-  const decisions = [...context.decisions];
+  const decisions = [...currentContext.decisions];
   if (capsule?.upstreamDecisions) {
     decisions.push({
       id: `dec_cap_${decisions.length + 1}`,
@@ -659,21 +705,22 @@ export function ingestDelegationTurn(
       source: "context-capsule",
     });
   }
-  const blockers = [...context.blockers];
+  const blockers = [...currentContext.blockers];
   for (const blocker of blockersFromOutput(turn.output, id, taskId)) {
     if (!blockers.some((candidate) => candidate.id === blocker.id))
       blockers.push(blocker);
   }
   return {
-    ...context,
+    ...currentContext,
+    contextProvenance: "current-session",
     decisions,
     blockers,
-    lineage: appendNewLineage(context.lineage, lineageFromOutput(turn.output)),
+    lineage: appendNewLineage(currentContext.lineage, lineageFromOutput(turn.output)),
     turns: [
-      ...context.turns,
+      ...currentContext.turns,
       {
         id,
-        turnNumber: context.turns.length + 1,
+        turnNumber: currentContext.turns.length + 1,
         timestamp: turn.timestamp,
         kind: "single-delegation",
         input: structuredClone(turn.input),
@@ -693,8 +740,25 @@ export function ingestBatchTurn(
     timestamp?: string;
   },
 ): OrchestrationContext {
-  const id = turn.id ?? `batch_turn_${context.turns.length + 1}`;
-  assertUniqueTurnId(context, id);
+  const firstTask = turn.input.tasks[0];
+  const currentContext =
+    context.contextProvenance === "imported-informational"
+      ? createOrchestrationContext({
+          objective: firstTask?.objective ?? "Batch delegation",
+          acceptanceCriteria: turn.input.tasks.flatMap((task) => task.acceptanceCriteria),
+          allowedFiles: [
+            ...new Set(turn.input.tasks.flatMap((task) => task.allowedFiles)),
+          ],
+          forbiddenFiles: [
+            ...new Set(turn.input.tasks.flatMap((task) => task.forbiddenFiles)),
+          ],
+          changeIntent: firstTask?.changeIntent ?? "required",
+          taskCategory: firstTask?.taskCategory,
+          importedHistory: context.importedHistory,
+        })
+      : context;
+  const id = turn.id ?? `batch_turn_${currentContext.turns.length + 1}`;
+  assertUniqueTurnId(currentContext, id);
   const additions = turn.output.tasks.flatMap((task) => {
     const attempts = task.attempts ?? task.result?.attempts ?? [];
     const verdict = task.result?.verdict ?? "FAILED";
@@ -707,7 +771,7 @@ export function ingestBatchTurn(
       ),
     );
   });
-  const blockers = [...context.blockers];
+  const blockers = [...currentContext.blockers];
   for (const task of turn.output.tasks) {
     if (!task.result) continue;
     for (const blocker of blockersFromOutput(
@@ -730,14 +794,15 @@ export function ingestBatchTurn(
       blockers.push(blocker);
   }
   return {
-    ...context,
+    ...currentContext,
+    contextProvenance: "current-session",
     blockers,
-    lineage: appendNewLineage(context.lineage, additions),
+    lineage: appendNewLineage(currentContext.lineage, additions),
     turns: [
-      ...context.turns,
+      ...currentContext.turns,
       {
         id,
-        turnNumber: context.turns.length + 1,
+        turnNumber: currentContext.turns.length + 1,
         timestamp: turn.timestamp,
         kind: "batch-delegation",
         input: structuredClone(turn.input),
@@ -823,9 +888,21 @@ export function ingestExplorationTurn(
     timestamp?: string;
   },
 ): OrchestrationContext {
-  const id = turn.id ?? `exp_turn_${context.turns.length + 1}`;
-  assertUniqueTurnId(context, id);
-  const blockers = [...context.blockers];
+  const currentContext =
+    context.contextProvenance === "imported-informational"
+      ? createOrchestrationContext({
+          objective: turn.input.target,
+          acceptanceCriteria: [...(turn.input.questions ?? [])],
+          allowedFiles: [...(turn.input.scope ?? [])],
+          forbiddenFiles: [...(turn.input.forbiddenFiles ?? [])],
+          changeIntent: "forbidden",
+          taskCategory: "investigation",
+          importedHistory: context.importedHistory,
+        })
+      : context;
+  const id = turn.id ?? `exp_turn_${currentContext.turns.length + 1}`;
+  assertUniqueTurnId(currentContext, id);
+  const blockers = [...currentContext.blockers];
   if (turn.output.verdict === "BLOCKED" || turn.output.verdict === "FAILED") {
     const reason =
       turn.output.errors.join("; ") ||
@@ -851,13 +928,14 @@ export function ingestExplorationTurn(
   }
 
   return {
-    ...context,
+    ...currentContext,
+    contextProvenance: "current-session",
     blockers,
     turns: [
-      ...context.turns,
+      ...currentContext.turns,
       {
         id,
-        turnNumber: context.turns.length + 1,
+        turnNumber: currentContext.turns.length + 1,
         timestamp: turn.timestamp,
         kind: "exploration",
         input: structuredClone(turn.input),

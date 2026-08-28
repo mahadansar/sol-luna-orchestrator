@@ -188,6 +188,25 @@ history. Both are single-use and TTL-bounded in memory; restarting the server
 invalidates them rather than reconstructing authority from retained logs or
 caller-supplied history.
 
+Cross-session handoff artifacts are different: they are portable, caller-held
+historical context and are never bearer capabilities or authenticated runtime
+evidence. Their schema proves structure only. On import, objective and scope are
+marked `imported-informational`; decisions, constraints, blockers, observations,
+verification, verdicts, failure decisions, and attempt lineage remain inside a
+separate imported-history packet. They do not populate the current session's
+canonical evidence, capability stores, retry lineage, compute selection, or
+verification state. A fresh delegation establishes its contract from the new
+request and passes the normal admission, scope, policy, and verification gates.
+Restore refuses non-empty or in-flight context stores, and a restart continues to
+invalidate every process-local `ctr_*` and `hdf_*` reference.
+
+Export sanitizes concrete capability and credential patterns, omits raw worker
+prompts and compacted turn payloads, and rejects artifacts above 256 KiB rather
+than truncating diagnostic semantics. It is still a potentially sensitive local
+artifact: historical paths, decisions, failures, source-grounding excerpts, and
+verification output can remain. Inspect it before sharing and do not treat
+redaction as a general-purpose data-loss-prevention boundary.
+
 Current activity writers exclude objectives and task context. Historical JSONL
 retained from pre-hardening versions may still contain older schema fields,
 including objectives; the current reader dropping such fields does not erase

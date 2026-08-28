@@ -356,6 +356,27 @@ authenticated lineage, so caller-declared history alone is insufficient. The
 handoff does not add an automatic loop and cannot bypass compute admission,
 scope, or verification gates.
 
+### Cross-session historical handoff
+
+The optional `SessionHandoffArtifact` API is a persistence format, not the live
+`hdf_*` next-action capability above. Export creates a sanitized historical
+snapshot; import labels its task description `imported-informational` and keeps
+all imported decisions, constraints, blockers, observations, verification, and
+attempt lineage in a separate history packet. None of those fields can authorize
+continuation, retry, effort escalation, stronger-executor fallback, scope, compute,
+or verification in the new process. A new delegation uses its own request contract
+and the current operator policy.
+
+Artifacts use schema `sol-luna-handoff/v1` and are limited to 256 KiB. Clean
+passing command output, status narration, and tool prose are discardable during
+compaction; failures, discrepancies, scope/security evidence, unknowns, active
+constraints, and historical lineage are retained. If the protected result is too
+large, export/import fails instead of truncating it. Repeated serialization of one
+artifact is canonical and byte-stable. Export normally creates a random
+`handoffId` and current `exportedAt`; a pure parse/restore/re-export preserves both,
+while a snapshot with fresh current-session evidence creates new metadata unless
+the caller supplies explicit values.
+
 ### Worktree retention
 
 `SOL_LUNA_KEEP_WORKTREES` applies only to the isolated worktrees created for

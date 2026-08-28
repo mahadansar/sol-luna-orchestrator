@@ -56,6 +56,7 @@ parallel recovery baseline described below. Shipped history belongs in
 | P1.2 adaptive routing and compute selection             | PASS     | PASS          | N/A           | Strong        |
 | P1.3 Context lifecycle management (P1.3A/B/C)           | PASS     | PASS          | N/A           | Strong        |
 | P2.1 Optional Explorer                                  | PASS     | PASS          | N/A           | Strong        |
+| P2.2 Lightweight Cross-Session Handoff                  | PASS     | PASS          | N/A           | Strong        |
 | `failureCauses` and verification contradiction handling | PASS     | PASS          | PASS          | Strong        |
 
 Dates, provenance, dependencies, and retest triggers are recorded below. A live
@@ -170,6 +171,32 @@ Deterministic tests prove fail-closed single-payload parsing, prompt generation,
 all mutation classes, source grounding, scope checks, compute propagation/admission/refusal, lifecycle leases and
 trust-preserving compaction, privacy-safe telemetry ingestion, and semantically consistent rendering modes. No
 model-backed benchmark is claimed.
+
+P2.2 Lightweight Cross-Session Handoff (`src/session-handoff.ts`, `src/session-handoff.test.ts`, `src/context.ts`, `src/server.ts`)
+is recorded with **PASS** deterministic coverage and **Strong** confidence. The cross-session handoff primitive
+provides a compact, deterministic, explicitly caller-supplied historical packet (`SessionHandoffArtifact`, schema
+`"sol-luna-handoff/v1"`) for resuming context across server restarts or separate supervisor sessions without
+replaying raw conversation logs or weakening trust boundaries. Schema validation proves structure, not factual
+authenticity. The export process aggregates historical
+architectural/user/policy/invariant decisions, active constraints, active and resolved blockers with
+classified causes, observed file modifications, verification counts and diagnostic failures, worker claims,
+discrepancies, scope violations, integration conflicts, and unresolved review checklist items. Exploration
+findings are strictly segregated into worker claims with grounding, runtime-observed facts, inferences, and
+clearly labeled open unknowns. All bearer capability tokens (`ctr_*`, `hdf_*`), API keys (`sk-*`), bearer headers,
+and credentials are deep-scrubbed and replaced with explicit expiration notices. Restart semantics fail closed:
+in-memory capabilities from the prior session are marked expired (`inMemoryContinuationsExpired: true`,
+`inMemoryHandoffsExpired: true`), prior tokens cannot be consumed in fresh server processes (`status: "unknown"`),
+and restored context re-enters standard admission, compute policy, scope, and verification gates. Imported task
+scope is a resumable description only; imported decisions, constraints, blockers, observations, verification,
+lineage, verdicts, and failure decisions remain in a separate informational history packet and never populate
+current-session canonical evidence or capability stores. Fresh delegations establish their own current task contract
+and evidence. Recursive canonical key sorting (`canonicalizeObject`) makes repeated serialization of one artifact
+byte-for-byte stable. Pure parse/restore/re-export preserves the packet identity and timestamp; new snapshots after
+fresh evidence generate new metadata unless the caller explicitly supplies it. A 256 KiB guard rejects oversized
+diagnostic artifacts rather than truncating them. Deterministic tests cover clean export/import cycles, semantic
+tampering without authority gain, historical/current evidence separation, secret scrubbing, restart fail-closed
+behavior, malformed payload rejection, stale handoff handling, bounded output, policy re-entry, identity/timestamp
+preservation, and lifecycle overwrite refusal. No model-backed benchmark is claimed.
 
 The terminal handoff protocol defaults clean verified PASS responses to compact
 text without `structuredContent`. A batch reruns the deduplicated declared checks

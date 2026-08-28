@@ -35,7 +35,7 @@ Cost matters, but it is not the primary objective. The orchestrator should use p
 | P1.2     | Adaptive Worker Routing and Compute Policy             | Complete, unreleased                                                          |
 | P1.3     | Automatic Context Lifecycle Management                 | Complete, unreleased; depends on P0.1, P0.2, and P0.3                         |
 | P2.1     | Optional Explorer                                      | Complete, unreleased; depends on P1.2                                         |
-| P2.2     | Lightweight Cross-Session Handoff                      | Depends on P1.3                                                               |
+| P2.2     | Lightweight Cross-Session Handoff                      | Complete, unreleased; depends on P1.3                                         |
 | P2.3     | End-to-End Automated Workflow                          | Depends on P1.2, P1.3, P2.1, and P2.2                                         |
 | P2.4     | Mature Benchmark and Acceptance Pass                   | Depends on P2.3                                                               |
 
@@ -276,11 +276,51 @@ Depends on P1.2.
 
 ## P2.2 Lightweight Cross-Session Handoff
 
-Provide optional persistent compact handoff containing the current objective,
-completed work, decisions, invariants, remaining work, blockers, verification
-state, useful attempts, and eligible continuation references. Keep state small,
-opt-in, and free of automatic Git commits or pushes. Format, location, retention,
-and reference-expiry handling remain undecided. Depends on P1.3.
+Provide an optional, compact, deterministic cross-session handoff artifact containing
+caller-supplied historical context for resuming work across server restarts or separate
+supervisor sessions without replaying raw conversation logs or weakening authority
+boundaries.
+
+### Implemented capabilities
+
+1. **Deterministic Structured Schema (`SessionHandoffArtifact`):** Strict Zod schema
+   (`SESSION_HANDOFF_SCHEMA_VERSION = "sol-luna-handoff/v1"`) with canonical key ordering,
+   mandatory deep sanitization, explicit imported provenance, and a 256 KiB fail-closed
+   artifact limit.
+2. **Contract, Decision, and Blocker Fidelity:** Preserves objective, acceptance criteria,
+   allowed/forbidden scope, change intent, task category, settled architectural/user/policy/invariant
+   decisions (`ContextDecision`), active constraints (`ContextConstraint`), and active/resolved
+   blockers (`ContextBlocker` with failure classifications).
+3. **Strict Epistemic Segregation:** Explicitly segregates worker claims (`observedFacts` with
+   grounding provenance and `workerClaims`), runtime-verified facts (`runtimeObservedFacts`),
+   inferences/hypotheses (`inferences`), and clearly labeled open unknowns (`unknowns`).
+4. **Historical Verification & Completed Work:** Retains prior observed file modifications,
+   verification counts (executed/passed/failed/refused), failed verification diagnostic evidence,
+   discrepancies, scope violations, integration conflicts, and unresolved review checklist items as
+   imported history that cannot satisfy current-session verification.
+5. **No Capability-Token or Credential Leakage:** Deeply redacts all bearer capability tokens
+   (`ctr_*`, `hdf_*`), API keys (`sk-*`), bearer tokens, and secrets. Replaces live bearer references
+   with explicit expiration markers.
+6. **Fail-Closed Restart & Re-Entry Semantics:** Marks all in-memory continuations and next-action
+   handoffs as expired (`inMemoryContinuationsExpired: true`, `inMemoryHandoffsExpired: true`).
+   In-memory capability stores in a new server process reject prior-session references (`status: "unknown"`).
+   Restoring a handoff into a new session context requires all new task delegations to re-enter
+   normal admission, compute policy, scope constraints, and verification gates.
+7. **Deterministic & Bounded Serialization:** Recursive canonical key sorting (`canonicalizeObject`)
+   makes repeated serialization of one artifact byte-for-byte stable. Export creates identity and time
+   metadata unless supplied; a pure parse/restore/re-export preserves them, while a snapshot containing
+   fresh current-session evidence receives new metadata. P1.3 compaction omits clean passing stdout,
+   status narration turns, and verbose tool prose while preserving diagnostic evidence. Oversized
+   diagnostic artifacts fail instead of truncating semantics.
+8. **Lifecycle Store & Registry Integration:** Provides `exportSessionHandoffFromStore`,
+   `restoreSessionHandoffIntoStore`, and `ContextLifecycleRegistry.restoreSessionHandoff` for direct
+   integration with in-memory execution lease management.
+
+**Constraints.** Schema validation proves structure, not authenticity. Cross-session handoffs are
+informational context only, not automatic authorization for retry, escalation, continuation, scope
+expansion, compute selection, verification, or handoff consumption. Imported decisions, constraints,
+blockers, observations, verification, and lineage remain separate from current server-owned canonical
+evidence. Depends on P1.3.
 
 ## P2.3 End-to-End Automated Workflow
 

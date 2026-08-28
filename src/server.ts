@@ -80,6 +80,11 @@ import {
   type WorktreeLease,
 } from "./worktree.js";
 import { ContextLifecycleStore } from "./context.js";
+import {
+  restoreSessionHandoffIntoStore,
+  type ImportSessionHandoffOptions,
+  type SessionHandoffArtifact,
+} from "./session-handoff.js";
 
 /**
  * stdout is the MCP transport. Anything written there that is not a JSON-RPC
@@ -149,6 +154,16 @@ export class ContextLifecycleRegistry {
     ) {
       this.stores.delete(contextKey);
     }
+  }
+
+  restoreSessionHandoff(
+    contextKey: string,
+    input: string | unknown,
+    options?: ImportSessionHandoffOptions,
+  ): { store: ContextLifecycleStore; artifact: SessionHandoffArtifact } {
+    const store = this.getOrCreate(contextKey);
+    const artifact = restoreSessionHandoffIntoStore(store, input, options);
+    return { store, artifact };
   }
 
   private sweep(exceptContextKey?: string): void {
