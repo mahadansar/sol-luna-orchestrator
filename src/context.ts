@@ -22,6 +22,16 @@ import type {
   TaskCategory,
   WorkerFailureCause,
 } from "./contract.js";
+import {
+  CONTEXT_COOLDOWN_TURNS,
+  CONTEXT_MAX_BYTES,
+  CONTEXT_MAX_CLEAN_TURNS,
+  CONTEXT_MAX_TURNS,
+  DEFAULT_CONTEXT_MAX_TOOL_OVERHEAD_BYTES,
+  DEFAULT_CONTEXT_MAX_TOOL_OVERHEAD_TURNS,
+  DEFAULT_CONTEXT_MIN_RECLAIMABLE_BYTES,
+  DEFAULT_CONTEXT_RECLAIMABLE_RATIO_THRESHOLD,
+} from "./config.js";
 
 // Soft target for stale successful history. Protected turns may exceed it.
 export const MAX_RETAINED_TURNS = 100;
@@ -197,6 +207,8 @@ export interface OrchestrationContext {
   readonly blockers: readonly ContextBlocker[];
   readonly lineage: readonly ContextLineageEntry[];
   readonly turns: readonly ContextTurn[];
+  /** Latest authoritative turn included in a compact projection, when any. */
+  readonly lastCompactedTurnNumber?: number;
 }
 
 export interface CompactedVerificationItem {
@@ -366,6 +378,7 @@ export interface CompactedContext {
   readonly turns: readonly CompactedTurn[];
   readonly activeHandoffs: readonly CompactedHandoffRef[];
   readonly activeContinuations: readonly CompactedContinuationRef[];
+  readonly lastCompactedTurnNumber: number;
   readonly stats: CompactionStats;
 }
 
@@ -1363,6 +1376,10 @@ export function compactContext(
     turns: retainedTurns,
     activeHandoffs: [...handoffs.values()],
     activeContinuations: [...continuations.values()],
+    lastCompactedTurnNumber: context.turns.reduce(
+      (latest, turn) => Math.max(latest, turn.turnNumber),
+      context.lastCompactedTurnNumber ?? 0,
+    ),
     stats: {
       originalSizeBytes,
       compactedSizeBytes: 0,
@@ -1410,4 +1427,699 @@ export function compactContext(
     result = next;
   }
   return result;
+}
+
+// ============================================================================
+// P1.3B Context Pressure and Trigger Policy
+// ============================================================================
+
+export const SAFE_LIFECYCLE_BOUNDARIES = [
+  "pre-delegation",
+  "post-delegation",
+  "pre-continuation",
+  "post-continuation",
+  "pre-batch",
+  "post-batch",
+  "routing-preflight",
+  "review-handoff",
+  "session-idle",
+  "manual",
+] as const;
+
+export type SafeLifecycleBoundary = (typeof SAFE_LIFECYCLE_BOUNDARIES)[number];
+
+export const UNSAFE_LIFECYCLE_BOUNDARIES = [
+  "in-flight",
+  "atomic-repair",
+  "recovery-running",
+  "unknown",
+] as const;
+
+export type UnsafeLifecycleBoundary = (typeof UNSAFE_LIFECYCLE_BOUNDARIES)[number];
+
+export type ContextLifecycleBoundary =
+  SafeLifecycleBoundary | UnsafeLifecycleBoundary | (string & {});
+
+export function isSafeLifecycleBoundary(
+  boundary: string,
+): boundary is SafeLifecycleBoundary {
+  return (SAFE_LIFECYCLE_BOUNDARIES as readonly string[]).includes(boundary);
+}
+
+export const CONTEXT_TRIGGER_REASON_CODES = [
+  "trigger:size-pressure-exceeded",
+  "trigger:total-turns-exceeded",
+  "trigger:stale-clean-history-accumulated",
+  "trigger:repeated-tool-overhead-exceeded",
+  "trigger:high-reclaimable-ratio",
+  "trigger:manual-request",
+] as const;
+export type ContextTriggerReasonCode = (typeof CONTEXT_TRIGGER_REASON_CODES)[number];
+
+export const CONTEXT_BLOCK_REASON_CODES = [
+  "block:unsafe-lifecycle-boundary",
+  "block:already-compacted",
+  "block:cooldown-active",
+  "block:insufficient-reclaimable-gain",
+] as const;
+export type ContextBlockReasonCode = (typeof CONTEXT_BLOCK_REASON_CODES)[number];
+
+export const CONTEXT_NOOP_REASON_CODES = [
+  "noop:below-thresholds",
+  "noop:empty-context",
+] as const;
+export type ContextNoopReasonCode = (typeof CONTEXT_NOOP_REASON_CODES)[number];
+
+export type ContextCompactionReasonCode =
+  ContextTriggerReasonCode | ContextBlockReasonCode | ContextNoopReasonCode;
+
+export const CONTEXT_COMPACTION_DECISIONS = ["trigger", "block", "noop"] as const;
+export type ContextCompactionDecision = (typeof CONTEXT_COMPACTION_DECISIONS)[number];
+
+export interface ContextReportedTokens {
+  readonly inputTokens: number;
+  readonly cachedInputTokens: number;
+  readonly cacheWriteInputTokens?: number;
+  readonly outputTokens: number;
+  readonly reasoningOutputTokens: number;
+  readonly totalTokens: number;
+  readonly isAuthoritative: boolean;
+}
+
+export interface ContextPressureMetrics {
+  readonly totalSizeBytes: number;
+  readonly totalTurns: number;
+  readonly cleanTurns: number;
+  readonly diagnosticTurns: number;
+  readonly statusNarrationTurns: number;
+  readonly toolProseTurns: number;
+  readonly routingTurns: number;
+  readonly repeatedToolTurns: number;
+  readonly toolOverheadBytes: number;
+  readonly estimatedReclaimableBytes: number;
+  readonly reclaimableRatio: number;
+  readonly decisionsCount: number;
+  readonly constraintsCount: number;
+  readonly activeBlockersCount: number;
+  readonly activeSecurityBlockersCount: number;
+  readonly activeHandoffsCount: number;
+  readonly activeContinuationsCount: number;
+  readonly lineageCount: number;
+  readonly reportedTokens?: ContextReportedTokens;
+}
+
+export interface ContextPressurePolicyConfig {
+  readonly maxSizeBytes?: number;
+  readonly maxTotalTurns?: number;
+  readonly maxCleanTurns?: number;
+  readonly maxToolOverheadTurns?: number;
+  readonly maxToolOverheadBytes?: number;
+  readonly reclaimableRatioThreshold?: number;
+  readonly minReclaimableBytes?: number;
+  readonly cooldownTurns?: number;
+}
+
+export interface ResolvedContextPressureConfig {
+  readonly maxSizeBytes: number;
+  readonly maxTotalTurns: number;
+  readonly maxCleanTurns: number;
+  readonly maxToolOverheadTurns: number;
+  readonly maxToolOverheadBytes: number;
+  readonly reclaimableRatioThreshold: number;
+  readonly minReclaimableBytes: number;
+  readonly cooldownTurns: number;
+}
+
+function requireSafeInteger(name: string, value: number, minimum: number): number {
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    throw new Error(`${name} must be a safe integer >= ${minimum}`);
+  }
+  return value;
+}
+
+function requireRatio(name: string, value: number): number {
+  if (!Number.isFinite(value) || value <= 0 || value > 1) {
+    throw new Error(`${name} must be finite and > 0 and <= 1`);
+  }
+  return value;
+}
+
+export function validateResolvedContextPressureConfig(
+  config: ResolvedContextPressureConfig,
+): ResolvedContextPressureConfig {
+  return {
+    maxSizeBytes: requireSafeInteger("maxSizeBytes", config.maxSizeBytes, 1),
+    maxTotalTurns: requireSafeInteger("maxTotalTurns", config.maxTotalTurns, 1),
+    maxCleanTurns: requireSafeInteger("maxCleanTurns", config.maxCleanTurns, 1),
+    maxToolOverheadTurns: requireSafeInteger(
+      "maxToolOverheadTurns",
+      config.maxToolOverheadTurns,
+      1,
+    ),
+    maxToolOverheadBytes: requireSafeInteger(
+      "maxToolOverheadBytes",
+      config.maxToolOverheadBytes,
+      1,
+    ),
+    reclaimableRatioThreshold: requireRatio(
+      "reclaimableRatioThreshold",
+      config.reclaimableRatioThreshold,
+    ),
+    minReclaimableBytes: requireSafeInteger(
+      "minReclaimableBytes",
+      config.minReclaimableBytes,
+      1,
+    ),
+    cooldownTurns: requireSafeInteger("cooldownTurns", config.cooldownTurns, 0),
+  };
+}
+
+export function resolveContextPressureConfig(
+  overrides: ContextPressurePolicyConfig = {},
+): ResolvedContextPressureConfig {
+  return validateResolvedContextPressureConfig({
+    maxSizeBytes: requireSafeInteger(
+      "maxSizeBytes",
+      overrides.maxSizeBytes ?? CONTEXT_MAX_BYTES,
+      1,
+    ),
+    maxTotalTurns: requireSafeInteger(
+      "maxTotalTurns",
+      overrides.maxTotalTurns ?? CONTEXT_MAX_TURNS,
+      1,
+    ),
+    maxCleanTurns: requireSafeInteger(
+      "maxCleanTurns",
+      overrides.maxCleanTurns ?? CONTEXT_MAX_CLEAN_TURNS,
+      1,
+    ),
+    maxToolOverheadTurns: requireSafeInteger(
+      "maxToolOverheadTurns",
+      overrides.maxToolOverheadTurns ?? DEFAULT_CONTEXT_MAX_TOOL_OVERHEAD_TURNS,
+      1,
+    ),
+    maxToolOverheadBytes: requireSafeInteger(
+      "maxToolOverheadBytes",
+      overrides.maxToolOverheadBytes ?? DEFAULT_CONTEXT_MAX_TOOL_OVERHEAD_BYTES,
+      1,
+    ),
+    reclaimableRatioThreshold: requireRatio(
+      "reclaimableRatioThreshold",
+      overrides.reclaimableRatioThreshold ?? DEFAULT_CONTEXT_RECLAIMABLE_RATIO_THRESHOLD,
+    ),
+    minReclaimableBytes: requireSafeInteger(
+      "minReclaimableBytes",
+      overrides.minReclaimableBytes ?? DEFAULT_CONTEXT_MIN_RECLAIMABLE_BYTES,
+      1,
+    ),
+    cooldownTurns: requireSafeInteger(
+      "cooldownTurns",
+      overrides.cooldownTurns ?? CONTEXT_COOLDOWN_TURNS,
+      0,
+    ),
+  });
+}
+
+function extractReportedTokens(
+  context: OrchestrationContext,
+): ContextReportedTokens | undefined {
+  const usageSamples: unknown[] = context.lineage.map((entry) => entry.usage);
+
+  const collectOutputUsage = (output: DelegateTaskOutput): void => {
+    // Current results have immutable per-execution lineage. Historical results
+    // may lack attempts, in which case the top-level aggregate is the only fact.
+    if (!output.attempts || output.attempts.length === 0) {
+      usageSamples.push(output.usage);
+    }
+  };
+
+  for (const turn of context.turns) {
+    if (turn.kind === "single-delegation" || turn.kind === "continuation") {
+      collectOutputUsage(turn.output);
+    } else if (turn.kind === "batch-delegation") {
+      for (const task of turn.output.tasks) {
+        const attempts = task.attempts ?? task.result?.attempts;
+        if (!attempts || attempts.length === 0) {
+          usageSamples.push(task.result?.usage ?? null);
+        }
+      }
+    }
+  }
+
+  if (usageSamples.length === 0) return undefined;
+
+  let inputTokens = 0;
+  let cachedInputTokens = 0;
+  let cacheWriteInputTokens = 0;
+  let cacheWriteComplete = true;
+  let outputTokens = 0;
+  let reasoningOutputTokens = 0;
+
+  for (const usage of usageSamples) {
+    if (!usage || typeof usage !== "object") return undefined;
+    const val =
+      "value" in usage && usage.value && typeof usage.value === "object"
+        ? (usage.value as Record<string, unknown>)
+        : (usage as Record<string, unknown>);
+    const fields = [
+      val.inputTokens,
+      val.cachedInputTokens,
+      val.outputTokens,
+      val.reasoningOutputTokens,
+    ];
+    if (
+      fields.some(
+        (value) => typeof value !== "number" || !Number.isSafeInteger(value) || value < 0,
+      )
+    ) {
+      return undefined;
+    }
+    const sampleInput = val.inputTokens as number;
+    const sampleCached = val.cachedInputTokens as number;
+    const sampleOutput = val.outputTokens as number;
+    const sampleReasoning = val.reasoningOutputTokens as number;
+    if (sampleCached > sampleInput || sampleReasoning > sampleOutput) return undefined;
+
+    inputTokens += sampleInput;
+    cachedInputTokens += sampleCached;
+    outputTokens += sampleOutput;
+    reasoningOutputTokens += sampleReasoning;
+    if (val.cacheWriteInputTokens === undefined) {
+      cacheWriteComplete = false;
+    } else if (
+      typeof val.cacheWriteInputTokens === "number" &&
+      Number.isSafeInteger(val.cacheWriteInputTokens) &&
+      val.cacheWriteInputTokens >= 0
+    ) {
+      cacheWriteInputTokens += val.cacheWriteInputTokens;
+    } else {
+      return undefined;
+    }
+  }
+
+  return {
+    inputTokens,
+    cachedInputTokens,
+    ...(cacheWriteComplete ? { cacheWriteInputTokens } : {}),
+    outputTokens,
+    reasoningOutputTokens,
+    // Provider input already includes cached input, and provider output already
+    // includes reasoning output. Neither subtype is added a second time.
+    totalTokens: inputTokens + outputTokens,
+    isAuthoritative: true,
+  };
+}
+
+export function calculateContextPressureMetrics(
+  context: OrchestrationContext,
+): ContextPressureMetrics {
+  const totalSizeBytes = byteLength(context);
+  const totalTurns = context.turns.length;
+  const decisionsCount = context.decisions.length;
+  const constraintsCount = context.constraints.length;
+  const lineageCount = context.lineage.length;
+  const activeBlockers = context.blockers.filter((b) => !b.resolved);
+  const activeBlockersCount = activeBlockers.length;
+  const activeSecurityBlockersCount = activeBlockers.filter((b) => {
+    return (
+      b.kind === "scope-violation" ||
+      b.kind === "scope-conflict" ||
+      b.kind === "integration-conflict" ||
+      b.failureClassification === "security-or-trust-boundary" ||
+      b.failureClassification === "scope-or-conflict"
+    );
+  }).length;
+  const reportedTokens = extractReportedTokens(context);
+
+  let cleanTurns = 0;
+  let diagnosticTurns = 0;
+  let statusNarrationTurns = 0;
+  let toolProseTurns = 0;
+  let routingTurns = 0;
+
+  const handoffs = new Map<string, CompactedHandoffRef>();
+  const continuations = new Map<string, CompactedContinuationRef>();
+
+  for (const turn of context.turns) {
+    if (turn.kind === "status-narration") {
+      statusNarrationTurns++;
+      continue;
+    }
+    if (turn.kind === "tool-prose") {
+      toolProseTurns++;
+      continue;
+    }
+    if (turn.kind === "routing-preflight") {
+      routingTurns++;
+      continue;
+    }
+
+    if (turn.kind === "single-delegation") {
+      if (turn.input.handoffReference) handoffs.delete(turn.input.handoffReference);
+      if (turn.output.handoffReference && turn.output.handoffState?.status === "issued") {
+        handoffs.set(turn.output.handoffReference, {
+          reference: turn.output.handoffReference,
+          status: "issued",
+          availabilityBasis: "recorded-issued-unconsumed",
+          reason: turn.output.handoffState.reason,
+          action: turn.output.failureDecision?.action,
+        });
+      } else if (turn.output.handoffReference) {
+        handoffs.delete(turn.output.handoffReference);
+      }
+      if (
+        turn.output.continuationReference &&
+        turn.output.continuationState?.status === "issued"
+      ) {
+        continuations.set(turn.output.continuationReference, {
+          reference: turn.output.continuationReference,
+          status: "issued",
+          availabilityBasis: "recorded-issued-unconsumed",
+          reason: turn.output.continuationState.reason,
+        });
+      } else if (turn.output.continuationReference) {
+        continuations.delete(turn.output.continuationReference);
+      }
+
+      if (isCleanPassResult(turn.output)) {
+        cleanTurns++;
+      } else {
+        diagnosticTurns++;
+      }
+      continue;
+    }
+
+    if (turn.kind === "continuation") {
+      continuations.delete(turn.continuationReference);
+      if (turn.output.handoffReference && turn.output.handoffState?.status === "issued") {
+        handoffs.set(turn.output.handoffReference, {
+          reference: turn.output.handoffReference,
+          status: "issued",
+          availabilityBasis: "recorded-issued-unconsumed",
+          reason: turn.output.handoffState.reason,
+          action: turn.output.failureDecision?.action,
+        });
+      } else if (turn.output.handoffReference) {
+        handoffs.delete(turn.output.handoffReference);
+      }
+      if (
+        turn.output.continuationReference &&
+        turn.output.continuationState?.status === "issued"
+      ) {
+        continuations.set(turn.output.continuationReference, {
+          reference: turn.output.continuationReference,
+          status: "issued",
+          availabilityBasis: "recorded-issued-unconsumed",
+          reason: turn.output.continuationState.reason,
+        });
+      } else if (turn.output.continuationReference) {
+        continuations.delete(turn.output.continuationReference);
+      }
+
+      if (isCleanPassResult(turn.output)) {
+        cleanTurns++;
+      } else {
+        diagnosticTurns++;
+      }
+      continue;
+    }
+
+    if (turn.kind === "batch-delegation") {
+      for (const task of turn.input.tasks) {
+        if (task.handoffReference) handoffs.delete(task.handoffReference);
+      }
+      for (const task of turn.output.tasks) {
+        const href = task.handoffReference ?? task.result?.handoffReference;
+        const hstate = task.handoffState ?? task.result?.handoffState;
+        if (href && hstate?.status === "issued") {
+          handoffs.set(href, {
+            reference: href,
+            status: "issued",
+            availabilityBasis: "recorded-issued-unconsumed",
+            reason: hstate.reason,
+            action: task.failureDecision?.action ?? task.result?.failureDecision?.action,
+          });
+        } else if (href) {
+          handoffs.delete(href);
+        }
+        const cref = task.result?.continuationReference;
+        const cstate = task.result?.continuationState;
+        if (cref && cstate?.status === "issued") {
+          continuations.set(cref, {
+            reference: cref,
+            status: "issued",
+            availabilityBasis: "recorded-issued-unconsumed",
+            reason: cstate.reason,
+          });
+        } else if (cref) {
+          continuations.delete(cref);
+        }
+      }
+
+      if (isCleanBatchResult(turn.output)) {
+        cleanTurns++;
+      } else {
+        diagnosticTurns++;
+      }
+    }
+  }
+
+  const repeatedToolTurns = statusNarrationTurns + toolProseTurns;
+  const contextWithoutRepeatedToolTurns: OrchestrationContext = {
+    ...context,
+    turns: context.turns.filter(
+      (turn) => turn.kind !== "status-narration" && turn.kind !== "tool-prose",
+    ),
+  };
+  const toolOverheadBytes = Math.max(
+    0,
+    totalSizeBytes - byteLength(contextWithoutRepeatedToolTurns),
+  );
+  const compacted = compactContext(context);
+  const estimatedReclaimableBytes = Math.max(
+    0,
+    totalSizeBytes - compacted.stats.compactedSizeBytes,
+  );
+  const reclaimableRatio =
+    totalSizeBytes === 0
+      ? 0
+      : Number((estimatedReclaimableBytes / totalSizeBytes).toFixed(4));
+
+  return {
+    totalSizeBytes,
+    totalTurns,
+    cleanTurns,
+    diagnosticTurns,
+    statusNarrationTurns,
+    toolProseTurns,
+    routingTurns,
+    repeatedToolTurns,
+    toolOverheadBytes,
+    estimatedReclaimableBytes,
+    reclaimableRatio,
+    decisionsCount,
+    constraintsCount,
+    activeBlockersCount,
+    activeSecurityBlockersCount,
+    activeHandoffsCount: handoffs.size,
+    activeContinuationsCount: continuations.size,
+    lineageCount,
+    reportedTokens,
+  };
+}
+
+export interface EvaluateContextPressureOptions {
+  readonly boundary: ContextLifecycleBoundary;
+  /** Fully resolved operator policy; the evaluator performs no environment reads. */
+  readonly config: ResolvedContextPressureConfig;
+  readonly force?: boolean;
+}
+
+export interface ContextPressureEvaluation {
+  readonly decision: ContextCompactionDecision;
+  readonly primaryReason: ContextCompactionReasonCode;
+  readonly reasonDetails: string;
+  readonly contributingReasons: readonly ContextCompactionReasonCode[];
+  readonly metrics: ContextPressureMetrics;
+  readonly safeBoundary: boolean;
+  readonly boundary: ContextLifecycleBoundary;
+  readonly cooldownRemaining: number;
+}
+
+export function evaluateContextPressure(
+  context: OrchestrationContext,
+  options: EvaluateContextPressureOptions,
+): ContextPressureEvaluation {
+  const boundary = options.boundary;
+  const safeBoundary = isSafeLifecycleBoundary(boundary);
+  const resolvedConfig = validateResolvedContextPressureConfig(options.config);
+  const force = Boolean(options.force);
+  const currentTurn = context.turns.reduce(
+    (latest, turn) => Math.max(latest, turn.turnNumber),
+    0,
+  );
+  const lastCompactedTurnNumber = context.lastCompactedTurnNumber;
+  if (
+    lastCompactedTurnNumber !== undefined &&
+    (!Number.isSafeInteger(lastCompactedTurnNumber) ||
+      lastCompactedTurnNumber < 0 ||
+      lastCompactedTurnNumber > currentTurn)
+  ) {
+    throw new Error(
+      "lastCompactedTurnNumber must identify an authoritative turn in this context",
+    );
+  }
+
+  const metrics = calculateContextPressureMetrics(context);
+
+  const cooldownRemaining =
+    lastCompactedTurnNumber !== undefined
+      ? Math.max(
+          0,
+          resolvedConfig.cooldownTurns - (currentTurn - lastCompactedTurnNumber),
+        )
+      : 0;
+
+  const triggerReasons: ContextTriggerReasonCode[] = [];
+  if (metrics.totalSizeBytes >= resolvedConfig.maxSizeBytes) {
+    triggerReasons.push("trigger:size-pressure-exceeded");
+  }
+  if (metrics.totalTurns >= resolvedConfig.maxTotalTurns) {
+    triggerReasons.push("trigger:total-turns-exceeded");
+  }
+  if (metrics.cleanTurns >= resolvedConfig.maxCleanTurns) {
+    triggerReasons.push("trigger:stale-clean-history-accumulated");
+  }
+  if (
+    metrics.repeatedToolTurns >= resolvedConfig.maxToolOverheadTurns ||
+    metrics.toolOverheadBytes >= resolvedConfig.maxToolOverheadBytes
+  ) {
+    triggerReasons.push("trigger:repeated-tool-overhead-exceeded");
+  }
+  if (metrics.reclaimableRatio >= resolvedConfig.reclaimableRatioThreshold) {
+    triggerReasons.push("trigger:high-reclaimable-ratio");
+  }
+  if (force) triggerReasons.push("trigger:manual-request");
+
+  const blockReasons: ContextBlockReasonCode[] = [];
+  if (triggerReasons.length > 0) {
+    if (!safeBoundary) blockReasons.push("block:unsafe-lifecycle-boundary");
+    if (
+      lastCompactedTurnNumber !== undefined &&
+      lastCompactedTurnNumber === currentTurn
+    ) {
+      blockReasons.push("block:already-compacted");
+    }
+    if (cooldownRemaining > 0) blockReasons.push("block:cooldown-active");
+    if (metrics.estimatedReclaimableBytes < resolvedConfig.minReclaimableBytes) {
+      blockReasons.push("block:insufficient-reclaimable-gain");
+    }
+  }
+
+  let decision: ContextCompactionDecision;
+  let primaryReason: ContextCompactionReasonCode;
+  let contributingReasons: ContextCompactionReasonCode[];
+
+  if (blockReasons.length > 0) {
+    decision = "block";
+    primaryReason = blockReasons[0]!;
+    contributingReasons = blockReasons;
+  } else if (triggerReasons.length > 0) {
+    decision = "trigger";
+    primaryReason = triggerReasons[0]!;
+    contributingReasons = triggerReasons;
+  } else {
+    decision = "noop";
+    if (metrics.totalTurns === 0) {
+      primaryReason = "noop:empty-context";
+    } else {
+      primaryReason = "noop:below-thresholds";
+    }
+    contributingReasons = [primaryReason];
+  }
+
+  let reasonDetails: string;
+  switch (primaryReason) {
+    case "block:already-compacted":
+      reasonDetails =
+        "Context compaction blocked: no authoritative turns have accumulated since the last compaction.";
+      break;
+    case "block:unsafe-lifecycle-boundary":
+      reasonDetails = `Context compaction blocked: lifecycle boundary '${boundary}' is not a safe compaction boundary.`;
+      break;
+    case "block:cooldown-active":
+      reasonDetails = `Context compaction blocked: cooldown active (${cooldownRemaining} turn(s) remaining since authoritative compaction at turn ${lastCompactedTurnNumber}).`;
+      break;
+    case "block:insufficient-reclaimable-gain":
+      reasonDetails = `Context compaction blocked: estimated reclaimable bytes (${metrics.estimatedReclaimableBytes} B) below minimum threshold (${resolvedConfig.minReclaimableBytes} B).`;
+      break;
+    case "trigger:size-pressure-exceeded":
+      reasonDetails = `Context compaction triggered: total context size (${metrics.totalSizeBytes} B) reached threshold (${resolvedConfig.maxSizeBytes} B) with ${metrics.estimatedReclaimableBytes} B reclaimable.`;
+      break;
+    case "trigger:total-turns-exceeded":
+      reasonDetails = `Context compaction triggered: total turns (${metrics.totalTurns}) reached threshold (${resolvedConfig.maxTotalTurns}) with ${metrics.estimatedReclaimableBytes} B reclaimable.`;
+      break;
+    case "trigger:stale-clean-history-accumulated":
+      reasonDetails = `Context compaction triggered: accumulated ${metrics.cleanTurns} clean turns (threshold: ${resolvedConfig.maxCleanTurns}) with ${metrics.estimatedReclaimableBytes} B reclaimable.`;
+      break;
+    case "trigger:repeated-tool-overhead-exceeded":
+      reasonDetails = `Context compaction triggered: repeated tool turns (${metrics.repeatedToolTurns}) or exactly removable repeated-turn bytes (${metrics.toolOverheadBytes} B) reached a threshold with ${metrics.estimatedReclaimableBytes} B reclaimable.`;
+      break;
+    case "trigger:high-reclaimable-ratio":
+      reasonDetails = `Context compaction triggered: reclaimable ratio (${(metrics.reclaimableRatio * 100).toFixed(1)}%) reached threshold (${(resolvedConfig.reclaimableRatioThreshold * 100).toFixed(1)}%) with ${metrics.estimatedReclaimableBytes} B reclaimable.`;
+      break;
+    case "trigger:manual-request":
+      reasonDetails = `Context compaction triggered: manually requested at safe boundary '${boundary}'.`;
+      break;
+    case "noop:empty-context":
+      reasonDetails = `Context compaction no-op: context contains no turns.`;
+      break;
+    case "noop:below-thresholds":
+      reasonDetails = `Context compaction no-op: context size (${metrics.totalSizeBytes} B, ${metrics.totalTurns} turns) is below all pressure thresholds.`;
+      break;
+    default:
+      reasonDetails = `Context compaction evaluated with outcome: ${primaryReason}.`;
+      break;
+  }
+
+  return {
+    decision,
+    primaryReason,
+    reasonDetails,
+    contributingReasons,
+    metrics,
+    safeBoundary,
+    boundary,
+    cooldownRemaining,
+  };
+}
+
+export function maybeCompactContext(
+  context: OrchestrationContext,
+  options: EvaluateContextPressureOptions,
+): {
+  readonly context: OrchestrationContext | CompactedContext;
+  readonly authoritativeContext: OrchestrationContext;
+  readonly evaluation: ContextPressureEvaluation;
+  readonly compacted: boolean;
+} {
+  const evaluation = evaluateContextPressure(context, options);
+  if (evaluation.decision === "trigger") {
+    const compactedContext = compactContext(context);
+    return {
+      context: compactedContext,
+      authoritativeContext: {
+        ...context,
+        lastCompactedTurnNumber: compactedContext.lastCompactedTurnNumber,
+      },
+      evaluation,
+      compacted: true,
+    };
+  }
+  return {
+    context,
+    authoritativeContext: context,
+    evaluation,
+    compacted: false,
+  };
 }

@@ -1,22 +1,28 @@
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import {
+  calculateContextPressureMetrics,
   compactContext,
   createOrchestrationContext,
+  evaluateContextPressure,
   ingestBatchTurn,
   ingestContinuationTurn,
   ingestDelegationTurn,
   ingestRoutingPreflightTurn,
   ingestStatusNarrationTurn,
   ingestToolProseTurn,
+  isSafeLifecycleBoundary,
+  maybeCompactContext,
   recordBlocker,
   recordConstraint,
   recordDecision,
   resolveBlocker,
+  resolveContextPressureConfig,
   scrubSensitiveText,
   type ContextBlocker,
   type ContextConstraint,
   type ContextDecision,
+  type ContextPressurePolicyConfig,
   type OrchestrationContext,
 } from "./context.js";
 import type {
@@ -25,6 +31,7 @@ import type {
   DelegateTaskOutput,
   DelegateTasksInput,
 } from "./contract.js";
+import { parseContextNonNegativeInteger, parseContextPositiveInteger } from "./config.js";
 
 function mockCleanTaskInput(
   overrides: Partial<DelegateTaskInput> = {},
@@ -1262,4 +1269,670 @@ test("context core - clean batch retains review facts while omitting only passed
   );
   assert.deepEqual(turn.batchTasks?.[0]?.risks, ["No breaking changes."]);
   assert.equal(turn.batchOutcome?.completionState, "verified-complete");
+});
+
+// ============================================================================
+// P1.3B Context Pressure and Trigger Policy Tests
+// ============================================================================
+
+function mockCleanCompletedOutput(
+  overrides: Partial<DelegateTaskOutput> = {},
+): DelegateTaskOutput {
+  return mockCleanTaskOutput({
+    continuationReference: null,
+    continuationState: {
+      status: "not-eligible",
+      reason: "Completed task has no active continuation.",
+    },
+    ...overrides,
+  });
+}
+
+const DEFAULT_PRESSURE_CONFIG = resolveContextPressureConfig();
+
+const pressureOptions = (
+  config: ContextPressurePolicyConfig = {},
+  boundary: "manual" | "post-delegation" | "in-flight" = "manual",
+  force = false,
+) => ({
+  boundary,
+  config: resolveContextPressureConfig(config),
+  ...(force ? { force: true } : {}),
+});
+
+test("context pressure - below-threshold no-op", () => {
+  const input = mockCleanTaskInput();
+  const output = mockCleanCompletedOutput();
+  let ctx = createOrchestrationContext({
+    objective: "Implement a small feature.",
+    acceptanceCriteria: ["Feature works."],
+  });
+  ctx = ingestDelegationTurn(ctx, { input, output, taskId: "t1" });
+
+  const evalPost = evaluateContextPressure(ctx, pressureOptions({}, "post-delegation"));
+  assert.equal(evalPost.decision, "noop");
+  assert.equal(evalPost.primaryReason, "noop:below-thresholds");
+  assert.equal(evalPost.safeBoundary, true);
+  assert.equal(evalPost.boundary, "post-delegation");
+  assert.equal(evalPost.cooldownRemaining, 0);
+  assert.ok(evalPost.reasonDetails.includes("below all pressure thresholds"));
+
+  const emptyCtx = createOrchestrationContext({
+    objective: "Empty context.",
+    acceptanceCriteria: [],
+  });
+  const evalEmpty = evaluateContextPressure(emptyCtx, pressureOptions());
+  assert.equal(evalEmpty.decision, "noop");
+  assert.equal(evalEmpty.primaryReason, "noop:empty-context");
+  assert.ok(evalEmpty.reasonDetails.includes("contains no turns"));
+
+  const maybeResult = maybeCompactContext(ctx, pressureOptions({}, "post-delegation"));
+  assert.equal(maybeResult.compacted, false);
+  assert.equal(maybeResult.context, ctx);
+  assert.equal(maybeResult.evaluation.decision, "noop");
+});
+
+test("context pressure - above-threshold trigger for size and turns", () => {
+  const input = mockCleanTaskInput();
+  const output = mockCleanCompletedOutput();
+  let ctx = createOrchestrationContext({
+    objective: "Large feature context.",
+    acceptanceCriteria: ["Criteria 1", "Criteria 2"],
+  });
+  ctx = ingestDelegationTurn(ctx, { input, output, taskId: "t1" });
+  ctx = ingestDelegationTurn(ctx, { input, output, taskId: "t2" });
+
+  const metrics = calculateContextPressureMetrics(ctx);
+  assert.ok(metrics.totalSizeBytes > 2000);
+  assert.ok(metrics.estimatedReclaimableBytes > 500);
+
+  // Trigger on size pressure
+  const evalSize = evaluateContextPressure(ctx, {
+    boundary: "manual",
+    config: { ...DEFAULT_PRESSURE_CONFIG, maxSizeBytes: 2000, minReclaimableBytes: 500 },
+  });
+  assert.equal(evalSize.decision, "trigger");
+  assert.equal(evalSize.primaryReason, "trigger:size-pressure-exceeded");
+  assert.ok(evalSize.contributingReasons.includes("trigger:size-pressure-exceeded"));
+  assert.ok(evalSize.reasonDetails.includes("reached threshold"));
+
+  // Trigger on total turns count
+  const evalTurns = evaluateContextPressure(ctx, {
+    boundary: "manual",
+    config: {
+      ...DEFAULT_PRESSURE_CONFIG,
+      maxTotalTurns: 2,
+      maxSizeBytes: 1_000_000,
+      minReclaimableBytes: 500,
+    },
+  });
+  assert.equal(evalTurns.decision, "trigger");
+  assert.equal(evalTurns.primaryReason, "trigger:total-turns-exceeded");
+
+  // Trigger on reclaimable ratio
+  const evalRatio = evaluateContextPressure(ctx, {
+    boundary: "manual",
+    config: {
+      ...DEFAULT_PRESSURE_CONFIG,
+      reclaimableRatioThreshold: 0.05,
+      maxSizeBytes: 1_000_000,
+      maxTotalTurns: 100,
+      minReclaimableBytes: 500,
+    },
+  });
+  assert.equal(evalRatio.decision, "trigger");
+  assert.equal(evalRatio.primaryReason, "trigger:high-reclaimable-ratio");
+
+  // maybeCompactContext executes compaction on trigger
+  const maybeCompacted = maybeCompactContext(ctx, {
+    boundary: "manual",
+    config: { ...DEFAULT_PRESSURE_CONFIG, maxSizeBytes: 2000, minReclaimableBytes: 500 },
+  });
+  assert.equal(maybeCompacted.compacted, true);
+  assert.ok("stats" in maybeCompacted.context);
+  assert.ok(maybeCompacted.context.stats.compactedSizeBytes < metrics.totalSizeBytes);
+});
+
+test("context pressure - stale clean-history accumulation trigger", () => {
+  const input = mockCleanTaskInput();
+  const output = mockCleanCompletedOutput();
+  let ctx = createOrchestrationContext({
+    objective: "Multi-step clean progression.",
+    acceptanceCriteria: ["Step 1", "Step 2", "Step 3", "Step 4", "Step 5"],
+  });
+
+  for (let i = 1; i <= 5; i++) {
+    ctx = ingestDelegationTurn(ctx, { input, output, taskId: `task_${i}` });
+  }
+
+  const metrics = calculateContextPressureMetrics(ctx);
+  assert.equal(metrics.cleanTurns, 5);
+  assert.equal(metrics.totalTurns, 5);
+
+  const evalStale = evaluateContextPressure(ctx, {
+    boundary: "manual",
+    config: {
+      ...DEFAULT_PRESSURE_CONFIG,
+      maxCleanTurns: 4,
+      maxSizeBytes: 1_000_000,
+      maxTotalTurns: 100,
+      minReclaimableBytes: 500,
+    },
+  });
+  assert.equal(evalStale.decision, "trigger");
+  assert.equal(evalStale.primaryReason, "trigger:stale-clean-history-accumulated");
+  assert.ok(
+    evalStale.contributingReasons.includes("trigger:stale-clean-history-accumulated"),
+  );
+  assert.ok(evalStale.reasonDetails.includes("accumulated 5 clean turns"));
+});
+
+test("context pressure - repeated tool and result overhead trigger", () => {
+  const input = mockCleanTaskInput();
+  const output = mockCleanCompletedOutput();
+  let ctx = createOrchestrationContext({
+    objective: "Handle polling and tool activity.",
+    acceptanceCriteria: ["Polled appropriately."],
+  });
+  ctx = ingestDelegationTurn(ctx, { input, output, taskId: "t1" });
+  ctx = ingestStatusNarrationTurn(ctx, "Worker started background processing...");
+  ctx = ingestStatusNarrationTurn(ctx, "Still running test suite (30s elapsed)...");
+  ctx = ingestStatusNarrationTurn(ctx, "Still running test suite (60s elapsed)...");
+  ctx = ingestToolProseTurn(ctx, "mcp_runner", "Tool invocation output verbose prose...");
+
+  const metrics = calculateContextPressureMetrics(ctx);
+  assert.equal(metrics.statusNarrationTurns, 3);
+  assert.equal(metrics.toolProseTurns, 1);
+  assert.equal(metrics.repeatedToolTurns, 4);
+  assert.ok(metrics.toolOverheadBytes > 0);
+  const withoutRepeatedTurns = {
+    ...ctx,
+    turns: ctx.turns.filter(
+      (turn) => turn.kind !== "status-narration" && turn.kind !== "tool-prose",
+    ),
+  };
+  assert.equal(
+    metrics.toolOverheadBytes,
+    new TextEncoder().encode(JSON.stringify(ctx)).byteLength -
+      new TextEncoder().encode(JSON.stringify(withoutRepeatedTurns)).byteLength,
+  );
+
+  // Trigger when repeated tool turns exceed threshold
+  const evalOverheadTurns = evaluateContextPressure(ctx, {
+    boundary: "manual",
+    config: {
+      ...DEFAULT_PRESSURE_CONFIG,
+      maxToolOverheadTurns: 3,
+      maxSizeBytes: 1_000_000,
+      maxTotalTurns: 100,
+      maxCleanTurns: 100,
+      minReclaimableBytes: 100,
+    },
+  });
+  assert.equal(evalOverheadTurns.decision, "trigger");
+  assert.equal(
+    evalOverheadTurns.primaryReason,
+    "trigger:repeated-tool-overhead-exceeded",
+  );
+
+  // Trigger when tool overhead bytes exceed threshold
+  const evalOverheadBytes = evaluateContextPressure(ctx, {
+    boundary: "manual",
+    config: {
+      ...DEFAULT_PRESSURE_CONFIG,
+      maxToolOverheadBytes: 200,
+      maxToolOverheadTurns: 100,
+      maxSizeBytes: 1_000_000,
+      maxTotalTurns: 100,
+      maxCleanTurns: 100,
+      minReclaimableBytes: 100,
+    },
+  });
+  assert.equal(evalOverheadBytes.decision, "trigger");
+  assert.equal(
+    evalOverheadBytes.primaryReason,
+    "trigger:repeated-tool-overhead-exceeded",
+  );
+});
+
+test("context pressure - active references and protected evidence survive compaction", () => {
+  // Scenario A: Active issued next-action handoff reference
+  const failedHandoffOutput = mockFailedTaskOutput({
+    handoffReference: "hdf_active_retry_12345678901234567890123456789012",
+    handoffState: {
+      status: "issued",
+      reason: "One bounded next-action handoff issued for retry.",
+    },
+  });
+  let ctxA = createOrchestrationContext({
+    objective: "Task with pending retry handoff.",
+    acceptanceCriteria: ["Criteria"],
+  });
+  ctxA = ingestDelegationTurn(ctxA, {
+    input: mockCleanTaskInput(),
+    output: failedHandoffOutput,
+    taskId: "t1",
+  });
+
+  const evalA = evaluateContextPressure(
+    ctxA,
+    pressureOptions({ maxSizeBytes: 100, minReclaimableBytes: 50 }),
+  );
+  assert.equal(evalA.decision, "trigger");
+  assert.ok(evalA.metrics.activeHandoffsCount > 0);
+  assert.doesNotMatch(JSON.stringify(evalA), /hdf_active_retry_/);
+  const compactedA = compactContext(ctxA);
+  assert.equal(compactedA.activeHandoffs.length, 1);
+  assert.equal(
+    compactedA.turns[0]?.contract?.objective,
+    ctxA.turns[0]?.kind === "single-delegation"
+      ? ctxA.turns[0].input.objective
+      : undefined,
+  );
+
+  // Scenario B: Active issued continuation reference
+  const continuationOutput = mockCleanTaskOutput({
+    continuationReference: "ctr_active_12345678901234567890123456789012",
+    continuationState: {
+      status: "issued",
+      reason: "One continuation turn available.",
+    },
+  });
+  let ctxB = createOrchestrationContext({
+    objective: "Task with pending continuation.",
+    acceptanceCriteria: ["Criteria"],
+  });
+  ctxB = ingestDelegationTurn(ctxB, {
+    input: mockCleanTaskInput(),
+    output: continuationOutput,
+    taskId: "t1",
+  });
+
+  const evalB = evaluateContextPressure(
+    ctxB,
+    pressureOptions({ maxSizeBytes: 100, minReclaimableBytes: 50 }),
+  );
+  assert.equal(evalB.decision, "trigger");
+  assert.ok(evalB.metrics.activeContinuationsCount > 0);
+  assert.doesNotMatch(JSON.stringify(evalB), /ctr_active_/);
+  assert.equal(compactContext(ctxB).activeContinuations.length, 1);
+
+  // Scenario B2: Consumed continuation reference unblocks compaction
+  ctxB = ingestContinuationTurn(ctxB, {
+    continuationReference: "ctr_active_12345678901234567890123456789012",
+    instruction: "Follow up.",
+    output: mockCleanCompletedOutput(),
+    taskId: "t1",
+  });
+  const evalBConsumed = evaluateContextPressure(
+    ctxB,
+    pressureOptions({ maxSizeBytes: 100, minReclaimableBytes: 50 }),
+  );
+  assert.equal(evalBConsumed.decision, "trigger");
+  assert.equal(evalBConsumed.primaryReason, "trigger:size-pressure-exceeded");
+  assert.equal(evalBConsumed.metrics.activeContinuationsCount, 0);
+
+  // Scenario C: Active unresolved security / scope violation blocker
+  let ctxC = createOrchestrationContext({
+    objective: "Task with security violation.",
+    acceptanceCriteria: ["Criteria"],
+  });
+  ctxC = ingestDelegationTurn(ctxC, {
+    input: mockCleanTaskInput(),
+    output: mockCleanCompletedOutput(),
+    taskId: "t1",
+  });
+  ctxC = recordBlocker(ctxC, {
+    kind: "scope-violation",
+    description: "Observed edit outside allowedFiles in src/secret.ts",
+    resolved: false,
+    failureClassification: "security-or-trust-boundary",
+  });
+
+  const evalC = evaluateContextPressure(
+    ctxC,
+    pressureOptions({ maxSizeBytes: 100, minReclaimableBytes: 50 }),
+  );
+  assert.equal(evalC.decision, "trigger");
+  assert.ok(evalC.metrics.activeSecurityBlockersCount > 0);
+  assert.equal(
+    compactContext(ctxC).blockers[0]?.description,
+    ctxC.blockers[0]?.description,
+  );
+
+  // Resolve blocker -> security block clears
+  const blockerId = ctxC.blockers[ctxC.blockers.length - 1]!.id;
+  const ctxCResolved = resolveBlocker(ctxC, blockerId);
+  const evalCResolved = evaluateContextPressure(
+    ctxCResolved,
+    pressureOptions({ maxSizeBytes: 100, minReclaimableBytes: 50 }),
+  );
+  assert.equal(evalCResolved.decision, "trigger");
+  assert.equal(evalCResolved.primaryReason, "trigger:size-pressure-exceeded");
+
+  // Scenario D: Unsafe lifecycle boundary
+  const evalUnsafe = evaluateContextPressure(
+    ctxA,
+    pressureOptions({ maxSizeBytes: 100, minReclaimableBytes: 50 }, "in-flight"),
+  );
+  assert.equal(evalUnsafe.decision, "block");
+  assert.equal(evalUnsafe.primaryReason, "block:unsafe-lifecycle-boundary");
+  assert.equal(evalUnsafe.safeBoundary, false);
+  assert.equal(isSafeLifecycleBoundary("in-flight"), false);
+  assert.equal(isSafeLifecycleBoundary("post-delegation"), true);
+});
+
+test("context pressure - hysteresis and cooldown prevent thrashing", () => {
+  const input = mockCleanTaskInput();
+  const output = mockCleanCompletedOutput();
+  let ctx = createOrchestrationContext({
+    objective: "Cooldown test.",
+    acceptanceCriteria: ["Tested."],
+  });
+  for (let i = 1; i <= 5; i++) {
+    ctx = ingestDelegationTurn(ctx, { input, output, taskId: `t${i}` });
+  }
+
+  const first = maybeCompactContext(
+    ctx,
+    pressureOptions({ cooldownTurns: 3, maxSizeBytes: 100, minReclaimableBytes: 50 }),
+  );
+  assert.equal(first.compacted, true);
+  ctx = ingestDelegationTurn(first.authoritativeContext, {
+    input,
+    output,
+    taskId: "t6",
+  });
+
+  // One authoritative turn after compaction leaves two cooldown turns.
+  const evalCooldown = evaluateContextPressure(
+    ctx,
+    pressureOptions({ cooldownTurns: 3, maxSizeBytes: 100, minReclaimableBytes: 50 }),
+  );
+  assert.equal(evalCooldown.decision, "block");
+  assert.equal(evalCooldown.primaryReason, "block:cooldown-active");
+  assert.equal(evalCooldown.cooldownRemaining, 2);
+  assert.ok(evalCooldown.reasonDetails.includes("2 turn(s) remaining"));
+
+  ctx = ingestDelegationTurn(ctx, { input, output, taskId: "t7" });
+  ctx = ingestDelegationTurn(ctx, { input, output, taskId: "t8" });
+  const evalExpired = evaluateContextPressure(
+    ctx,
+    pressureOptions({ cooldownTurns: 3, maxSizeBytes: 100, minReclaimableBytes: 50 }),
+  );
+  assert.equal(evalExpired.decision, "trigger");
+  assert.equal(evalExpired.primaryReason, "trigger:size-pressure-exceeded");
+  assert.equal(evalExpired.cooldownRemaining, 0);
+
+  // Manual force cannot bypass authoritative cooldown state.
+  const evalForced = evaluateContextPressure(
+    ingestDelegationTurn(first.authoritativeContext, {
+      input,
+      output,
+      taskId: "forced-t6",
+    }),
+    pressureOptions({ cooldownTurns: 3 }, "manual", true),
+  );
+  assert.equal(evalForced.decision, "block");
+  assert.equal(evalForced.primaryReason, "block:cooldown-active");
+});
+
+test("context pressure - idempotent handling of already-compacted context", () => {
+  const input = mockCleanTaskInput();
+  const output = mockCleanCompletedOutput();
+  let ctx = createOrchestrationContext({
+    objective: "Compacted context idempotence.",
+    acceptanceCriteria: ["Criterion 1"],
+  });
+  ctx = ingestDelegationTurn(ctx, { input, output, taskId: "t1" });
+  ctx = ingestDelegationTurn(ctx, { input, output, taskId: "t2" });
+
+  const first = maybeCompactContext(
+    ctx,
+    pressureOptions({ maxSizeBytes: 10, minReclaimableBytes: 1 }),
+  );
+  assert.equal(first.compacted, true);
+  const evalCompacted = evaluateContextPressure(
+    first.authoritativeContext,
+    pressureOptions({ maxSizeBytes: 10, minReclaimableBytes: 1 }),
+  );
+  assert.equal(evalCompacted.decision, "block");
+  assert.equal(evalCompacted.primaryReason, "block:already-compacted");
+  assert.ok(evalCompacted.reasonDetails.includes("no authoritative turns"));
+
+  const evalCompactedForced = evaluateContextPressure(
+    first.authoritativeContext,
+    pressureOptions({}, "manual", true),
+  );
+  assert.equal(evalCompactedForced.decision, "block");
+  assert.equal(evalCompactedForced.primaryReason, "block:already-compacted");
+
+  // New authoritative context makes the context eligible again; the cooldown,
+  // rather than structural compacted detection, governs when it may run.
+  const accumulated = ingestDelegationTurn(first.authoritativeContext, {
+    input,
+    output,
+    taskId: "t3",
+  });
+  const afterNewTurn = evaluateContextPressure(
+    accumulated,
+    pressureOptions({ cooldownTurns: 0, maxSizeBytes: 10, minReclaimableBytes: 1 }),
+  );
+  assert.equal(afterNewTurn.decision, "trigger");
+});
+
+test("context pressure - explicit reason codes and descriptive details", () => {
+  // Test config resolver defaults and overrides
+  const defaultConfig = resolveContextPressureConfig();
+  assert.equal(defaultConfig.maxTotalTurns, 20);
+  assert.equal(defaultConfig.maxCleanTurns, 5);
+  assert.equal(defaultConfig.cooldownTurns, 2);
+
+  const customConfig = resolveContextPressureConfig({
+    maxSizeBytes: 80_000,
+    maxTotalTurns: 40,
+    maxCleanTurns: 10,
+    cooldownTurns: 5,
+  });
+  assert.equal(customConfig.maxSizeBytes, 80_000);
+  assert.equal(customConfig.maxTotalTurns, 40);
+  assert.equal(customConfig.maxCleanTurns, 10);
+  assert.equal(customConfig.cooldownTurns, 5);
+  assert.throws(
+    () => resolveContextPressureConfig({ maxSizeBytes: Number.NaN }),
+    /maxSizeBytes/,
+  );
+  assert.throws(
+    () => resolveContextPressureConfig({ maxTotalTurns: 1.5 }),
+    /maxTotalTurns/,
+  );
+  assert.throws(
+    () => resolveContextPressureConfig({ reclaimableRatioThreshold: 0 }),
+    /reclaimableRatioThreshold/,
+  );
+  assert.throws(
+    () =>
+      evaluateContextPressure(
+        createOrchestrationContext({
+          objective: "Invalid config.",
+          acceptanceCriteria: [],
+        }),
+        {
+          boundary: "manual",
+          config: {
+            ...DEFAULT_PRESSURE_CONFIG,
+            maxSizeBytes: Number.NaN,
+          },
+        },
+      ),
+    /maxSizeBytes/,
+  );
+  assert.throws(
+    () => parseContextPositiveInteger("SOL_LUNA_CONTEXT_MAX_BYTES", "NaN", 50_000),
+    /SOL_LUNA_CONTEXT_MAX_BYTES/,
+  );
+  assert.throws(
+    () => parseContextNonNegativeInteger("SOL_LUNA_CONTEXT_COOLDOWN_TURNS", "-1", 2),
+    /SOL_LUNA_CONTEXT_COOLDOWN_TURNS/,
+  );
+
+  // Insufficient reclaimable gain
+  let ctx = createOrchestrationContext({
+    objective: "Small gain context.",
+    acceptanceCriteria: ["Small"],
+  });
+  ctx = ingestRoutingPreflightTurn(ctx, {
+    card: {
+      seams: ["s1"],
+      seamSize: "small",
+      sharedState: "none",
+      coreOverlap: "disjoint",
+      integration: "mechanical",
+      verification: "per-seam",
+    },
+    route: "solo",
+  });
+  const evalSmallGain = evaluateContextPressure(
+    ctx,
+    pressureOptions({ maxSizeBytes: 10, minReclaimableBytes: 50_000 }),
+  );
+  assert.equal(evalSmallGain.decision, "block");
+  assert.equal(evalSmallGain.primaryReason, "block:insufficient-reclaimable-gain");
+  assert.ok(evalSmallGain.reasonDetails.includes("below minimum threshold"));
+});
+
+test("context pressure - deterministic size accounting and factual token reporting", () => {
+  const input = mockCleanTaskInput();
+  const output = mockCleanCompletedOutput();
+  let ctx = createOrchestrationContext({
+    objective: "Deterministic size accounting test.",
+    acceptanceCriteria: ["Accurate metrics."],
+    decisions: [{ id: "dec_1", kind: "architectural", summary: "Use pure functions." }],
+    constraints: [
+      { id: "cst_1", kind: "scope", description: "Stay in src/", active: true },
+    ],
+  });
+  ctx = ingestDelegationTurn(ctx, { input, output, taskId: "t1" });
+
+  const metrics = calculateContextPressureMetrics(ctx);
+  assert.equal(metrics.decisionsCount, 1);
+  assert.equal(metrics.constraintsCount, 1);
+  assert.equal(metrics.totalTurns, 1);
+  assert.equal(metrics.cleanTurns, 1);
+  assert.equal(metrics.diagnosticTurns, 0);
+  assert.ok(metrics.totalSizeBytes > 0);
+  assert.ok(metrics.estimatedReclaimableBytes >= 0);
+  const projection = compactContext(ctx);
+  assert.equal(
+    metrics.estimatedReclaimableBytes,
+    Math.max(0, metrics.totalSizeBytes - projection.stats.compactedSizeBytes),
+  );
+
+  // Factual token usage accounting
+  assert.ok(metrics.reportedTokens !== undefined);
+  assert.equal(metrics.reportedTokens?.isAuthoritative, true);
+  assert.equal(metrics.reportedTokens?.inputTokens, 500);
+  assert.equal(metrics.reportedTokens?.cachedInputTokens, 100);
+  assert.equal(metrics.reportedTokens?.outputTokens, 200);
+  assert.equal(metrics.reportedTokens?.reasoningOutputTokens, 50);
+  assert.equal(metrics.reportedTokens?.totalTokens, 700);
+
+  // Exact provider semantics: cached input is included in input, reasoning is
+  // included in output, and neither is added again to the total.
+  assert.equal(
+    metrics.reportedTokens?.totalTokens,
+    metrics.reportedTokens!.inputTokens + metrics.reportedTokens!.outputTokens,
+  );
+
+  const unavailableOutput = mockCleanCompletedOutput({
+    usage: null,
+    attempts: [
+      ...output.attempts!,
+      {
+        ...output.attempts![0]!,
+        executionId: "exec_unknown_2",
+        logicalAttempt: 2,
+        usage: { status: "unavailable", reason: "turn-failed" },
+      },
+    ],
+  });
+  const unknownMetrics = calculateContextPressureMetrics(
+    ingestDelegationTurn(
+      createOrchestrationContext({ objective: "Unknown usage.", acceptanceCriteria: [] }),
+      { input, output: unavailableOutput },
+    ),
+  );
+  assert.equal(unknownMetrics.reportedTokens, undefined);
+
+  const historicalOutput = mockCleanCompletedOutput({
+    attempts: undefined,
+    usage: {
+      inputTokens: 10,
+      cachedInputTokens: 4,
+      cacheWriteInputTokens: 3,
+      outputTokens: 6,
+      reasoningOutputTokens: 2,
+    },
+  });
+  const historicalMetrics = calculateContextPressureMetrics(
+    ingestDelegationTurn(
+      createOrchestrationContext({
+        objective: "Historical usage.",
+        acceptanceCriteria: [],
+      }),
+      { input, output: historicalOutput },
+    ),
+  );
+  assert.equal(historicalMetrics.reportedTokens?.totalTokens, 16);
+  assert.equal(historicalMetrics.reportedTokens?.cacheWriteInputTokens, 3);
+
+  // Context without usage reports undefined tokens rather than guessing
+  const ctxNoUsage = createOrchestrationContext({
+    objective: "No usage data.",
+    acceptanceCriteria: [],
+  });
+  const metricsNoUsage = calculateContextPressureMetrics(ctxNoUsage);
+  assert.equal(metricsNoUsage.reportedTokens, undefined);
+});
+
+test("context pressure - exact thresholds and simultaneous signals are deterministic", () => {
+  let ctx = createOrchestrationContext({
+    objective: "Boundary behavior.",
+    acceptanceCriteria: ["Exact thresholds trigger."],
+  });
+  for (let index = 0; index < 10; index++) {
+    ctx = ingestStatusNarrationTurn(ctx, `discard me ${index} ${"x".repeat(2_000)}`);
+  }
+  const metrics = calculateContextPressureMetrics(ctx);
+  const evaluation = evaluateContextPressure(ctx, {
+    boundary: "manual",
+    config: resolveContextPressureConfig({
+      maxSizeBytes: metrics.totalSizeBytes,
+      maxTotalTurns: metrics.totalTurns,
+      maxCleanTurns: 100,
+      maxToolOverheadTurns: metrics.repeatedToolTurns,
+      maxToolOverheadBytes: metrics.toolOverheadBytes,
+      reclaimableRatioThreshold: metrics.reclaimableRatio,
+      minReclaimableBytes: 1,
+    }),
+  });
+  assert.equal(evaluation.decision, "trigger");
+  assert.equal(evaluation.primaryReason, "trigger:size-pressure-exceeded");
+  assert.deepEqual(evaluation.contributingReasons.slice(0, 3), [
+    "trigger:size-pressure-exceeded",
+    "trigger:total-turns-exceeded",
+    "trigger:repeated-tool-overhead-exceeded",
+  ]);
+
+  const forcedUnsafe = evaluateContextPressure(ctx, {
+    boundary: "in-flight",
+    force: true,
+    config: resolveContextPressureConfig({ minReclaimableBytes: 1_000_000 }),
+  });
+  assert.equal(forcedUnsafe.decision, "block");
+  assert.equal(forcedUnsafe.primaryReason, "block:unsafe-lifecycle-boundary");
+  assert.deepEqual(forcedUnsafe.contributingReasons, [
+    "block:unsafe-lifecycle-boundary",
+    "block:insufficient-reclaimable-gain",
+  ]);
 });

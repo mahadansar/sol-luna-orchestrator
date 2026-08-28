@@ -342,3 +342,62 @@ export const ALLOW_DIRTY_WORKTREE_BASE = process.env.SOL_LUNA_ALLOW_DIRTY === "1
 
 /** Truncation limit for command output echoed back to the parent orchestrator. */
 export const MAX_OUTPUT_CHARS = 4000;
+
+/**
+ * Context lifecycle management defaults and environment overrides (P1.3).
+ */
+export const DEFAULT_CONTEXT_MAX_BYTES = 50_000;
+export const DEFAULT_CONTEXT_MAX_TURNS = 20;
+export const DEFAULT_CONTEXT_MAX_CLEAN_TURNS = 5;
+export const DEFAULT_CONTEXT_MAX_TOOL_OVERHEAD_TURNS = 4;
+export const DEFAULT_CONTEXT_MAX_TOOL_OVERHEAD_BYTES = 8_000;
+export const DEFAULT_CONTEXT_RECLAIMABLE_RATIO_THRESHOLD = 0.25;
+export const DEFAULT_CONTEXT_MIN_RECLAIMABLE_BYTES = 1_000;
+export const DEFAULT_CONTEXT_COOLDOWN_TURNS = 2;
+
+export function parseContextPositiveInteger(
+  name: string,
+  raw: string | undefined,
+  fallback: number,
+): number {
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive safe integer`);
+  }
+  return value;
+}
+
+export function parseContextNonNegativeInteger(
+  name: string,
+  raw: string | undefined,
+  fallback: number,
+): number {
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${name} must be a non-negative safe integer`);
+  }
+  return value;
+}
+
+export const CONTEXT_MAX_BYTES = parseContextPositiveInteger(
+  "SOL_LUNA_CONTEXT_MAX_BYTES",
+  process.env.SOL_LUNA_CONTEXT_MAX_BYTES,
+  DEFAULT_CONTEXT_MAX_BYTES,
+);
+export const CONTEXT_MAX_TURNS = parseContextPositiveInteger(
+  "SOL_LUNA_CONTEXT_MAX_TURNS",
+  process.env.SOL_LUNA_CONTEXT_MAX_TURNS,
+  DEFAULT_CONTEXT_MAX_TURNS,
+);
+export const CONTEXT_MAX_CLEAN_TURNS = parseContextPositiveInteger(
+  "SOL_LUNA_CONTEXT_MAX_CLEAN_TURNS",
+  process.env.SOL_LUNA_CONTEXT_MAX_CLEAN_TURNS,
+  DEFAULT_CONTEXT_MAX_CLEAN_TURNS,
+);
+export const CONTEXT_COOLDOWN_TURNS = parseContextNonNegativeInteger(
+  "SOL_LUNA_CONTEXT_COOLDOWN_TURNS",
+  process.env.SOL_LUNA_CONTEXT_COOLDOWN_TURNS,
+  DEFAULT_CONTEXT_COOLDOWN_TURNS,
+);

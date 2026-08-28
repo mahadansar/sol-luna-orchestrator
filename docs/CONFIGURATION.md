@@ -241,9 +241,19 @@ authoritative presentation of the required keys, values, and failure rationale.
 | `SOL_LUNA_VERIFY_ENV_PASSTHROUGH`  | off                     | `1` stops withholding credential-shaped env vars                  |
 | `SOL_LUNA_ALLOWED_ROOTS`           | —                       | Confine delegation to these directory trees                       |
 | `SOL_LUNA_SERVER_NAME`             | `sol-luna-orchestrator` | **Must match** the name registered in Codex                       |
+| `SOL_LUNA_CONTEXT_MAX_BYTES`       | `50000`                 | P1.3B policy threshold in exact serialized UTF-8 bytes            |
+| `SOL_LUNA_CONTEXT_MAX_TURNS`       | `20`                    | P1.3B total-turn threshold                                        |
+| `SOL_LUNA_CONTEXT_MAX_CLEAN_TURNS` | `5`                     | P1.3B clean PASS accumulation threshold                           |
+| `SOL_LUNA_CONTEXT_COOLDOWN_TURNS`  | `2`                     | P1.3B authoritative turns required between compact projections    |
 | `SOL_LUNA_WORKER`                  | set per worker          | Internal marker; a server seeing it registers zero tools          |
 | `SOL_LUNA_EVENTS`                  | set by `init`           | Structured JSONL activity log, read by `activity`. Unset = no log |
 | `SOL_LUNA_LOG`                     | set by `init`           | Human-readable diagnostics log. Unset in the server env = no log  |
+
+The three context thresholds must be positive safe integers; the cooldown must
+be a non-negative safe integer. Invalid values fail startup instead of silently
+disabling or forcing a trigger. These settings resolve operator policy only.
+P1.3B does not wire automatic compaction into delegation, batch, or continuation
+lifecycles.
 
 `LUNA_SANDBOX` accepts `read-only`, `workspace-write` and
 `danger-full-access`. Keep the default `workspace-write` for normal use.
