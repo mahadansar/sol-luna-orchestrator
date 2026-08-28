@@ -413,26 +413,98 @@ export const continueTaskInputShape = {
 export const continueTaskInputSchema = z.object(continueTaskInputShape);
 export type ContinueTaskInput = z.input<typeof continueTaskInputSchema>;
 
+/** Input for an optional bounded read-only repository exploration. */
+export const exploreInputShape = {
+  target: z
+    .string()
+    .min(10, "target must describe what to explore in at least 10 characters")
+    .describe("Exploration topic or question; Luna cannot see the conversation."),
+
+  activityLabel: z
+    .string()
+    .min(1)
+    .max(80)
+    .optional()
+    .describe(
+      "Optional concise non-sensitive activity label; persisted locally; omit if sensitive.",
+    ),
+
+  effort: z
+    .enum(EFFORTS)
+    .default(DEFAULT_EFFORT)
+    .describe("Worker effort for exploration: medium, high, xhigh, or max."),
+
+  effortReason: z.string().min(10).describe("Brief reason for the selected effort."),
+
+  scope: z
+    .array(z.string())
+    .min(1, "at least one explicit exploration scope pattern is required")
+    .describe(
+      "Explicit workspace-relative file/glob admission list copied into the disposable exploration surface.",
+    ),
+
+  forbiddenFiles: z
+    .array(z.string())
+    .default([])
+    .describe("Workspace-relative edit/read globs forbidden during exploration."),
+
+  questions: z
+    .array(z.string().min(1))
+    .default([])
+    .describe("Specific questions to answer with observed evidence."),
+
+  workingDirectory: z
+    .string()
+    .optional()
+    .describe("Absolute worker directory; defaults to the current directory."),
+
+  context: z.string().optional().describe("Legacy plain-text background."),
+
+  contextCapsule: z
+    .object(contextCapsuleShape)
+    .optional()
+    .describe(
+      "Optional structured background; supplements legacy context, omit empty fields.",
+    ),
+
+  resultDetail: z
+    .enum(["handoff", "compact", "full"])
+    .default("handoff")
+    .describe(
+      "handoff (default) returns concise text findings; compact and full preserve structured compatibility.",
+    ),
+
+  timeoutSeconds: z
+    .number()
+    .int()
+    .positive()
+    .max(7200)
+    .optional()
+    .describe("Optional per-turn wall-clock budget; otherwise use configured default."),
+
+  computePolicy: computePolicySchema.partial().optional(),
+};
+
+export const exploreInputSchema = z.object(exploreInputShape);
+export type ExploreInput = z.infer<typeof exploreInputSchema>;
+
 /**
  * Deterministic budgets for the always-advertised input metadata.
  *
  * Every entry is checked against the schema the MCP server actually advertises,
- * so `delegateTask`, `delegateTasks` and `advertisedCombined` include the routing
- * card the parent is really sent. The `*Contract` and `routingCard*` entries are
- * diagnostics for the same bytes split by owner: they answer "did the delegation
- * contract itself grow?" and "what does routing cost?" without either of them
- * standing in for the advertised total. No ceiling here is reached by subtracting
- * one advertised surface from another.
+ * so `delegateTask`, `delegateTasks`, `continueTask`, `exploreTool`, and
+ * `advertisedCombined` include the card the parent is really sent.
  */
 export const INPUT_METADATA_SIZE_BUDGETS = {
   delegateTask: 3_550,
   continueTask: 390,
   delegateTasks: 3_990,
   routingPreflightTool: 810,
-  advertisedCombined: 8_740,
+  exploreTool: 1_680,
+  advertisedCombined: 10_500,
   delegateTaskContract: 2_500,
   delegateTasksContract: 2_940,
-  contractCombined: 5_820,
+  contractCombined: 7_600,
   routingCardDelegateTask: 1_060,
   routingCardDelegateTasks: 1_060,
   routingCombined: 2_920,
@@ -518,6 +590,201 @@ export const workerOutputJsonSchema = {
     },
   },
 } as const;
+
+/**
+ * JSON Schema handed to Codex via `--output-schema` for exploration turns.
+ * Enforces structured worker claims that the runtime later grounds and keeps
+ * distinct from runtime observations, inferences, unknowns, and candidate seams.
+ */
+export const explorerOutputJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "status",
+    "summary",
+    "observedFacts",
+    "inferences",
+    "unknowns",
+    "relevantFiles",
+    "recommendedSeams",
+    "notes",
+  ],
+  properties: {
+    status: {
+      type: "string",
+      enum: STATUSES,
+      description:
+        "PASS = investigation completed and questions answered. " +
+        "BLOCKED = could not inspect needed files/areas. FAILED = investigation failed.",
+    },
+    summary: {
+      type: "string",
+      description: "Concise summary of what you investigated and found.",
+    },
+    observedFacts: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["statement", "sourceFile", "sourceLine", "evidence"],
+        properties: {
+          statement: {
+            type: "string",
+            description: "Worker claim supported by the cited repository text.",
+          },
+          sourceFile: {
+            type: "string",
+            description: "Repository file path where observed.",
+          },
+          sourceLine: {
+            type: "integer",
+            minimum: 1,
+            description: "One-based line where the exact evidence text begins.",
+          },
+          evidence: {
+            type: "string",
+            description: "Line, symbol, or code excerpt supporting the fact.",
+          },
+        },
+      },
+      description:
+        "Worker claims with explicit source grounding; the runtime independently validates file, line, and evidence text.",
+    },
+    inferences: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["hypothesis", "rationale"],
+        properties: {
+          hypothesis: {
+            type: "string",
+            description: "Deduced conclusion or hypothesis.",
+          },
+          rationale: { type: "string", description: "Why this conclusion is likely." },
+        },
+      },
+      description: "Inferences or deductions, distinct from grounded worker claims.",
+    },
+    unknowns: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["question", "whyUnresolved"],
+        properties: {
+          question: { type: "string", description: "Open question or unknown." },
+          whyUnresolved: {
+            type: "string",
+            description: "Why this could not be determined.",
+          },
+        },
+      },
+      description:
+        "Unresolved questions, missing information, or ambiguous requirements.",
+    },
+    relevantFiles: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["path", "why"],
+        properties: {
+          path: { type: "string" },
+          why: { type: "string" },
+        },
+      },
+      description: "Files inspected that are relevant to this topic.",
+    },
+    recommendedSeams: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["label", "description", "candidateFiles"],
+        properties: {
+          label: { type: "string" },
+          description: { type: "string" },
+          candidateFiles: { type: "array", items: { type: "string" } },
+        },
+      },
+      description:
+        "Potential decoupled ownership seams discovered during exploration (not an implementation plan).",
+    },
+    notes: {
+      type: "string",
+      description:
+        "Assumptions, architectural risks, or caveats for the supervisor. Empty string if none.",
+    },
+  },
+} as const;
+
+export interface ExploreReport {
+  status: Status;
+  summary: string;
+  observedFacts: Array<{
+    statement: string;
+    sourceFile: string;
+    sourceLine: number;
+    evidence: string;
+  }>;
+  inferences: Array<{
+    hypothesis: string;
+    rationale: string;
+  }>;
+  unknowns: Array<{
+    question: string;
+    whyUnresolved: string;
+  }>;
+  relevantFiles: Array<{
+    path: string;
+    why: string;
+  }>;
+  recommendedSeams: Array<{
+    label: string;
+    description: string;
+    candidateFiles: string[];
+  }>;
+  notes: string;
+}
+
+export const exploreReportSchema = z
+  .object({
+    status: z.enum(STATUSES),
+    summary: z.string(),
+    observedFacts: z.array(
+      z
+        .object({
+          statement: z.string().min(1),
+          sourceFile: z.string().min(1),
+          sourceLine: z.number().int().positive(),
+          evidence: z.string().min(1),
+        })
+        .strict(),
+    ),
+    inferences: z.array(
+      z.object({ hypothesis: z.string().min(1), rationale: z.string().min(1) }).strict(),
+    ),
+    unknowns: z.array(
+      z
+        .object({ question: z.string().min(1), whyUnresolved: z.string().min(1) })
+        .strict(),
+    ),
+    relevantFiles: z.array(
+      z.object({ path: z.string().min(1), why: z.string().min(1) }).strict(),
+    ),
+    recommendedSeams: z.array(
+      z
+        .object({
+          label: z.string().min(1),
+          description: z.string().min(1),
+          candidateFiles: z.array(z.string().min(1)),
+        })
+        .strict(),
+    ),
+    notes: z.string(),
+  })
+  .strict();
 
 /** The worker's self-reported result, as parsed from its final message. */
 export interface WorkerReport {
@@ -808,6 +1075,124 @@ export const delegateTaskOutputShape = {
 export type DelegateTaskOutput = z.infer<z.ZodObject<typeof delegateTaskOutputShape>>;
 export type { Effort };
 
+export interface ExploreFindings {
+  summary: string;
+  observedFacts: Array<{
+    statement: string;
+    sourceFile: string;
+    sourceLine: number;
+    evidence: string;
+    provenance: "worker";
+    grounding: "runtime-verified" | "unverified";
+  }>;
+  runtimeObservedFacts: Array<{
+    kind: "source-grounding" | "surface-mutation";
+    statement: string;
+    sourceFile?: string;
+    sourceLine?: number;
+  }>;
+  inferences: Array<{
+    hypothesis: string;
+    rationale: string;
+  }>;
+  unknowns: Array<{
+    question: string;
+    whyUnresolved: string;
+  }>;
+  relevantFiles: Array<{
+    path: string;
+    why: string;
+  }>;
+  recommendedSeams: Array<{
+    label: string;
+    description: string;
+    candidateFiles: string[];
+  }>;
+  notes: string;
+}
+
+export const exploreOutputShape = {
+  target: z.string().describe("Exploration topic or question."),
+  verdict: z
+    .enum(STATUSES)
+    .describe("Orchestrator verdict from observed evidence and contract compliance."),
+  workerClaimedStatus: z.enum(STATUSES).describe("What the worker reported."),
+  trustworthy: z
+    .boolean()
+    .describe(
+      "False when claims conflict with observed evidence or runtime errors occurred.",
+    ),
+  model: z.string(),
+  effort: z.string(),
+  effortReason: z.string(),
+  durationSeconds: z.number(),
+  workerThreadId: z.string().nullable(),
+  findings: z.object({
+    summary: z.string(),
+    observedFacts: z.array(
+      z.object({
+        statement: z.string(),
+        sourceFile: z.string(),
+        sourceLine: z.number().int().positive(),
+        evidence: z.string(),
+        provenance: z.literal("worker"),
+        grounding: z.enum(["runtime-verified", "unverified"]),
+      }),
+    ),
+    runtimeObservedFacts: z.array(
+      z.object({
+        kind: z.enum(["source-grounding", "surface-mutation"]),
+        statement: z.string(),
+        sourceFile: z.string().optional(),
+        sourceLine: z.number().int().positive().optional(),
+      }),
+    ),
+    inferences: z.array(
+      z.object({
+        hypothesis: z.string(),
+        rationale: z.string(),
+      }),
+    ),
+    unknowns: z.array(
+      z.object({
+        question: z.string(),
+        whyUnresolved: z.string(),
+      }),
+    ),
+    relevantFiles: z.array(
+      z.object({
+        path: z.string(),
+        why: z.string(),
+      }),
+    ),
+    recommendedSeams: z.array(
+      z.object({
+        label: z.string(),
+        description: z.string(),
+        candidateFiles: z.array(z.string()),
+      }),
+    ),
+    notes: z.string(),
+  }),
+  observedFilesChanged: z
+    .array(
+      z.object({
+        path: z.string(),
+        kind: z.string(),
+      }),
+    )
+    .describe("Files changed during turn. MUST be empty for a valid exploration!"),
+  scopeViolations: z.array(z.string()),
+  discrepancies: z.array(z.string()),
+  reviewChecklist: z.array(z.string()),
+  usage: z.object(usageShape).nullable(),
+  attempts: z.array(attemptEvidenceSchema).optional(),
+  errors: z.array(z.string()),
+};
+
+export const exploreOutputSchema = z.object(exploreOutputShape);
+export type ExploreOutput = z.infer<typeof exploreOutputSchema>;
+
 // --- Batch delegation -------------------------------------------------------
 
 /** Lifecycle state of one task inside a batch. */
@@ -994,6 +1379,12 @@ export const delegateTasksMcpInputShape = {
   computePolicy: computePolicyMcpSchema,
 };
 
+export const exploreMcpInputShape = {
+  ...withoutFieldDescriptions(exploreInputShape),
+  contextCapsule: z.object(withoutFieldDescriptions(contextCapsuleShape)).optional(),
+  computePolicy: computePolicyMcpSchema,
+};
+
 /** The advisory tool takes the card and nothing else. */
 export const routingPreflightMcpInputShape =
   withoutFieldDescriptions(routingPreflightShape);
@@ -1001,18 +1392,17 @@ export const routingPreflightMcpInputShape =
 /**
  * Measure the advertised input metadata.
  *
- * `delegateTask`, `delegateTasks`, `continueTask` and `routingPreflightTool` are
- * the schemas the server really registers, and `advertisedCombined` is their sum
- * — the whole input-schema cost of a session, with nothing excluded. The
- * `*Contract` and `routingCard*` fields attribute those same bytes to the
- * delegation contract and to routing respectively, so a regression can be
- * located; they are diagnostics, never the total.
+ * `delegateTask`, `delegateTasks`, `continueTask`, `exploreTool`, and
+ * `routingPreflightTool` are the schemas the server really registers, and
+ * `advertisedCombined` is their sum — the whole input-schema cost of a session,
+ * with nothing excluded.
  */
 export function inputMetadataSizeReport(): {
   delegateTask: number;
   continueTask: number;
   delegateTasks: number;
   routingPreflightTool: number;
+  exploreTool: number;
   advertisedCombined: number;
   delegateTaskContract: number;
   delegateTasksContract: number;
@@ -1031,6 +1421,7 @@ export function inputMetadataSizeReport(): {
   const delegateTasks = size(delegateTasksMcpInputShape);
   const continueTask = size(continueTaskMcpInputShape);
   const routingPreflightTool = size(routingPreflightMcpInputShape);
+  const exploreTool = size(exploreMcpInputShape);
   const delegateTaskContract = size(withoutCard(delegateTaskMcpInputShape));
   const delegateTasksContract = size(withoutCard(delegateTasksMcpInputShape));
   return {
@@ -1038,11 +1429,13 @@ export function inputMetadataSizeReport(): {
     continueTask,
     delegateTasks,
     routingPreflightTool,
+    exploreTool,
     advertisedCombined:
-      delegateTask + continueTask + delegateTasks + routingPreflightTool,
+      delegateTask + continueTask + delegateTasks + routingPreflightTool + exploreTool,
     delegateTaskContract,
     delegateTasksContract,
-    contractCombined: delegateTaskContract + continueTask + delegateTasksContract,
+    contractCombined:
+      delegateTaskContract + continueTask + delegateTasksContract + exploreTool,
     routingCardDelegateTask: delegateTask - delegateTaskContract,
     routingCardDelegateTasks: delegateTasks - delegateTasksContract,
     routingCombined:

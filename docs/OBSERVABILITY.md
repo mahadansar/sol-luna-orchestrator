@@ -248,6 +248,19 @@ both semantic fields are absent, they fall back to `Delegated task N`, where
 positional fallback was needed. None of these fallbacks is derived from the
 objective or the opaque task id.
 
+### Exploration telemetry
+
+The `explore` tool emits typed lifecycle events to record investigation companion sessions:
+
+- `explore.started`: emitted only after the disposable surface and worker slot are ready; records `batchId`, optional non-sensitive `activityLabel`, requested and selected model/effort, and the admitted `computePolicy`.
+- `explore.completed`: records `batchId`, final `verdict`, claimed worker status, duration, worker-grounded-claim/runtime-fact/inference/unknown counts, actually executed model/effort, and provider `usage`.
+- `explore.rejected`: emitted only before execution starts and records `batchId` plus a bounded `reasonCode` (`compute-policy` or `execution-setup`). An admitted execution error completes as `FAILED` instead.
+
+Exploration telemetry never includes the target or prompt, working-directory or source paths,
+source excerpts, thread ids, raw worker output, capability references, or free-form error text.
+Canonical `attempt.started` and `attempt.completed` records carry the same bounded compute and
+termination evidence as other worker-capacity consumers.
+
 ## The two representations of a single delegation
 
 Current behaviour, and the thing most likely to trip up anyone parsing the JSONL

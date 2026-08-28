@@ -46,6 +46,7 @@ reported separately without changing effort or contract fields.
 | Choice           | Use when                                                                                                                                                                                           |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Solo             | Work is small, simple, tightly coupled, already obvious, or cheaper to do than coordinate.                                                                                                         |
+| `explore`        | Investigation companion for unfamiliar repositories, APIs, or docs to gather grounded facts and candidate seams before delegation. Read-only; implements nothing and cannot delegate.              |
 | `delegate_task`  | One substantial, bounded, well-specified executable task is worth moving out of the parent's context for cost, context, isolation, verification, or execution benefit. No second seam is required. |
 | Sequential batch | Two or more meaningful tasks depend on earlier changes, share workspace state, or may touch the same files.                                                                                        |
 | Parallel batch   | Two or more genuinely independent tasks have disjoint declared scopes.                                                                                                                             |
@@ -57,6 +58,37 @@ not create artificial seams merely to use cheap workers.
 
 The batch contract accepts one task for compatibility; use `delegate_task` when
 no batch-level scheduling is needed.
+
+## Optional exploration
+
+The `explore` tool provides an optional, read-only investigation companion with Luna
+when the supervisor needs grounded evidence about an unfamiliar codebase, dependency,
+API, or documentation before designing task boundaries or deciding whether to delegate.
+
+- **Supervisor-Owned and Optional**: Exploration is never automatically forced. Direct solo
+  execution or immediate task delegation without exploration remains first-class.
+- **Strictly Read-Only**: `changeIntent` is strictly `"forbidden"`. The SDK turn is fixed to
+  its `read-only` sandbox and runs only against a disposable copy containing the explicitly
+  admitted scope; operator worker-sandbox settings cannot weaken this. The authoritative
+  workspace is never the explorer working directory. A before/after manifest detects file
+  creation, deletion, modification, rename, symlink changes, and untracked files; any change
+  fails the exploration, invalidates trust, and is discarded with the surface.
+- **Grounded Structured Output**: Findings clearly separate:
+  - `observedFacts`: worker claims with explicit `provenance: "worker"`; exact file, line,
+    and evidence text are independently checked and marked `runtime-verified` or `unverified`.
+  - `runtimeObservedFacts`: only facts the runtime itself established, such as successful
+    source grounding or a disposable-surface mutation.
+  - `inferences`: explicit hypotheses with reasoning.
+  - `unknowns`: open, unresolved questions and why they could not be resolved.
+  - `relevantFiles`: key files with explanation.
+  - `recommendedSeams`: suggested decoupled seams for supervisor delegation planning.
+- **No Delegation or Implementation**: The explorer implements nothing and cannot delegate
+  further or spawn recursive explorers.
+- **Explicit Read Admission**: `scope` is required. Forbidden files, `.git`, `.sol-luna`, and
+  environment files are not copied into the disposable surface. Model-reported file references
+  cannot expand the admitted scope.
+- **Context Compaction**: Clean exploration turns compact structured findings into context
+  history, preserving facts, inferences, and candidate seams across the session.
 
 ## Cheap routing preflight
 

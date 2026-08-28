@@ -22,6 +22,8 @@ import {
   asRoutingCard,
   continueTaskMcpInputShape,
   delegateTaskMcpInputShape,
+  exploreInputSchema,
+  exploreMcpInputShape,
   inputMetadataSizeReport,
   INPUT_METADATA_SIZE_BUDGETS,
   delegateTasksMcpInputShape,
@@ -32,6 +34,8 @@ import {
   type DelegateTaskInput,
   type DelegateTaskOutput,
   type DelegateTasksInput,
+  type ExploreInput,
+  type ExploreOutput,
   type RoutingPreflightInput,
 } from "./contract.js";
 import { BatchRejectedError, runBatch } from "./batch.js";
@@ -40,6 +44,7 @@ import {
   applyFailureDecision,
   continueToLuna,
   delegateToLuna,
+  exploreWithLuna,
   reconcileParallelWorktreeEvidence,
   resultWasCancelled,
 } from "./worker.js";
@@ -792,6 +797,8 @@ export const SERVER_INSTRUCTIONS = `Sol-Luna Orchestrator routes bounded ownersh
 
 export const ROUTING_PREFLIGHT_TOOL_DESCRIPTION = `Cheap deterministic check of whether delegating is structurally sound and economically sensible, before any repository exploration. Declare the ownership seams you are considering and what they share; leave a field "unknown" when you do not know, which biases the advice toward solo without ever refusing. Creates no worker, batch, worktree, or thread, refuses nothing, and returns route (solo | either | delegation-plausible), the deciding signals, and structural parallel eligibility. Advisory only and never required: the parent owns sequential vs parallel, worker count, effort, and the final decision, and choosing zero workers afterwards is a normal successful outcome. either means fixed delegation overhead needs explicit justification, otherwise stay solo.`;
 
+export const EXPLORE_TOOL_DESCRIPTION = `Explicitly explore an admitted repository, API, or documentation scope with ${LUNA_MODEL}; fixed read-only disposable execution returns provenance-marked worker claims, runtime facts, inferences, and unknowns. Implements nothing, cannot delegate, and is never automatic.`;
+
 /**
  * Deterministic ceilings for everything the server always advertises.
  *
@@ -806,8 +813,9 @@ export const METADATA_SIZE_BUDGETS = {
   delegateTasksDescription: 2_150,
   continueTaskDescription: 690,
   routingPreflightDescription: 800,
-  advertisedTotal: 15_150,
-  delegationContract: 11_450,
+  exploreDescription: 275,
+  advertisedTotal: 17_000,
+  delegationContract: 13_400,
   routingCombined: 3_700,
 } as const;
 
@@ -827,6 +835,7 @@ export function metadataSizeReport(): {
   delegateTasksDescription: number;
   continueTaskDescription: number;
   routingPreflightDescription: number;
+  exploreDescription: number;
   inputSchemas: ReturnType<typeof inputMetadataSizeReport>;
   advertisedTotal: number;
   delegationContract: number;
@@ -838,11 +847,13 @@ export function metadataSizeReport(): {
   const delegateTasksDescription = BATCH_TOOL_DESCRIPTION.length;
   const continueTaskDescription = CONTINUE_TOOL_DESCRIPTION.length;
   const routingPreflightDescription = ROUTING_PREFLIGHT_TOOL_DESCRIPTION.length;
+  const exploreDescription = EXPLORE_TOOL_DESCRIPTION.length;
   const delegationContract =
     serverInstructions +
     delegateTaskDescription +
     delegateTasksDescription +
     continueTaskDescription +
+    exploreDescription +
     inputSchemas.contractCombined;
   const routingCombined = routingPreflightDescription + inputSchemas.routingCombined;
   return {
@@ -851,6 +862,7 @@ export function metadataSizeReport(): {
     delegateTasksDescription,
     continueTaskDescription,
     routingPreflightDescription,
+    exploreDescription,
     inputSchemas,
     // Summed from the advertised figures directly, not from the two diagnostics:
     // the total must stay correct even if their attribution ever changes.
@@ -860,6 +872,7 @@ export function metadataSizeReport(): {
       delegateTasksDescription +
       continueTaskDescription +
       routingPreflightDescription +
+      exploreDescription +
       inputSchemas.advertisedCombined,
     delegationContract,
     routingCombined,
@@ -878,6 +891,7 @@ export function assertMetadataBudgets(): void {
       METADATA_SIZE_BUDGETS.continueTaskDescription ||
     metadataSizes.routingPreflightDescription >
       METADATA_SIZE_BUDGETS.routingPreflightDescription ||
+    metadataSizes.exploreDescription > METADATA_SIZE_BUDGETS.exploreDescription ||
     metadataSizes.advertisedTotal > METADATA_SIZE_BUDGETS.advertisedTotal ||
     metadataSizes.delegationContract > METADATA_SIZE_BUDGETS.delegationContract ||
     metadataSizes.routingCombined > METADATA_SIZE_BUDGETS.routingCombined ||
@@ -1932,6 +1946,310 @@ function registerRoutingPreflight(): void {
   );
 }
 
+export function isCleanExplore(result: ExploreOutput): boolean {
+  return (
+    result.verdict === "PASS" &&
+    result.workerClaimedStatus === "PASS" &&
+    result.trustworthy &&
+    result.observedFilesChanged.length === 0 &&
+    result.scopeViolations.length === 0 &&
+    result.discrepancies.length === 0 &&
+    result.errors.length === 0 &&
+    result.findings.observedFacts.every(
+      (fact) => fact.provenance === "worker" && fact.grounding === "runtime-verified",
+    )
+  );
+}
+
+export function renderExploreResult(
+  result: ExploreOutput,
+  detail: ExploreInput["resultDetail"] = "handoff",
+): string {
+  if (detail === "full") {
+    return JSON.stringify(result, null, 2);
+  }
+  if (detail === "compact") {
+    return JSON.stringify(compactExploreResult(result), null, 2);
+  }
+
+  const lines: string[] = [];
+  lines.push(
+    `EXPLORATION VERDICT: ${result.verdict} | TRUSTWORTHY: ${result.trustworthy}`,
+  );
+  lines.push(
+    `WORKER: ${result.model} @ ${result.effort} | thread ${result.workerThreadId ?? "unknown"} | ${result.durationSeconds}s`,
+  );
+  lines.push(`TARGET: ${result.target}`);
+  if (result.findings.summary) {
+    lines.push(`SUMMARY: ${result.findings.summary}`);
+  }
+
+  if (result.findings.observedFacts.length > 0) {
+    lines.push(`WORKER-GROUNDED CLAIMS (${result.findings.observedFacts.length}):`);
+    for (const f of result.findings.observedFacts) {
+      const src = f.sourceFile ? ` [${f.sourceFile}:${f.sourceLine}]` : "";
+      const ev = f.evidence ? ` (evidence: ${f.evidence})` : "";
+      lines.push(`- ${f.statement}${src}${ev} [${f.provenance}; ${f.grounding}]`);
+    }
+  }
+
+  if (result.findings.runtimeObservedFacts.length > 0) {
+    lines.push(
+      `RUNTIME-OBSERVED FACTS (${result.findings.runtimeObservedFacts.length}):`,
+    );
+    for (const fact of result.findings.runtimeObservedFacts) {
+      const source = fact.sourceFile
+        ? ` [${fact.sourceFile}${fact.sourceLine ? `:${fact.sourceLine}` : ""}]`
+        : "";
+      lines.push(`- ${fact.statement}${source}`);
+    }
+  }
+
+  if (result.findings.inferences.length > 0) {
+    lines.push(`INFERENCES (${result.findings.inferences.length}):`);
+    for (const inf of result.findings.inferences) {
+      lines.push(`- ${inf.hypothesis} (rationale: ${inf.rationale})`);
+    }
+  }
+
+  if (result.findings.unknowns.length > 0) {
+    lines.push(`UNKNOWNS (${result.findings.unknowns.length}):`);
+    for (const u of result.findings.unknowns) {
+      lines.push(`- ${u.question} (unresolved: ${u.whyUnresolved})`);
+    }
+  }
+
+  if (result.findings.relevantFiles.length > 0) {
+    lines.push(
+      `RELEVANT FILES: ${result.findings.relevantFiles.map((rf) => `${rf.path} (${rf.why})`).join(", ")}`,
+    );
+  }
+
+  if (result.findings.recommendedSeams.length > 0) {
+    lines.push(`CANDIDATE SEAMS:`);
+    for (const s of result.findings.recommendedSeams) {
+      const files =
+        s.candidateFiles.length > 0 ? ` [${s.candidateFiles.join(", ")}]` : "";
+      lines.push(`- ${s.label}: ${s.description}${files}`);
+    }
+  }
+
+  if (result.discrepancies.length > 0) {
+    lines.push(`DISCREPANCIES: ${result.discrepancies.join("; ")}`);
+  }
+  if (result.scopeViolations.length > 0) {
+    lines.push(`SCOPE VIOLATIONS: ${result.scopeViolations.join("; ")}`);
+  }
+  if (result.errors.length > 0) {
+    lines.push(`ERRORS: ${result.errors.join("; ")}`);
+  }
+
+  if (result.reviewChecklist.length > 0) {
+    lines.push(`REVIEW CHECKLIST: ${result.reviewChecklist.join("; ")}`);
+  }
+
+  lines.push(
+    result.verdict === "PASS"
+      ? "NEXT: Treat worker-grounded claims and advisory seams as supervisor input, or stay solo."
+      : "NEXT: Resolve discrepancies or errors before delegating implementation.",
+  );
+
+  return lines.join("\n");
+}
+
+export function compactExploreResult(result: ExploreOutput): Record<string, unknown> {
+  return {
+    target: result.target,
+    verdict: result.verdict,
+    workerClaimedStatus: result.workerClaimedStatus,
+    trustworthy: result.trustworthy,
+    model: result.model,
+    effort: result.effort,
+    durationSeconds: result.durationSeconds,
+    findings: result.findings,
+    observedFilesChanged: result.observedFilesChanged,
+    scopeViolations: result.scopeViolations,
+    discrepancies: result.discrepancies,
+    reviewChecklist: result.reviewChecklist,
+    errors: result.errors,
+  };
+}
+
+export interface ExploreHandlerDependencies {
+  exploreWithLuna: typeof exploreWithLuna;
+  emit: EventEmitter;
+  contextStore?: ContextLifecycleStore;
+  contextRegistry: ContextLifecycleRegistry;
+  admitCompute: typeof admitCompute;
+}
+
+export async function handleExplore(
+  input: ExploreInput,
+  signal?: AbortSignal,
+  overrides?: Partial<ExploreHandlerDependencies>,
+): Promise<{
+  content: Array<{ type: "text"; text: string }>;
+  structuredContent?: Record<string, unknown>;
+  isError?: boolean;
+}> {
+  const deps: ExploreHandlerDependencies = {
+    exploreWithLuna: overrides?.exploreWithLuna ?? exploreWithLuna,
+    emit: overrides?.emit ?? emitEvent,
+    contextRegistry: overrides?.contextRegistry ?? contextRegistry,
+    contextStore: overrides?.contextStore,
+    admitCompute: overrides?.admitCompute ?? admitCompute,
+  };
+
+  const batchId = `exp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const contextKey = batchId;
+  const lifecycleStore =
+    deps.contextStore ?? deps.contextRegistry.getOrCreate(contextKey);
+  const releaseLease = lifecycleStore.acquireExecutionLease();
+
+  const admission = deps.admitCompute({
+    requested: input.computePolicy,
+    model: LUNA_MODEL,
+    efforts: [input.effort],
+    workerCount: 1,
+  });
+
+  if (admission.refusal) {
+    releaseLease();
+    deps.emit({
+      type: "explore.rejected",
+      batchId,
+      reasonCode: "compute-policy",
+    });
+    deps.contextRegistry.releaseIfUnreferenced(contextKey);
+    return {
+      content: [{ type: "text", text: `EXPLORATION REFUSED: ${admission.refusal}` }],
+      isError: true,
+    };
+  }
+
+  // Admission authorizes the fixed explorer executor; the policy list is an
+  // envelope, not an instruction to silently substitute its first entry.
+  const model = LUNA_MODEL;
+  const effort = input.effort;
+
+  let executionStarted = false;
+  try {
+    const result = await deps.exploreWithLuna(
+      { ...input, effort },
+      signal,
+      {
+        onStarted: () => {
+          executionStarted = true;
+          deps.emit({
+            type: "explore.started",
+            batchId,
+            activityLabel: input.activityLabel,
+            requestedModel: LUNA_MODEL,
+            requestedEffort: input.effort,
+            selectedModel: model,
+            selectedEffort: effort,
+            computePolicy: admission.policy,
+          });
+        },
+        onAttemptStart: (evidence) =>
+          emitAttemptStarted(deps.emit, batchId, "explorer", evidence),
+        onAttemptComplete: (evidence) =>
+          emitAttemptCompleted(deps.emit, batchId, "explorer", evidence),
+      },
+      model,
+    );
+
+    lifecycleStore.recordExplorationTurn(input, result, { id: batchId });
+
+    deps.emit({
+      type: "explore.completed",
+      batchId,
+      verdict: result.verdict,
+      claimed: result.workerClaimedStatus,
+      durationSeconds: result.durationSeconds,
+      workerGroundedClaimsCount: result.findings.observedFacts.length,
+      runtimeFactsCount: result.findings.runtimeObservedFacts.length,
+      inferencesCount: result.findings.inferences.length,
+      unknownsCount: result.findings.unknowns.length,
+      executedModel: result.model,
+      executedEffort: result.effort,
+      usage: result.usage,
+    });
+
+    const rendered = renderExploreResult(result, input.resultDetail);
+    const structuredContent =
+      input.resultDetail === "compact"
+        ? compactExploreResult(result)
+        : input.resultDetail === "full" || !isCleanExplore(result)
+          ? (result as unknown as Record<string, unknown>)
+          : undefined;
+
+    return {
+      content: [{ type: "text", text: rendered }],
+      ...(structuredContent ? { structuredContent } : {}),
+      isError: result.verdict !== "PASS",
+    };
+  } catch (error) {
+    const errMessage = (error as Error).message;
+    lifecycleStore.recordRuntimeFailure({
+      id: `err_${batchId}`,
+      description: errMessage,
+      objective: input.target,
+      acceptanceCriteria: input.questions ?? [],
+      changeIntent: "forbidden",
+      taskCategory: "investigation",
+    });
+    if (executionStarted) {
+      deps.emit({
+        type: "explore.completed",
+        batchId,
+        verdict: "FAILED",
+        claimed: null,
+        durationSeconds: 0,
+        workerGroundedClaimsCount: 0,
+        runtimeFactsCount: 0,
+        inferencesCount: 0,
+        unknownsCount: 0,
+        executedModel: model,
+        executedEffort: effort,
+        usage: null,
+      });
+    } else {
+      deps.emit({
+        type: "explore.rejected",
+        batchId,
+        reasonCode: "execution-setup",
+      });
+    }
+    return {
+      content: [{ type: "text", text: `EXPLORATION FAILED: ${errMessage}` }],
+      isError: true,
+    };
+  } finally {
+    releaseLease();
+    lifecycleStore.evaluateAndMaybeCompact("post-exploration", {
+      batchId,
+      emit: deps.emit,
+    });
+    deps.contextRegistry.releaseIfUnreferenced(contextKey);
+  }
+}
+
+export function registerExplore(targetServer: McpServer = server): void {
+  targetServer.registerTool(
+    "explore",
+    {
+      title: "Explore repository, API, or documentation with Luna",
+      description: EXPLORE_TOOL_DESCRIPTION,
+      inputSchema: exploreMcpInputShape,
+    },
+    async (input, extra) => {
+      const parsed = exploreInputSchema.parse(input);
+      return await handleExplore(parsed, extra?.signal);
+    },
+  );
+}
+
 /** Render a batch result as readable text for the model's transcript. */
 function renderRichBatch(batch: BatchOutput): string {
   const lines: string[] = [];
@@ -2161,6 +2479,7 @@ async function main(): Promise<void> {
     registerDelegateTasks();
     registerContinueTask();
     registerRoutingPreflight();
+    registerExplore();
   }
 
   const transport = new StdioServerTransport();

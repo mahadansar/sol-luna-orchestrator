@@ -24,6 +24,7 @@ import { findScopeViolations, resolvePath, type RealPathResolver } from "./scope
 import { buildVerificationEnv, runVerificationCommand } from "./verify.js";
 import { sanitizeForLog } from "./log.js";
 import { WorkspaceError, resolveWorkspace } from "./workspace.js";
+import { buildExploreResult } from "./worker.js";
 
 const POLICY: CommandPolicy = { allowed: DEFAULT_ALLOWED_EXECUTABLES };
 
@@ -617,4 +618,49 @@ test("POSIX verification timeout kills a spawned process-group descendant", asyn
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("explorer strictly enforces read-only: observed edits cause contract discrepancy and failure", () => {
+  const input = {
+    target: "Investigate authentication module structure",
+    effort: "high" as const,
+    effortReason: "detailed inspection of auth flow",
+    scope: ["src/auth/**"],
+    forbiddenFiles: [],
+    questions: ["How are tokens signed?"],
+    resultDetail: "handoff" as const,
+  };
+  const observed = {
+    threadId: "thread-exp-security",
+    finalResponse: JSON.stringify({
+      status: "PASS",
+      summary: "I investigated auth and modified a helper file.",
+      observedFacts: [],
+      inferences: [],
+      unknowns: [],
+      relevantFiles: [{ path: "src/auth/helper.ts", why: "modified" }],
+      recommendedSeams: [],
+      notes: "",
+    }),
+    filesChanged: [{ path: "src/auth/helper.ts", kind: "modified" }],
+    errors: [],
+    usage: null,
+    timedOut: false,
+    cancelled: false,
+    termination: "completed" as const,
+    terminationMessage: null,
+  };
+
+  const result = buildExploreResult({
+    input,
+    workingDirectory: process.cwd(),
+    observed,
+    durationSeconds: 2,
+  });
+
+  assert.equal(result.verdict, "FAILED");
+  assert.equal(result.trustworthy, false);
+  assert.ok(
+    result.discrepancies.some((d: string) => /Change intent contract violated/i.test(d)),
+  );
 });

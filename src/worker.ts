@@ -27,6 +27,10 @@ import type {
   DelegateTaskInput,
   DelegateTaskOutput,
   Effort,
+  ExploreFindings,
+  ExploreInput,
+  ExploreOutput,
+  ExploreReport,
   FailureDecision,
   Status,
   TaskState,
@@ -35,10 +39,24 @@ import type {
   WorkerReport,
 } from "./contract.js";
 import { resolveComputePolicy } from "./policy.js";
-import { STATUSES, WORKER_FAILURE_CAUSES, workerOutputJsonSchema } from "./contract.js";
+import {
+  STATUSES,
+  WORKER_FAILURE_CAUSES,
+  explorerOutputJsonSchema,
+  exploreReportSchema,
+  workerOutputJsonSchema,
+} from "./contract.js";
 import { verificationCommandsEquivalent } from "./command.js";
-import { buildWorkerPrompt } from "./prompt.js";
+import { buildExplorerPrompt, buildWorkerPrompt } from "./prompt.js";
 import { findScopeViolations, toRelativePosix } from "./scope.js";
+import {
+  collectExplorationMutations,
+  createExplorationSurface,
+  removeExplorationSurface,
+  verifyGrounding,
+  type ExplorationMutation,
+  type ExplorationSurface,
+} from "./explorer-surface.js";
 import {
   runVerifications,
   truncate,
@@ -91,6 +109,7 @@ export const workerSlots = new Semaphore(MAX_PARALLEL);
 export interface ObservedRun {
   threadId: string | null;
   finalResponse: string;
+  agentMessageCount?: number;
   filesChanged: Array<{ path: string; kind: string }>;
   errors: string[];
   usage: DelegateTaskOutput["usage"];
@@ -133,7 +152,7 @@ export interface WorkerCodex {
  * actually observed rather than only what the model says it did.
  */
 async function runWorkerThread(
-  input: DelegateTaskInput,
+  input: { effort: Effort },
   workingDirectory: string,
   timeoutSeconds: number,
   externalSignal?: AbortSignal,
@@ -142,11 +161,15 @@ async function runWorkerThread(
     resumeThreadId?: string;
     continuationInstruction?: string;
     codex?: WorkerCodex;
+    customPrompt?: string;
+    outputSchema?: object;
+    sandboxMode?: ThreadOptions["sandboxMode"];
   } = {},
 ): Promise<ObservedRun> {
   const observed: ObservedRun = {
     threadId: null,
     finalResponse: "",
+    agentMessageCount: 0,
     filesChanged: [],
     errors: [],
     usage: null,
@@ -175,7 +198,7 @@ async function runWorkerThread(
   const threadOptions: ThreadOptions = {
     model: options.model ?? LUNA_MODEL,
     modelReasoningEffort: asSdkEffort(input.effort),
-    sandboxMode: WORKER_SANDBOX,
+    sandboxMode: options.sandboxMode ?? WORKER_SANDBOX,
     workingDirectory,
     skipGitRepoCheck: true,
     networkAccessEnabled: WORKER_NETWORK_ACCESS,
@@ -214,10 +237,18 @@ async function runWorkerThread(
       ? codex.resumeThread(options.resumeThreadId, threadOptions)
       : codex.startThread(threadOptions);
 
-    const { events } = await thread.runStreamed(
-      buildWorkerPrompt(input, workingDirectory, options.continuationInstruction),
-      { outputSchema: workerOutputJsonSchema, signal: controller.signal },
-    );
+    const prompt =
+      options.customPrompt ??
+      buildWorkerPrompt(
+        input as DelegateTaskInput,
+        workingDirectory,
+        options.continuationInstruction,
+      );
+    const outputSchema = options.outputSchema ?? workerOutputJsonSchema;
+    const { events } = await thread.runStreamed(prompt, {
+      outputSchema,
+      signal: controller.signal,
+    });
 
     for await (const event of events as AsyncGenerator<ThreadEvent>) {
       switch (event.type) {
@@ -235,6 +266,7 @@ async function runWorkerThread(
               observed.filesChanged.push({ path: change.path, kind: change.kind });
             }
           } else if (item.type === "agent_message") {
+            observed.agentMessageCount = (observed.agentMessageCount ?? 0) + 1;
             observed.finalResponse = item.text;
           } else if (item.type === "error") {
             observed.errors.push(item.message);
@@ -338,6 +370,19 @@ export function parseWorkerReport(finalResponse: string): WorkerReport | null {
     }
   }
   return null;
+}
+
+/** Parse exactly one schema-valid structured exploration payload. */
+export function parseExploreReport(finalResponse: string): ExploreReport | null {
+  const text = finalResponse.trim();
+  if (!text) return null;
+  try {
+    const decoded: unknown = JSON.parse(text);
+    const parsed = exploreReportSchema.safeParse(decoded);
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
 }
 
 function parseFailureCauses(
@@ -2003,4 +2048,396 @@ function buildReviewChecklist(
   }
 
   return checklist;
+}
+
+export interface ExploreAnalysisParams {
+  input: ExploreInput;
+  workingDirectory: string;
+  observed: ObservedRun;
+  durationSeconds: number;
+  model?: string;
+  attempts?: AttemptEvidence[];
+  findings?: ExploreFindings;
+  groundingDiscrepancies?: string[];
+  mutations?: ExplorationMutation[];
+  evidenceError?: string;
+}
+
+/**
+ * Assemble the supervisor-facing exploration output from raw observations.
+ *
+ * Enforces strictly read-only intent: any runtime-observed file edit violates the contract
+ * and fails the verdict.
+ */
+export function buildExploreResult({
+  input,
+  workingDirectory,
+  observed,
+  durationSeconds,
+  model = LUNA_MODEL,
+  attempts,
+  findings: validatedFindings,
+  groundingDiscrepancies = [],
+  mutations = [],
+  evidenceError,
+}: ExploreAnalysisParams): ExploreOutput {
+  const report = parseExploreReport(observed.finalResponse);
+  const errors = [...observed.errors];
+  if ((observed.agentMessageCount ?? (observed.finalResponse ? 1 : 0)) > 1) {
+    errors.push(
+      "Worker produced multiple final-message payloads; exploration fails closed.",
+    );
+  }
+  if (!report && observed.finalResponse) {
+    errors.push(
+      "Worker's final message was not valid JSON matching the explorer output schema.",
+    );
+  }
+  if (!report && !observed.finalResponse) {
+    errors.push("Worker produced no final message.");
+  }
+
+  const workerClaimedStatus: Status = report?.status ?? "FAILED";
+  const discrepancies: string[] = [...groundingDiscrepancies];
+  if (!validatedFindings && (report?.observedFacts.length ?? 0) > 0) {
+    discrepancies.push(
+      "Worker-grounded claims were not checked against an isolated source snapshot.",
+    );
+  }
+
+  // Observed edits check: Exploration is strictly read-only!
+  const observedFilesChanged = [
+    ...observed.filesChanged.map((c) => ({
+      path: toRelativePosix(c.path, workingDirectory),
+      kind: normalizeKind(c.kind),
+    })),
+    ...mutations,
+  ].filter(
+    (change, index, all) =>
+      all.findIndex(
+        (candidate) => candidate.path === change.path && candidate.kind === change.kind,
+      ) === index,
+  );
+
+  if (evidenceError) {
+    errors.push(`Disposable exploration evidence scan failed: ${evidenceError}`);
+  }
+
+  const changeIntentViolation = observedFilesChanged.length > 0;
+  if (changeIntentViolation) {
+    discrepancies.push(
+      `Change intent contract violated: explorer is strictly read-only, but the runtime ` +
+        `observed edits in ${observedFilesChanged.map((f) => f.path).join(", ")}.`,
+    );
+  }
+
+  // Scope check: If forbidden files were accessed/touched
+  const touchedPaths = observedFilesChanged.map((f) => f.path);
+  const scopeViolations = findScopeViolations(
+    touchedPaths,
+    input.scope ?? [],
+    input.forbiddenFiles ?? [],
+    workingDirectory,
+  );
+  if (scopeViolations.length > 0) {
+    discrepancies.push(`Scope was violated: ${scopeViolations.join("; ")}`);
+  }
+
+  let verdict: Status = workerClaimedStatus;
+  if (errors.length > 0 || observed.timedOut || observed.cancelled) {
+    verdict = "FAILED";
+  } else if (
+    changeIntentViolation ||
+    scopeViolations.length > 0 ||
+    discrepancies.length > 0
+  ) {
+    verdict = "FAILED";
+  }
+
+  const reviewChecklist: string[] = [];
+  if (verdict === "PASS") {
+    reviewChecklist.push(
+      "Review worker-grounded claims, runtime observations, and inferences before designing seams or implementation contracts.",
+    );
+    if ((report?.unknowns.length ?? 0) > 0) {
+      reviewChecklist.push(
+        "Address identified open unknowns before delegating implementation.",
+      );
+    }
+  } else {
+    reviewChecklist.push(
+      "Scrutinize explorer failure / discrepancies before re-exploring or proceeding.",
+    );
+  }
+
+  const findings: ExploreFindings =
+    validatedFindings ??
+    (report
+      ? {
+          summary: report.summary,
+          observedFacts: report.observedFacts.map((fact) => ({
+            ...fact,
+            provenance: "worker" as const,
+            grounding: "unverified" as const,
+          })),
+          runtimeObservedFacts: [],
+          inferences: report.inferences,
+          unknowns: report.unknowns,
+          relevantFiles: report.relevantFiles,
+          recommendedSeams: report.recommendedSeams,
+          notes: report.notes,
+        }
+      : {
+          summary: "",
+          observedFacts: [],
+          runtimeObservedFacts: [],
+          inferences: [],
+          unknowns: [],
+          relevantFiles: [],
+          recommendedSeams: [],
+          notes: "",
+        });
+
+  return {
+    target: input.target,
+    verdict,
+    workerClaimedStatus,
+    trustworthy: discrepancies.length === 0 && errors.length === 0,
+    model,
+    effort: input.effort,
+    effortReason: input.effortReason,
+    durationSeconds,
+    workerThreadId: observed.threadId,
+    findings,
+    observedFilesChanged,
+    scopeViolations,
+    discrepancies,
+    reviewChecklist,
+    usage: observed.usage,
+    attempts,
+    errors,
+  };
+}
+
+async function validateExploreFindings(
+  input: ExploreInput,
+  surface: ExplorationSurface,
+  report: ExploreReport | null,
+  mutations: readonly ExplorationMutation[],
+): Promise<{ findings?: ExploreFindings; discrepancies: string[] }> {
+  if (!report) return { discrepancies: [] };
+
+  const discrepancies: string[] = [];
+  const runtimeObservedFacts: ExploreFindings["runtimeObservedFacts"] = [];
+  const mutationOccurred = mutations.length > 0;
+  const observedFacts: ExploreFindings["observedFacts"] = [];
+
+  for (const [index, fact] of report.observedFacts.entries()) {
+    const groundingError = mutationOccurred
+      ? "the disposable surface was mutated during exploration"
+      : await verifyGrounding(surface, fact.sourceFile, fact.sourceLine, fact.evidence);
+    if (groundingError) {
+      discrepancies.push(
+        `Worker-grounded claim ${index + 1} was discarded because its source grounding could not be verified: ${groundingError}.`,
+      );
+    } else {
+      observedFacts.push({
+        ...fact,
+        provenance: "worker",
+        grounding: "runtime-verified",
+      });
+      runtimeObservedFacts.push({
+        kind: "source-grounding",
+        statement: "The cited evidence text was present at the claimed source location.",
+        sourceFile: fact.sourceFile,
+        sourceLine: fact.sourceLine,
+      });
+    }
+  }
+
+  for (const mutation of mutations) {
+    runtimeObservedFacts.push({
+      kind: "surface-mutation",
+      statement: `The disposable exploration surface recorded a ${mutation.kind} change at ${mutation.path}.`,
+    });
+  }
+
+  const pathViolation = (candidate: string): string | null => {
+    const violations = findScopeViolations(
+      [candidate],
+      input.scope,
+      input.forbiddenFiles,
+      surface.sourceWorkspace,
+    );
+    return violations[0] ?? null;
+  };
+
+  const relevantFiles = report.relevantFiles.filter((file) => {
+    const violation = pathViolation(file.path);
+    const normalized = file.path.replaceAll("\\", "/");
+    const missing = !surface.baseline.has(normalized);
+    if (!violation && !missing) return true;
+    discrepancies.push(
+      `Worker-reported relevant file '${file.path}' was discarded: ${violation ?? "not present in the admitted surface"}.`,
+    );
+    return false;
+  });
+
+  const recommendedSeams = report.recommendedSeams.map((seam) => {
+    const candidateFiles = seam.candidateFiles.filter((candidate) => {
+      const violation = pathViolation(candidate);
+      if (!violation) return true;
+      discrepancies.push(
+        `Advisory seam file '${candidate}' was discarded because it was outside admitted scope: ${violation}.`,
+      );
+      return false;
+    });
+    return { ...seam, candidateFiles };
+  });
+
+  return {
+    discrepancies,
+    findings: {
+      summary: report.summary,
+      observedFacts,
+      runtimeObservedFacts,
+      inferences: report.inferences,
+      unknowns: report.unknowns,
+      relevantFiles,
+      recommendedSeams,
+      notes: report.notes,
+    },
+  };
+}
+
+/**
+ * Execute an exploration turn with Luna, taking one concurrency slot.
+ */
+export async function exploreWithLuna(
+  input: ExploreInput,
+  signal?: AbortSignal,
+  hooks: {
+    onStarted?: (workingDirectory: string) => void;
+    onAttemptStart?: (evidence: AttemptStartEvidence) => void;
+    onAttemptComplete?: (evidence: AttemptEvidence) => void;
+  } = {},
+  requestedModel: string = LUNA_MODEL,
+  options: {
+    codex?: WorkerCodex;
+  } = {},
+): Promise<ExploreOutput> {
+  const timeoutSeconds = input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS;
+  const executionId = createExecutionId();
+  const startedAt = new Date().toISOString();
+  const startTime = performance.now();
+
+  const release = await workerSlots.acquire();
+  let sourceWorkspace: string;
+  try {
+    sourceWorkspace = resolveWorkspace(input.workingDirectory);
+  } catch (error) {
+    release();
+    throw error;
+  }
+
+  let surface: ExplorationSurface | null = null;
+  try {
+    surface = await createExplorationSurface(
+      sourceWorkspace,
+      input.scope,
+      input.forbiddenFiles,
+    );
+    hooks.onStarted?.(surface.path);
+    hooks.onAttemptStart?.({
+      executionId,
+      logicalAttempt: 1,
+      role: "initial",
+      predecessorExecutionId: null,
+      requestedModel,
+      requestedEffort: input.effort,
+      threadOperation: "start",
+      startedAt,
+      timeoutMs: timeoutSeconds * 1000,
+    });
+
+    const workerStart = performance.now();
+    const observed = await runWorkerThread(input, surface.path, timeoutSeconds, signal, {
+      model: requestedModel,
+      codex: options.codex,
+      customPrompt: buildExplorerPrompt(input, surface.path),
+      outputSchema: explorerOutputJsonSchema,
+      sandboxMode: "read-only",
+    });
+
+    const workerElapsedMs = Math.max(0, performance.now() - workerStart);
+    const finishedAt = new Date().toISOString();
+    const elapsedMs = Math.max(0, performance.now() - startTime);
+    const durationSeconds = Math.max(1, Math.round(elapsedMs / 1000));
+
+    const report = parseExploreReport(observed.finalResponse);
+    let mutations: ExplorationMutation[] = [];
+    let evidenceError: string | undefined;
+    try {
+      mutations = await collectExplorationMutations(surface);
+    } catch (error) {
+      evidenceError = (error as Error).message;
+    }
+    const validated = await validateExploreFindings(input, surface, report, mutations);
+
+    const attemptEvidence: AttemptEvidence = {
+      executionId,
+      logicalAttempt: 1,
+      role: "initial",
+      predecessorExecutionId: null,
+      requestedModel,
+      requestedEffort: input.effort,
+      threadId: observed.threadId,
+      threadOperation: "start",
+      threadIdentityMatched: null,
+      startedAt,
+      finishedAt,
+      elapsedMs: Math.round(elapsedMs),
+      workerElapsedMs: Math.round(workerElapsedMs),
+      verificationElapsedMs: 0,
+      timeoutMs: timeoutSeconds * 1000,
+      termination: {
+        kind: observed.termination,
+        message: observed.terminationMessage,
+      },
+      usage: observed.usage
+        ? {
+            status: "reported",
+            source: "codex-turn.completed",
+            value: observed.usage,
+          }
+        : {
+            status: "unavailable",
+            reason: unavailableUsageReason(observed),
+          },
+      workerClaimedStatus: report?.status ?? "FAILED",
+      workerClaimedFailureCauses: [],
+      verification: [],
+    };
+
+    hooks.onAttemptComplete?.(attemptEvidence);
+
+    return buildExploreResult({
+      input,
+      workingDirectory: surface.path,
+      observed,
+      durationSeconds,
+      model: requestedModel,
+      attempts: [attemptEvidence],
+      findings: validated.findings,
+      groundingDiscrepancies: validated.discrepancies,
+      mutations,
+      evidenceError,
+    });
+  } finally {
+    try {
+      if (surface) await removeExplorationSurface(surface);
+    } finally {
+      release();
+    }
+  }
 }

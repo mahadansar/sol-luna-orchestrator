@@ -34,7 +34,7 @@ Cost matters, but it is not the primary objective. The orchestrator should use p
 | P1.1     | Reasoned Retry and Effort Escalation                   | Complete, unreleased; built on P0.4 and completed P1.0 hardening              |
 | P1.2     | Adaptive Worker Routing and Compute Policy             | Complete, unreleased                                                          |
 | P1.3     | Automatic Context Lifecycle Management                 | Complete, unreleased; depends on P0.1, P0.2, and P0.3                         |
-| P2.1     | Optional Explorer                                      | Depends on P1.2                                                               |
+| P2.1     | Optional Explorer                                      | Complete, unreleased; depends on P1.2                                         |
 | P2.2     | Lightweight Cross-Session Handoff                      | Depends on P1.3                                                               |
 | P2.3     | End-to-End Automated Workflow                          | Depends on P1.2, P1.3, P2.1, and P2.2                                         |
 | P2.4     | Mature Benchmark and Acceptance Pass                   | Depends on P2.3                                                               |
@@ -225,10 +225,54 @@ between claimed and verified results. Depends on P0.1, P0.2, and P0.3.
 
 ## P2.1 Optional Explorer
 
-Provide an adaptive, bounded, read-only investigation companion for unfamiliar
-repositories, dependencies, APIs, or documentation. It returns findings rather
-than an unchecked plan, implements nothing, and cannot delegate. Optional and
-depends on P1.2.
+**Complete, unreleased.**
+
+Provide an adaptive, bounded, read-only investigation companion (`explore` MCP tool)
+for unfamiliar repositories, dependencies, APIs, or documentation. It returns structured
+findings rather than an unchecked plan, implements nothing, and cannot delegate.
+Optional and supervisor-owned.
+
+The implemented P2.1 capabilities provide:
+
+1. **Read-Only Companion Contract and Schema (`explore` tool):** Bounded `ExploreInput`
+   and `ExploreOutput` contracts in `src/contract.ts` requiring specific investigation
+   targets, explicit effort justifications, optional question lists, and structured
+   capsules (`contextCapsule`).
+2. **Strict Read-Only Enforcement:** `changeIntent` is strictly `"forbidden"`. The Codex
+   thread uses the fixed SDK `read-only` sandbox in a disposable admitted-scope copy, never
+   the authoritative workspace. A content/symlink manifest detects creation, deletion,
+   modification, rename, symlink, and untracked-file changes; attempted mutation fails trust
+   and the disposable surface is removed.
+3. **Grounded Structured Findings:** Worker output conforms to strict JSON schema
+   `explorerOutputJsonSchema`, cleanly segregating:
+   - `observedFacts`: explicitly worker-provenanced claims whose exact source file, one-based
+     line, and evidence text receive a runtime grounding status.
+   - `runtimeObservedFacts`: only source-grounding and mutation facts established by the runtime.
+   - `inferences`: explicit hypotheses with stated rationale.
+   - `unknowns`: open, unresolved questions with why they could not be determined.
+   - `relevantFiles`: files key to the target with reason for relevance.
+   - `recommendedSeams`: candidate decoupled seams for supervisor delegation planning.
+4. **Advisory Seam Discovery Without Delegation Façade:** Proposes candidate seams
+   and files to assist supervisor architecture without generating speculative unchecked
+   implementation plans or usurping supervisor decomposition.
+5. **Single-Worker Compute Policy Enforcement:** Adheres to the operator compute policy
+   envelope via `admitCompute`, admitting or refusing exploration calls based on
+   declared model and effort permissions and emitting `explore.started`, `explore.completed`,
+   and `explore.rejected` telemetry events.
+6. **Context Lifecycle and Compaction Integration:** Integrates into authoritative
+   `ContextLifecycleStore`, acquiring execution leases to guard in-flight exploration,
+   recording exploration turns, and triggering safe compaction evaluations at the
+   `"post-exploration"` lifecycle boundary. `compactContext` compacts clean exploration turns
+   while preserving grounded facts, inferences, unknowns, and candidate seams.
+7. **Anti-Recursion and Isolation:** The `explore` tool is disabled inside worker processes
+   (`IS_WORKER_PROCESS` / `SOL_LUNA_WORKER=1`), preventing recursive explorer spawning.
+8. **Proportional Rendering:** Supports `handoff` (concise human-readable report),
+   `compact` (the same reduced canonical structure in text and `structuredContent`), and
+   `full` (complete `ExploreOutput`); modes do not change factual semantics.
+
+**Constraints.** Exploration must remain optional, bounded, read-only, and supervisor-owned.
+Zero-worker direct solo execution or immediate task delegation without exploration remain first-class.
+Depends on P1.2.
 
 ## P2.2 Lightweight Cross-Session Handoff
 

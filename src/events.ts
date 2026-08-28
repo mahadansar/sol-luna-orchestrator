@@ -54,6 +54,35 @@ export type OrchestratorEvent =
   | { type: "batch.cancelled"; batchId: string; reason: string }
   | { type: "batch.rejected"; batchId: string; reason: string }
   | {
+      type: "explore.started";
+      batchId: string;
+      activityLabel?: string;
+      requestedModel: string;
+      requestedEffort: string;
+      selectedModel: string;
+      selectedEffort: string;
+      computePolicy?: ComputePolicy;
+    }
+  | {
+      type: "explore.completed";
+      batchId: string;
+      verdict: string;
+      claimed: string | null;
+      durationSeconds: number;
+      workerGroundedClaimsCount: number;
+      runtimeFactsCount: number;
+      inferencesCount: number;
+      unknownsCount: number;
+      executedModel: string;
+      executedEffort: string;
+      usage: DelegateTaskOutput["usage"];
+    }
+  | {
+      type: "explore.rejected";
+      batchId: string;
+      reasonCode: "compute-policy" | "execution-setup";
+    }
+  | {
       type: "attempt.started";
       batchId: string;
       taskId: string;

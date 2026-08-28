@@ -11,6 +11,8 @@ import type {
   DelegateTaskInput,
   DelegateTaskOutput,
   DelegateTasksInput,
+  ExploreInput,
+  ExploreOutput,
   FailureAction,
   FailureClassification,
   FailureDecision,
@@ -140,6 +142,7 @@ export type ContextTurnKind =
   | "batch-delegation"
   | "continuation"
   | "routing-preflight"
+  | "exploration"
   | "status-narration"
   | "tool-prose";
 
@@ -178,6 +181,12 @@ export interface RoutingPreflightTurn extends BaseContextTurn {
   readonly signals?: readonly string[];
 }
 
+export interface ExplorationTurn extends BaseContextTurn {
+  readonly kind: "exploration";
+  readonly input: ExploreInput;
+  readonly output: ExploreOutput;
+}
+
 export interface StatusNarrationTurn extends BaseContextTurn {
   readonly kind: "status-narration";
   readonly text: string;
@@ -195,6 +204,7 @@ export type ContextTurn =
   | BatchDelegationTurn
   | ContinuationTurn
   | RoutingPreflightTurn
+  | ExplorationTurn
   | StatusNarrationTurn
   | ToolProseTurn;
 
@@ -261,9 +271,14 @@ export interface CompactedTurn {
   readonly id: string;
   readonly turnNumber: number;
   readonly kind:
-    "single-delegation" | "batch-delegation" | "continuation" | "routing-preflight";
+    | "single-delegation"
+    | "batch-delegation"
+    | "continuation"
+    | "routing-preflight"
+    | "exploration";
   readonly verdict: Status | "NEEDS_SUPERVISOR" | "NOT_EXECUTED";
   readonly isClean: boolean;
+  readonly trustworthy?: boolean;
   readonly taskId?: string;
   readonly model?: string;
   readonly effort?: string;
@@ -272,6 +287,41 @@ export interface CompactedTurn {
   readonly durationSeconds?: number;
   readonly changeIntent?: ChangeIntent;
   readonly contract?: CompactedTaskContract;
+  readonly explorationFindings?: {
+    readonly target: string;
+    readonly summary: string;
+    readonly observedFacts: readonly {
+      readonly statement: string;
+      readonly sourceFile: string;
+      readonly sourceLine: number;
+      readonly evidence: string;
+      readonly provenance: "worker";
+      readonly grounding: "runtime-verified" | "unverified";
+    }[];
+    readonly runtimeObservedFacts: readonly {
+      readonly kind: "source-grounding" | "surface-mutation";
+      readonly statement: string;
+      readonly sourceFile?: string;
+      readonly sourceLine?: number;
+    }[];
+    readonly inferences: readonly {
+      readonly hypothesis: string;
+      readonly rationale: string;
+    }[];
+    readonly unknowns: readonly {
+      readonly question: string;
+      readonly whyUnresolved: string;
+    }[];
+    readonly relevantFiles: readonly {
+      readonly path: string;
+      readonly why: string;
+    }[];
+    readonly recommendedSeams: readonly {
+      readonly label: string;
+      readonly description: string;
+      readonly candidateFiles: readonly string[];
+    }[];
+  };
   readonly batchPolicy?: CompactedBatchPolicy;
   readonly batchOutcome?: {
     readonly completionState: BatchOutput["completionState"];
@@ -764,6 +814,59 @@ export function ingestRoutingPreflightTurn(
   };
 }
 
+export function ingestExplorationTurn(
+  context: OrchestrationContext,
+  turn: {
+    input: ExploreInput;
+    output: ExploreOutput;
+    id?: string;
+    timestamp?: string;
+  },
+): OrchestrationContext {
+  const id = turn.id ?? `exp_turn_${context.turns.length + 1}`;
+  assertUniqueTurnId(context, id);
+  const blockers = [...context.blockers];
+  if (turn.output.verdict === "BLOCKED" || turn.output.verdict === "FAILED") {
+    const reason =
+      turn.output.errors.join("; ") ||
+      turn.output.discrepancies.join("; ") ||
+      turn.output.findings.summary ||
+      `Exploration turn ended with verdict ${turn.output.verdict}`;
+    const blocker: ContextBlocker = {
+      id: `blk_${id}`,
+      kind:
+        turn.output.scopeViolations.length > 0
+          ? "scope-violation"
+          : turn.output.discrepancies.length > 0
+            ? "discrepancy"
+            : turn.output.verdict === "BLOCKED"
+              ? "worker-blocked"
+              : "runtime-error",
+      description: reason,
+      resolved: false,
+    };
+    if (!blockers.some((candidate) => candidate.id === blocker.id)) {
+      blockers.push(blocker);
+    }
+  }
+
+  return {
+    ...context,
+    blockers,
+    turns: [
+      ...context.turns,
+      {
+        id,
+        turnNumber: context.turns.length + 1,
+        timestamp: turn.timestamp,
+        kind: "exploration",
+        input: structuredClone(turn.input),
+        output: structuredClone(turn.output),
+      },
+    ],
+  };
+}
+
 export function ingestStatusNarrationTurn(
   context: OrchestrationContext,
   text: string,
@@ -810,6 +913,21 @@ export function ingestToolProseTurn(
       },
     ],
   };
+}
+
+export function isCleanExploreResult(output: ExploreOutput): boolean {
+  return (
+    output.verdict === "PASS" &&
+    output.workerClaimedStatus === "PASS" &&
+    output.trustworthy &&
+    (output.observedFilesChanged?.length ?? 0) === 0 &&
+    (output.scopeViolations?.length ?? 0) === 0 &&
+    (output.discrepancies?.length ?? 0) === 0 &&
+    (output.errors?.length ?? 0) === 0 &&
+    output.findings.observedFacts.every(
+      (fact) => fact.provenance === "worker" && fact.grounding === "runtime-verified",
+    )
+  );
 }
 
 export function isCleanPassResult(result: DelegateTaskOutput): boolean {
@@ -1323,6 +1441,91 @@ export function compactContext(
       continue;
     }
 
+    if (turn.kind === "exploration") {
+      const output = turn.output;
+      const clean = isCleanExploreResult(output);
+      if (clean) {
+        compactedCleanTurns++;
+        if (output.findings.summary.trim()) omittedCleanSummaries++;
+      } else {
+        retainedDiagnosticTurns++;
+        protectedTurnIds.add(turn.id);
+      }
+      const risks = [
+        ...(output.findings.notes ? [output.findings.notes] : []),
+        ...(output.reviewChecklist ?? []),
+      ]
+        .filter((value) => typeof value === "string" && value.trim().length > 0)
+        .map((value) => redact(value, redactions));
+
+      allTurns.push({
+        id: turn.id,
+        turnNumber: turn.turnNumber,
+        kind: "exploration",
+        verdict: output.verdict,
+        isClean: clean,
+        trustworthy: output.trustworthy,
+        model: output.model,
+        effort: output.effort,
+        executionIds: (output.attempts ?? []).map((attempt) => attempt.executionId),
+        durationSeconds: output.durationSeconds,
+        changeIntent: "forbidden",
+        filesChanged: output.observedFilesChanged.map((file) => ({
+          path: file.path,
+          kind: file.kind,
+          observed: true,
+        })),
+        authoritativeVerification: emptyCounts(),
+        verificationDetails: [],
+        workerClaim: {
+          status: output.workerClaimedStatus,
+          failureCauses: [],
+          summary: clean ? undefined : redact(output.findings.summary, redactions),
+        },
+        explorationFindings: {
+          target: redact(output.target, redactions),
+          summary: redact(output.findings.summary, redactions),
+          observedFacts: output.findings.observedFacts.map((f) => ({
+            statement: redact(f.statement, redactions),
+            sourceFile: f.sourceFile,
+            sourceLine: f.sourceLine,
+            evidence: redact(f.evidence, redactions),
+            provenance: f.provenance,
+            grounding: f.grounding,
+          })),
+          runtimeObservedFacts: output.findings.runtimeObservedFacts.map((f) => ({
+            kind: f.kind,
+            statement: redact(f.statement, redactions),
+            ...(f.sourceFile ? { sourceFile: f.sourceFile } : {}),
+            ...(f.sourceLine ? { sourceLine: f.sourceLine } : {}),
+          })),
+          inferences: output.findings.inferences.map((inf) => ({
+            hypothesis: redact(inf.hypothesis, redactions),
+            rationale: redact(inf.rationale, redactions),
+          })),
+          unknowns: output.findings.unknowns.map((u) => ({
+            question: redact(u.question, redactions),
+            whyUnresolved: redact(u.whyUnresolved, redactions),
+          })),
+          relevantFiles: output.findings.relevantFiles.map((rf) => ({
+            path: rf.path,
+            why: redact(rf.why, redactions),
+          })),
+          recommendedSeams: output.findings.recommendedSeams.map((s) => ({
+            label: redact(s.label, redactions),
+            description: redact(s.description, redactions),
+            candidateFiles: [...s.candidateFiles],
+          })),
+        },
+        scopeViolations: output.scopeViolations.map((v) => redact(v, redactions)),
+        discrepancies: output.discrepancies.map((d) => redact(d, redactions)),
+        conflicts: [],
+        errors: output.errors.map((e) => redact(e, redactions)),
+        risks,
+      });
+      continue;
+    }
+
     allTurns.push({
       id: turn.id,
       turnNumber: turn.turnNumber,
@@ -1504,6 +1707,8 @@ export const SAFE_LIFECYCLE_BOUNDARIES = [
   "post-continuation",
   "pre-batch",
   "post-batch",
+  "pre-exploration",
+  "post-exploration",
   "review-handoff",
   "session-idle",
   "manual",
@@ -2481,6 +2686,30 @@ export class ContextLifecycleStore {
       card,
       route: evaluation?.route,
       signals: evaluation?.signals,
+      id: options.id,
+      timestamp: options.timestamp,
+    });
+    this.compactedProjection = null;
+  }
+
+  recordExplorationTurn(
+    input: ExploreInput,
+    output: ExploreOutput,
+    options: { id?: string; timestamp?: string } = {},
+  ): void {
+    if (!this.authoritativeContext) {
+      this.authoritativeContext = createOrchestrationContext({
+        objective: input.target,
+        acceptanceCriteria: input.questions ?? [],
+        allowedFiles: input.scope ?? [],
+        forbiddenFiles: input.forbiddenFiles ?? [],
+        changeIntent: "forbidden",
+        taskCategory: "investigation",
+      });
+    }
+    this.authoritativeContext = ingestExplorationTurn(this.authoritativeContext, {
+      input,
+      output,
       id: options.id,
       timestamp: options.timestamp,
     });

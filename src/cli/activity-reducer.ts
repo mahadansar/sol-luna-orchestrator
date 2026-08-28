@@ -35,6 +35,42 @@ const timestampedEventSchema = z.discriminatedUnion("type", [
   z.object({ ...eventBase, type: z.literal("batch.rejected"), reason: eventString }),
   z.object({
     ...eventBase,
+    type: z.literal("explore.started"),
+    activityLabel: optionalEventString,
+    requestedModel: eventString,
+    requestedEffort: eventString,
+    selectedModel: eventString,
+    selectedEffort: eventString,
+  }),
+  z.object({
+    ...eventBase,
+    type: z.literal("explore.completed"),
+    verdict: eventString,
+    claimed: optionalEventString.nullable().catch(undefined),
+    durationSeconds: z.number().finite(),
+    workerGroundedClaimsCount: z.number().finite(),
+    runtimeFactsCount: z.number().finite(),
+    inferencesCount: z.number().finite(),
+    unknownsCount: z.number().finite(),
+    executedModel: eventString,
+    executedEffort: eventString,
+    usage: z
+      .object({
+        inputTokens: z.number().finite(),
+        cachedInputTokens: z.number().finite(),
+        cacheWriteInputTokens: z.number().finite().optional(),
+        outputTokens: z.number().finite(),
+        reasoningOutputTokens: z.number().finite(),
+      })
+      .nullable(),
+  }),
+  z.object({
+    ...eventBase,
+    type: z.literal("explore.rejected"),
+    reasonCode: z.enum(["compute-policy", "execution-setup"]),
+  }),
+  z.object({
+    ...eventBase,
     type: z.literal("attempt.started"),
     taskId: eventString,
     executionId: eventString,

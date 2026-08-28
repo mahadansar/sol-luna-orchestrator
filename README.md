@@ -97,17 +97,18 @@ for options and [Troubleshooting](docs/TROUBLESHOOTING.md) for recovery.
 
 ## Features
 
-| Capability                      | What it does                                                                                                                                               |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Adaptive delegation             | Lets the supervisor choose solo work, one worker, or sequential or parallel batches, with worker effort chosen per task.                                   |
-| Bounded task contracts          | Constrains delegated work with file scopes, acceptance criteria, verification commands, and explicit `forbidden`, `optional`, or `required` change intent. |
-| Isolated parallel execution     | Uses separate worktrees, bounded concurrency, leases, and conservative conflict-aware integration for independent tasks.                                   |
-| Independent evidence            | Reruns declared verification, reconciles claims with observed Git changes, and verifies the combined batch workspace before terminal acceptance.           |
-| Continuation and bounded repair | Can resume an eligible worker under the original contract and optionally perform one conservatively classified repair attempt.                             |
-| Reasoned failure decisions      | Classifies authoritative failure evidence and selects one bounded next action without silently changing executor or compute policy.                        |
-| Context and review controls     | Uses structured Context Capsules and Compact Evidence Packets to limit unnecessary context while preserving review evidence.                               |
-| Activity and observability      | Exposes human-readable and JSON batch and worker activity while keeping prompts and sensitive task context out of the activity stream.                     |
-| Setup and diagnostics           | Provides `init`, `doctor`, `status`, `activity`, and `uninstall`, including managed discovery for normal Codex usage.                                      |
+| Capability                      | What it does                                                                                                                                                                             |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Adaptive delegation             | Lets the supervisor choose solo work, one worker, or sequential or parallel batches, with worker effort chosen per task.                                                                 |
+| Optional exploration            | Provides an explicitly invoked, admitted-scope investigation companion (`explore`) that runs in a read-only disposable surface and returns provenance-marked findings before delegation. |
+| Bounded task contracts          | Constrains delegated work with file scopes, acceptance criteria, verification commands, and explicit `forbidden`, `optional`, or `required` change intent.                               |
+| Isolated parallel execution     | Uses separate worktrees, bounded concurrency, leases, and conservative conflict-aware integration for independent tasks.                                                                 |
+| Independent evidence            | Reruns declared verification, reconciles claims with observed Git changes, and verifies the combined batch workspace before terminal acceptance.                                         |
+| Continuation and bounded repair | Can resume an eligible worker under the original contract and optionally perform one conservatively classified repair attempt.                                                           |
+| Reasoned failure decisions      | Classifies authoritative failure evidence and selects one bounded next action without silently changing executor or compute policy.                                                      |
+| Context and review controls     | Uses structured Context Capsules and Compact Evidence Packets to limit unnecessary context while preserving review evidence.                                                             |
+| Activity and observability      | Exposes human-readable and JSON batch and worker activity while keeping prompts and sensitive task context out of the activity stream.                                                   |
+| Setup and diagnostics           | Provides `init`, `doctor`, `status`, `activity`, and `uninstall`, including managed discovery for normal Codex usage.                                                                    |
 
 ## How it works
 

@@ -95,6 +95,16 @@ async function main(): Promise<void> {
 
   const preflightTool = tools.find((t) => t.name === "routing_preflight");
   check("routing_preflight is advertised", () => assert.ok(preflightTool));
+
+  const exploreTool = tools.find((t) => t.name === "explore");
+  check("explore is advertised as an explicit optional surface", () => {
+    assert.ok(exploreTool);
+    assert.match(exploreTool?.description ?? "", /never automatic/i);
+    const required = (exploreTool?.inputSchema?.required ?? []) as string[];
+    assert.ok(required.includes("target"));
+    assert.ok(required.includes("effortReason"));
+    assert.ok(required.includes("scope"));
+  });
   check("routing_preflight advertises exactly the finalized card fields", () => {
     const properties = (preflightTool?.inputSchema?.properties ?? {}) as Record<
       string,
@@ -195,6 +205,7 @@ async function main(): Promise<void> {
     assert.equal(batchTool?.outputSchema, undefined);
     assert.equal(continueTool?.outputSchema, undefined);
     assert.equal(preflightTool?.outputSchema, undefined);
+    assert.equal(exploreTool?.outputSchema, undefined);
   });
 
   const preflight = await client.callTool({
@@ -314,6 +325,17 @@ async function main(): Promise<void> {
   });
   check("invalid task contracts are rejected", () => {
     assert.equal(invalid.isError, true);
+  });
+
+  const invalidExplore = await client.callTool({
+    name: "explore",
+    arguments: {
+      target: "Inspect a bounded source module",
+      effortReason: "A missing scope must fail before any model execution",
+    },
+  });
+  check("exploration requires explicit admitted scope", () => {
+    assert.equal(invalidExplore.isError, true);
   });
 
   await client.close();

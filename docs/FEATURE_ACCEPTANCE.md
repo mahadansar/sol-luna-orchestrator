@@ -13,7 +13,7 @@ parallel recovery baseline described below. Shipped history belongs in
 - **Runtime baseline:** commit-relative current main for v0.10.0 after the Thin
   Supervisor work above. Package and lockfile versions are `0.10.0`.
 - **Latest full deterministic validation:** `npm run verify` passed on
-  2026-08-27 with **717/720 tests passed**, no failures and three expected
+  2026-08-28 with **810/813 tests passed**, no failures and three expected
   platform-specific Windows skips, plus typecheck and the deterministic MCP
   protocol smoke test.
 - **Current native platform evidence:** deterministic CI covers Windows, Linux,
@@ -55,6 +55,7 @@ parallel recovery baseline described below. Shipped history belongs in
 | P1.2 user-owned compute policy and enforcement          | PASS     | PASS          | N/A           | Strong        |
 | P1.2 adaptive routing and compute selection             | PASS     | PASS          | N/A           | Strong        |
 | P1.3 Context lifecycle management (P1.3A/B/C)           | PASS     | PASS          | N/A           | Strong        |
+| P2.1 Optional Explorer                                  | PASS     | PASS          | N/A           | Strong        |
 | `failureCauses` and verification contradiction handling | PASS     | PASS          | PASS          | Strong        |
 
 Dates, provenance, dependencies, and retest triggers are recorded below. A live
@@ -151,6 +152,24 @@ compaction run after `delegate_task`, `delegate_tasks`, and `continue_task`. Adv
 cover overlapping calls, isolation, error release, stale-projection invalidation, live non-consuming
 reference status, and capability-free projections. Factual telemetry events (`context.evaluated`,
 `context.compacted`) emit exact metrics without leaking capability tokens, prompts, or sensitive output.
+
+P2.1 Optional Explorer (`src/contract.ts`, `src/prompt.ts`, `src/worker.ts`, `src/server.ts`, `src/context.ts`, `src/explore.test.ts`, `src/security.test.ts`)
+is recorded with **PASS** deterministic coverage and **Strong** confidence. The `explore` MCP tool provides
+a bounded read-only investigation companion with Luna under strict `changeIntent: "forbidden"`. It requires an
+explicit admitted scope, copies only that scope to a disposable surface, fixes the SDK sandbox to `read-only`, and
+never uses the authoritative workspace as the explorer working directory. An independent content/symlink manifest
+detects creation, deletion, modification, rename, symlink, and untracked-file changes; mutation invalidates trust,
+fails the verdict, and is discarded. Findings conform to strict JSON schema `explorerOutputJsonSchema`: worker claims
+carry explicit worker provenance and exact runtime-checked file/line/evidence grounding, while runtime-observed facts,
+hypotheses/inferences, and open unknowns remain separate.
+Suggested candidate seams provide supervisor planning input without creating an unchecked implementation plan.
+The tool adheres to operator compute policy envelopes via `admitCompute`, emits `explore.started`, `explore.completed`,
+and `explore.rejected` telemetry, and integrates into `ContextLifecycleStore` with execution leases and `"post-exploration"`
+compaction evaluation. The tool is disabled in worker threads (`IS_WORKER_PROCESS`), preventing recursive explorer spawning.
+Deterministic tests prove fail-closed single-payload parsing, prompt generation, disposable isolation and cleanup,
+all mutation classes, source grounding, scope checks, compute propagation/admission/refusal, lifecycle leases and
+trust-preserving compaction, privacy-safe telemetry ingestion, and semantically consistent rendering modes. No
+model-backed benchmark is claimed.
 
 The terminal handoff protocol defaults clean verified PASS responses to compact
 text without `structuredContent`. A batch reruns the deduplicated declared checks

@@ -1,4 +1,4 @@
-import type { DelegateTaskInput } from "./contract.js";
+import type { DelegateTaskInput, ExploreInput } from "./contract.js";
 
 const bullets = (items: string[]): string => items.map((item) => `- ${item}`).join("\n");
 
@@ -186,6 +186,99 @@ entire reason for FAILED. Do not omit another cause merely because verification 
 failed. Use \`unclassified\` whenever the cause cannot be stated safely.
 
 Only claim PASS if you would stake the review on it.`,
+  );
+
+  return sections.join("\n\n");
+}
+
+/**
+ * Render the exploration contract into the explorer worker's opening prompt.
+ *
+ * Exploration is strictly read-only: Luna cannot create, edit, or delete files,
+ * cannot delegate, and must return structured findings distinguishing grounded
+ * worker claims from inferences and unknowns.
+ */
+export function buildExplorerPrompt(
+  input: ExploreInput,
+  workingDirectory: string,
+): string {
+  const sections: string[] = [];
+
+  sections.push(
+    `You are Luna, an isolated read-only exploration assistant running as a Codex thread.
+
+A parent orchestrator has delegated ONE exploration target to you. You have no access
+to the parent's conversation — this brief is everything. You cannot delegate
+further; investigate the repository and report your findings.
+
+Working directory: ${workingDirectory}`,
+  );
+
+  sections.push(`## Exploration target\n\n${input.target}`);
+
+  sections.push(
+    `## Change intent\n\nSelected intent: **forbidden**. ` +
+      `This exploration is strictly read-only: do NOT create, modify, or delete files. ` +
+      `If you test commands or inspect scripts, do not leave modified files in the repository.`,
+  );
+
+  if (input.questions && input.questions.length > 0) {
+    sections.push(`## Specific questions to answer\n\n${bullets(input.questions)}`);
+  }
+
+  if (input.context) {
+    sections.push(`## Context from the supervisor\n\n${input.context}`);
+  }
+
+  if (input.contextCapsule) {
+    const c = input.contextCapsule;
+    const capsule: Array<[string, string | undefined]> = [
+      ["Relevant context", c.relevantContext],
+      ["Interfaces", c.interfaces],
+      ["Dependencies", c.dependencies],
+      ["Invariants", c.invariants],
+      ["Upstream decisions", c.upstreamDecisions],
+      ["Known pitfalls", c.knownPitfalls],
+    ];
+    for (const [heading, value] of capsule) {
+      const body = value?.trim();
+      if (body) sections.push(`## ${heading}\n\n${body}`);
+    }
+  }
+
+  const scope: string[] = [];
+  if (input.scope && input.scope.length > 0) {
+    scope.push(
+      `Focus your investigation primarily on files matching:\n${bullets(input.scope)}`,
+    );
+  }
+  if (input.forbiddenFiles && input.forbiddenFiles.length > 0) {
+    scope.push(
+      `You must NOT inspect or touch files matching:\n${bullets(input.forbiddenFiles)}`,
+    );
+  }
+  if (scope.length > 0) {
+    sections.push(`## Scope\n\n${scope.join("\n\n")}`);
+  }
+
+  sections.push(
+    `## Rules
+
+1. Read and inspect files to answer the target and questions.
+2. Put worker-grounded claims in \`observedFacts\`; each must cite a workspace-relative \`sourceFile\`, exact one-based \`sourceLine\`, and verbatim non-empty \`evidence\`. The runtime validates only that grounding; it does not turn your statement into an orchestrator-observed fact.
+3. Propose high-level decoupled candidate seams if relevant, but DO NOT create an unchecked implementation plan.
+4. Do NOT modify any files. You are running on a disposable admitted-scope copy; any creation, deletion, modification, rename, or symlink change will cause the exploration to fail and your findings to remain untrusted.
+5. If blocked or unable to access required files, report BLOCKED.
+
+## Output
+
+Your final message must be a single JSON object matching the required schema:
+\`status\`, \`summary\`, \`observedFacts\`, \`inferences\`, \`unknowns\`, \`relevantFiles\`, \`recommendedSeams\`, \`notes\`.
+
+Set \`status\`:
+- PASS — investigation completed and target/questions addressed with evidence.
+- FAILED — investigation attempted but inconclusive or failed.
+- BLOCKED — cannot proceed with investigation.`,
   );
 
   return sections.join("\n\n");

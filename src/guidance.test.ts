@@ -13,6 +13,7 @@ import { z } from "zod";
 import {
   BATCH_TOOL_DESCRIPTION,
   CONTINUE_TOOL_DESCRIPTION,
+  EXPLORE_TOOL_DESCRIPTION,
   METADATA_SIZE_BUDGETS,
   metadataSizeReport,
   ROUTING_PREFLIGHT_TOOL_DESCRIPTION,
@@ -31,6 +32,7 @@ import {
   delegateTasksInputSchema,
   delegateTasksInputShape,
   delegateTasksOutputShape,
+  exploreMcpInputShape,
   INPUT_METADATA_SIZE_BUDGETS,
   inputMetadataSizeReport,
   asRoutingCard,
@@ -856,7 +858,7 @@ test("acceptance ledger owns the current release baseline", async () => {
   assert.match(acceptance, /current main runtime is its release baseline/i);
   // Refresh both this literal and the ledger from a measured `npm test` run
   // whenever the suite changes size; the pin is what stops the ledger drifting.
-  assert.match(acceptance, /\*\*717\/720 tests passed\*\*/);
+  assert.match(acceptance, /\*\*810\/813 tests passed\*\*/);
   assert.match(acceptance, /## Current capability matrix/);
   assert.match(
     acceptance,
@@ -898,7 +900,10 @@ test("routing metadata is metered by its own budgets, not the delegation contrac
   // the total, which is asserted separately and includes every routing byte.
   assert.equal(
     inputs.contractCombined,
-    inputs.delegateTaskContract + inputs.continueTask + inputs.delegateTasksContract,
+    inputs.delegateTaskContract +
+      inputs.continueTask +
+      inputs.delegateTasksContract +
+      inputs.exploreTool,
   );
   assert.equal(
     inputs.routingCombined,
@@ -932,7 +937,8 @@ test("the advertised metadata total accounts for every routing byte", () => {
     inputs.delegateTask +
       inputs.continueTask +
       inputs.delegateTasks +
-      inputs.routingPreflightTool,
+      inputs.routingPreflightTool +
+      inputs.exploreTool,
   );
 
   // The routing card is really advertised on both delegation surfaces, so the
@@ -963,6 +969,7 @@ test("advertised-schema budgets bound the JSON the MCP server actually registers
     delegateTasks: serialized(delegateTasksMcpInputShape),
     continueTask: serialized(continueTaskMcpInputShape),
     routingPreflightTool: serialized(routingPreflightMcpInputShape),
+    exploreTool: serialized(exploreMcpInputShape),
   };
 
   assert.ok(
@@ -981,12 +988,17 @@ test("advertised-schema budgets bound the JSON the MCP server actually registers
     advertised.routingPreflightTool <= INPUT_METADATA_SIZE_BUDGETS.routingPreflightTool,
     `routing_preflight advertises ${advertised.routingPreflightTool}`,
   );
+  assert.ok(
+    advertised.exploreTool <= INPUT_METADATA_SIZE_BUDGETS.exploreTool,
+    `explore advertises ${advertised.exploreTool}`,
+  );
 
   const total =
     advertised.delegateTask +
     advertised.delegateTasks +
     advertised.continueTask +
-    advertised.routingPreflightTool;
+    advertised.routingPreflightTool +
+    advertised.exploreTool;
   assert.ok(
     total <= INPUT_METADATA_SIZE_BUDGETS.advertisedCombined,
     `advertised input schemas total ${total}`,
@@ -998,6 +1010,7 @@ test("advertised-schema budgets bound the JSON the MCP server actually registers
   assert.equal(inputs.delegateTasks, advertised.delegateTasks);
   assert.equal(inputs.continueTask, advertised.continueTask);
   assert.equal(inputs.routingPreflightTool, advertised.routingPreflightTool);
+  assert.equal(inputs.exploreTool, advertised.exploreTool);
   assert.equal(inputs.advertisedCombined, total);
 });
 
