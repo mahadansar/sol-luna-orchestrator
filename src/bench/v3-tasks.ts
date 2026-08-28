@@ -15,9 +15,9 @@ import type { BenchTask, GradeCommand } from "./tasks.js";
  * `./integrity.js` identifies the current reviewed content instead, and this
  * SHA must be updated to the freeze-2 commit before a live campaign launches.
  */
-export const BENCHMARK_V3_FREEZE_SHA = "544d217967646e5f48b9aa73e936567e87d87c8b";
+export const BENCHMARK_V3_FREEZE_SHA = "c9b6bbe657a91808c9b91d3f46105f61b3243866";
 export const BENCHMARK_V3_PRODUCTION_BASELINE_SHA =
-  "83f024355c8c7caa21b488a6ea7aaa7b73a3be9e";
+  "c9b6bbe657a91808c9b91d3f46105f61b3243866";
 
 export type V3RoutingCategory =
   | "expected-solo"
