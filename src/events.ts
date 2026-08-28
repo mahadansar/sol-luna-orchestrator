@@ -446,6 +446,52 @@ export type OrchestratorEvent =
       omittedCleanTurns: number;
       omittedCleanSummaries: number;
       scrubbedValuesCount: number;
+    }
+  | {
+      type: "workflow.started";
+      workflowId: string;
+      batchId?: string;
+      taskCount: number;
+      requestedMode: string;
+      requestedWorkerCount: number;
+      requestedModels: string[];
+      requestedEfforts: string[];
+      maxSteps: number;
+      maxEscalations: number;
+      maxContinuations: number;
+      importedContext: boolean;
+      computePolicy?: ComputePolicy;
+    }
+  | {
+      type: "workflow.transition";
+      workflowId: string;
+      batchId?: string;
+      fromState: string;
+      toState: string;
+      reasonCode: string;
+      stepNumber: number;
+      recommendedMode?: string;
+      recommendedWorkerCount?: number;
+      recommendedConcurrency?: number;
+      recommendedEffort?: string | null;
+      selectedModel?: string | null;
+      selectedEffort?: string | null;
+    }
+  | {
+      type: "workflow.completed";
+      workflowId: string;
+      batchId?: string;
+      finalState: string;
+      status: string;
+      durationMs: number;
+      totalSteps: number;
+      passed: boolean;
+      delegated: boolean;
+      explored: boolean;
+      escalated: boolean;
+      executionMode: string;
+      executedModels: string[];
+      executedEfforts: string[];
     };
 
 export type EventEmitter = (event: OrchestratorEvent) => void;

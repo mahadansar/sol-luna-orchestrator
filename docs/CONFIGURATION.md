@@ -11,6 +11,7 @@ Everything the orchestrator reads, and how to change it. The
 - [Activity and diagnostics logs](#activity-and-diagnostics-logs)
 - [Parent model and effort](#parent-model-and-effort)
 - [Metadata and thin result fast path](#metadata-and-thin-result-fast-path)
+- [End-to-end automated workflow](#end-to-end-automated-workflow)
 - [Platform support](#platform-support)
 
 ---
@@ -523,6 +524,41 @@ The orchestrator does not set the parent effort. Choose the effort the work
 warrants; the creator usually uses `medium` and selects `high` for heavier work.
 `ultra` is a separate Codex multi-agent execution mode, not another
 reasoning-effort value.
+
+## End-to-end automated workflow
+
+The orchestrator includes a unified workflow engine (`executeWorkflow` in `src/workflow.ts`)
+that automates the end-to-end delegation lifecycle within strict supervisory bounds:
+
+1. **State Machine Lifecycle:** Executes a bounded 13-state sequence:
+   - `assessing`: Validates input contracts, objectives, and optional historical context.
+   - `exploring`: Runs read-only exploration (`explore`) when requested.
+   - `routing`: Evaluates candidate seams and preflight cards with `routeAdaptiveTask`.
+   - `solo`: Records a zero-worker routing result, then yields to `parent_takeover`; it never claims
+     that implementation or verification occurred.
+   - `delegating`: Executes single (`delegate_task`) or batch (`delegate_tasks`) delegation.
+   - `evaluating`: Consumes the existing handlers' authoritative verification, scope reconciliation,
+     and P1.1 failure decision; it does not run another verification pass.
+   - Repair and recovery remain internal to the existing single-task and batch handlers. The workflow
+     consumes their final authoritative evidence and does not add separate states or verification runs.
+   - `continuing`: Resumes incomplete tasks via single-use continuation references (`ctr_*`).
+   - `escalating`: Escalates effort or applies stronger-executor fallback via authoritative handoff references (`hdf_*`).
+   - `completed` / `failed` / `blocked` / `parent_takeover` / `cancelled`: Terminal states.
+2. **Execution Bounds:**
+   - `maxSteps`: Maximum transitions before yielding (clamped to 20; default 10).
+   - `maxEscalations`: Maximum effort/model escalations (clamped to 5; default 2).
+   - `maxContinuations`: Maximum worker continuations (clamped to 3; default 1).
+3. **Fail-Closed Safeguards:** Untrusted results, scope violations, contradictory claims,
+   or unrecoverable verification defects immediately transition to `PARENT_TAKEOVER`.
+4. **Telemetry Privacy:** Telemetry events (`workflow.started`, `workflow.transition`,
+   `workflow.completed`) use allowlisted structural fields. They omit prompts, paths, capability
+   references, imported handoff contents, and raw or verification output. Requested, routing-advised,
+   selected, and executed compute are reported separately.
+
+The bounds accept only finite values, normalize them to non-negative integers, and clamp them to
+the ceilings above. A caller can narrow a ceiling but cannot widen it. Handler-owned automatic
+repair remains one turn, batch recovery remains one pass, and continuation/handoff references
+remain server-issued and single-use.
 
 ## Platform support
 

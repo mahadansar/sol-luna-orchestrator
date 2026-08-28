@@ -13,7 +13,7 @@ parallel recovery baseline described below. Shipped history belongs in
 - **Runtime baseline:** commit-relative current main for v0.10.0 after the Thin
   Supervisor work above. Package and lockfile versions are `0.10.0`.
 - **Latest full deterministic validation:** `npm run verify` passed on
-  2026-08-28 with **810/813 tests passed**, no failures and three expected
+  2026-08-29 with **855/858 tests passed**, no failures and three expected
   platform-specific Windows skips, plus typecheck and the deterministic MCP
   protocol smoke test.
 - **Current native platform evidence:** deterministic CI covers Windows, Linux,
@@ -57,6 +57,7 @@ parallel recovery baseline described below. Shipped history belongs in
 | P1.3 Context lifecycle management (P1.3A/B/C)           | PASS     | PASS          | N/A           | Strong        |
 | P2.1 Optional Explorer                                  | PASS     | PASS          | N/A           | Strong        |
 | P2.2 Lightweight Cross-Session Handoff                  | PASS     | PASS          | N/A           | Strong        |
+| P2.3 End-to-End Automated Workflow                      | PASS     | DEEP PASS     | N/A           | Strong        |
 | `failureCauses` and verification contradiction handling | PASS     | PASS          | PASS          | Strong        |
 
 Dates, provenance, dependencies, and retest triggers are recorded below. A live
@@ -197,6 +198,33 @@ diagnostic artifacts rather than truncating them. Deterministic tests cover clea
 tampering without authority gain, historical/current evidence separation, secret scrubbing, restart fail-closed
 behavior, malformed payload rejection, stale handoff handling, bounded output, policy re-entry, identity/timestamp
 preservation, and lifecycle overwrite refusal. No model-backed benchmark is claimed.
+
+P2.3 End-to-End Automated Workflow (`src/workflow.ts`, `src/workflow.test.ts`, `src/events.ts`)
+is recorded with **DEEP PASS** deterministic coverage and **Strong** confidence. The capstone workflow
+engine provides one bounded supervisor-driven coordinator (`executeWorkflow`) that composes the
+P1 and P2 primitives across task assessment, optional exploration, seam planning, adaptive routing,
+zero-worker parent takeover, single and batch execution, authoritative verification, P1.1 failure
+decisions, bounded repair, timeout/exit recovery, continuation, and evidence-earned next-action
+escalation without duplicating server paths. The engine uses 13 states (`assessing`, `exploring`,
+`routing`, `solo`, `delegating`, `evaluating`, `continuing`, `escalating`, `completed`, `failed`,
+`blocked`, `parent_takeover`, `cancelled`). `solo` is non-terminal and cannot produce completion.
+Execution bounds
+enforce hard limits on steps (`maxSteps` <= 20), effort escalations (`maxEscalations` <= 5), and
+continuations (`maxContinuations` <= 3), guaranteeing termination. It reuses existing execution
+handlers directly (`handleExplore`, `handleDelegateTask`, `handleDelegateTasks`, `handleContinueTask`),
+adaptive routing and compute admission, and stores (`ContextLifecycleStore`,
+`HandoffStore`, `ContinuationStore`, `ContextLifecycleRegistry`). It manages execution leases and triggers
+safe post-delegation context compaction. Handler-owned repair and recovery remain independently bounded;
+the workflow neither re-verifies nor reimplements them. Unrecoverable verification failures, scope violations, untrusted
+results, or missing capabilities yield cleanly to `PARENT_TAKEOVER`. Telemetry events (`workflow.started`,
+`workflow.transition`, `workflow.completed`) contain only allowlisted structural fields and distinguish
+requested, recommended, and executed compute. The exact 26-test file contains 25 workflow scenarios
+and one report renderer. It proves zero-worker parent takeover, advisory explorer-to-delegation,
+single delegation, parallel batches, sequential batches, repair, recovery, continuations, effort escalation,
+stronger-executor fallback via explicit `allowedModels` + `executorOrder`, compact authoritative evidence
+on the normal thin-handoff path, failed verification parent takeover,
+scope violation fail-closed takeover, external cancellation, concurrent isolation, fail-closed restart semantics,
+step bound limits, telemetry privacy, and multi-step context compaction. No model-backed benchmark is claimed.
 
 The terminal handoff protocol defaults clean verified PASS responses to compact
 text without `structuredContent`. A batch reruns the deduplicated declared checks

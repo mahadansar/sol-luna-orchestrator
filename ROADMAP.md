@@ -36,7 +36,7 @@ Cost matters, but it is not the primary objective. The orchestrator should use p
 | P1.3     | Automatic Context Lifecycle Management                 | Complete, unreleased; depends on P0.1, P0.2, and P0.3                         |
 | P2.1     | Optional Explorer                                      | Complete, unreleased; depends on P1.2                                         |
 | P2.2     | Lightweight Cross-Session Handoff                      | Complete, unreleased; depends on P1.3                                         |
-| P2.3     | End-to-End Automated Workflow                          | Depends on P1.2, P1.3, P2.1, and P2.2                                         |
+| P2.3     | End-to-End Automated Workflow                          | Complete, unreleased; depends on P1.2, P1.3, P2.1, and P2.2                   |
 | P2.4     | Mature Benchmark and Acceptance Pass                   | Depends on P2.3                                                               |
 
 The order is intentional: continuation, repair, failure classification, and
@@ -324,15 +324,57 @@ evidence. Depends on P1.3.
 
 ## P2.3 End-to-End Automated Workflow
 
-Compose the bounded primitives into an adaptive capstone: routing, optional
-exploration, continuation, evidence-driven repair, classified retry, authorised
-fallback, parent takeover, context lifecycle management, safe integration, and
-optional handoff.
+**Complete, unreleased.**
 
-**Constraints.** Build this only after the constituent guardrails stabilize. Solo
-execution, bounded contracts, independent verification, isolated worktrees, and
-supervisor control remain valid; no monolithic first implementation is implied.
-Depends on P1.2, P1.3, P2.1, and P2.2.
+Provide one bounded supervisor-driven workflow (`executeWorkflow`) that coordinates
+task intake, optional exploration, semantic decomposition, adaptive routing, zero-worker parent
+takeover, single and batch delegation, authoritative verification, P1.1 failure decisions,
+bounded repair, recovery, continuation, and evidence-earned next-action escalation without creating
+a second orchestration system.
+
+### Implemented capabilities
+
+1. **Bounded coordinator (`executeWorkflow`):** A 13-state coordinator (`assessing`,
+   `exploring`, `routing`, `solo`, `delegating`, `evaluating`, `continuing`, `escalating`,
+   `completed`, `failed`, `blocked`, `parent_takeover`, `cancelled`) reflects authoritative
+   handler results. `solo` is a non-terminal routing state that yields to parent takeover;
+   it is never verification or completion evidence.
+2. **Direct primitives reuse:** Reuses the existing server lifecycle handlers
+   (`handleExplore`, `handleDelegateTask`, `handleDelegateTasks`, `handleContinueTask`), adaptive
+   routing and compute admission, and the existing context, handoff, and continuation stores.
+   Handler-owned verification, one-turn repair, one-pass batch recovery, scope reconciliation,
+   worktree cleanup, and capability consumption remain authoritative.
+3. **Optional advisory exploration:** Explicit exploration uses the existing read-only handler.
+   Findings remain provenance-bearing advice and never become executable task contracts.
+4. **Adaptive routing and zero-worker path:** Semantic task contracts remain the only executable
+   work units. A zero-worker result creates no worker, thread, or worktree and returns
+   `PARENT_TAKEOVER`, because the coordinator has no evidence that the parent completed the work.
+5. **Single and Batch Delegation:** Executes single delegation (`delegate_task`) or parallel /
+   sequential batches (`delegate_tasks_parallel`, `delegate_tasks_sequential`) with integration verification.
+6. **Handler-owned repair and recovery:** Consumes the final result after the existing single-task
+   repair or batch recovery mechanisms finish; the workflow adds no repair or verification pass.
+7. **Continuation & Next-Action Escalation:** Resumes incomplete tasks via single-use server-issued
+   continuation references (`ctr_*`) and escalates effort or triggers stronger-executor fallback via
+   authoritative handoff tokens (`hdf_*`).
+8. **Fail-Closed Verification & Parent Takeover:** Untrusted results, scope violations, contradictory claims,
+   and unrecoverable verification defects cleanly yield to `PARENT_TAKEOVER` with diagnostic evidence.
+9. **Execution bound enforcement:** Finite non-negative bounds are normalized and clamped
+   (`maxSteps` <= 20, `maxEscalations` <= 5, `maxContinuations` <= 3). Callers can narrow only.
+   The existing one-turn repair, one-pass batch recovery, and single-use capabilities impose
+   their independent authoritative bounds.
+10. **Lifecycle Lease & Context Compaction:** Manages `ContextLifecycleStore` execution leases and triggers
+    safe post-execution compaction evaluations.
+11. **Privacy-preserving workflow telemetry:** Emits allowlisted structural
+    `workflow.started`, `workflow.transition`, and `workflow.completed` fields. Requested,
+    recommended, and executed compute remain distinct; prompts, paths, raw output, verification
+    output, and capability references are absent.
+
+The deterministic workflow suite contains exactly 26 tests: 25 coordinator scenarios and one
+report-rendering test. It is included in the canonical `npm test` and `npm run verify` gates.
+
+**Constraints.** Supervisor remains the orchestration authority. File scopes remain detective, and
+independent verification remains authoritative. Model list position is never a strength hierarchy; explicit
+`executorOrder` ladder is respected. Depends on P1.2, P1.3, P2.1, and P2.2.
 
 ## P2.4 Mature Benchmark and Acceptance Pass
 

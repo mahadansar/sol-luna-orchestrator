@@ -711,23 +711,30 @@ function authoritativeVerificationCounts(result: DelegateTaskOutput): string {
   );
 }
 
-function isCleanPass(result: DelegateTaskOutput): boolean {
+/** Current authoritative single-task completion evidence, independent of display mode. */
+export function isAuthoritativelyVerifiedPass(result: DelegateTaskOutput): boolean {
   const authoritative = result.verification.filter(
     (run) => run.source === "orchestrator",
   );
   return (
     result.verdict === "PASS" &&
-    result.workerClaimedStatus === "PASS" &&
     result.trustworthy &&
     result.scopeViolations.length === 0 &&
     result.discrepancies.length === 0 &&
     result.errors.length === 0 &&
     result.filesChanged.every((file) => file.observed) &&
-    !result.repair?.attempted &&
     authoritative.length > 0 &&
     authoritative.every(
       (run) => (run.execution === "argv" || run.execution === "shell") && run.passed,
     )
+  );
+}
+
+function isCleanPass(result: DelegateTaskOutput): boolean {
+  return (
+    isAuthoritativelyVerifiedPass(result) &&
+    result.workerClaimedStatus === "PASS" &&
+    !result.repair?.attempted
   );
 }
 
