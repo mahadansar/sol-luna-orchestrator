@@ -195,7 +195,17 @@ export function recommendThirdRepetition(
     : null;
 }
 
-export function groupCells(records: readonly RunRecord[]): CellSummary[] {
+/**
+ * A run the predeclared exclusion rules removed.
+ *
+ * Historical records carry no verdict and are therefore included, exactly as
+ * they always were.
+ */
+export const isQuarantinedRecord = (record: RunRecord): boolean =>
+  record.validity?.status === "quarantined";
+
+export function groupCells(all: readonly RunRecord[]): CellSummary[] {
+  const records = all.filter((record) => !isQuarantinedRecord(record));
   const cells = new Map<string, RunRecord[]>();
   for (const record of records) {
     const key = `${record.taskId}\0${record.arm}`;

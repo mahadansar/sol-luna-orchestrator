@@ -3,18 +3,37 @@
 ## Freeze status
 
 This document is the pre-results specification for Benchmark V3. It was frozen
-before the first live V3 result was collected. It contains no V3 result,
-pass rate, cost, latency, routing, or model-performance claim.
+before the first live V3 result was collected, and no live V3 run has been
+executed under any freeze. It contains no V3 result, pass rate, cost, latency,
+routing, or model-performance claim.
 
-- Content-freeze commit: `544d217967646e5f48b9aa73e936567e87d87c8b`
+- Freeze review: **freeze 2 (P2.4A)**, superseding the freeze-1 content commit
+  `544d217967646e5f48b9aa73e936567e87d87c8b`.
+- Methodology content digest: `af4860bed58f21c103c5f921c4ae3bd561cf2e0943cd1dd12b899a34a4bacc87`, verified at launch by `assertMethodologyFrozen`.
 - Initial normal campaign: nine tasks, two arms, and exactly two repetitions per
   task/arm cell (36 live runs).
 - Any post-freeze correction follows the correction policy below and cannot
   silently change a task, arm, prompt, grader, repetition rule, or result.
 
-The content-freeze SHA above identifies the reviewed workload and methodology.
-This administrative record was added immediately afterward and is not a V3
-result.
+Freeze 1 fixed the workload, arms, graders, repetition rules, holdout
+protections, and economic accounting. Those are unchanged and remain in force.
+Freeze 2 changes nothing a model can observe. It adds the measurement,
+reproducibility, exclusion, and reporting discipline in the sections below, and
+makes one deliberate change to what the harness configures: V3 no longer passes
+a per-fixture worker-concurrency ceiling, because that ceiling was derived from
+the same stream count that defines the evaluator-only routing category. Neither
+change is comparable to a mid-campaign edit: no V3 run existed under freeze 1,
+so nothing is being reinterpreted after the fact.
+
+Because freeze 2 alters telemetry definitions and harness configuration, it is a
+new freeze review under the correction policy below and requires a new campaign
+ID. No freeze-1 campaign ID may be resumed under it.
+
+Identity is content-addressed rather than commit-addressed. The digest above is
+the sha256 of this file with line endings normalized and the digest line itself
+removed, so the gate works in a working tree, a published tarball, or a checkout
+whose history was rewritten. `src/bench/integrity.ts` holds the expected value
+and `assertMethodologyFrozen` enforces it at launch.
 
 ## Question and interpretation boundary
 
@@ -166,6 +185,295 @@ excluded from third-run admission. No claim of statistical significance is made
 from two or three repetitions; these are bounded directional evidence and
 diagnostic review rules.
 
+## Comparison candidates and baselines
+
+The campaign compares exactly two candidates on identical work. Both run the
+current Thin Supervisor / adaptive runtime at the same commit; the only
+difference is whether that runtime's orchestration path is reachable.
+
+| Candidate       | What it is                                                                                                                                                          | Role                       |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| Solo Medium     | `gpt-5.6-sol` at Medium with the orchestrator disabled at the Codex configuration level. The supervisor reads, implements, and verifies the task itself.            | Within-campaign baseline   |
+| Adaptive Medium | The same supervisor and effort with the orchestrator available: P1.2 adaptive routing, P1.3 context lifecycle, P2.1 exploration, and P0.3/P0.4 continuation/repair. | Candidate under evaluation |
+
+Every per-task comparison is against that task's own Solo Medium cell in the
+same campaign, never against a different task, a different campaign, or a
+historical record.
+
+Three further baselines exist and are explicitly **not** campaign arms:
+
+- **Benchmark V2 (frozen historical architecture evidence).** V2 measured an
+  earlier architecture on a different task suite with a different prompt
+  history, a per-fixture concurrency ceiling, and a different telemetry schema.
+  It may be cited for direction and for architectural context. It may not be
+  differenced against V3, pooled with V3, or presented as the same measurement
+  under a larger sample. Any V2/V3 sentence in the final report must name the
+  methodology differences that make the two incomparable.
+- **Forced Delegation.** Excluded from the normal campaign, as under freeze 1.
+  It survives only as a separately identified diagnostic probe and can never be
+  pooled into Adaptive results.
+- **Deterministic acceptance evidence.** The P1/P2 test suites establish that a
+  capability exists and is bounded. They establish nothing about latency, cost,
+  or routing quality, and V3 establishes nothing about the correctness of the
+  primitives they cover. The two evidence classes are reported separately and
+  neither substitutes for the other.
+
+Both candidates receive identical tasks, identical starting workspaces,
+identical objective text apart from the arm's delegation-availability sentence,
+identical acceptance criteria, identical grading commands, identical mutation
+and immutable-specification checks, identical supervisor model and effort, and
+the same standard-speed execution profile.
+
+## Harness configuration boundary
+
+The runner measures the shipped product. It does not tune it.
+
+- The benchmark configures **no** orchestrator policy for V3. It sets the events
+  path so telemetry can be read, and nothing else. Worker concurrency, batch
+  limits, effort ceilings, executor ordering, retention, and context thresholds
+  are whatever the shipped defaults are.
+- In particular, V3 does **not** set `SOL_LUNA_MAX_PARALLEL`. V2 set it per
+  fixture, to that fixture's declared natural stream count. In V3 that stream
+  count is derived from the same structure that defines the evaluator-only
+  routing category, so passing it through would hand the orchestrator a
+  task-specific hint about the exact question V3 asks. `resolveWorkerConcurrency`
+  enforces this, and a deterministic test proves no V3 task can produce a
+  per-task value. V2's historical records keep their original behaviour.
+- No task identity appears in harness control flow. There is no per-task prompt,
+  guidance, timeout, grading tolerance, routing hint, or special case keyed on a
+  V3 task ID.
+- The runner introduces no benchmark-only production behaviour and mutates no
+  orchestrator production policy. Anything a benchmark run can do, a user's run
+  can do.
+- Both arms' guidance text is fixed in `ARMS` and is identical apart from
+  whether delegation exists. Neither text mandates, forbids, or hints at a
+  worker count.
+
+## Metric catalog and measurement semantics
+
+Every metric below is fixed before any V3 result exists. Each is either an
+observed fact or explicitly unknown; a quantity that was not reported is `null`
+and is never converted to zero, an average, or an estimate.
+
+### Correctness and verification
+
+| Metric                       | Semantics                                                                                                         |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `passed`                     | Every declared grade command exited zero, no immutable specification file changed, and the mutation check caught. |
+| `grades[]`                   | Per-command label, exit code, and captured output. A `null` exit code means the grader did not execute.           |
+| `immutableViolations[]`      | Protected specification files whose content hash changed. A scope violation, not a stylistic finding.             |
+| `mutationCaught`             | Whether the work fails the predeclared mutation. `null` when the task declares none.                              |
+| `verificationFailed/Refused` | Authoritative in-run verification outcomes counted from `verification.completed`.                                 |
+| `integrationVerification`    | The integrated workspace's re-run of the deduplicated declared checks. `null` when no batch integrated.           |
+| `integrationConflicts`       | Distinct integration conflicts. A correctness-relevant orchestration cost, not a latency detail.                  |
+| `scopeConflicts`             | Declared-scope violations detected by the runtime.                                                                |
+| `routingContradictions`      | Declarations the runtime's own evidence contradicted.                                                             |
+
+### Latency and supervisor overhead
+
+| Metric                    | Semantics                                                                                                                      |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `durationSeconds`         | End-to-end wall-clock for the complete supervisor turn: reading, contracts, setup, workers, integration, review, verification. |
+| `supervisorBeforeSeconds` | Run start to the first `batch.started`. Supervisor work before any worker exists.                                              |
+| `worktreeSetupSeconds`    | First `batch.started` to the last `worktree.created`.                                                                          |
+| `workerWindowSeconds`     | First worker start to last worker end.                                                                                         |
+| `slowestWorkerSeconds`    | Longest single worker span, for straggler analysis.                                                                            |
+| `integrationSeconds`      | Last worker end to `batch.completed`.                                                                                          |
+| `supervisorAfterSeconds`  | `batch.completed` to run end. The thin-handoff cost.                                                                           |
+| `peakConcurrency`         | Highest number of workers alive at one instant, from start/end sweeps rather than from configuration.                          |
+
+Supervisor overhead is derived from event timestamps the runtime already emits.
+No timing instrumentation is added for the benchmark, so measurement cannot
+perturb what is measured. Individual worker durations are never summed into, or
+substituted for, end-to-end wall-clock. A phase never observed is `null`.
+
+### Worker and model calls
+
+| Metric                                       | Semantics                                                                                       |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `workerCount`                                | Distinct worker delegations observed. Zero is a valid, first-class Adaptive outcome.            |
+| `delegationCalls`, `batchesByMode`           | Delegation calls that opened a batch, split by single / sequential / parallel.                  |
+| `attemptsStarted`, `attemptsCompleted`       | Individual worker SDK invocations, from canonical `attempt.*` lineage.                          |
+| `attemptsByRole`                             | `initial`, `automatic-repair`, `manual-continuation`, `timeout-recovery`, `process-retry`.      |
+| `explorations`, `explorationsRejected`       | Read-only `explore` calls admitted and refused.                                                 |
+| `routingPreflights`, `routingDeclarations*`  | Advisory routing evaluations, and whether a call attached a declaration at all.                 |
+| `maxParallelConfigured`, `concurrencyPolicy` | What the harness configured, and under which rule. For V3 always `null` / `production-default`. |
+
+### Token usage
+
+Token fields use Codex SDK semantics exactly and are recorded per participant
+(one supervisor row, one row per observed delegation) as well as in aggregate.
+
+- `inputTokens` is total input and **includes** `cachedInputTokens`. The
+  full-rate portion is `inputTokens - cachedInputTokens`.
+- `outputTokens` **includes** `reasoningOutputTokens`. Reasoning tokens are a
+  retained diagnostic and are never added to output a second time.
+- `cacheWriteInputTokens` is a diagnostic meter and is uncharged.
+- Usage is authoritative only when the Codex turn reported it. A started
+  execution that never emits `turn.completed` — some timeout, cancellation,
+  turn-failure, stream, and abnormal-exit paths — has genuinely unavailable
+  usage. `usageUnavailableAttempts` counts those, the affected participant's
+  credits become `null`, and every aggregate containing it becomes `null` too.
+  Nothing is back-filled.
+
+### Cost
+
+- Credits are computed only from the revalidated pricing profile embedded in the
+  result file, using the freeze-1 accounting rules: uncached input, cached input,
+  and output charged separately; cache writes uncharged.
+- The computed value is named `rateCardCredits` / `estimatedCredits` and is an
+  estimate. `actualCredits` is a separate nullable field that may be populated
+  only from an authoritative external accounting source, and is never derived by
+  summing estimates.
+- An incomplete participant usage record yields unknown credits for that
+  participant and for every aggregate containing it.
+- Raw token counts are diagnostic. They are never reported as credits, currency,
+  or the primary economic measure.
+
+### Failure, repair, and waste
+
+| Metric                                  | Semantics                                                                                                                                                                                      |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `repairsStarted`, `repairsCompleted`    | Bounded one-turn same-thread repair (P0.4).                                                                                                                                                    |
+| `recoveriesStarted/Skipped/Completed`   | Bounded one-pass parallel recovery after timeout or process exit.                                                                                                                              |
+| `continuations`                         | Attempts resuming a server-issued single-use continuation.                                                                                                                                     |
+| `effortEscalations`, `executorChanges`  | Attempts that resumed a predecessor at a higher effort rung, or on a different model. Derived from attempt lineage, not from configuration.                                                    |
+| `workerTimeouts`, `workerCancellations` | Runtime-observed worker terminations.                                                                                                                                                          |
+| `workerFailures[]`                      | Declared worker failure reasons, retained in full rather than counted away.                                                                                                                    |
+| `wastedAttempts`                        | Attempts that ended abnormally or left a failing verification behind. A diagnostic, not a cost: bounded recovery is expected behaviour, and a wasted attempt can still be correct engineering. |
+| `worktreesRetained`                     | Worktrees kept because integration could not safely complete.                                                                                                                                  |
+| `terminationReason`                     | `completed`, `harness-timeout`, or `agent-error`.                                                                                                                                              |
+
+### Context size and compaction
+
+| Metric                                       | Semantics                                                              |
+| -------------------------------------------- | ---------------------------------------------------------------------- |
+| `evaluations`, `triggers`, `blocks`, `noops` | Context pressure evaluations and their decisions.                      |
+| `compactions`, `compactionBoundaries`        | Compactions performed, and the lifecycle boundary each occurred at.    |
+| `maxTotalSizeBytes`, `lastTotalSizeBytes`    | Exact UTF-8 context size observed, at peak and at the last evaluation. |
+| `maxTotalTurns`                              | Peak authoritative turn count.                                         |
+| `reclaimedBytes`                             | Sum of observed compaction size deltas.                                |
+
+A run with no context telemetry reports `null` sizes and `0` for events that
+were observable and did not occur. A record predating these fields reports
+`unknown` in the generated summary rather than a zero.
+
+### Deliberately absent
+
+No single composite score is computed. `ROADMAP.md` requires a lexicographic
+order — correctness, then credits, then latency, then diagnostics — and a
+weighted scalar would let a cost or latency gain silently offset a correctness
+regression. Reports present the ordered measures; they do not collapse them.
+
+## Execution ordering and randomization
+
+Order is fixed and published before the first live turn, and recorded in every
+shard as `ordering`.
+
+- `declared` executes the frozen fixture order: repetition, then task, then arm.
+- `seeded` independently shuffles task order within each repetition and arm
+  order within each task, from a recorded seed, using a platform-independent
+  deterministic generator. The same seed always reproduces the same sequence.
+- Repetition blocks are never interleaved, so an interrupted campaign still
+  holds a complete balanced earlier repetition rather than an arbitrary slice.
+- Seeded ordering is preferred for the normal campaign, because it decorrelates
+  arm position from time of day, account state, and service load. Whichever mode
+  is chosen is recorded with its seed.
+- A resumed campaign must present the same mode and seed. The harness refuses a
+  resume that would reorder work after results exist.
+
+## Run validity, exclusion, and retry treatment
+
+These rules are fixed before execution and are applied by `classifyRunValidity`,
+which is deliberately blind to `passed`, credits, latency, worker count, and
+arm, so it cannot be applied selectively to an unwelcome result.
+
+A run is **quarantined** only for missing or untrustworthy evidence:
+
+| Reason                             | Condition                                                                       |
+| ---------------------------------- | ------------------------------------------------------------------------------- |
+| `grader-did-not-execute`           | No grade commands ran, or a grade command produced no exit code at all.         |
+| `agent-transport-error`            | The supervisor turn ended in a transport or turn failure rather than finishing. |
+| `delegation-telemetry-unavailable` | An arm with an orchestrator produced an unreadable event stream.                |
+| `fixture-identity-missing`         | A V3 record lacks its run ID or fixture revision.                               |
+| `fixture-revision-drift`           | A record's fixture revision differs from the campaign's frozen revision.        |
+
+The following are explicitly **results, not exclusions**, and are retained and
+reported as failures:
+
+- a non-zero grade command;
+- a changed immutable specification file;
+- an uncaught mutation;
+- exhausting the harness time bound, which is part of the task contract; and
+- any outcome that is merely surprising, inconvenient, or unfavourable to a
+  candidate.
+
+Retry treatment:
+
+- The harness performs **zero** automatic re-executions of a live cell and zero
+  grading retries. In-run repair, recovery, and continuation belong to the
+  product under test and are measured, not suppressed.
+- A completed cell — passing or failing — is immutable evidence. `--resume`
+  skips it; an ordinary re-run refuses to overwrite it.
+- A quarantined cell may be re-executed only under a recorded review and a new
+  run identity. The quarantined record is retained alongside it.
+- Quarantined runs are excluded from every aggregate and listed explicitly in
+  the generated report with their reasons. They are never silently dropped and
+  never averaged in.
+
+## Statistical and reporting discipline
+
+- Per-run rows are the primary record. Every task, arm, and repetition appears
+  individually with its own outcome, credits, latency, routing, and diagnostics.
+  Cell summaries are derived views and never replace the rows.
+- Central tendency is the **median**. With two repetitions a median is a
+  midpoint, not an estimate of a population, and is reported as such.
+- Dispersion is reported as min, max, and relative range alongside the median,
+  with the number of known values. A summary over one known value says so.
+- Failures are preserved. A failing run is never averaged into a pass rate
+  without also appearing as its own row, and a cell containing a failure is
+  never described only by its successful repetition.
+- Unknown is a reported value. Aggregates over incomplete usage stay `null`.
+  Counts distinguish unknown, not-applicable, zero workers, and zero tokens.
+- No claim of statistical significance is made from two or three repetitions.
+  There are no p-values, confidence intervals, or "significantly faster/cheaper"
+  claims. The evidence is bounded and directional.
+- Measurement and interpretation are separated: measured tables first,
+  interpretation in clearly labelled prose that cites the rows it rests on.
+- Comparisons against V2 must state the methodology differences — architecture,
+  task suite, prompt history, concurrency configuration, telemetry schema — and
+  must not present a V2 number and a V3 number as two samples of one experiment.
+- Negative and inconclusive findings are results. "Adaptive was not cheaper" and
+  "the evidence does not separate the candidates" are both publishable outcomes.
+
+## Reproducibility and integrity controls
+
+Every shard records, and the harness refuses to launch a V3 campaign without:
+
+- git commit, branch, `describe`, and a clean-working-tree check — a dirty tree
+  is refused, because the recorded commit would not describe the code that ran;
+- Node version, platform, architecture, OS release, CPU count, memory, and
+  timezone;
+- package version, npm version, Codex CLI version, and Codex SDK version, each
+  recorded as read or as `null`;
+- the exact campaign invocation and working directory;
+- allowlisted orchestrator environment overrides in effect — an allowlist, not
+  an environment dump, so a committed record cannot leak credentials;
+- the verified methodology content digest;
+- the execution ordering mode, seed, and full planned sequence; and
+- the predeclared retry and exclusion policy.
+
+Each case starts from a freshly materialized workspace built from the immutable
+fixture, with its own run ID and a content-derived fixture revision, and the
+workspace is removed afterwards. The orchestrator event stream is created before
+the turn begins, so an empty stream — the supervisor never used the orchestrator
+— is distinguishable from a missing one, where the evidence was lost.
+
+Raw JSON shards and the event stream are authoritative. Generated Markdown
+summaries are derived views; they never overwrite raw evidence, and they never
+overwrite historical V2 files. Every conclusion in a human summary must be
+traceable to a committed raw record.
+
 ## Required routing, economic, and diagnostic telemetry
 
 Every raw run record must preserve, or explicitly mark unavailable:
@@ -267,3 +575,21 @@ It will not claim that Adaptive should always delegate, that a category is a
 correctness grade, that raw tokens equal credits, that V3 proves universal
 superiority, or that the repetition sample establishes statistical
 significance.
+
+## Freeze review log
+
+| Freeze | Date       | Scope                                                                                                                                                                                                                                                                                                           | Campaign IDs                       |
+| ------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| 1      | 2026-08-25 | Workload suite, graders, hidden references, arms, repetitions and third-run rules, holdout protections, pricing and economic accounting, primary decision order. Content commit `544d217`.                                                                                                                      | None launched.                     |
+| 2      | 2026-08-29 | P2.4A. Adds comparison candidates and baselines, harness configuration boundary, metric catalog and measurement semantics, execution ordering, run validity and retry treatment, statistical and reporting discipline, and reproducibility controls. Removes the per-fixture worker-concurrency ceiling for V3. | Requires a new campaign ID prefix. |
+
+Freeze 2 changed no model-facing text, no task, no grader, no hidden reference,
+no mutation case, no arm, no model, no effort, no speed profile, no pricing
+applicability, no repetition count, and no third-run admission rule. It changed
+telemetry definitions (additively) and one harness configuration, which under
+the correction policy above makes it a new freeze review rather than a
+correction. No live V3 run existed under freeze 1, so no result is reinterpreted
+and no evidence is rewritten.
+
+Reviewer of record and the freeze-2 content commit are recorded in the campaign
+checkpoint at launch, alongside the digest the harness verified.

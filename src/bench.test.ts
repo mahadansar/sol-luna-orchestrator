@@ -52,6 +52,7 @@ import {
   BENCHMARK_V3_PRODUCTION_BASELINE_SHA,
   V3_TASKS,
 } from "./bench/v3-tasks.js";
+import { buildEnvironmentRecord } from "./bench/environment.js";
 import { repriceHistoricalRecord, renderReport } from "./bench/report.js";
 
 // --- Concurrency measurement ------------------------------------------------
@@ -930,6 +931,37 @@ test("Benchmark V2 refuses to start or snapshot without standard-speed confirmat
   );
 });
 
+/**
+ * The launch evidence every V3 snapshot now carries. The rules that produce and
+ * enforce it are covered in `src/bench/harness.test.ts`; tests below supply it
+ * so they can keep asserting what they were written to assert.
+ */
+const V3_LAUNCH_EVIDENCE = {
+  environment: buildEnvironmentRecord({
+    capturedAt: "2026-08-29T00:00:00.000Z",
+    gitCommit: "b".repeat(40),
+    gitBranch: "main",
+    gitStatusPorcelain: "",
+    gitDescribe: "v0.10.0",
+    nodeVersion: "v22.12.0",
+    npmVersion: "11.12.1",
+    codexCliVersion: "0.149.1",
+    codexSdkVersion: "0.147.0",
+    packageVersion: "0.10.0",
+    platform: "win32",
+    arch: "x64",
+    osRelease: "10.0.26200",
+    cpuCount: 8,
+    totalMemoryBytes: 1,
+    timezone: "UTC",
+    argv: [],
+    cwd: "D:\\repo",
+    environment: {},
+  }),
+  ordering: { mode: "declared" as const, seed: null, sequence: [] },
+  methodologyDigest: "c".repeat(64),
+};
+
 test("Benchmark V3 requires an explicit pre-campaign pricing revalidation", () => {
   assert.throws(() => assertV3PricingProfileConfirmed(false), /credit-rate profile/);
   assert.doesNotThrow(() => assertV3PricingProfileConfirmed(true));
@@ -951,6 +983,7 @@ test("Benchmark V3 requires an explicit pre-campaign pricing revalidation", () =
     suite: "v3",
     standardSpeedConfirmed: true,
     pricingProfileConfirmed: true,
+    ...V3_LAUNCH_EVIDENCE,
   });
   assert.equal(snapshot.benchmarkVersion, 3);
   assert.equal(snapshot.suite, "v3");
@@ -1268,6 +1301,7 @@ test("V3 campaign analysis and report generation work with synthetic evidence", 
       suite: "v3",
       standardSpeedConfirmed: true,
       pricingProfileConfirmed: true,
+      ...V3_LAUNCH_EVIDENCE,
     });
     fs.writeFileSync(path.join(directory, "synthetic.v3.json"), JSON.stringify(snapshot));
     const loaded = loadV3Campaign(directory, "v3-synthetic");

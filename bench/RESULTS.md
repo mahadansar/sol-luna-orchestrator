@@ -7,8 +7,15 @@ rules, measured evidence, and the limits on interpreting those results.
 V2 is frozen historical architecture evidence. Its BEFORE/AFTER campaigns
 directly informed the Thin Supervisor design, so it is no longer the primary
 unbiased optimization target for routing work. The fresh routing holdout is
-[Benchmark V3](V3_METHODOLOGY.md). No model-backed V3 campaign has been run at
-freeze time.
+[Benchmark V3](V3_METHODOLOGY.md), frozen under its freeze 2 (P2.4A) review. No
+model-backed V3 campaign has been run under any freeze.
+
+V2 and V3 are not two samples of one experiment. They measure different
+architectures on different suites, under different prompt histories, different
+harness configuration — V2 sets a per-fixture worker-concurrency ceiling and V3
+sets none — and different telemetry schemas. A V2 number and a V3 number may be
+discussed together only alongside those differences, and may never be
+differenced, pooled, or presented as a larger sample.
 
 Historical V1 JSON and generated reports remain in `bench/results/` as evidence.
 They are not the primary product story for V2; Git history preserves the old

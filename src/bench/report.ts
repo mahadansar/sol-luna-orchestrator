@@ -44,6 +44,10 @@ export interface ResultsFile {
   campaignId?: string;
   holdoutFreezeSha?: string;
   productionBaseline?: { version: string; sha: string };
+  environment?: BenchmarkResultsSnapshot["environment"];
+  ordering?: BenchmarkResultsSnapshot["ordering"];
+  methodologyDigest?: string;
+  retryPolicy?: BenchmarkResultsSnapshot["retryPolicy"];
   records: RunRecord[];
 }
 
@@ -156,6 +160,76 @@ export function renderReport(
   if (!isV2 && options.repriceHistorical) {
     lines.push(
       "> Historical backfill: credits below are estimates under the displayed V2 snapshot, not actual billed credits and not the rate necessarily applicable when the run occurred.",
+      "",
+    );
+  }
+
+  lines.push("## Reproducibility", "");
+  const environment = input.environment;
+  if (environment) {
+    lines.push(
+      `- Commit: \`${environment.git.commit ?? "unknown"}\` on branch \`${environment.git.branch ?? "unknown"}\`` +
+        ` (${
+          environment.git.workingTreeClean === null
+            ? "working tree unknown"
+            : environment.git.workingTreeClean
+              ? "clean working tree"
+              : `${environment.git.dirtyPathCount ?? "unknown"} dirty path(s)`
+        }; describe \`${environment.git.describe ?? "unknown"}\`)`,
+      `- Runtime: Node ${environment.runtime.nodeVersion ?? "unknown"} on ${environment.runtime.platform ?? "unknown"} ${environment.runtime.arch ?? ""}`.trimEnd() +
+        ` (release ${environment.runtime.osRelease ?? "unknown"}, ${number(environment.runtime.cpuCount)} CPU(s), timezone ${environment.runtime.timezone ?? "unknown"})`,
+      `- Toolchain: package ${environment.toolchain.packageVersion ?? "unknown"}, npm ${environment.toolchain.npmVersion ?? "unknown"}, Codex CLI ${environment.toolchain.codexCliVersion ?? "unknown"}, Codex SDK ${environment.toolchain.codexSdkVersion ?? "unknown"}`,
+      `- Invocation: \`${environment.invocation.argv.join(" ") || "(none)"}\` in \`${environment.invocation.cwd ?? "unknown"}\``,
+      `- Recorded environment overrides: ${
+        Object.keys(environment.environment).length === 0
+          ? "none"
+          : Object.entries(environment.environment)
+              .map(([key, value]) => `\`${key}=${value}\``)
+              .join(", ")
+      }`,
+    );
+  } else {
+    lines.push("- Environment: unknown (this shard predates reproducibility capture).");
+  }
+  lines.push(
+    `- Execution ordering: ${
+      input.ordering
+        ? `${input.ordering.mode}${input.ordering.seed === null ? "" : ` (seed \`${input.ordering.seed}\`)`}, ${input.ordering.sequence.length} planned cell(s) fixed before execution`
+        : "unknown"
+    }`,
+    `- Methodology digest: \`${input.methodologyDigest ?? "unknown"}\``,
+    `- Retry treatment: ${
+      input.retryPolicy
+        ? `${input.retryPolicy.automaticRunRetries} automatic run retries; quarantined cells re-run only as ${input.retryPolicy.quarantinedCellReexecution}`
+        : "unknown"
+    }`,
+    "",
+  );
+
+  const quarantined = records.filter(
+    (record) => record.validity?.status === "quarantined",
+  );
+  lines.push("## Run validity", "");
+  lines.push(
+    `Included in aggregates: ${records.length - quarantined.length} of ${records.length} run(s).`,
+    "",
+  );
+  if (quarantined.length === 0) {
+    lines.push("No run met a predeclared exclusion condition.", "");
+  } else {
+    lines.push(
+      "| Task | Strategy | Rep | Run | Exclusion reasons |",
+      "|---|---|---:|---|---|",
+    );
+    for (const record of quarantined) {
+      lines.push(
+        `| ${record.taskId} | ${record.arm} | ${record.repetition} | \`${record.runId ?? "unknown"}\` | ` +
+          `${(record.validity?.reasons ?? []).join(", ")} |`,
+      );
+    }
+    lines.push(
+      "",
+      "Quarantined runs are retained as evidence and excluded from every aggregate above and below.",
       "",
     );
   }
@@ -356,6 +430,65 @@ export function renderReport(
   }
   lines.push("");
 
+  lines.push("## Supervisor overhead by run", "");
+  lines.push(
+    "| Task | Strategy | Rep | Before | Worktree setup | Worker window | Integration | After | Peak | End-to-end | Termination |",
+    "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+  );
+  for (const record of records) {
+    const breakdown = record.breakdown;
+    lines.push(
+      `| ${record.taskId} | ${record.arm} | ${record.repetition} | ` +
+        `${number(breakdown?.supervisorBeforeSeconds ?? null, "s")} | ` +
+        `${number(breakdown?.worktreeSetupSeconds ?? null, "s")} | ` +
+        `${number(breakdown?.workerWindowSeconds ?? null, "s")} | ` +
+        `${number(breakdown?.integrationSeconds ?? null, "s")} | ` +
+        `${number(breakdown?.supervisorAfterSeconds ?? null, "s")} | ` +
+        `${number(breakdown?.peakConcurrency ?? null)} | ` +
+        `${number(record.durationSeconds, "s")} | ${record.terminationReason ?? "unknown"} |`,
+    );
+  }
+  lines.push("");
+
+  lines.push("## Orchestration behaviour by run", "");
+  lines.push(
+    "| Task | Strategy | Rep | Delegation calls | Explorations | Attempts | Repairs | Recoveries | Continuations | Effort escalations | Executor changes | Wasted attempts | Usage unavailable | Scope conflicts |",
+    "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+  );
+  for (const record of records) {
+    const orchestration = record.orchestration;
+    const cell = (value: number | undefined): string =>
+      value === undefined ? "unknown" : String(value);
+    lines.push(
+      `| ${record.taskId} | ${record.arm} | ${record.repetition} | ` +
+        `${cell(orchestration?.delegationCalls)} | ${cell(orchestration?.explorations)} | ` +
+        `${cell(orchestration?.attemptsCompleted)} | ${cell(orchestration?.repairsCompleted)} | ` +
+        `${cell(orchestration?.recoveriesCompleted)} | ${cell(orchestration?.continuations)} | ` +
+        `${cell(orchestration?.effortEscalations)} | ${cell(orchestration?.executorChanges)} | ` +
+        `${cell(orchestration?.wastedAttempts)} | ${cell(orchestration?.usageUnavailableAttempts)} | ` +
+        `${cell(orchestration?.scopeConflicts)} |`,
+    );
+  }
+  lines.push("");
+
+  lines.push("## Context lifecycle by run", "");
+  lines.push(
+    "| Task | Strategy | Rep | Evaluations | Triggers | Blocks | Compactions | Max size | Max turns | Reclaimed |",
+    "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+  );
+  for (const record of records) {
+    const context = record.context;
+    const cell = (value: number | undefined): string =>
+      value === undefined ? "unknown" : String(value);
+    lines.push(
+      `| ${record.taskId} | ${record.arm} | ${record.repetition} | ` +
+        `${cell(context?.evaluations)} | ${cell(context?.triggers)} | ${cell(context?.blocks)} | ` +
+        `${cell(context?.compactions)} | ${number(context?.maxTotalSizeBytes ?? null, "B")} | ` +
+        `${number(context?.maxTotalTurns ?? null)} | ${number(context?.reclaimedBytes ?? null, "B")} |`,
+    );
+  }
+  lines.push("");
+
   lines.push("## Third-repetition recommendations", "");
   const recommendations = ordered
     .map((cell) => {
@@ -391,6 +524,10 @@ export function renderReport(
     "- Participant worker durations remain individual execution times. They are never summed or substituted for end-to-end wall-clock; supervisor participant duration stays unavailable because the harness does not observe a single authoritative supervisor-only duration.",
     "- Raw tokens, worker effort, concurrency, duration, and straggler fields are supporting diagnostics rather than the headline economic metric.",
     "- Two repetitions are directional evidence. A third is recommended only for the conditions listed above; no statistical significance is claimed.",
+    "- Per-run rows are the primary record. Cell medians, ranges, and rates are summaries of those rows and never replace them; failures and quarantined runs stay listed individually.",
+    "- Orchestration and context counts are folded from the orchestrator's own event stream. A count of `unknown` means the run predates that field; it is never a zero.",
+    "- `wastedAttempts` counts attempts that ended abnormally or left a failing verification behind. It is a diagnostic, not a cost: bounded recovery work is expected behaviour.",
+    "- Supervisor overhead columns are derived from event timestamps rather than added instrumentation, so measuring does not change what is measured.",
   );
   return lines.join("\n");
 }

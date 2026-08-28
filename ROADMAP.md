@@ -37,7 +37,8 @@ Cost matters, but it is not the primary objective. The orchestrator should use p
 | P2.1     | Optional Explorer                                      | Complete, unreleased; depends on P1.2                                         |
 | P2.2     | Lightweight Cross-Session Handoff                      | Complete, unreleased; depends on P1.3                                         |
 | P2.3     | End-to-End Automated Workflow                          | Complete, unreleased; depends on P1.2, P1.3, P2.1, and P2.2                   |
-| P2.4     | Mature Benchmark and Acceptance Pass                   | Depends on P2.3                                                               |
+| P2.4A    | Acceptance Harness and Benchmark V3 Methodology        | Complete, unreleased; methodology and harness frozen, no V3 run               |
+| P2.4B    | Benchmark V3 Execution and Mature Acceptance Pass      | Not started; depends on P2.4A and an operator launch decision                 |
 
 The order is intentional: continuation, repair, failure classification, and
 policy discovery should precede stronger-executor routing. Explorer, handoff,
@@ -390,6 +391,41 @@ against V3 during active feature development. Major model-backed benchmark
 campaigns should wait until P2.4 / mature acceptance after the planned feature
 chain is substantially complete. Targeted deterministic tests, runtime tests,
 smoke tests, and security tests still happen as each feature lands.
+
+### P2.4A Acceptance harness and Benchmark V3 methodology
+
+**Complete, unreleased. Methodology and harness are frozen; no V3 run exists.**
+
+P2.4A fixes what a V3 result will be allowed to mean, before any model-backed
+V3 task is executed:
+
+1. **Final acceptance boundary.** Every capability from P1.0 through P2.3 is
+   enumerated in [`docs/FEATURE_ACCEPTANCE.md`](docs/FEATURE_ACCEPTANCE.md)
+   against three separated evidence classes: deterministic/code-confirmed, live
+   model-backed behavioural, and benchmark performance/economics. P1.1 through
+   P2.3 hold deterministic acceptance only; no live or benchmark evidence is
+   claimed for them.
+2. **Frozen V3 methodology (freeze 2).** [`bench/V3_METHODOLOGY.md`](bench/V3_METHODOLOGY.md)
+   adds comparison candidates and baselines, a harness configuration boundary, a
+   metric catalog with provider-exact measurement semantics, execution ordering
+   and randomization, run validity/exclusion and retry treatment, statistical and
+   reporting discipline, and reproducibility controls. Freeze 1's workload,
+   graders, arms, repetition rules, and economic accounting are unchanged. The
+   document is content-addressed and the harness refuses to launch on drift.
+3. **Harness maturity.** Reproducibility capture, deterministic seeded ordering,
+   predeclared exclusion classification, and orchestration/context metric folding
+   reuse the existing benchmark infrastructure. No task identity appears in
+   harness control flow, and the runner configures no orchestrator production
+   policy for V3.
+
+**Constraints.** No composite score. No live evidence claimed where only
+deterministic tests exist. No tuning of prompts, routing, thresholds, or fixtures
+against V3. Quarantine covers missing evidence only, never an unwelcome result.
+
+### P2.4B Benchmark V3 execution and mature acceptance pass
+
+**Not started.** Runs the frozen campaign and reports it. Blocked on an operator
+launch decision, pricing revalidation, and a clean recorded baseline commit.
 
 ## Research and platform work
 

@@ -37,6 +37,36 @@ import {
   type BenchmarkUsage,
   type CreditPricingProfile,
 } from "./credits.js";
+import {
+  assertEnvironmentEvidence,
+  captureEnvironmentRecord,
+  type EnvironmentRecord,
+} from "./environment.js";
+import {
+  assertMethodologyFrozen,
+  CAMPAIGN_RETRY_POLICY,
+  classifyRunValidity,
+  resolveWorkerConcurrency,
+  V3_METHODOLOGY_PATH,
+  type ConcurrencyPolicy,
+  type RunTerminationReason,
+  type RunValidity,
+} from "./integrity.js";
+import {
+  EMPTY_CONTEXT_METRICS,
+  EMPTY_ORCHESTRATION_METRICS,
+  foldContextMetrics,
+  foldOrchestrationMetrics,
+  type ContextMetrics,
+  type OrchestrationMetrics,
+} from "./metrics.js";
+import {
+  assertOrderingCompatibility,
+  CAMPAIGN_ORDERING_MODES,
+  orderCampaignCells,
+  type CampaignOrdering,
+  type CampaignOrderingMode,
+} from "./ordering.js";
 import type { BenchTask, GradeCommand } from "./tasks.js";
 import { V2_TASKS, type V2BenchTask } from "./v2-tasks.js";
 import {
@@ -48,6 +78,25 @@ import {
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RESULTS_DIR = path.resolve(HERE, "..", "..", "bench", "results");
+
+/** Read a package version for the run record, or leave it unknown. */
+const readVersionOf = (...segments: string[]): string | null => {
+  try {
+    const manifest = JSON.parse(
+      fs.readFileSync(
+        path.resolve(HERE, "..", "..", ...segments, "package.json"),
+        "utf8",
+      ),
+    ) as { version?: unknown };
+    return typeof manifest.version === "string" ? manifest.version : null;
+  } catch {
+    return null;
+  }
+};
+
+const readPackageVersion = (): string | null => readVersionOf();
+const readCodexSdkVersion = (): string | null =>
+  readVersionOf("node_modules", "@openai", "codex-sdk");
 
 export const SUPERVISOR_MODEL = "gpt-5.6-sol" as const;
 const ORCHESTRATOR_NAME = process.env.SOL_LUNA_SERVER_NAME ?? "sol-luna-orchestrator";
@@ -242,12 +291,23 @@ export interface RunRecord {
   streams: number | null;
   /** SOL_LUNA_MAX_PARALLEL given to the orchestrator, or null when solo. */
   maxParallelConfigured: number | null;
+  /** Which concurrency rule produced `maxParallelConfigured`. */
+  concurrencyPolicy?: ConcurrencyPolicy;
   arm: Arm | string;
   armLabel: string;
+  /** Whether the orchestrator was reachable at all for this arm. */
+  delegationEnabled?: boolean;
   supervisorEffort: string;
   repetition: number;
   startedAt: string;
   durationSeconds: number;
+  /** How the supervisor turn ended, as a fact rather than a judgement. */
+  terminationReason?: RunTerminationReason;
+  /**
+   * Whether orchestrator telemetry could be read for this run. Null when the
+   * arm has no orchestrator, so absent telemetry is not missing evidence.
+   */
+  telemetryAvailable?: boolean | null;
   passed: boolean;
   grades: GradeOutcome[];
   immutableViolations: string[];
@@ -264,6 +324,12 @@ export interface RunRecord {
   workerFailures: string[];
   agentError: string | null;
   creditAccounting?: RunCreditAccounting;
+  /** Delegation, repair, recovery, escalation, and integration counts. */
+  orchestration?: OrchestrationMetrics;
+  /** Context size and compaction behaviour observed during the run. */
+  context?: ContextMetrics;
+  /** Predeclared inclusion decision; see `classifyRunValidity`. */
+  validity?: RunValidity;
 }
 
 export interface BenchmarkResultsSnapshot {
@@ -282,6 +348,14 @@ export interface BenchmarkResultsSnapshot {
   records: RunRecord[];
   holdoutFreezeSha?: string;
   productionBaseline?: { version: "0.10.0"; sha: string };
+  /** Commit, branch, runtime, toolchain, and invocation of this shard. */
+  environment?: EnvironmentRecord;
+  /** Execution order, fixed and published before the first live turn. */
+  ordering?: CampaignOrdering;
+  /** Digest of the frozen methodology this campaign executed under. */
+  methodologyDigest?: string;
+  /** Retry and exclusion treatment, recorded before any result existed. */
+  retryPolicy?: typeof CAMPAIGN_RETRY_POLICY;
 }
 
 export function assertStandardSpeedConfirmed(confirmed: boolean): void {
@@ -326,11 +400,30 @@ export function buildResultsSnapshot(options: {
   standardSpeedConfirmed: boolean;
   suite?: SuiteName;
   pricingProfileConfirmed?: boolean;
+  environment?: EnvironmentRecord;
+  ordering?: CampaignOrdering;
+  methodologyDigest?: string;
 }): BenchmarkResultsSnapshot {
   assertStandardSpeedConfirmed(options.standardSpeedConfirmed);
   const suite = options.suite ?? "v2";
   if (suite === "v3") {
     assertV3PricingProfileConfirmed(options.pricingProfileConfirmed === true);
+    // A holdout result nobody can attribute to a commit, an order, and a
+    // reviewed methodology is not auditable evidence.
+    if (!options.environment) {
+      throw new Error(
+        "Benchmark V3 snapshots require captured reproducibility evidence (git commit, branch, runtime, invocation)",
+      );
+    }
+    assertEnvironmentEvidence(options.environment);
+    if (!options.ordering) {
+      throw new Error("Benchmark V3 snapshots require a recorded execution ordering");
+    }
+    if (!options.methodologyDigest) {
+      throw new Error(
+        `Benchmark V3 snapshots require the verified ${V3_METHODOLOGY_PATH} digest`,
+      );
+    }
   }
   return {
     schema: 4,
@@ -355,6 +448,12 @@ export function buildResultsSnapshot(options: {
           },
         }
       : {}),
+    ...(options.environment ? { environment: options.environment } : {}),
+    ...(options.ordering ? { ordering: options.ordering } : {}),
+    ...(options.methodologyDigest
+      ? { methodologyDigest: options.methodologyDigest }
+      : {}),
+    retryPolicy: CAMPAIGN_RETRY_POLICY,
   };
 }
 
@@ -551,6 +650,8 @@ const buildPrompt = (task: BenchTask, arm: Arm): string =>
   }`;
 
 interface Telemetry {
+  /** False when the event stream could not be read at all. */
+  available: boolean;
   delegations: DelegationRecord[];
   batches: RunRecord["batches"];
   integrationConflicts: number;
@@ -560,6 +661,8 @@ interface Telemetry {
   verificationFailed: number;
   verificationRefused: number;
   workerFailures: string[];
+  orchestration: OrchestrationMetrics;
+  context: ContextMetrics;
 }
 
 const EMPTY_BREAKDOWN: Breakdown = {
@@ -573,6 +676,7 @@ const EMPTY_BREAKDOWN: Breakdown = {
 };
 
 const EMPTY_TELEMETRY: Telemetry = {
+  available: false,
   delegations: [],
   batches: [],
   integrationConflicts: 0,
@@ -581,6 +685,8 @@ const EMPTY_TELEMETRY: Telemetry = {
   verificationFailed: 0,
   verificationRefused: 0,
   workerFailures: [],
+  orchestration: EMPTY_ORCHESTRATION_METRICS,
+  context: EMPTY_CONTEXT_METRICS,
 };
 
 /**
@@ -635,9 +741,19 @@ export function readTelemetry(
   const workerStarts = new Map<string, number>();
   const spans: Array<{ start: number; end: number }> = [];
 
-  if (!fs.existsSync(eventsFile)) return EMPTY_TELEMETRY;
+  // Every event this run appended, kept so the metric folds see exactly the
+  // same slice the delegation reconciliation below does.
+  const parsedEvents: Array<Record<string, unknown>> = [];
 
-  const content = fs.readFileSync(eventsFile, "utf8").slice(offset);
+  let content: string;
+  try {
+    content = fs.readFileSync(eventsFile, "utf8").slice(offset);
+  } catch {
+    // The stream the arm was told to write is unreadable. That is missing
+    // evidence, not an absence of orchestration, and it must stay visible.
+    return EMPTY_TELEMETRY;
+  }
+
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
@@ -647,6 +763,7 @@ export function readTelemetry(
     } catch {
       continue;
     }
+    parsedEvents.push(parsed);
     const at = Date.parse(String(parsed.timestamp ?? ""));
     const stamp = Number.isNaN(at) ? null : at;
 
@@ -866,6 +983,7 @@ export function readTelemetry(
   };
 
   return {
+    available: true,
     delegations,
     batches,
     integrationConflicts,
@@ -874,6 +992,8 @@ export function readTelemetry(
     verificationFailed,
     verificationRefused,
     workerFailures,
+    orchestration: foldOrchestrationMetrics(parsedEvents),
+    context: foldContextMetrics(parsedEvents),
   };
 }
 
@@ -917,17 +1037,25 @@ async function runArm(
     before.set(name, sha256(fs.readFileSync(path.join(workspace, ...name.split("/")))));
   }
 
+  if (armSpec.delegation) {
+    // Create the stream before the turn starts. An empty file afterwards then
+    // means the supervisor never used the orchestrator, while a missing file
+    // means the evidence was lost — two facts that must not look alike.
+    fs.appendFileSync(eventsFile, "");
+  }
   const eventsOffset = fs.existsSync(eventsFile) ? fs.statSync(eventsFile).size : 0;
 
-  // A fixture with N independent streams needs N concurrent workers before
-  // parallel execution can show what it is worth; the shipped default of 3
-  // would otherwise queue the rest and cap the speedup at 3x regardless of
-  // fixture size. This is a non-default configuration and is recorded in the
-  // results file so no reader has to assume otherwise. It changes nothing for
-  // the solo arms, which have no workers.
-  const maxParallel = armSpec.delegation
-    ? Math.min(Math.max(task.streams ?? 1, 1), 8)
-    : null;
+  // V2 gave each fixture a ceiling equal to its declared natural stream count,
+  // and its committed records depend on that. V3 must not: stream counts track
+  // the evaluator-only routing category, so passing them through would be a
+  // task-specific hint about the exact question V3 asks. V3 configures nothing
+  // and measures the shipped production default instead.
+  const concurrency = resolveWorkerConcurrency({
+    suite,
+    delegationEnabled: armSpec.delegation,
+    streams: task.streams,
+  });
+  const maxParallel = concurrency.maxParallel;
 
   const config = armSpec.delegation
     ? {
@@ -935,7 +1063,9 @@ async function runArm(
           [ORCHESTRATOR_NAME]: {
             env: {
               SOL_LUNA_EVENTS: eventsFile,
-              SOL_LUNA_MAX_PARALLEL: String(maxParallel),
+              ...(maxParallel === null
+                ? {}
+                : { SOL_LUNA_MAX_PARALLEL: String(maxParallel) }),
             },
           },
         },
@@ -954,9 +1084,16 @@ async function runArm(
 
   let supervisorUsage: RunRecord["supervisorUsage"] = null;
   let agentError: string | null = null;
+  // The harness time bound is part of the task contract, so exhausting it is a
+  // result. A transport or turn failure is not, and the two must be told apart
+  // before the exclusion rules see them.
+  let harnessTimedOut = false;
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TASK_TIMEOUT_SECONDS * 1000);
+  const timer = setTimeout(() => {
+    harnessTimedOut = true;
+    controller.abort();
+  }, TASK_TIMEOUT_SECONDS * 1000);
 
   try {
     const { events } = await thread.runStreamed(buildPrompt(task, arm), {
@@ -1021,6 +1158,13 @@ async function runArm(
   const telemetry: Telemetry = armSpec.delegation
     ? readTelemetry(eventsFile, eventsOffset, start, runEndMs)
     : EMPTY_TELEMETRY;
+  // A solo arm has no orchestrator, so silence there is not missing evidence.
+  const telemetryAvailable = armSpec.delegation ? telemetry.available : null;
+  const terminationReason: RunTerminationReason = harnessTimedOut
+    ? "harness-timeout"
+    : agentError !== null
+      ? "agent-error"
+      : "completed";
 
   const workerEfforts = telemetry.efforts;
   const creditAccounting = buildRunCreditAccounting({
@@ -1033,8 +1177,18 @@ async function runArm(
     .rm(workspace, { recursive: true, force: true, maxRetries: 3 })
     .catch(() => undefined);
 
+  const benchmarkVersion = suite === "v3" ? 3 : 2;
+  const validity = classifyRunValidity({
+    benchmarkVersion,
+    delegationEnabled: armSpec.delegation,
+    grades,
+    terminationReason,
+    telemetryAvailable,
+    ...(suite === "v3" ? { runId, fixtureRevision } : {}),
+  });
+
   return {
-    benchmarkVersion: suite === "v3" ? 3 : 2,
+    benchmarkVersion,
     suite,
     taskId: task.id,
     taskCategory: task.category,
@@ -1044,12 +1198,16 @@ async function runArm(
     tier: task.tier ?? null,
     streams: task.streams ?? null,
     maxParallelConfigured: maxParallel,
+    concurrencyPolicy: concurrency.policy,
     arm,
     armLabel: armSpec.label,
+    delegationEnabled: armSpec.delegation,
     supervisorEffort: armSpec.effort,
     repetition,
     startedAt,
     durationSeconds,
+    terminationReason,
+    telemetryAvailable,
     passed,
     grades,
     immutableViolations,
@@ -1066,8 +1224,14 @@ async function runArm(
     workerFailures: telemetry.workerFailures,
     agentError,
     creditAccounting,
+    orchestration: telemetry.orchestration,
+    context: telemetry.context,
+    validity,
   };
 }
+
+const isOrderingMode = (value: string): value is CampaignOrderingMode =>
+  (CAMPAIGN_ORDERING_MODES as readonly string[]).includes(value);
 
 export function parseArgs(argv: string[]): {
   reps: number;
@@ -1078,6 +1242,8 @@ export function parseArgs(argv: string[]): {
   standardSpeedConfirmed: boolean;
   pricingProfileConfirmed: boolean;
   resume: boolean;
+  orderMode: CampaignOrderingMode;
+  orderSeed: string | undefined;
 } {
   const get = (flag: string): string | undefined => {
     const index = argv.indexOf(flag);
@@ -1093,6 +1259,11 @@ export function parseArgs(argv: string[]): {
 
   const suite = (get("--suite") ?? "v2") as SuiteName;
   const arms = list(get("--arms")) as Arm[];
+  const orderSeed = get("--order-seed");
+  const requestedOrder = get("--order");
+  if (requestedOrder !== undefined && !isOrderingMode(requestedOrder)) {
+    throw new Error(`--order accepts ${CAMPAIGN_ORDERING_MODES.join(" or ")}`);
+  }
 
   return {
     reps: Number(get("--reps") ?? 2),
@@ -1103,6 +1274,12 @@ export function parseArgs(argv: string[]): {
     resume: argv.includes("--resume"),
     tasks: list(get("--tasks")),
     arms: arms.length > 0 ? arms : ["solo-medium", "adaptive-medium"],
+    // Ordering is explicit: naming a seed selects seeded ordering, so a
+    // recorded seed can never sit beside a declared-order campaign.
+    orderMode:
+      requestedOrder ??
+      (orderSeed !== undefined && orderSeed !== "" ? "seeded" : "declared"),
+    orderSeed,
   };
 }
 
@@ -1116,12 +1293,27 @@ async function main(): Promise<void> {
     standardSpeedConfirmed,
     pricingProfileConfirmed,
     resume,
+    orderMode,
+    orderSeed,
   } = parseArgs(process.argv.slice(2));
 
   assertStandardSpeedConfirmed(standardSpeedConfirmed);
+
+  const environment = captureEnvironmentRecord({
+    argv: process.argv.slice(2),
+    packageVersion: readPackageVersion(),
+    codexSdkVersion: readCodexSdkVersion(),
+  });
+  let methodologyDigest: string | undefined;
   if (suite === "v3") {
     assertV3PricingProfileConfirmed(pricingProfileConfirmed);
     assertV3CampaignPolicy({ reps, arms, resume });
+    // Reproducibility and the reviewed methodology are launch preconditions,
+    // not fields filled in afterwards.
+    assertEnvironmentEvidence(environment, { requireCleanWorkingTree: true });
+    methodologyDigest = assertMethodologyFrozen(
+      fs.readFileSync(path.resolve(HERE, "..", "..", V3_METHODOLOGY_PATH), "utf8"),
+    );
   }
 
   const available = SUITES[suite];
@@ -1171,16 +1363,31 @@ async function main(): Promise<void> {
       }
     }
   }
+  const { cells: orderedCells, ordering } = orderCampaignCells(plannedCells, {
+    mode: orderMode,
+    ...(orderSeed === undefined ? {} : { seed: orderSeed }),
+  });
+
   const existingShards = readCampaignShards(RESULTS_DIR, campaignId);
   assertCampaignCompatibility(existingShards, currentCampaignCompatibility(suite));
+  assertOrderingCompatibility(
+    existingShards.map((shard) => ({
+      file: path.basename(shard.file),
+      ordering: (shard.data as { ordering?: CampaignOrdering }).ordering,
+    })),
+    ordering,
+  );
   const completedCells = collectCompletedCampaignCells(existingShards, campaignId);
   const plan = planCampaignCells({
-    planned: plannedCells,
+    planned: orderedCells,
     completed: completedCells,
     resume,
   });
 
   console.log(`Campaign: ${campaignId}`);
+  console.log(
+    `Ordering: ${ordering.mode}${ordering.seed === null ? "" : ` (seed ${ordering.seed})`}`,
+  );
   console.log(`Planned cells: ${plan.planned.length}`);
   console.log(`Already completed: ${plan.completed.length}`);
   console.log(`Remaining: ${plan.remaining.length}`);
@@ -1219,8 +1426,12 @@ async function main(): Promise<void> {
       record.workerCount > 0
         ? ` (${record.workerCount} worker(s): ${record.workerEfforts.join(", ") || "?"})`
         : "";
+    const quarantine =
+      record.validity && record.validity.status === "quarantined"
+        ? ` [QUARANTINED: ${record.validity.reasons.join(", ")}]`
+        : "";
     console.log(
-      `${record.passed ? "PASS" : "FAIL"} in ${record.durationSeconds}s${detail}`,
+      `${record.passed ? "PASS" : "FAIL"} in ${record.durationSeconds}s${detail}${quarantine}`,
     );
 
     checkpointResultsShard(
@@ -1233,6 +1444,9 @@ async function main(): Promise<void> {
         standardSpeedConfirmed: true,
         suite,
         pricingProfileConfirmed,
+        environment,
+        ordering,
+        ...(methodologyDigest === undefined ? {} : { methodologyDigest }),
       }),
     );
   }

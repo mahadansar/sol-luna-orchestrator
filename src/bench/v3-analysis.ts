@@ -137,6 +137,17 @@ export interface V3RoutingAnalysis {
   routingChanges: readonly string[];
   verificationFailures: number;
   integrationConflicts: number;
+  /** Runs the predeclared exclusion rules removed, kept visible not deleted. */
+  quarantinedRuns: readonly V3QuarantinedRun[];
+  includedRuns: number;
+}
+
+export interface V3QuarantinedRun {
+  taskId: string;
+  arm: string;
+  repetition: number | null;
+  runId: string | null;
+  reasons: readonly string[];
 }
 
 export interface V3RepetitionRecommendation {
@@ -490,9 +501,23 @@ const economicComparison = (
 
 /** Analyze records without performing any I/O, grading, or model calls. */
 export function analyzeV3(
-  records: readonly RunRecordCompatible[],
+  all: readonly RunRecordCompatible[],
   evaluatorMetadata?: V3EvaluatorMetadataByTaskId,
 ): V3RoutingAnalysis {
+  // Quarantined runs are excluded from every aggregate and listed separately.
+  // Removing them silently would let a missing-evidence run look like a result;
+  // averaging them in would let it look like a model outcome.
+  const quarantinedRuns: V3QuarantinedRun[] = all
+    .filter((record) => record.validity?.status === "quarantined")
+    .map((record) => ({
+      taskId: record.taskId,
+      arm: record.arm,
+      repetition: asFinite(record.repetition),
+      runId: typeof record.runId === "string" ? record.runId : null,
+      reasons: record.validity?.reasons ?? [],
+    }));
+  const records = all.filter((record) => record.validity?.status !== "quarantined");
+
   const grouped = new Map<string, RunRecordCompatible[]>();
   for (const record of records) {
     const key = `${record.taskId}\0${record.arm}`;
@@ -555,6 +580,8 @@ export function analyzeV3(
       (total, record) => total + (asFinite(record.integrationConflicts) ?? 0),
       0,
     ),
+    quarantinedRuns,
+    includedRuns: records.length,
   };
 }
 

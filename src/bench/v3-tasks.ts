@@ -7,7 +7,14 @@
  */
 import type { BenchTask, GradeCommand } from "./tasks.js";
 
-/** Exact commit containing the frozen V3 workload and methodology. */
+/**
+ * Exact commit containing the frozen V3 workload and methodology.
+ *
+ * This is still the freeze-1 commit. The P2.4A freeze-2 review has no commit
+ * yet, so recording one here would be an invention; `V3_METHODOLOGY_DIGEST` in
+ * `./integrity.js` identifies the current reviewed content instead, and this
+ * SHA must be updated to the freeze-2 commit before a live campaign launches.
+ */
 export const BENCHMARK_V3_FREEZE_SHA = "544d217967646e5f48b9aa73e936567e87d87c8b";
 export const BENCHMARK_V3_PRODUCTION_BASELINE_SHA =
   "83f024355c8c7caa21b488a6ea7aaa7b73a3be9e";

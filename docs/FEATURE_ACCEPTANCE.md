@@ -13,9 +13,12 @@ parallel recovery baseline described below. Shipped history belongs in
 - **Runtime baseline:** commit-relative current main for v0.10.0 after the Thin
   Supervisor work above. Package and lockfile versions are `0.10.0`.
 - **Latest full deterministic validation:** `npm run verify` passed on
-  2026-08-29 with **855/858 tests passed**, no failures and three expected
+  2026-08-29 with **886/889 tests passed**, no failures and three expected
   platform-specific Windows skips, plus typecheck and the deterministic MCP
-  protocol smoke test.
+  protocol smoke test. The count includes the 31 P2.4A acceptance-harness tests
+  in `src/bench/harness.test.ts`. `npm run bench:v3:validate` also passed: every
+  V3 starting state fails, every hidden reference passes, and every mutation and
+  immutable-specification check discriminates.
 - **Current native platform evidence:** deterministic CI covers Windows, Linux,
   and macOS. Focused Linux/POSIX symlink, dependency-link, and process-group
   paths passed natively. Live Codex delegation has representative Windows and
@@ -241,6 +244,91 @@ in observed supervisor-after time, compared with 26.8-113.1 seconds in the
 delegated frozen baseline. The canonical economics and limitations are in
 `bench/RESULTS.md`; this is representative live acceptance, not a claim of
 universal savings.
+
+## Final acceptance boundary (P2.4A)
+
+This is the frozen acceptance boundary for the completed orchestrator, covering
+everything shipped from P1.0 through P2.3. It separates three evidence classes
+that the rest of this ledger sometimes reports in one column, because they
+support different claims:
+
+- **Deterministic / code-confirmed.** A named test file executed in the
+  canonical `npm run verify` gate. It establishes that the behaviour exists, is
+  bounded, and holds at the current baseline. It establishes nothing about how a
+  real model behaves, how long anything takes, or what anything costs.
+- **Live model-backed behavioural.** A real Codex supervisor turn exercised the
+  path end to end. It establishes that the behaviour survives contact with a
+  model and a real workspace. It is not a performance or economic measurement.
+- **Benchmark performance / economics.** A committed campaign record under a
+  frozen methodology, with external grading and recorded usage. It establishes
+  latency, routing, and credit evidence within that methodology's limits, and
+  nothing about capabilities it did not exercise.
+
+Vocabulary is the ledger's own: **N/A**, **NOT TESTED**, **PARTIAL**, **PASS**,
+**DEEP PASS**, **STALE**.
+
+| Roadmap capability                                        | Deterministic | Live model-backed | Benchmark economics | Primary deterministic evidence                                                                                 |
+| --------------------------------------------------------- | ------------- | ----------------- | ------------------- | -------------------------------------------------------------------------------------------------------------- |
+| P0 Context Capsule v2 / Compact Evidence Packets          | PASS          | PASS              | PARTIAL (V2)        | `src/evidence.test.ts`, `src/prompt.test.ts`                                                                   |
+| P0.2a Explicit Change Intent Contracts                    | PASS          | DEEP PASS         | PARTIAL (V2)        | `src/evidence.test.ts`, `src/selftest.ts`                                                                      |
+| P0.3 Worker Continuation                                  | DEEP PASS     | DEEP PASS         | NOT TESTED          | `src/parallel.test.ts`, `src/evidence.test.ts`                                                                 |
+| P0.4 Bounded Repair Loop                                  | PASS          | DEEP PASS         | NOT TESTED          | `src/evidence.test.ts`, `src/parallel.test.ts`                                                                 |
+| Thin Supervisor terminal verification / handoff           | PASS          | DEEP PASS         | PASS (V2)           | `src/evidence.test.ts`, `src/selftest.ts`                                                                      |
+| Parallel batches, worktree isolation, bounded concurrency | DEEP PASS     | DEEP PASS         | PASS (V1/V2)        | `src/parallel.test.ts`, `src/security.test.ts`                                                                 |
+| Bounded parallel automatic recovery                       | PASS          | PASS              | PARTIAL (V2)        | `src/parallel.test.ts`                                                                                         |
+| P1.0 Parent identity, billing, post-hoc cost              | PASS          | N/A               | PASS (V2 profile)   | `src/bench/credits.test.ts`, `src/evidence.test.ts`                                                            |
+| P1.0 Per-execution attempt, failure, and usage evidence   | DEEP PASS     | PARTIAL           | PARTIAL (V2)        | `src/evidence.test.ts`, `src/parallel.test.ts`                                                                 |
+| P1.1 Reasoned retry and effort escalation                 | DEEP PASS     | NOT TESTED        | NOT TESTED          | `src/evidence.test.ts`, `src/policy.test.ts`                                                                   |
+| P1.2 User-owned compute policy and enforcement            | PASS          | NOT TESTED        | NOT TESTED          | `src/policy.test.ts`, `src/selection.test.ts`                                                                  |
+| P1.2 Adaptive routing, seam planning, selection           | PASS          | NOT TESTED        | NOT TESTED          | `src/adaptive-routing.test.ts`, `src/routing.test.ts`, `src/seam-plan.test.ts`, `src/selection.test.ts`        |
+| P1.3A Retention and compaction core                       | PASS          | NOT TESTED        | NOT TESTED          | `src/context.test.ts`                                                                                          |
+| P1.3B Context pressure metrics and trigger policy         | PASS          | NOT TESTED        | NOT TESTED          | `src/context.test.ts`                                                                                          |
+| P1.3C Live context lifecycle integration                  | PASS          | NOT TESTED        | NOT TESTED          | `src/context-lifecycle.test.ts`                                                                                |
+| P2.1 Optional Explorer                                    | PASS          | NOT TESTED        | NOT TESTED          | `src/explore.test.ts`, `src/security.test.ts`                                                                  |
+| P2.2 Lightweight Cross-Session Handoff                    | PASS          | NOT TESTED        | NOT TESTED          | `src/session-handoff.test.ts`                                                                                  |
+| P2.3 End-to-End Automated Workflow                        | DEEP PASS     | NOT TESTED        | NOT TESTED          | `src/workflow.test.ts` (26 tests)                                                                              |
+| Benchmark harness and acceptance methodology (P2.4A)      | PASS          | N/A               | N/A                 | `src/bench.test.ts`, `src/bench/harness.test.ts`, `src/bench/v3-analysis.test.ts`, `src/bench/credits.test.ts` |
+
+### Reading this table against the matrix above
+
+The current capability matrix records **N/A** in its live column for the P1.1
+through P2.3 rows. The accurate reading is **NOT TESTED**: live evidence is
+applicable to those runtime behaviours, and no live campaign has exercised them.
+`N/A` is reserved here for capabilities where a live turn genuinely cannot
+produce the evidence, such as post-hoc credit arithmetic. The matrix rows are
+left as written to avoid rewriting historical entries; this section is
+authoritative on the distinction.
+
+`PARTIAL` in the benchmark column means a V1 or V2 campaign exercised the path
+incidentally while measuring something else. It is not a performance claim about
+that capability.
+
+### What is explicitly not claimed
+
+- **No live model-backed evidence exists for P1.1, P1.2, P1.3, P2.1, P2.2, or
+  P2.3.** Their acceptance is deterministic. A green test file is not a live
+  behavioural result, and this ledger does not present it as one.
+- **No performance, latency, or economic claim is made for any P1 or P2
+  capability.** No campaign has measured them. Benchmark V3 is designed to
+  produce that evidence and has not been run.
+- **No Benchmark V3 result exists**, under freeze 1 or freeze 2. Every V3
+  statement in this repository describes method, never outcome.
+- **Adaptive orchestration is not claimed to be cheaper, faster, or better than
+  solo execution.** V2's seven fully priced task medians were about 2% more
+  expensive than Solo, and the full Adaptive total is unknown.
+- **V2 evidence is not V3 evidence.** It measured an earlier architecture on a
+  different suite under a different configuration, and the two are not two
+  samples of one experiment.
+- **The deterministic suite is not a coverage claim.** No fresh whole-system
+  coverage report exists after the v0.9.1 runtime changes.
+
+### Freeze status
+
+P2.4A is complete: the acceptance boundary above and the Benchmark V3
+methodology in [`bench/V3_METHODOLOGY.md`](../bench/V3_METHODOLOGY.md) are
+frozen under freeze 2, and the harness enforcing them is covered by
+`src/bench/harness.test.ts` in the canonical gate. P2.4 and Benchmark V3 remain
+incomplete; no model-backed V3 task has been executed.
 
 ## Current known evidence gaps and non-claims
 

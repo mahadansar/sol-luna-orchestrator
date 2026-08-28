@@ -20,6 +20,13 @@ not production orchestration behavior.
   rules, or concurrency after seeing outcomes to make delegation look better.
 - Configured maximum parallelism matches the V2 fixture's declared natural stream count
   and is recorded. Do not change the shipped concurrency default to improve a result.
+- V3 configures no orchestrator policy at all and measures the shipped defaults.
+  It deliberately does not pass `SOL_LUNA_MAX_PARALLEL`, because a V3 fixture's
+  stream count is derived from the same structure as its evaluator-only routing
+  category. `resolveWorkerConcurrency` owns this rule; a deterministic test proves
+  no V3 task can produce a per-task value.
+- No harness control flow may key on a task identity: no per-task prompt, guidance,
+  timeout, grading tolerance, routing hint, or special case.
 - Missing measurements are `null`/unknown, never zero. V2 may calculate credits only
   from its embedded official rate-card snapshot and complete usage; calculated
   `rateCardCredits` must never be labelled actual billing.
@@ -39,7 +46,14 @@ not production orchestration behavior.
 - Run `npm run bench:validate` after fixture or grader changes; use
   `npm run bench:v3:validate` for the isolated V3 gate. Validation must prove that every
   starting state fails, every reference solution passes, and mutation detection works.
-  Run `npm test` as well; `src/bench.test.ts` pins harness and fixture invariants.
+  Run `npm test` as well; `src/bench.test.ts` pins harness and fixture invariants and
+  `src/bench/harness.test.ts` pins the acceptance rules — reproducibility evidence,
+  ordering, exclusion and retry treatment, the frozen methodology digest, the harness
+  configuration boundary, and metric folding.
+- `bench/V3_METHODOLOGY.md` is content-addressed. Editing it changes its digest and a
+  V3 launch will refuse until `V3_METHODOLOGY_DIGEST` in `src/bench/integrity.ts` is
+  updated through the document's own correction/freeze-review policy. That refusal is
+  the point: do not silence it to get a campaign started.
 
 ## Running and reporting
 

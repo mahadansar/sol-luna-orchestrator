@@ -21,6 +21,12 @@ fixtures and harness code live in `src/bench/` and follow that directory's instr
 - Do not claim statistical significance, universal superiority, currency cost, or a
   latency/token crossover that the data does not establish. Negative and inconclusive
   findings are results, not defects to hide.
+- Report per-run rows, not only cell medians. Preserve failures individually, keep
+  quarantined runs listed with their exclusion reasons, and never let a summary be the
+  only place a failing run appears.
+- A quarantined run is one with missing or untrustworthy evidence, never one with an
+  unwelcome outcome. A failing grade, a changed protected specification, an uncaught
+  mutation, and an exhausted time bound are all results.
 - `npm run bench:analyze` reads schema-4 V2 records and `npm run bench:v3:analyze`
   reads schema-4 V3 records. Both check pricing-profile compatibility,
   and reports correctness/credit/latency trade-offs without model calls. A new live run

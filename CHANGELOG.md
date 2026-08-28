@@ -93,9 +93,46 @@ successful response.
   Solo/Adaptive/Forced arms, schema-4 credit telemetry, resumable campaign
   checkpoints, Pareto reporting, selective third-repetition recommendations,
   and committed evidence-qualified campaign results.
+- Added the P2.4A acceptance harness and froze the Benchmark V3 methodology
+  before any model-backed V3 run. The benchmark runner now captures
+  reproducibility evidence with every shard — git commit, branch, describe,
+  working-tree cleanliness, Node/platform/OS/CPU/timezone, package, npm, Codex
+  CLI and SDK versions, the exact invocation, and allowlisted orchestrator
+  environment overrides — and a V3 campaign refuses to launch without it or
+  against a dirty working tree. Execution order is fixed and published before
+  the first live turn, either as the declared fixture order or as a
+  platform-independent seeded shuffle of tasks within a repetition and arms
+  within a task; a resume cannot reorder work after results exist.
+  `bench/V3_METHODOLOGY.md` is content-addressed and verified at launch, so a
+  silent edit to arms, graders, or stopping rules fails loudly instead of
+  passing unnoticed. Predeclared exclusion rules classify each run as valid or
+  quarantined from evidence alone — blind to pass/fail, credits, latency, worker
+  count, and arm — and quarantined runs are retained, listed with their reasons,
+  and excluded from every aggregate; a failing grade, a changed protected
+  specification, an uncaught mutation, and an exhausted time bound remain
+  results, not exclusions. The harness performs no automatic re-execution of a
+  live cell and no grading retries. Run records now also carry delegation,
+  exploration, attempt-by-role, repair, recovery, continuation, effort- and
+  executor-escalation, wasted-attempt, unavailable-usage, scope, routing,
+  integration, and context size/compaction counts folded from the orchestrator's
+  own event stream, and generated reports add reproducibility, run-validity,
+  supervisor-overhead, orchestration, and context sections. Unknown stays
+  unknown throughout; no token, credit, or timing field is ever back-filled.
+- Added `docs/FEATURE_ACCEPTANCE.md` final acceptance boundary for P1.0 through
+  P2.3, separating deterministic/code-confirmed acceptance from live
+  model-backed behavioural evidence and from benchmark performance/economics
+  evidence. P1.1, P1.2, P1.3, P2.1, P2.2, and P2.3 hold deterministic acceptance
+  only; no live or benchmark evidence is claimed for them.
 
 ### Changed
 
+- Benchmark V3 no longer configures worker concurrency. V2 set
+  `SOL_LUNA_MAX_PARALLEL` per fixture from that fixture's declared natural
+  stream count; in V3 the same stream count is derived from the structure that
+  defines the evaluator-only routing category, so passing it through would give
+  the orchestrator a task-specific hint about the exact question V3 asks. V3
+  now configures no orchestrator policy at all and measures the shipped
+  production defaults. V2's committed records and behaviour are unchanged.
 - Made `resultDetail: "handoff"` the default. Clean verified PASS responses are
   text-only and omit `structuredContent`; failures and suspicious states expand
   to rich evidence progressively. Callers requiring structured success output
