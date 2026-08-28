@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import type { DelegateTaskInput } from "./contract.js";
+import type { ContinuationState, DelegateTaskInput } from "./contract.js";
 import { LUNA_MODEL } from "./config.js";
 import type { WorktreeLease } from "./worktree.js";
 
@@ -17,6 +17,8 @@ interface ContinuationRecord {
   predecessorExecutionId: string | null;
   logicalAttempt: number;
   model: string;
+  /** Internal lifecycle owner; never exposed as a capability or accepted from callers. */
+  contextKey: string | null;
   expiresAt: number;
 }
 
@@ -38,6 +40,8 @@ export interface ContinuationEntry {
   logicalAttempt: number;
   /** Executor that owns the thread and must be used when resuming it. */
   model: string;
+  /** Internal lifecycle owner restored only from this server-issued reference. */
+  contextKey: string | null;
 }
 
 export type ContinuationConsumeResult =
@@ -83,6 +87,7 @@ export class ContinuationStore {
     predecessorExecutionId: string | null = null,
     logicalAttempt = input.previousAttempts.length + 2,
     model = LUNA_MODEL,
+    contextKey: string | null = null,
   ): string {
     const now = this.now();
     this.prune(now);
@@ -101,6 +106,7 @@ export class ContinuationStore {
       predecessorExecutionId,
       logicalAttempt,
       model,
+      contextKey,
       expiresAt: now + CONTINUATION_TTL_MS,
     });
     return reference;
@@ -136,6 +142,7 @@ export class ContinuationStore {
           predecessorExecutionId: record.predecessorExecutionId,
           logicalAttempt: record.logicalAttempt,
           model: record.model,
+          contextKey: record.contextKey,
         },
       };
     }
@@ -149,6 +156,37 @@ export class ContinuationStore {
   /** Release the filesystem lease after the consumed continuation turn exits. */
   release(reference: string): void {
     this.leased.delete(reference);
+  }
+
+  /** Check live status of a continuation reference without consuming it. */
+  status(reference: string): ContinuationState {
+    if (!isContinuationReference(reference)) return "unavailable";
+    const now = this.now();
+    this.prune(now);
+    const record = this.active.get(reference);
+    if (record) {
+      if (now >= record.expiresAt) {
+        return "unavailable";
+      }
+      return "issued";
+    }
+    const leased = this.leased.get(reference);
+    if (leased) {
+      return "consumed";
+    }
+    const retired = this.retired.get(reference);
+    if (retired && now < retired.until) {
+      return retired.status === "used" ? "consumed" : "unavailable";
+    }
+    return "unavailable";
+  }
+
+  /** Whether an active or executing reference still owns a lifecycle context. */
+  hasContextKey(contextKey: string): boolean {
+    this.prune(this.now());
+    return [...this.active.values(), ...this.leased.values()].some(
+      (record) => record.contextKey === contextKey,
+    );
   }
 
   /** Directories that must not be pruned while a reference can still use them. */

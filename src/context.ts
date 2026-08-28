@@ -22,6 +22,9 @@ import type {
   TaskCategory,
   WorkerFailureCause,
 } from "./contract.js";
+import type { ContinuationStore } from "./continuation.js";
+import type { HandoffStore } from "./handoff.js";
+import type { EventEmitter } from "./events.js";
 import {
   CONTEXT_COOLDOWN_TURNS,
   CONTEXT_MAX_BYTES,
@@ -325,7 +328,6 @@ export interface CompactedTurn {
 }
 
 export interface CompactedHandoffRef {
-  readonly reference: string;
   readonly status: HandoffState;
   readonly availabilityBasis: "recorded-issued-unconsumed";
   readonly reason: string;
@@ -333,7 +335,6 @@ export interface CompactedHandoffRef {
 }
 
 export interface CompactedContinuationRef {
-  readonly reference: string;
   readonly status: ContinuationState;
   readonly availabilityBasis: "recorded-issued-unconsumed";
   readonly reason: string;
@@ -412,39 +413,57 @@ export function createOrchestrationContext(params: {
 
 export function recordDecision(
   context: OrchestrationContext,
-  decision: Omit<ContextDecision, "id"> & { id?: string },
+  decision: Omit<ContextDecision, "id" | "kind"> & {
+    id?: string;
+    kind?: ContextDecision["kind"];
+  },
 ): OrchestrationContext {
   return {
     ...context,
     decisions: [
       ...context.decisions,
-      { ...decision, id: decision.id ?? `dec_${context.decisions.length + 1}` },
+      {
+        kind: "architectural",
+        ...decision,
+        id: decision.id ?? `dec_${context.decisions.length + 1}`,
+      },
     ],
   };
 }
 
 export function recordConstraint(
   context: OrchestrationContext,
-  constraint: Omit<ContextConstraint, "id"> & { id?: string },
+  constraint: Omit<ContextConstraint, "id" | "active"> & {
+    id?: string;
+    active?: boolean;
+  },
 ): OrchestrationContext {
   return {
     ...context,
     constraints: [
       ...context.constraints,
-      { ...constraint, id: constraint.id ?? `cst_${context.constraints.length + 1}` },
+      {
+        active: true,
+        ...constraint,
+        id: constraint.id ?? `cst_${context.constraints.length + 1}`,
+      },
     ],
   };
 }
 
 export function recordBlocker(
   context: OrchestrationContext,
-  blocker: Omit<ContextBlocker, "id"> & { id?: string },
+  blocker: Omit<ContextBlocker, "id" | "resolved"> & { id?: string; resolved?: boolean },
 ): OrchestrationContext {
   return {
     ...context,
     blockers: [
       ...context.blockers,
-      { ...blocker, id: blocker.id ?? `blk_${context.blockers.length + 1}` },
+      {
+        resolved: false,
+        ...blocker,
+        id: blocker.id ?? `blk_${context.blockers.length + 1}`,
+      },
     ],
   };
 }
@@ -462,14 +481,22 @@ export function resolveBlocker(
 }
 
 function lineageFromOutput(output: DelegateTaskOutput): ContextLineageEntry[] {
-  return (output.attempts ?? []).map((attempt) =>
-    lineageFromAttempt(attempt, output.verdict, output.failureDecision),
+  const attempts = output.attempts ?? [];
+  // A top-level verdict/decision classifies the aggregate result, not each
+  // repair/recovery execution. Attribute it only when exactly one execution
+  // exists; multi-attempt aggregate state remains authoritative on the turn.
+  return attempts.map((attempt) =>
+    lineageFromAttempt(
+      attempt,
+      attempts.length === 1 ? output.verdict : undefined,
+      attempts.length === 1 ? output.failureDecision : undefined,
+    ),
   );
 }
 
 function lineageFromAttempt(
   attempt: AttemptEvidence,
-  verdict: Status,
+  verdict?: Status,
   failureDecision?: FailureDecision,
 ): ContextLineageEntry {
   return {
@@ -622,7 +649,13 @@ export function ingestBatchTurn(
     const attempts = task.attempts ?? task.result?.attempts ?? [];
     const verdict = task.result?.verdict ?? "FAILED";
     const decision = task.failureDecision ?? task.result?.failureDecision;
-    return attempts.map((attempt) => lineageFromAttempt(attempt, verdict, decision));
+    return attempts.map((attempt) =>
+      lineageFromAttempt(
+        attempt,
+        attempts.length === 1 ? verdict : undefined,
+        attempts.length === 1 ? decision : undefined,
+      ),
+    );
   });
   const blockers = [...context.blockers];
   for (const task of turn.output.tasks) {
@@ -780,22 +813,22 @@ export function ingestToolProseTurn(
 }
 
 export function isCleanPassResult(result: DelegateTaskOutput): boolean {
-  const authoritative = result.verification.filter(
+  const authoritative = (result.verification ?? []).filter(
     (run) => run.source === "orchestrator",
   );
   return (
     result.verdict === "PASS" &&
     result.workerClaimedStatus === "PASS" &&
     result.trustworthy &&
-    result.scopeViolations.length === 0 &&
-    result.discrepancies.length === 0 &&
-    result.errors.length === 0 &&
-    result.filesChanged.every((file) => file.observed) &&
+    (result.scopeViolations?.length ?? 0) === 0 &&
+    (result.discrepancies?.length ?? 0) === 0 &&
+    (result.errors?.length ?? 0) === 0 &&
+    (result.filesChanged ?? []).every((file) => file.observed) &&
     !result.repair?.attempted &&
     !result.recovery?.attempted &&
     !result.failureDecision &&
-    result.followUps.length === 0 &&
-    result.reviewChecklist.length === 0 &&
+    (result.followUps?.length ?? 0) === 0 &&
+    (result.reviewChecklist?.length ?? 0) === 0 &&
     authoritative.length > 0 &&
     authoritative.every(
       (run) => (run.execution === "argv" || run.execution === "shell") && run.passed,
@@ -808,12 +841,12 @@ export function isCleanBatchResult(batch: BatchOutput): boolean {
     batch.completionState === "verified-complete" &&
     batch.passed === batch.taskCount &&
     batch.failed === 0 &&
-    batch.integrationConflicts.length === 0 &&
-    batch.scopeConflicts.length === 0 &&
-    batch.warnings.length === 0 &&
-    batch.reviewChecklist.length === 0 &&
+    (batch.integrationConflicts?.length ?? 0) === 0 &&
+    (batch.scopeConflicts?.length ?? 0) === 0 &&
+    (batch.warnings?.length ?? 0) === 0 &&
+    (batch.reviewChecklist?.length ?? 0) === 0 &&
     batch.integrated &&
-    batch.integrationVerification.length > 0 &&
+    (batch.integrationVerification?.length ?? 0) > 0 &&
     batch.integrationVerification.every(
       (run) => (run.execution === "argv" || run.execution === "shell") && run.passed,
     ) &&
@@ -821,8 +854,9 @@ export function isCleanBatchResult(batch: BatchOutput): boolean {
       (task) =>
         task.state === "completed" &&
         task.error === null &&
-        task.warnings.length === 0 &&
+        (task.warnings?.length ?? 0) === 0 &&
         task.result !== null &&
+        task.result !== undefined &&
         isCleanPassResult(task.result),
     )
   );
@@ -831,6 +865,12 @@ export function isCleanBatchResult(batch: BatchOutput): boolean {
 export interface CompactContextOptions {
   // Soft target. Protected evidence is retained even when this is exceeded.
   readonly maxTurnsCount?: number;
+  readonly continuationStore?: Pick<ContinuationStore, "status">;
+  readonly handoffStore?: Pick<HandoffStore, "status">;
+  readonly continuationStatusResolver?: (
+    reference: string,
+  ) => ContinuationState | undefined;
+  readonly handoffStatusResolver?: (reference: string) => HandoffState | undefined;
 }
 
 function redact(text: string, stats: { count: number }): string {
@@ -919,8 +959,12 @@ function compactTaskOutput(
 > {
   const clean = isCleanPassResult(output);
   const details = compactVerification(output.verification, clean, redactions);
-  const risks = [output.notes, ...output.followUps, ...output.reviewChecklist]
-    .filter((value) => value.trim().length > 0)
+  const risks = [
+    ...(output.notes ? [output.notes] : []),
+    ...(output.followUps ?? []),
+    ...(output.reviewChecklist ?? []),
+  ]
+    .filter((value) => typeof value === "string" && value.trim().length > 0)
     .map((value) => redact(value, redactions));
   return {
     verdict: output.verdict,
@@ -949,8 +993,8 @@ function compactTaskOutput(
       ? {
           attempted: output.repair.attempted,
           classification: output.repair.classification,
-          reason: redact(output.repair.reason, redactions),
-          failureEvidence: output.repair.failureEvidence.map((evidence) => ({
+          reason: output.repair.reason ? redact(output.repair.reason, redactions) : "",
+          failureEvidence: (output.repair.failureEvidence ?? []).map((evidence) => ({
             command: redact(evidence.command, redactions),
             exitCode: evidence.exitCode,
             output: redact(evidence.output, redactions),
@@ -961,7 +1005,9 @@ function compactTaskOutput(
       ? {
           attempted: output.recovery.attempted,
           classification: output.recovery.classification,
-          evidence: redact(output.recovery.evidence, redactions),
+          evidence: output.recovery.evidence
+            ? redact(output.recovery.evidence, redactions)
+            : "",
           recoveryAttempt: output.recovery.recoveryAttempt,
         }
       : undefined,
@@ -1046,7 +1092,6 @@ export function compactContext(
       if (output.handoffReference) {
         if (output.handoffState?.status === "issued") {
           handoffs.set(output.handoffReference, {
-            reference: output.handoffReference,
             status: "issued",
             availabilityBasis: "recorded-issued-unconsumed",
             reason: redact(output.handoffState.reason, redactions),
@@ -1060,7 +1105,6 @@ export function compactContext(
       if (output.continuationReference) {
         if (output.continuationState?.status === "issued") {
           continuations.set(output.continuationReference, {
-            reference: output.continuationReference,
             status: "issued",
             availabilityBasis: "recorded-issued-unconsumed",
             reason: redact(output.continuationState.reason, redactions),
@@ -1098,7 +1142,6 @@ export function compactContext(
         if (handoffReference) {
           if (handoffState?.status === "issued") {
             handoffs.set(handoffReference, {
-              reference: handoffReference,
               status: "issued",
               availabilityBasis: "recorded-issued-unconsumed",
               reason: redact(handoffState.reason, redactions),
@@ -1115,7 +1158,6 @@ export function compactContext(
         if (continuationReference) {
           if (continuationState?.status === "issued") {
             continuations.set(continuationReference, {
-              reference: continuationReference,
               status: "issued",
               availabilityBasis: "recorded-issued-unconsumed",
               reason: redact(continuationState.reason, redactions),
@@ -1308,6 +1350,28 @@ export function compactContext(
     latestRoutingTurnId = turn.id;
   }
 
+  for (const [ref] of handoffs) {
+    const liveStatus = options.handoffStatusResolver
+      ? options.handoffStatusResolver(ref)
+      : options.handoffStore
+        ? options.handoffStore.status(ref)
+        : undefined;
+    if (liveStatus && liveStatus !== "issued") {
+      handoffs.delete(ref);
+    }
+  }
+
+  for (const [ref] of continuations) {
+    const liveStatus = options.continuationStatusResolver
+      ? options.continuationStatusResolver(ref)
+      : options.continuationStore
+        ? options.continuationStore.status(ref)
+        : undefined;
+    if (liveStatus && liveStatus !== "issued") {
+      continuations.delete(ref);
+    }
+  }
+
   if (latestRoutingTurnId) protectedTurnIds.add(latestRoutingTurnId);
 
   const turnLimit = Math.max(0, Math.floor(options.maxTurnsCount ?? MAX_RETAINED_TURNS));
@@ -1440,7 +1504,6 @@ export const SAFE_LIFECYCLE_BOUNDARIES = [
   "post-continuation",
   "pre-batch",
   "post-batch",
-  "routing-preflight",
   "review-handoff",
   "session-idle",
   "manual",
@@ -1452,6 +1515,7 @@ export const UNSAFE_LIFECYCLE_BOUNDARIES = [
   "in-flight",
   "atomic-repair",
   "recovery-running",
+  "routing-preflight",
   "unknown",
 ] as const;
 
@@ -1730,8 +1794,18 @@ function extractReportedTokens(
   };
 }
 
+export interface CalculateContextPressureMetricsOptions {
+  readonly continuationStore?: Pick<ContinuationStore, "status">;
+  readonly handoffStore?: Pick<HandoffStore, "status">;
+  readonly continuationStatusResolver?: (
+    reference: string,
+  ) => ContinuationState | undefined;
+  readonly handoffStatusResolver?: (reference: string) => HandoffState | undefined;
+}
+
 export function calculateContextPressureMetrics(
   context: OrchestrationContext,
+  options: CalculateContextPressureMetricsOptions = {},
 ): ContextPressureMetrics {
   const totalSizeBytes = byteLength(context);
   const totalTurns = context.turns.length;
@@ -1778,7 +1852,6 @@ export function calculateContextPressureMetrics(
       if (turn.input.handoffReference) handoffs.delete(turn.input.handoffReference);
       if (turn.output.handoffReference && turn.output.handoffState?.status === "issued") {
         handoffs.set(turn.output.handoffReference, {
-          reference: turn.output.handoffReference,
           status: "issued",
           availabilityBasis: "recorded-issued-unconsumed",
           reason: turn.output.handoffState.reason,
@@ -1792,7 +1865,6 @@ export function calculateContextPressureMetrics(
         turn.output.continuationState?.status === "issued"
       ) {
         continuations.set(turn.output.continuationReference, {
-          reference: turn.output.continuationReference,
           status: "issued",
           availabilityBasis: "recorded-issued-unconsumed",
           reason: turn.output.continuationState.reason,
@@ -1813,7 +1885,6 @@ export function calculateContextPressureMetrics(
       continuations.delete(turn.continuationReference);
       if (turn.output.handoffReference && turn.output.handoffState?.status === "issued") {
         handoffs.set(turn.output.handoffReference, {
-          reference: turn.output.handoffReference,
           status: "issued",
           availabilityBasis: "recorded-issued-unconsumed",
           reason: turn.output.handoffState.reason,
@@ -1827,7 +1898,6 @@ export function calculateContextPressureMetrics(
         turn.output.continuationState?.status === "issued"
       ) {
         continuations.set(turn.output.continuationReference, {
-          reference: turn.output.continuationReference,
           status: "issued",
           availabilityBasis: "recorded-issued-unconsumed",
           reason: turn.output.continuationState.reason,
@@ -1853,7 +1923,6 @@ export function calculateContextPressureMetrics(
         const hstate = task.handoffState ?? task.result?.handoffState;
         if (href && hstate?.status === "issued") {
           handoffs.set(href, {
-            reference: href,
             status: "issued",
             availabilityBasis: "recorded-issued-unconsumed",
             reason: hstate.reason,
@@ -1866,7 +1935,6 @@ export function calculateContextPressureMetrics(
         const cstate = task.result?.continuationState;
         if (cref && cstate?.status === "issued") {
           continuations.set(cref, {
-            reference: cref,
             status: "issued",
             availabilityBasis: "recorded-issued-unconsumed",
             reason: cstate.reason,
@@ -1884,6 +1952,28 @@ export function calculateContextPressureMetrics(
     }
   }
 
+  for (const [ref] of handoffs) {
+    const liveStatus = options.handoffStatusResolver
+      ? options.handoffStatusResolver(ref)
+      : options.handoffStore
+        ? options.handoffStore.status(ref)
+        : undefined;
+    if (liveStatus && liveStatus !== "issued") {
+      handoffs.delete(ref);
+    }
+  }
+
+  for (const [ref] of continuations) {
+    const liveStatus = options.continuationStatusResolver
+      ? options.continuationStatusResolver(ref)
+      : options.continuationStore
+        ? options.continuationStore.status(ref)
+        : undefined;
+    if (liveStatus && liveStatus !== "issued") {
+      continuations.delete(ref);
+    }
+  }
+
   const repeatedToolTurns = statusNarrationTurns + toolProseTurns;
   const contextWithoutRepeatedToolTurns: OrchestrationContext = {
     ...context,
@@ -1895,7 +1985,7 @@ export function calculateContextPressureMetrics(
     0,
     totalSizeBytes - byteLength(contextWithoutRepeatedToolTurns),
   );
-  const compacted = compactContext(context);
+  const compacted = compactContext(context, options);
   const estimatedReclaimableBytes = Math.max(
     0,
     totalSizeBytes - compacted.stats.compactedSizeBytes,
@@ -1933,6 +2023,12 @@ export interface EvaluateContextPressureOptions {
   /** Fully resolved operator policy; the evaluator performs no environment reads. */
   readonly config: ResolvedContextPressureConfig;
   readonly force?: boolean;
+  readonly continuationStore?: Pick<ContinuationStore, "status">;
+  readonly handoffStore?: Pick<HandoffStore, "status">;
+  readonly continuationStatusResolver?: (
+    reference: string,
+  ) => ContinuationState | undefined;
+  readonly handoffStatusResolver?: (reference: string) => HandoffState | undefined;
 }
 
 export interface ContextPressureEvaluation {
@@ -1970,7 +2066,7 @@ export function evaluateContextPressure(
     );
   }
 
-  const metrics = calculateContextPressureMetrics(context);
+  const metrics = calculateContextPressureMetrics(context, options);
 
   const cooldownRemaining =
     lastCompactedTurnNumber !== undefined
@@ -2105,7 +2201,7 @@ export function maybeCompactContext(
 } {
   const evaluation = evaluateContextPressure(context, options);
   if (evaluation.decision === "trigger") {
-    const compactedContext = compactContext(context);
+    const compactedContext = compactContext(context, options);
     return {
       context: compactedContext,
       authoritativeContext: {
@@ -2122,4 +2218,441 @@ export function maybeCompactContext(
     evaluation,
     compacted: false,
   };
+}
+
+// ============================================================================
+// P1.3C Live Context Lifecycle Store & Management
+// ============================================================================
+
+export interface ContextLifecycleStoreOptions {
+  readonly config?: ContextPressurePolicyConfig;
+  readonly continuationStore?: ContinuationStore;
+  readonly handoffStore?: HandoffStore;
+  readonly emit?: EventEmitter;
+  readonly initialContext?: OrchestrationContext;
+}
+
+export class ContextLifecycleStore {
+  private authoritativeContext: OrchestrationContext | null = null;
+  private compactedProjection: CompactedContext | null = null;
+  private readonly executionLeases = new Set<symbol>();
+  private readonly config: ResolvedContextPressureConfig;
+  private readonly continuationStore?: ContinuationStore;
+  private readonly handoffStore?: HandoffStore;
+  private readonly emit?: EventEmitter;
+
+  constructor(options: ContextLifecycleStoreOptions = {}) {
+    this.config = resolveContextPressureConfig(options.config);
+    this.continuationStore = options.continuationStore;
+    this.handoffStore = options.handoffStore;
+    this.emit = options.emit;
+    if (options.initialContext) {
+      this.authoritativeContext = structuredClone(options.initialContext);
+    }
+  }
+
+  getAuthoritativeContext(): OrchestrationContext | null {
+    return this.authoritativeContext ? structuredClone(this.authoritativeContext) : null;
+  }
+
+  getCompactedProjection(): CompactedContext | null {
+    return this.compactedProjection ? structuredClone(this.compactedProjection) : null;
+  }
+
+  getCurrentProjection(): OrchestrationContext | CompactedContext | null {
+    if (this.compactedProjection) {
+      return structuredClone(this.compactedProjection);
+    }
+    return this.getAuthoritativeContext();
+  }
+
+  getConfig(): ResolvedContextPressureConfig {
+    return this.config;
+  }
+
+  isInFlight(): boolean {
+    return this.executionLeases.size > 0;
+  }
+
+  getInFlightCount(): number {
+    return this.executionLeases.size;
+  }
+
+  /**
+   * Acquire one execution lease. The returned release is idempotent so a
+   * cancellation/error/finally path cannot decrement another execution.
+   */
+  acquireExecutionLease(): () => void {
+    const lease = Symbol("context-execution");
+    this.executionLeases.add(lease);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.executionLeases.delete(lease);
+    };
+  }
+
+  reset(initialContext?: OrchestrationContext): void {
+    this.authoritativeContext = initialContext ? structuredClone(initialContext) : null;
+    this.compactedProjection = null;
+    this.executionLeases.clear();
+  }
+
+  recordDecision(
+    decision: Omit<ContextDecision, "id" | "kind"> & {
+      id?: string;
+      kind?: ContextDecision["kind"];
+    },
+  ): void {
+    if (!this.authoritativeContext) {
+      this.authoritativeContext = createOrchestrationContext({
+        objective: "Orchestrated workflow",
+        acceptanceCriteria: [],
+      });
+    }
+    this.authoritativeContext = recordDecision(this.authoritativeContext, decision);
+    this.compactedProjection = null;
+  }
+
+  recordConstraint(
+    constraint: Omit<ContextConstraint, "id" | "active"> & {
+      id?: string;
+      active?: boolean;
+    },
+  ): void {
+    if (!this.authoritativeContext) {
+      this.authoritativeContext = createOrchestrationContext({
+        objective: "Orchestrated workflow",
+        acceptanceCriteria: [],
+      });
+    }
+    this.authoritativeContext = recordConstraint(this.authoritativeContext, constraint);
+    this.compactedProjection = null;
+  }
+
+  recordBlocker(
+    blocker: Omit<ContextBlocker, "id" | "resolved"> & {
+      id?: string;
+      resolved?: boolean;
+    },
+  ): void {
+    if (!this.authoritativeContext) {
+      this.authoritativeContext = createOrchestrationContext({
+        objective: "Orchestrated workflow",
+        acceptanceCriteria: [],
+      });
+    }
+    this.authoritativeContext = recordBlocker(this.authoritativeContext, blocker);
+    this.compactedProjection = null;
+  }
+
+  resolveBlocker(blockerId: string): void {
+    if (this.authoritativeContext) {
+      this.authoritativeContext = resolveBlocker(this.authoritativeContext, blockerId);
+      this.compactedProjection = null;
+    }
+  }
+
+  /** Preserve a terminal runtime failure even when no structured result exists. */
+  recordRuntimeFailure(params: {
+    id: string;
+    description: string;
+    objective: string;
+    acceptanceCriteria: readonly string[];
+    allowedFiles?: readonly string[];
+    forbiddenFiles?: readonly string[];
+    changeIntent?: ChangeIntent;
+    taskCategory?: TaskCategory;
+    taskId?: string;
+  }): void {
+    if (!this.authoritativeContext) {
+      this.authoritativeContext = createOrchestrationContext({
+        objective: params.objective,
+        acceptanceCriteria: [...params.acceptanceCriteria],
+        allowedFiles: [...(params.allowedFiles ?? [])],
+        forbiddenFiles: [...(params.forbiddenFiles ?? [])],
+        changeIntent: params.changeIntent,
+        taskCategory: params.taskCategory,
+      });
+    }
+    this.authoritativeContext = recordBlocker(this.authoritativeContext, {
+      id: params.id,
+      kind: "runtime-error",
+      description: params.description,
+      resolved: false,
+      taskId: params.taskId,
+    });
+    this.compactedProjection = null;
+  }
+
+  recordDelegationTurn(
+    input: DelegateTaskInput,
+    output: DelegateTaskOutput,
+    options: { taskId?: string; id?: string; timestamp?: string; batchId?: string } = {},
+  ): void {
+    if (!this.authoritativeContext) {
+      this.authoritativeContext = createOrchestrationContext({
+        objective: input.objective,
+        acceptanceCriteria: input.acceptanceCriteria,
+        allowedFiles: input.allowedFiles,
+        forbiddenFiles: input.forbiddenFiles,
+        changeIntent: input.changeIntent,
+        taskCategory: input.taskCategory,
+      });
+    }
+    const id =
+      options.id ??
+      (options.batchId ? `${options.batchId}_${options.taskId ?? "t1"}` : undefined);
+    this.authoritativeContext = ingestDelegationTurn(this.authoritativeContext, {
+      input,
+      output,
+      taskId: options.taskId,
+      id,
+      timestamp: options.timestamp,
+    });
+    this.compactedProjection = null;
+  }
+
+  recordBatchTurn(
+    input: DelegateTasksInput,
+    output: BatchOutput,
+    options: { id?: string; timestamp?: string } = {},
+  ): void {
+    if (!this.authoritativeContext) {
+      const firstTask = input.tasks[0];
+      this.authoritativeContext = createOrchestrationContext({
+        objective: firstTask?.objective ?? "Batch delegation",
+        acceptanceCriteria: input.tasks.flatMap((task) => task.acceptanceCriteria),
+        allowedFiles: [...new Set(input.tasks.flatMap((task) => task.allowedFiles))],
+        forbiddenFiles: [...new Set(input.tasks.flatMap((task) => task.forbiddenFiles))],
+        changeIntent: firstTask?.changeIntent ?? "required",
+      });
+    }
+    this.authoritativeContext = ingestBatchTurn(this.authoritativeContext, {
+      input,
+      output,
+      id: options.id,
+      timestamp: options.timestamp,
+    });
+    this.compactedProjection = null;
+  }
+
+  recordContinuationTurn(
+    request: {
+      continuationReference: string;
+      instruction: string;
+      taskId?: string;
+    },
+    output: DelegateTaskOutput,
+    options: { id?: string; timestamp?: string } = {},
+  ): void {
+    if (!this.authoritativeContext) {
+      this.authoritativeContext = createOrchestrationContext({
+        objective: "Worker continuation",
+        acceptanceCriteria: [],
+        changeIntent: output.changeIntent ?? "required",
+      });
+    }
+    this.authoritativeContext = ingestContinuationTurn(this.authoritativeContext, {
+      continuationReference: request.continuationReference,
+      instruction: request.instruction,
+      output,
+      taskId: request.taskId,
+      id: options.id,
+      timestamp: options.timestamp,
+    });
+    this.compactedProjection = null;
+  }
+
+  recordRoutingPreflightTurn(
+    card: RoutingPreflightInput,
+    evaluation?: { route?: string; signals?: readonly string[] },
+    options: { id?: string; timestamp?: string } = {},
+  ): void {
+    if (!this.authoritativeContext) {
+      this.authoritativeContext = createOrchestrationContext({
+        objective: "Routing preflight",
+        acceptanceCriteria: [],
+        changeIntent: "forbidden",
+      });
+    }
+    this.authoritativeContext = ingestRoutingPreflightTurn(this.authoritativeContext, {
+      card,
+      route: evaluation?.route,
+      signals: evaluation?.signals,
+      id: options.id,
+      timestamp: options.timestamp,
+    });
+    this.compactedProjection = null;
+  }
+
+  recordStatusNarration(
+    text: string,
+    phase: "waiting" | "polling" | "progress" | "info" = "progress",
+    timestamp?: string,
+  ): void {
+    if (!this.authoritativeContext) {
+      this.authoritativeContext = createOrchestrationContext({
+        objective: "Status narration",
+        acceptanceCriteria: [],
+      });
+    }
+    this.authoritativeContext = ingestStatusNarrationTurn(
+      this.authoritativeContext,
+      text,
+      phase,
+      timestamp,
+    );
+    this.compactedProjection = null;
+  }
+
+  recordToolProse(toolName: string, prose: string, timestamp?: string): void {
+    if (!this.authoritativeContext) {
+      this.authoritativeContext = createOrchestrationContext({
+        objective: "Tool prose",
+        acceptanceCriteria: [],
+      });
+    }
+    this.authoritativeContext = ingestToolProseTurn(
+      this.authoritativeContext,
+      toolName,
+      prose,
+      timestamp,
+    );
+    this.compactedProjection = null;
+  }
+
+  evaluateAndMaybeCompact(
+    boundary: ContextLifecycleBoundary,
+    options: {
+      batchId?: string;
+      emit?: EventEmitter;
+      force?: boolean;
+    } = {},
+  ): {
+    readonly evaluation: ContextPressureEvaluation;
+    readonly compacted: boolean;
+    readonly projection: OrchestrationContext | CompactedContext | null;
+  } {
+    const effectiveBoundary = this.isInFlight() ? "in-flight" : boundary;
+    const emit = options.emit ?? this.emit;
+
+    if (!this.authoritativeContext) {
+      const emptyContext = createOrchestrationContext({
+        objective: "",
+        acceptanceCriteria: [],
+      });
+      const evaluation = evaluateContextPressure(emptyContext, {
+        boundary: effectiveBoundary,
+        config: this.config,
+        force: options.force,
+        continuationStore: this.continuationStore,
+        handoffStore: this.handoffStore,
+      });
+      if (emit) {
+        emit({
+          type: "context.evaluated",
+          batchId: options.batchId,
+          boundary: effectiveBoundary,
+          safeBoundary: evaluation.safeBoundary,
+          decision: evaluation.decision,
+          primaryReason: evaluation.primaryReason,
+          contributingReasons: evaluation.contributingReasons,
+          totalSizeBytes: evaluation.metrics.totalSizeBytes,
+          totalTurns: evaluation.metrics.totalTurns,
+          cleanTurns: evaluation.metrics.cleanTurns,
+          diagnosticTurns: evaluation.metrics.diagnosticTurns,
+          toolOverheadBytes: evaluation.metrics.toolOverheadBytes,
+          estimatedReclaimableBytes: evaluation.metrics.estimatedReclaimableBytes,
+          reclaimableRatio: evaluation.metrics.reclaimableRatio,
+          activeHandoffsCount: evaluation.metrics.activeHandoffsCount,
+          activeContinuationsCount: evaluation.metrics.activeContinuationsCount,
+          cooldownRemaining: evaluation.cooldownRemaining,
+          lastCompactedTurnNumber: undefined,
+        });
+      }
+      return {
+        evaluation,
+        compacted: false,
+        projection: null,
+      };
+    }
+
+    const evaluation = evaluateContextPressure(this.authoritativeContext, {
+      boundary: effectiveBoundary,
+      config: this.config,
+      force: options.force,
+      continuationStore: this.continuationStore,
+      handoffStore: this.handoffStore,
+    });
+
+    if (emit) {
+      emit({
+        type: "context.evaluated",
+        batchId: options.batchId,
+        boundary: effectiveBoundary,
+        safeBoundary: evaluation.safeBoundary,
+        decision: evaluation.decision,
+        primaryReason: evaluation.primaryReason,
+        contributingReasons: evaluation.contributingReasons,
+        totalSizeBytes: evaluation.metrics.totalSizeBytes,
+        totalTurns: evaluation.metrics.totalTurns,
+        cleanTurns: evaluation.metrics.cleanTurns,
+        diagnosticTurns: evaluation.metrics.diagnosticTurns,
+        toolOverheadBytes: evaluation.metrics.toolOverheadBytes,
+        estimatedReclaimableBytes: evaluation.metrics.estimatedReclaimableBytes,
+        reclaimableRatio: evaluation.metrics.reclaimableRatio,
+        activeHandoffsCount: evaluation.metrics.activeHandoffsCount,
+        activeContinuationsCount: evaluation.metrics.activeContinuationsCount,
+        cooldownRemaining: evaluation.cooldownRemaining,
+        lastCompactedTurnNumber: this.authoritativeContext.lastCompactedTurnNumber,
+      });
+    }
+
+    if (evaluation.decision === "trigger") {
+      const compactedContext = compactContext(this.authoritativeContext, {
+        continuationStore: this.continuationStore,
+        handoffStore: this.handoffStore,
+      });
+      this.authoritativeContext = {
+        ...this.authoritativeContext,
+        lastCompactedTurnNumber: compactedContext.lastCompactedTurnNumber,
+      };
+      this.compactedProjection = compactedContext;
+
+      if (emit) {
+        emit({
+          type: "context.compacted",
+          batchId: options.batchId,
+          boundary: effectiveBoundary,
+          lastCompactedTurnNumber: compactedContext.lastCompactedTurnNumber,
+          originalSizeBytes: compactedContext.stats.originalSizeBytes,
+          compactedSizeBytes: compactedContext.stats.compactedSizeBytes,
+          sizeDeltaBytes: compactedContext.stats.sizeDeltaBytes,
+          reductionRatio: compactedContext.stats.reductionRatio,
+          rulesApplied: compactedContext.stats.rulesApplied,
+          discardedNarrationTurns: compactedContext.stats.discardedNarrationTurns,
+          discardedToolProseTurns: compactedContext.stats.discardedToolProseTurns,
+          compactedCleanTurns: compactedContext.stats.compactedCleanTurns,
+          retainedDiagnosticTurns: compactedContext.stats.retainedDiagnosticTurns,
+          omittedCleanTurns: compactedContext.stats.omittedCleanTurns,
+          omittedCleanSummaries: compactedContext.stats.omittedCleanSummaries,
+          scrubbedValuesCount: compactedContext.stats.scrubbedValuesCount,
+        });
+      }
+
+      return {
+        evaluation,
+        compacted: true,
+        projection: this.compactedProjection,
+      };
+    }
+
+    return {
+      evaluation,
+      compacted: false,
+      projection: this.getCurrentProjection(),
+    };
+  }
 }

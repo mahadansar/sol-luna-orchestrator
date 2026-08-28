@@ -69,8 +69,8 @@ retained; verification started and completed;
 scope conflicts; integration conflicts, applied file counts, and completed,
 not-attempted, partial or failed integration; final-workspace verification
 started and completed; bounded repair started and completed; bounded recovery
-skipped, started, and completed; and cheap routing preflight, declaration, and
-contradiction records.
+skipped, started, and completed; cheap routing preflight, declaration, and
+contradiction records; and safe context pressure evaluation and compaction events.
 
 Every execution for which the runtime invokes the worker SDK has a unique
 `executionId` and emits `attempt.started` before invocation. Unless the host
@@ -184,6 +184,19 @@ operator warning.
 recommended mechanism, worker count, concurrency and effort, followed by the
 selector's model, effort and reason. It has **no** `batchId` and no actual execution
 fields because no batch or worker exists at that point.
+
+It does not create, mutate, evaluate, or compact a persisted execution context.
+There is no server-authoritative lineage key at preflight time, so associating it
+with a later call would risk mixing unrelated requests.
+
+### Context lifecycle records
+
+`context.evaluated` is emitted only when an isolated execution context is actually
+evaluated after delegation, batch, or continuation work. It carries numeric pressure,
+reference counts, cooldown state, the evaluated boundary, and the factual decision and
+reason codes. `context.compacted` is emitted only when that evaluation really creates a
+new projection. Neither event contains task contracts, prompts, verification output,
+worker output, paths, failure prose, secrets, or continuation/handoff capability values.
 
 `routing.declared` records what a real delegation call declared. It always
 carries `batchId`, `declaration` (`attached` or `absent`), `mode`, and

@@ -379,6 +379,44 @@ export type OrchestratorEvent =
         | "evidence-failure"
         | "cleanup-failed"
         | "retention-policy";
+    }
+  | {
+      type: "context.evaluated";
+      batchId?: string;
+      boundary: string;
+      safeBoundary: boolean;
+      decision: "trigger" | "block" | "noop";
+      primaryReason: string;
+      contributingReasons: readonly string[];
+      totalSizeBytes: number;
+      totalTurns: number;
+      cleanTurns: number;
+      diagnosticTurns: number;
+      toolOverheadBytes: number;
+      estimatedReclaimableBytes: number;
+      reclaimableRatio: number;
+      activeHandoffsCount: number;
+      activeContinuationsCount: number;
+      cooldownRemaining: number;
+      lastCompactedTurnNumber?: number;
+    }
+  | {
+      type: "context.compacted";
+      batchId?: string;
+      boundary: string;
+      lastCompactedTurnNumber: number;
+      originalSizeBytes: number;
+      compactedSizeBytes: number;
+      sizeDeltaBytes: number;
+      reductionRatio: number;
+      rulesApplied: readonly string[];
+      discardedNarrationTurns: number;
+      discardedToolProseTurns: number;
+      compactedCleanTurns: number;
+      retainedDiagnosticTurns: number;
+      omittedCleanTurns: number;
+      omittedCleanSummaries: number;
+      scrubbedValuesCount: number;
     };
 
 export type EventEmitter = (event: OrchestratorEvent) => void;

@@ -54,7 +54,7 @@ parallel recovery baseline described below. Shipped history belongs in
 | P1.1 reasoned retry and effort escalation decisions     | PASS     | DEEP PASS     | N/A           | Strong        |
 | P1.2 user-owned compute policy and enforcement          | PASS     | PASS          | N/A           | Strong        |
 | P1.2 adaptive routing and compute selection             | PASS     | PASS          | N/A           | Strong        |
-| P1.3 Context retention & trigger policy (P1.3A/B)       | PASS     | PASS          | N/A           | Strong        |
+| P1.3 Context lifecycle management (P1.3A/B/C)           | PASS     | PASS          | N/A           | Strong        |
 | `failureCauses` and verification contradiction handling | PASS     | PASS          | PASS          | Strong        |
 
 Dates, provenance, dependencies, and retest triggers are recorded below. A live
@@ -123,17 +123,18 @@ contract restoration, batch sibling preservation, and selected SDK thread option
 Restart loss is intentionally fail-closed and no model-backed P1.2 campaign is
 claimed.
 
-P1.3 Context lifecycle management (`src/context.ts`, `src/context.test.ts`) is recorded
-with **PASS** deterministic coverage and **Strong** confidence across both P1.3A (retention
-and compaction core) and P1.3B (pressure metrics and trigger policy). The pure synchronous
-primitive accepts single delegations, batch delegations, continuations, and preflight turns,
+P1.3 Context lifecycle management (`src/context.ts`, `src/context.test.ts`, `src/context-lifecycle.test.ts`)
+is recorded with **PASS** deterministic coverage and **Strong** confidence across P1.3A (retention
+and compaction core), P1.3B (pressure metrics and trigger policy), and P1.3C (live runtime lifecycle integration).
+The pure synchronous primitive accepts single delegations, batch delegations, continuations, and preflight turns,
 producing a redacted compact projection without mutating the authoritative context. Complete
 contract arrays, distinct decisions, constraints, blockers, attempt lineage, failure/conflict/refusal
 evidence, per-task batch claims, observed changes, and authoritative verification facts are preserved.
 Turn bounding is a soft target that prunes stale clean history while protected evidence may exceed
 it. Clean verified PASS paths omit only successful command output while retaining command outcomes,
-provenance, counts, changed files, and risks. Capability references are reported only when their latest
-recorded state is issued and unconsumed. P1.3B adds deterministic context pressure metrics (exact
+provenance, counts, changed files, and risks. Compact projections report only the count and
+state of authority whose latest live registry status is issued and unconsumed; capability values
+are never exposed. P1.3B adds deterministic context pressure metrics (exact
 UTF-8 byte size, turn distribution, exactly removable narration/tool-prose bytes, exact compact-projection
 reclaimable bytes, and complete provider-reported token usage) and a configurable trigger policy. Cached
 input remains a subset of provider input, reasoning output remains a subset of provider output, and any
@@ -141,11 +142,15 @@ unavailable constituent keeps aggregate usage unknown. The evaluator accepts res
 checks size, total turns, stale clean history, repeated tool overhead, and reclaimable ratio at inclusive
 thresholds. Deterministic safety precedence blocks unsafe lifecycle boundaries, no-new-turn repeat
 compaction, authoritative cooldown, and insufficient reclaimable gain; manual force bypasses none of
-these. Issued handoff and continuation capabilities do not block because the compact projection preserves
-their originating contract/evidence and only issued/unconsumed references; pressure output exposes counts,
-not values. Failure, conflict, security/scope, lineage, and unresolved review evidence remain protected.
-Explicit reason codes (`trigger:*`, `block:*`, `noop:*`) accompany all evaluations. This covers P1.3A and
-P1.3B foundations; automatic compaction is not wired into live delegation lifecycles.
+these. In P1.3C, a server-owned registry isolates authoritative stores for unrelated fresh
+calls and batches while server-issued continuation/handoff lineage restores only its owning
+context. Reference-counted execution leases cover execution, repair, recovery, reconciliation,
+and continuation cleanup; one completion cannot clear another active lease. Evaluation and safe
+compaction run after `delegate_task`, `delegate_tasks`, and `continue_task`. Advisory
+`routing_preflight` remains side-effect-free with respect to execution context. Deterministic tests
+cover overlapping calls, isolation, error release, stale-projection invalidation, live non-consuming
+reference status, and capability-free projections. Factual telemetry events (`context.evaluated`,
+`context.compacted`) emit exact metrics without leaking capability tokens, prompts, or sensitive output.
 
 The terminal handoff protocol defaults clean verified PASS responses to compact
 text without `structuredContent`. A batch reruns the deduplicated declared checks

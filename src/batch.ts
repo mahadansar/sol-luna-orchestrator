@@ -181,6 +181,8 @@ export async function runBatch(
     ) => string | null;
     /** In-memory store for resolving task handoff references. */
     handoffStore?: HandoffStore;
+    /** Server-owned lifecycle key inherited by newly issued handoffs. */
+    handoffContextKey?: string | null;
     /** Worktrees still referenced by unused or in-flight continuations. */
     protectedWorktreePaths?: Iterable<string>;
     /** Deterministic lifecycle seam for tests; production always generates one. */
@@ -888,6 +890,7 @@ export async function runBatch(
             {
               authoritativePrior: task.authoritativePrior,
               workingDirectory: workspace,
+              contextKey: options.handoffContextKey ?? null,
             },
           );
           task.result.handoffReference = ref;

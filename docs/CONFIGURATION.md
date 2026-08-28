@@ -251,9 +251,10 @@ authoritative presentation of the required keys, values, and failure rationale.
 
 The three context thresholds must be positive safe integers; the cooldown must
 be a non-negative safe integer. Invalid values fail startup instead of silently
-disabling or forcing a trigger. These settings resolve operator policy only.
-P1.3B does not wire automatic compaction into delegation, batch, or continuation
-lifecycles.
+disabling or forcing a trigger. In P1.3C, these settings configure each isolated
+authoritative `ContextLifecycleStore` in the server-owned lifecycle registry. Fresh
+delegations and batches do not share state; only server-issued continuation or handoff
+lineage can restore an existing context.
 
 `LUNA_SANDBOX` accepts `read-only`, `workspace-write` and
 `danger-full-access`. Keep the default `workspace-write` for normal use.

@@ -5,6 +5,7 @@ import type {
   DelegateTaskOutput,
   Effort,
   FailureDecision,
+  HandoffState,
 } from "./contract.js";
 import { LUNA_MODEL } from "./config.js";
 import { resultWasCancelled } from "./worker.js";
@@ -22,6 +23,8 @@ export interface HandoffRecord {
   effort: Effort;
   failureDecision: FailureDecision;
   attemptEvidence: readonly AttemptEvidence[];
+  /** Internal lifecycle owner; never exposed as a capability or accepted from callers. */
+  contextKey: string | null;
   expiresAt: number;
 }
 
@@ -33,6 +36,8 @@ export interface HandoffEntry {
   effort: Effort;
   failureDecision: FailureDecision;
   attemptEvidence: readonly AttemptEvidence[];
+  /** Internal lifecycle owner restored only from this server-issued reference. */
+  contextKey: string | null;
 }
 
 export type HandoffConsumeResult =
@@ -73,6 +78,7 @@ export class HandoffStore {
     input: DelegateTaskInput,
     result: DelegateTaskOutput,
     predecessorExecutionId: string | null = null,
+    contextKey: string | null = null,
   ): string {
     const now = this.now();
     this.prune(now);
@@ -113,6 +119,7 @@ export class HandoffStore {
       effort,
       failureDecision: structuredClone(decision),
       attemptEvidence: attempts,
+      contextKey,
       expiresAt: now + HANDOFF_TTL_MS,
     });
     return reference;
@@ -146,6 +153,7 @@ export class HandoffStore {
           effort: record.effort,
           failureDecision: structuredClone(record.failureDecision),
           attemptEvidence: structuredClone(record.attemptEvidence),
+          contextKey: record.contextKey,
         },
       };
     }
@@ -154,6 +162,31 @@ export class HandoffStore {
     if (retired && now < retired.until) return { status: retired.status };
     if (retired) this.retired.delete(reference);
     return { status: "unknown" };
+  }
+
+  /** Check live status of a handoff reference without consuming it. */
+  status(reference: string): HandoffState {
+    if (!isHandoffReference(reference)) return "unavailable";
+    const now = this.now();
+    this.prune(now);
+    const record = this.active.get(reference);
+    if (record) {
+      if (now >= record.expiresAt) {
+        return "unavailable";
+      }
+      return "issued";
+    }
+    const retired = this.retired.get(reference);
+    if (retired && now < retired.until) {
+      return retired.status === "used" ? "consumed" : "unavailable";
+    }
+    return "unavailable";
+  }
+
+  /** Whether an unused reference still owns a lifecycle context. */
+  hasContextKey(contextKey: string): boolean {
+    this.prune(this.now());
+    return [...this.active.values()].some((record) => record.contextKey === contextKey);
   }
 
   private prune(now: number): void {
@@ -195,7 +228,11 @@ export function registerHandoff(
   input: DelegateTaskInput,
   result: DelegateTaskOutput,
   handoffStore: HandoffStore,
-  options: { authoritativePrior?: boolean; workingDirectory?: string } = {},
+  options: {
+    authoritativePrior?: boolean;
+    workingDirectory?: string;
+    contextKey?: string | null;
+  } = {},
 ): string | null {
   if (resultWasCancelled(result) || result.verdict === "PASS") {
     result.handoffState = {
@@ -243,6 +280,7 @@ export function registerHandoff(
     authoritativeInput,
     result,
     predecessorExecutionId,
+    options.contextKey ?? null,
   );
   result.handoffReference = reference;
   result.handoffState = {

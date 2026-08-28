@@ -471,13 +471,10 @@ test("context core - failure/conflict retention preserves rich diagnostic eviden
     ),
   );
 
-  // Active handoff reference preserved
+  // Active handoff authority is preserved without exposing the capability.
   assert.equal(compacted.activeHandoffs.length, 1);
-  assert.equal(
-    compacted.activeHandoffs[0]?.reference,
-    "hdf_fixture_retry_12345678901234567890123456789012",
-  );
   assert.equal(compacted.activeHandoffs[0]?.action, "retry");
+  assert.ok(!JSON.stringify(compacted).includes("hdf_fixture_retry"));
 });
 
 test("context core - batch delegation preserves integration conflicts and scope conflicts", () => {
@@ -844,25 +841,19 @@ test("context core - retry, continuation, and handoff lineage retention", () => 
   assert.equal(compacted.lineage[1]?.role, "manual-continuation");
   assert.equal(compacted.lineage[1]?.logicalAttempt, 2);
 
-  // References tracked
-  assert.ok(
-    compacted.activeHandoffs.some((h) =>
-      h.reference.includes("hdf_fixture_token_retry_001"),
-    ),
-  );
+  // Reference authority is tracked without exposing capability values.
+  assert.equal(compacted.activeHandoffs.length, 1);
   assert.equal(
     compacted.activeHandoffs[0]?.availabilityBasis,
     "recorded-issued-unconsumed",
   );
-  assert.ok(
-    compacted.activeContinuations.some((c) =>
-      c.reference.includes("ctr_followup_token_002"),
-    ),
-  );
+  assert.equal(compacted.activeContinuations.length, 1);
   assert.equal(
     compacted.activeContinuations[0]?.availabilityBasis,
     "recorded-issued-unconsumed",
   );
+  assert.ok(!JSON.stringify(compacted).includes("hdf_fixture_token_retry_001"));
+  assert.ok(!JSON.stringify(compacted).includes("ctr_followup_token_002"));
 });
 
 test("context core - blocker resolution lifecycle", () => {

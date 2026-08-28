@@ -74,6 +74,7 @@ import {
   WORKTREE_LEASE_GRACE_MS,
   type WorktreeLease,
 } from "./worktree.js";
+import { ContextLifecycleStore } from "./context.js";
 
 /**
  * stdout is the MCP transport. Anything written there that is not a JSON-RPC
@@ -100,12 +101,69 @@ const log = createLogger(LOG_FILE);
 const continuationStore = new ContinuationStore();
 const handoffStore = new HandoffStore();
 
+/** Process-local lifecycle contexts, isolated by server-owned execution lineage. */
+export class ContextLifecycleRegistry {
+  private readonly stores = new Map<string, ContextLifecycleStore>();
+  private readonly continuationStore: ContinuationStore;
+  private readonly handoffStore: HandoffStore;
+  private readonly emit: EventEmitter;
+
+  constructor(
+    options: {
+      continuationStore?: ContinuationStore;
+      handoffStore?: HandoffStore;
+      emit?: EventEmitter;
+    } = {},
+  ) {
+    this.continuationStore = options.continuationStore ?? continuationStore;
+    this.handoffStore = options.handoffStore ?? handoffStore;
+    this.emit = options.emit ?? emitEvent;
+  }
+
+  getOrCreate(contextKey: string): ContextLifecycleStore {
+    this.sweep(contextKey);
+    let store = this.stores.get(contextKey);
+    if (!store) {
+      store = new ContextLifecycleStore({
+        continuationStore: this.continuationStore,
+        handoffStore: this.handoffStore,
+        emit: this.emit,
+      });
+      this.stores.set(contextKey, store);
+    }
+    return store;
+  }
+
+  releaseIfUnreferenced(contextKey: string): void {
+    const store = this.stores.get(contextKey);
+    if (
+      store &&
+      !store.isInFlight() &&
+      !this.continuationStore.hasContextKey(contextKey) &&
+      !this.handoffStore.hasContextKey(contextKey)
+    ) {
+      this.stores.delete(contextKey);
+    }
+  }
+
+  private sweep(exceptContextKey?: string): void {
+    for (const contextKey of this.stores.keys()) {
+      if (contextKey === exceptContextKey) continue;
+      this.releaseIfUnreferenced(contextKey);
+    }
+  }
+}
+
+const contextRegistry = new ContextLifecycleRegistry();
+
 function registerContinuation(
   input: DelegateTaskInput,
   result: DelegateTaskOutput,
   workingDirectory: string,
   reconcileFinalGit = false,
   worktreeLease: WorktreeLease | null = null,
+  store: ContinuationStore = continuationStore,
+  contextKey: string | null = null,
 ): string | null {
   if (!result.workerThreadId) {
     result.continuationState = {
@@ -124,7 +182,7 @@ function registerContinuation(
     return null;
   }
   const predecessorExecutionId = result.attempts?.at(-1)?.executionId ?? null;
-  const reference = continuationStore.issue(
+  const reference = store.issue(
     input,
     result.workerThreadId,
     workingDirectory,
@@ -133,6 +191,7 @@ function registerContinuation(
     predecessorExecutionId,
     result.attempt + 1,
     result.model,
+    contextKey,
   );
   result.continuationState = {
     status: "issued",
@@ -845,6 +904,406 @@ const server = new McpServer(
 // inside a Luna worker, do not advertise the delegation tool at all. Workers
 // are already isolated via config, but that depends on the registered server
 // name matching; this check does not.
+export interface DelegateTaskHandlerDependencies {
+  handoffStore: HandoffStore;
+  continuationStore: ContinuationStore;
+  contextStore?: ContextLifecycleStore;
+  contextRegistry: ContextLifecycleRegistry;
+  delegateToLuna: typeof delegateToLuna;
+  emit: EventEmitter;
+  record: typeof recordEvent;
+  makeBatchId: () => string;
+}
+
+export async function handleDelegateTask(
+  rawTask: DelegateTaskInput,
+  signal?: AbortSignal,
+  overrides: Partial<DelegateTaskHandlerDependencies> = {},
+): Promise<{
+  content: Array<{ type: "text"; text: string }>;
+  structuredContent?: DelegateTaskOutput;
+  isError?: boolean;
+}> {
+  const dependencies: DelegateTaskHandlerDependencies = {
+    handoffStore,
+    continuationStore,
+    contextRegistry,
+    delegateToLuna,
+    emit: emitEvent,
+    record: recordEvent,
+    makeBatchId: makeSingleBatchId,
+    ...overrides,
+  };
+  const batchId = dependencies.makeBatchId();
+  const taskId = "t1";
+
+  let predecessorExecutionId: string | null = null;
+  let logicalAttempt = rawTask.previousAttempts.length + 1;
+  let priorEvidence: PriorExecution | undefined = undefined;
+  let resolvedTask = rawTask;
+  let contextKey = batchId;
+
+  if (rawTask.handoffReference) {
+    const consumed = dependencies.handoffStore.consume(rawTask.handoffReference);
+    if (consumed.status !== "ready") {
+      const message = handoffError(consumed);
+      dependencies.emit({ type: "batch.rejected", batchId, reason: message });
+      log(`delegate_task handoff rejected: ${message}`);
+      return {
+        content: [{ type: "text" as const, text: message }],
+        isError: true,
+      };
+    }
+    resolvedTask = {
+      ...consumed.entry.input,
+      previousAttempts: [
+        ...consumed.entry.input.previousAttempts,
+        {
+          effort: consumed.entry.effort,
+          verdict: "FAILED" as const,
+          whatWentWrong: consumed.entry.failureDecision.reason,
+        },
+      ],
+    };
+    predecessorExecutionId = consumed.entry.predecessorExecutionId;
+    logicalAttempt = consumed.entry.logicalAttempt;
+    priorEvidence = {
+      requestedModel: consumed.entry.model,
+      requestedEffort: consumed.entry.effort,
+      failureDecision: consumed.entry.failureDecision,
+    };
+    contextKey = consumed.entry.contextKey ?? batchId;
+  }
+
+  const initialAdmission = admitCompute({
+    requested: resolvedTask.computePolicy,
+    model: LUNA_MODEL,
+    efforts: [resolvedTask.effort],
+    workerCount: 1,
+  });
+
+  const liveRouting = routeLiveTask(resolvedTask, {
+    policy: initialAdmission.policy,
+    evidence: priorEvidence,
+  });
+
+  if (
+    liveRouting.selection.reason === "no-authorised-next-execution" ||
+    (priorEvidence && liveRouting.selectedModel === null)
+  ) {
+    dependencies.emit({
+      type: "batch.rejected",
+      batchId,
+      reason: liveRouting.selection.detail,
+    });
+    log(`delegate_task selection refused: ${liveRouting.selection.detail}`);
+    return {
+      content: [{ type: "text" as const, text: liveRouting.selection.detail }],
+      isError: true,
+    };
+  }
+
+  let targetModel = liveRouting.selectedModel;
+  if (!targetModel) {
+    if (initialAdmission.policy.allowedModels.length === 1) {
+      targetModel = initialAdmission.policy.allowedModels[0]!;
+    } else if (initialAdmission.policy.allowedModels.includes(LUNA_MODEL)) {
+      targetModel = LUNA_MODEL;
+    } else {
+      targetModel = initialAdmission.policy.allowedModels[0]!;
+    }
+  }
+
+  const targetEffort = liveRouting.selectedEffort ?? resolvedTask.effort;
+
+  const admission = admitCompute({
+    requested: resolvedTask.computePolicy,
+    model: targetModel,
+    efforts: [targetEffort],
+    workerCount: 1,
+  });
+
+  const task: DelegateTaskInput = {
+    ...resolvedTask,
+    effort: targetEffort,
+    computePolicy: cloneComputePolicy(admission.policy),
+  };
+  const startedAt = Date.now();
+  let workerStarted = false;
+  let workerDirectory: string | null = null;
+  log(
+    `delegate_task: model=${targetModel} effort=${task.effort} cwd=${task.workingDirectory ?? process.cwd()} ` +
+      `objective="${task.objective.slice(0, 80)}..."`,
+  );
+
+  dependencies.emit({
+    type: "batch.started",
+    batchId,
+    mode: "single",
+    taskCount: 1,
+    maxParallel: 1,
+    computePolicy: admission.policy,
+  });
+
+  // Structural routing gates come first on both delegation surfaces: a call
+  // that declared no seam is malformed, and admitting compute for it would
+  // be answering the wrong question. Compute policy is the second gate.
+  const routingRefusal = refuseSingleDelegation(
+    task.routingPreflight,
+    batchId,
+    dependencies.emit,
+    admission.policy,
+  );
+  if (routingRefusal) {
+    dependencies.emit({ type: "batch.rejected", batchId, reason: routingRefusal });
+    log(`delegate_task refused: ${routingRefusal}`);
+    return {
+      content: [{ type: "text" as const, text: routingRefusal }],
+      isError: true,
+    };
+  }
+
+  if (admission.refusal) {
+    dependencies.emit({ type: "batch.rejected", batchId, reason: admission.refusal });
+    log(`delegate_task refused: ${admission.refusal}`);
+    return {
+      content: [{ type: "text" as const, text: admission.refusal }],
+      isError: true,
+    };
+  }
+
+  const routingAdvisory = routingAdvisoryLine(
+    task.routingPreflight,
+    {
+      mode: "single",
+      taskCount: 1,
+    },
+    admission.policy,
+  );
+
+  dependencies.emit({
+    type: "task.queued",
+    batchId,
+    taskId,
+    effort: task.effort,
+    category: task.taskCategory,
+    activityLabel: task.activityLabel,
+    model: targetModel,
+    attempt: logicalAttempt,
+  });
+
+  const lifecycleStore =
+    dependencies.contextStore ?? dependencies.contextRegistry.getOrCreate(contextKey);
+  const persistedContextKey = dependencies.contextStore ? null : contextKey;
+  const releaseExecutionLease = lifecycleStore.acquireExecutionLease();
+  let executionLeaseActive = true;
+  const releaseExecution = (): void => {
+    if (!executionLeaseActive) return;
+    executionLeaseActive = false;
+    releaseExecutionLease();
+  };
+
+  try {
+    const result = await dependencies.delegateToLuna(
+      task,
+      signal,
+      {
+        onStarted: (workingDirectory) => {
+          workerStarted = true;
+          workerDirectory = workingDirectory;
+          dependencies.emit({
+            type: "worker.started",
+            batchId,
+            taskId,
+            effort: task.effort,
+            workingDirectory,
+            model: targetModel,
+            attempt: logicalAttempt,
+          });
+        },
+        onVerificationStart: (commandCount, attribution) =>
+          dependencies.emit({
+            type: "verification.started",
+            batchId,
+            taskId,
+            commandCount,
+            executionId: attribution.executionId,
+            attempt: attribution.logicalAttempt,
+            role: attribution.role,
+          }),
+        onRepairStart: (classification, executionId) => {
+          dependencies.emit({
+            type: "repair.started",
+            batchId,
+            taskId,
+            classification,
+            turn: 1,
+            executionId,
+          });
+        },
+        onRepairComplete: (verdict, executionId) =>
+          dependencies.emit({
+            type: "repair.completed",
+            batchId,
+            taskId,
+            verdict,
+            turn: 1,
+            executionId,
+          }),
+        onAttemptStart: (evidence) =>
+          emitAttemptStarted(dependencies.emit, batchId, taskId, evidence),
+        onAttemptComplete: (evidence) =>
+          emitCanonicalAttemptCompletion(dependencies.emit, batchId, taskId, evidence),
+      },
+      targetModel,
+      predecessorExecutionId,
+      logicalAttempt,
+    );
+    if (workerDirectory) {
+      try {
+        result.continuationReference = registerContinuation(
+          task,
+          result,
+          workerDirectory,
+          false,
+          null,
+          dependencies.continuationStore,
+          persistedContextKey,
+        );
+      } catch (error) {
+        const detail = `Continuation registration failed after execution: ${(error as Error).message}`;
+        result.verdict = "FAILED";
+        result.trustworthy = false;
+        result.errors.push(detail);
+        result.continuationReference = null;
+        result.continuationState = { status: "unavailable", reason: detail };
+        applyFailureDecision(task, result);
+      }
+    }
+    result.handoffReference = registerHandoff(task, result, dependencies.handoffStore, {
+      authoritativePrior: priorEvidence !== undefined,
+      workingDirectory: workerDirectory ?? undefined,
+      contextKey: persistedContextKey,
+    });
+    emitSingleCompletion(
+      batchId,
+      taskId,
+      task.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS,
+      result,
+      dependencies.emit,
+    );
+    log(
+      `done: verdict=${result.verdict} claimed=${result.workerClaimedStatus} ` +
+        `thread=${result.workerThreadId ?? "?"} in ${result.durationSeconds}s`,
+    );
+    dependencies.record(result);
+
+    lifecycleStore.recordDelegationTurn(task, result, {
+      batchId,
+      taskId,
+    });
+    releaseExecution();
+    lifecycleStore.evaluateAndMaybeCompact("post-delegation", {
+      batchId,
+      emit: dependencies.emit,
+    });
+
+    const structuredContent = structuredResultForDetail(
+      result,
+      task.resultDetail ?? "handoff",
+    );
+
+    const rendered = renderResult(result, {
+      batchId,
+      taskId,
+      integration: "single-task workspace",
+    });
+    const response = {
+      content: [
+        {
+          type: "text" as const,
+          text: routingAdvisory ? `${routingAdvisory}\n${rendered}` : rendered,
+        },
+      ],
+    };
+    return structuredContent ? { ...response, structuredContent } : response;
+  } catch (error) {
+    const message =
+      error instanceof WorkspaceError
+        ? error.message
+        : `Delegation failed: ${(error as Error).message}`;
+
+    if (workerStarted) {
+      const durationSeconds = Math.round((Date.now() - startedAt) / 1000);
+      if (signal?.aborted) {
+        dependencies.emit({
+          type: "worker.cancelled",
+          batchId,
+          taskId,
+          attempt: logicalAttempt,
+        });
+        dependencies.emit({
+          type: "batch.cancelled",
+          batchId,
+          reason: "worker cancelled",
+        });
+      } else {
+        dependencies.emit({
+          type: "worker.failed",
+          batchId,
+          taskId,
+          reason: message,
+          attempt: logicalAttempt,
+        });
+        dependencies.emit({
+          type: "batch.completed",
+          batchId,
+          durationSeconds,
+          passed: 0,
+          failed: 1,
+        });
+      }
+    } else if (signal?.aborted) {
+      dependencies.emit({
+        type: "batch.cancelled",
+        batchId,
+        reason: "cancelled before worker start",
+      });
+    } else {
+      dependencies.emit({ type: "batch.rejected", batchId, reason: message });
+    }
+
+    log(`error: ${message}`);
+    lifecycleStore.recordRuntimeFailure({
+      id: `blk_runtime_${batchId}_${taskId}`,
+      description: message,
+      objective: task.objective,
+      acceptanceCriteria: task.acceptanceCriteria,
+      allowedFiles: task.allowedFiles,
+      forbiddenFiles: task.forbiddenFiles,
+      changeIntent: task.changeIntent,
+      taskCategory: task.taskCategory,
+      taskId,
+    });
+    releaseExecution();
+    lifecycleStore.evaluateAndMaybeCompact("post-delegation", {
+      batchId,
+      emit: dependencies.emit,
+    });
+    // Returned as a tool error (not a thrown protocol error) so the parent can read
+    // the reason and adapt instead of seeing an opaque transport failure.
+    return {
+      content: [{ type: "text" as const, text: message }],
+      isError: true,
+    };
+  } finally {
+    releaseExecution();
+    if (persistedContextKey) {
+      dependencies.contextRegistry.releaseIfUnreferenced(persistedContextKey);
+    }
+  }
+}
+
 function registerDelegateTask(): void {
   server.registerTool(
     "delegate_task",
@@ -854,330 +1313,16 @@ function registerDelegateTask(): void {
       inputSchema: delegateTaskMcpInputShape,
     },
     async (input, extra) => {
-      const rawTask = input as DelegateTaskInput;
-      const batchId = makeSingleBatchId();
-      const taskId = "t1";
-
-      let predecessorExecutionId: string | null = null;
-      let logicalAttempt = rawTask.previousAttempts.length + 1;
-      let priorEvidence: PriorExecution | undefined = undefined;
-      let resolvedTask = rawTask;
-
-      if (rawTask.handoffReference) {
-        const consumed = handoffStore.consume(rawTask.handoffReference);
-        if (consumed.status !== "ready") {
-          const message = handoffError(consumed);
-          emitEvent({ type: "batch.rejected", batchId, reason: message });
-          log(`delegate_task handoff rejected: ${message}`);
-          return {
-            content: [{ type: "text" as const, text: message }],
-            isError: true,
-          };
-        }
-        resolvedTask = {
-          ...consumed.entry.input,
-          previousAttempts: [
-            ...consumed.entry.input.previousAttempts,
-            {
-              effort: consumed.entry.effort,
-              verdict: "FAILED" as const,
-              whatWentWrong: consumed.entry.failureDecision.reason,
-            },
-          ],
-        };
-        predecessorExecutionId = consumed.entry.predecessorExecutionId;
-        logicalAttempt = consumed.entry.logicalAttempt;
-        priorEvidence = {
-          requestedModel: consumed.entry.model,
-          requestedEffort: consumed.entry.effort,
-          failureDecision: consumed.entry.failureDecision,
-        };
-      }
-
-      const initialAdmission = admitCompute({
-        requested: resolvedTask.computePolicy,
-        model: LUNA_MODEL,
-        efforts: [resolvedTask.effort],
-        workerCount: 1,
-      });
-
-      const liveRouting = routeLiveTask(resolvedTask, {
-        policy: initialAdmission.policy,
-        evidence: priorEvidence,
-      });
-
-      if (
-        liveRouting.selection.reason === "no-authorised-next-execution" ||
-        (priorEvidence && liveRouting.selectedModel === null)
-      ) {
-        emitEvent({
-          type: "batch.rejected",
-          batchId,
-          reason: liveRouting.selection.detail,
-        });
-        log(`delegate_task selection refused: ${liveRouting.selection.detail}`);
-        return {
-          content: [{ type: "text" as const, text: liveRouting.selection.detail }],
-          isError: true,
-        };
-      }
-
-      let targetModel = liveRouting.selectedModel;
-      if (!targetModel) {
-        if (initialAdmission.policy.allowedModels.length === 1) {
-          targetModel = initialAdmission.policy.allowedModels[0]!;
-        } else if (initialAdmission.policy.allowedModels.includes(LUNA_MODEL)) {
-          targetModel = LUNA_MODEL;
-        } else {
-          targetModel = initialAdmission.policy.allowedModels[0]!;
-        }
-      }
-
-      const targetEffort = liveRouting.selectedEffort ?? resolvedTask.effort;
-
-      const admission = admitCompute({
-        requested: resolvedTask.computePolicy,
-        model: targetModel,
-        efforts: [targetEffort],
-        workerCount: 1,
-      });
-
-      const task: DelegateTaskInput = {
-        ...resolvedTask,
-        effort: targetEffort,
-        computePolicy: cloneComputePolicy(admission.policy),
-      };
-      const startedAt = Date.now();
-      let workerStarted = false;
-      let workerDirectory: string | null = null;
-      log(
-        `delegate_task: model=${targetModel} effort=${task.effort} cwd=${task.workingDirectory ?? process.cwd()} ` +
-          `objective="${task.objective.slice(0, 80)}..."`,
-      );
-
-      emitEvent({
-        type: "batch.started",
-        batchId,
-        mode: "single",
-        taskCount: 1,
-        maxParallel: 1,
-        computePolicy: admission.policy,
-      });
-
-      // Structural routing gates come first on both delegation surfaces: a call
-      // that declared no seam is malformed, and admitting compute for it would
-      // be answering the wrong question. Compute policy is the second gate.
-      const routingRefusal = refuseSingleDelegation(
-        task.routingPreflight,
-        batchId,
-        emitEvent,
-        admission.policy,
-      );
-      if (routingRefusal) {
-        emitEvent({ type: "batch.rejected", batchId, reason: routingRefusal });
-        log(`delegate_task refused: ${routingRefusal}`);
-        return {
-          content: [{ type: "text" as const, text: routingRefusal }],
-          isError: true,
-        };
-      }
-
-      if (admission.refusal) {
-        emitEvent({ type: "batch.rejected", batchId, reason: admission.refusal });
-        log(`delegate_task refused: ${admission.refusal}`);
-        return {
-          content: [{ type: "text" as const, text: admission.refusal }],
-          isError: true,
-        };
-      }
-
-      const routingAdvisory = routingAdvisoryLine(
-        task.routingPreflight,
-        {
-          mode: "single",
-          taskCount: 1,
-        },
-        admission.policy,
-      );
-
-      emitEvent({
-        type: "task.queued",
-        batchId,
-        taskId,
-        effort: task.effort,
-        category: task.taskCategory,
-        activityLabel: task.activityLabel,
-        model: targetModel,
-        attempt: logicalAttempt,
-      });
-
-      try {
-        const result = await delegateToLuna(
-          task,
-          extra?.signal,
-          {
-            onStarted: (workingDirectory) => {
-              workerStarted = true;
-              workerDirectory = workingDirectory;
-              emitEvent({
-                type: "worker.started",
-                batchId,
-                taskId,
-                effort: task.effort,
-                workingDirectory,
-                model: targetModel,
-                attempt: logicalAttempt,
-              });
-            },
-            onVerificationStart: (commandCount, attribution) =>
-              emitEvent({
-                type: "verification.started",
-                batchId,
-                taskId,
-                commandCount,
-                executionId: attribution.executionId,
-                attempt: attribution.logicalAttempt,
-                role: attribution.role,
-              }),
-            onRepairStart: (classification, executionId) => {
-              emitEvent({
-                type: "repair.started",
-                batchId,
-                taskId,
-                classification,
-                turn: 1,
-                executionId,
-              });
-            },
-            onRepairComplete: (verdict, executionId) =>
-              emitEvent({
-                type: "repair.completed",
-                batchId,
-                taskId,
-                verdict,
-                turn: 1,
-                executionId,
-              }),
-            onAttemptStart: (evidence) =>
-              emitAttemptStarted(emitEvent, batchId, taskId, evidence),
-            onAttemptComplete: (evidence) =>
-              emitCanonicalAttemptCompletion(emitEvent, batchId, taskId, evidence),
-          },
-          targetModel,
-          predecessorExecutionId,
-          logicalAttempt,
-        );
-        if (workerDirectory) {
-          try {
-            result.continuationReference = registerContinuation(
-              task,
-              result,
-              workerDirectory,
-            );
-          } catch (error) {
-            const detail = `Continuation registration failed after execution: ${(error as Error).message}`;
-            result.verdict = "FAILED";
-            result.trustworthy = false;
-            result.errors.push(detail);
-            result.continuationReference = null;
-            result.continuationState = { status: "unavailable", reason: detail };
-            applyFailureDecision(task, result);
-          }
-        }
-        result.handoffReference = registerHandoff(task, result, handoffStore, {
-          authoritativePrior: priorEvidence !== undefined,
-          workingDirectory: workerDirectory ?? undefined,
-        });
-        emitSingleCompletion(
-          batchId,
-          taskId,
-          task.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS,
-          result,
-        );
-        log(
-          `done: verdict=${result.verdict} claimed=${result.workerClaimedStatus} ` +
-            `thread=${result.workerThreadId ?? "?"} in ${result.durationSeconds}s`,
-        );
-        recordEvent(result);
-        const structuredContent = structuredResultForDetail(
-          result,
-          task.resultDetail ?? "handoff",
-        );
-
-        const rendered = renderResult(result, {
-          batchId,
-          taskId,
-          integration: "single-task workspace",
-        });
-        const response = {
-          content: [
-            {
-              type: "text" as const,
-              text: routingAdvisory ? `${routingAdvisory}\n${rendered}` : rendered,
-            },
-          ],
-        };
-        return structuredContent ? { ...response, structuredContent } : response;
-      } catch (error) {
-        const message =
-          error instanceof WorkspaceError
-            ? error.message
-            : `Delegation failed: ${(error as Error).message}`;
-
-        if (workerStarted) {
-          const durationSeconds = Math.round((Date.now() - startedAt) / 1000);
-          if (extra?.signal?.aborted) {
-            emitEvent({
-              type: "worker.cancelled",
-              batchId,
-              taskId,
-              attempt: logicalAttempt,
-            });
-            emitEvent({
-              type: "batch.cancelled",
-              batchId,
-              reason: "worker cancelled",
-            });
-          } else {
-            emitEvent({
-              type: "worker.failed",
-              batchId,
-              taskId,
-              reason: message,
-              attempt: logicalAttempt,
-            });
-            emitEvent({
-              type: "batch.completed",
-              batchId,
-              durationSeconds,
-              passed: 0,
-              failed: 1,
-            });
-          }
-        } else if (extra?.signal?.aborted) {
-          emitEvent({
-            type: "batch.cancelled",
-            batchId,
-            reason: "cancelled before worker start",
-          });
-        } else {
-          emitEvent({ type: "batch.rejected", batchId, reason: message });
-        }
-
-        log(`error: ${message}`);
-        // Returned as a tool error (not a thrown protocol error) so the parent can read
-        // the reason and adapt instead of seeing an opaque transport failure.
-        return {
-          content: [{ type: "text" as const, text: message }],
-          isError: true,
-        };
-      }
+      return handleDelegateTask(input as DelegateTaskInput, extra?.signal);
     },
   );
 }
 
-interface ContinuationHandlerDependencies {
+export interface ContinuationHandlerDependencies {
   store: ContinuationStore;
+  handoffStore: HandoffStore;
+  contextStore?: ContextLifecycleStore;
+  contextRegistry: ContextLifecycleRegistry;
   continueTask: typeof continueToLuna;
   reconcile: typeof reconcileRetainedContinuationEvidence;
   refreshLease: typeof refreshWorktreeLease;
@@ -1199,6 +1344,8 @@ export async function handleContinueTask(
 }> {
   const dependencies: ContinuationHandlerDependencies = {
     store: continuationStore,
+    handoffStore,
+    contextRegistry,
     continueTask: continueToLuna,
     reconcile: reconcileRetainedContinuationEvidence,
     refreshLease: refreshWorktreeLease,
@@ -1219,6 +1366,19 @@ export async function handleContinueTask(
   }
 
   const { entry } = reserved;
+  const batchId = dependencies.makeBatchId();
+  const taskId = "t1";
+  const contextKey = entry.contextKey ?? batchId;
+  const lifecycleStore =
+    dependencies.contextStore ?? dependencies.contextRegistry.getOrCreate(contextKey);
+  const persistedContextKey = dependencies.contextStore ? null : contextKey;
+  const releaseExecutionLease = lifecycleStore.acquireExecutionLease();
+  let executionLeaseActive = true;
+  const releaseExecution = (): void => {
+    if (!executionLeaseActive) return;
+    executionLeaseActive = false;
+    releaseExecutionLease();
+  };
   const timeoutSeconds = entry.input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS;
   if (entry.worktreeLease) {
     try {
@@ -1228,20 +1388,41 @@ export async function handleContinueTask(
         "executing-continuation",
       );
     } catch (error) {
-      dependencies.store.release(request.continuationReference);
-      await dependencies.releaseLease(entry.worktreeLease);
-      const message =
+      let message =
         `Continuation could not start because its retained worktree lease ` +
         `could not be refreshed: ${(error as Error).message}`;
+      try {
+        await dependencies.releaseLease(entry.worktreeLease);
+      } catch (cleanupError) {
+        message += ` Worktree lease cleanup also failed: ${(cleanupError as Error).message}`;
+      }
       log(`continue_task rejected: ${message}`);
+      lifecycleStore.recordRuntimeFailure({
+        id: `blk_runtime_${batchId}_${taskId}`,
+        description: message,
+        objective: entry.input.objective,
+        acceptanceCriteria: entry.input.acceptanceCriteria,
+        allowedFiles: entry.input.allowedFiles,
+        forbiddenFiles: entry.input.forbiddenFiles,
+        changeIntent: entry.input.changeIntent,
+        taskCategory: entry.input.taskCategory,
+        taskId,
+      });
+      releaseExecution();
+      dependencies.store.release(request.continuationReference);
+      lifecycleStore.evaluateAndMaybeCompact("post-continuation", {
+        batchId,
+        emit: dependencies.emit,
+      });
+      if (persistedContextKey) {
+        dependencies.contextRegistry.releaseIfUnreferenced(persistedContextKey);
+      }
       return {
         content: [{ type: "text" as const, text: message }],
         isError: true,
       };
     }
   }
-  const batchId = dependencies.makeBatchId();
-  const taskId = "t1";
   const startedAt = Date.now();
   let workerStarted = false;
   let worktreeLeaseFinalized = false;
@@ -1338,11 +1519,33 @@ export async function handleContinueTask(
       reason: "The single-use continuation bound was consumed by this execution.",
     };
     applyFailureDecision(entry.input, result);
-    result.handoffReference = registerHandoff(entry.input, result, handoffStore, {
-      workingDirectory: entry.workingDirectory,
-    });
+    result.handoffReference = registerHandoff(
+      entry.input,
+      result,
+      dependencies.handoffStore,
+      {
+        workingDirectory: entry.workingDirectory,
+        contextKey: persistedContextKey,
+      },
+    );
     emitSingleCompletion(batchId, taskId, timeoutSeconds, result, dependencies.emit);
     dependencies.record(result);
+
+    lifecycleStore.recordContinuationTurn(
+      {
+        continuationReference: request.continuationReference,
+        instruction: request.instruction,
+        taskId,
+      },
+      result,
+      { id: batchId },
+    );
+    releaseExecution();
+    lifecycleStore.evaluateAndMaybeCompact("post-continuation", {
+      batchId,
+      emit: dependencies.emit,
+    });
+
     const structuredContent = structuredResultForDetail(
       result,
       request.resultDetail ?? "handoff",
@@ -1407,11 +1610,39 @@ export async function handleContinueTask(
       dependencies.emit({ type: "batch.rejected", batchId, reason: message });
     }
     log(`continue_task error: ${message}`);
+    if (entry.worktreeLease && !worktreeLeaseFinalized) {
+      try {
+        await dependencies.releaseLease(entry.worktreeLease);
+      } catch (cleanupError) {
+        log(
+          `Continuation worktree lease cleanup failed: ${(cleanupError as Error).message}`,
+        );
+      } finally {
+        worktreeLeaseFinalized = true;
+      }
+    }
+    lifecycleStore.recordRuntimeFailure({
+      id: `blk_runtime_${batchId}_${taskId}`,
+      description: message,
+      objective: entry.input.objective,
+      acceptanceCriteria: entry.input.acceptanceCriteria,
+      allowedFiles: entry.input.allowedFiles,
+      forbiddenFiles: entry.input.forbiddenFiles,
+      changeIntent: entry.input.changeIntent,
+      taskCategory: entry.input.taskCategory,
+      taskId,
+    });
+    releaseExecution();
+    lifecycleStore.evaluateAndMaybeCompact("post-continuation", {
+      batchId,
+      emit: dependencies.emit,
+    });
     return {
       content: [{ type: "text" as const, text: message }],
       isError: true,
     };
   } finally {
+    releaseExecution();
     dependencies.store.release(request.continuationReference);
     if (entry.worktreeLease && !worktreeLeaseFinalized) {
       try {
@@ -1419,6 +1650,9 @@ export async function handleContinueTask(
       } catch (error) {
         log(`Continuation worktree lease cleanup failed: ${(error as Error).message}`);
       }
+    }
+    if (persistedContextKey) {
+      dependencies.contextRegistry.releaseIfUnreferenced(persistedContextKey);
     }
   }
 }
@@ -1443,6 +1677,180 @@ Parallel same-file edits prevent automatic integration. allowOverlappingScopes:t
 
 After integration, deterministic code reruns the deduplicated union of declared checks in the final workspace. completionState=verified-complete means all seams, integration, and final checks passed; the default text-only handoff then tells the parent to finish without rereading files or rerunning checks. Any failure/refusal/conflict returns rich evidence for targeted diagnosis. resultDetail is one batch-level compatibility choice. More workers are not automatically cheaper; raw tokens are not credit cost and savings depend on the parent and task mix. While pending with no meaningful new state, remain silent; do not narrate waiting or polling. Report only a result, error, cancellation, timeout, or actionable state change.`;
 
+export interface DelegateTasksHandlerDependencies {
+  handoffStore: HandoffStore;
+  continuationStore: ContinuationStore;
+  contextStore?: ContextLifecycleStore;
+  contextRegistry: ContextLifecycleRegistry;
+  runBatch: typeof runBatch;
+  emit: EventEmitter;
+  makeBatchId: () => string;
+}
+
+export async function handleDelegateTasks(
+  batch: DelegateTasksInput,
+  signal?: AbortSignal,
+  overrides: Partial<DelegateTasksHandlerDependencies> = {},
+): Promise<{
+  content: Array<{ type: "text"; text: string }>;
+  structuredContent?: BatchOutput;
+  isError?: boolean;
+}> {
+  const dependencies: DelegateTasksHandlerDependencies = {
+    handoffStore,
+    continuationStore,
+    contextRegistry,
+    runBatch,
+    emit: emitEvent,
+    makeBatchId: makeSingleBatchId,
+    ...overrides,
+  };
+  log(
+    `delegate_tasks: mode=${batch.mode} tasks=${batch.tasks.length} ` +
+      `efforts=[${batch.tasks.map((task) => task.effort).join(",")}]`,
+  );
+
+  const admission = admitCompute({
+    requested: batch.computePolicy,
+    model: LUNA_MODEL,
+    efforts: batch.tasks.map((task) => task.effort),
+    workerCount: batch.tasks.length,
+  });
+  if (admission.refusal) {
+    const refusedBatchId = dependencies.makeBatchId();
+    dependencies.emit({
+      type: "batch.started",
+      batchId: refusedBatchId,
+      mode: batch.mode,
+      taskCount: batch.tasks.length,
+      maxParallel: batch.mode === "parallel" ? admission.policy.maxConcurrency : 1,
+      computePolicy: admission.policy,
+    });
+    dependencies.emit({
+      type: "batch.rejected",
+      batchId: refusedBatchId,
+      reason: admission.refusal,
+    });
+    log(`delegate_tasks refused: ${admission.refusal}`);
+    return {
+      content: [{ type: "text" as const, text: admission.refusal }],
+      isError: true,
+    };
+  }
+
+  const routingAdvisory = routingAdvisoryLine(
+    batch.routingPreflight,
+    {
+      mode: batch.mode,
+      taskCount: batch.tasks.length,
+      allowOverlappingScopes: batch.allowOverlappingScopes,
+    },
+    admission.policy,
+  );
+
+  const admittedTasks = (batch.tasks as DelegateTaskInput[]).map((task) => ({
+    ...task,
+    computePolicy: cloneComputePolicy(admission.policy),
+  }));
+
+  const contextKey = dependencies.makeBatchId();
+  const lifecycleStore =
+    dependencies.contextStore ?? dependencies.contextRegistry.getOrCreate(contextKey);
+  const persistedContextKey = dependencies.contextStore ? null : contextKey;
+  const releaseExecutionLease = lifecycleStore.acquireExecutionLease();
+  let executionLeaseActive = true;
+  const releaseExecution = (): void => {
+    if (!executionLeaseActive) return;
+    executionLeaseActive = false;
+    releaseExecutionLease();
+  };
+
+  try {
+    const result = await dependencies.runBatch(admittedTasks, {
+      mode: batch.mode,
+      workingDirectory: batch.workingDirectory,
+      allowOverlappingScopes: batch.allowOverlappingScopes,
+      integrate: batch.integrate,
+      automaticRecovery: batch.automaticRecovery,
+      signal,
+      batchId: contextKey,
+      continuationRegistrar: (input, res, cwd, reconcile, lease) =>
+        registerContinuation(
+          input,
+          res,
+          cwd,
+          reconcile,
+          lease,
+          dependencies.continuationStore,
+          persistedContextKey,
+        ),
+      handoffStore: dependencies.handoffStore,
+      handoffContextKey: persistedContextKey,
+      protectedWorktreePaths:
+        dependencies.continuationStore.protectedWorkingDirectories(),
+      routingPreflight: batch.routingPreflight,
+      computePolicy: admission.policy,
+      eventEmitter: dependencies.emit,
+    });
+    log(
+      `batch done: ${result.passed}/${result.taskCount} passed in ` +
+        `${result.durationSeconds}s, integrated=${result.integrated}`,
+    );
+
+    lifecycleStore.recordBatchTurn(batch, result, { id: result.batchId });
+    releaseExecution();
+    lifecycleStore.evaluateAndMaybeCompact("post-batch", {
+      batchId: result.batchId,
+      emit: dependencies.emit,
+    });
+
+    const structuredContent = structuredBatchForDetail(
+      result,
+      batch.resultDetail ?? "handoff",
+    );
+
+    const rendered = renderBatch(result);
+    const response = {
+      content: [
+        {
+          type: "text" as const,
+          text: routingAdvisory ? `${routingAdvisory}\n${rendered}` : rendered,
+        },
+      ],
+    };
+    return structuredContent ? { ...response, structuredContent } : response;
+  } catch (error) {
+    const message =
+      error instanceof BatchRejectedError || error instanceof WorkspaceError
+        ? error.message
+        : `Batch delegation failed: ${(error as Error).message}`;
+    log(`batch error: ${message}`);
+    lifecycleStore.recordRuntimeFailure({
+      id: `blk_runtime_${contextKey}`,
+      description: message,
+      objective: batch.tasks[0]?.objective ?? "Batch delegation",
+      acceptanceCriteria: batch.tasks.flatMap((task) => task.acceptanceCriteria),
+      allowedFiles: [...new Set(batch.tasks.flatMap((task) => task.allowedFiles))],
+      forbiddenFiles: [...new Set(batch.tasks.flatMap((task) => task.forbiddenFiles))],
+      changeIntent: batch.tasks[0]?.changeIntent ?? "required",
+    });
+    releaseExecution();
+    lifecycleStore.evaluateAndMaybeCompact("post-batch", {
+      batchId: contextKey,
+      emit: dependencies.emit,
+    });
+    return {
+      content: [{ type: "text" as const, text: message }],
+      isError: true,
+    };
+  } finally {
+    releaseExecution();
+    if (persistedContextKey) {
+      dependencies.contextRegistry.releaseIfUnreferenced(persistedContextKey);
+    }
+  }
+}
+
 function registerDelegateTasks(): void {
   server.registerTool(
     "delegate_tasks",
@@ -1452,117 +1860,7 @@ function registerDelegateTasks(): void {
       inputSchema: delegateTasksMcpInputShape,
     },
     async (input, extra) => {
-      const batch = input as DelegateTasksInput;
-      log(
-        `delegate_tasks: mode=${batch.mode} tasks=${batch.tasks.length} ` +
-          `efforts=[${batch.tasks.map((task) => task.effort).join(",")}]`,
-      );
-
-      // The same admission gate the single surface uses, so the two tools cannot
-      // drift on which bounds they check or how they word a refusal.
-      //
-      // Precedence differs from the single surface by necessity, and the
-      // difference is documented in SOL_RULES.md rather than left implicit: a
-      // batch's structural routing gates are entangled with the scope
-      // comparison inside runBatch and emit the `routing.declared` record as
-      // they go, so re-running them here to gate compute first would either
-      // duplicate that telemetry or fork the evaluation. Compute admission
-      // therefore leads on this surface. Both orders still refuse before any
-      // worktree, thread, or worker exists, which is the property that matters.
-      //
-      // Worker count is bounded in both modes: a sequential batch enlists just
-      // as many workers, it only staggers them.
-      const admission = admitCompute({
-        requested: batch.computePolicy,
-        model: LUNA_MODEL,
-        efforts: batch.tasks.map((task) => task.effort),
-        workerCount: batch.tasks.length,
-      });
-      if (admission.refusal) {
-        const refusedBatchId = makeSingleBatchId();
-        emitEvent({
-          type: "batch.started",
-          batchId: refusedBatchId,
-          mode: batch.mode,
-          taskCount: batch.tasks.length,
-          maxParallel: batch.mode === "parallel" ? admission.policy.maxConcurrency : 1,
-          computePolicy: admission.policy,
-        });
-        emitEvent({
-          type: "batch.rejected",
-          batchId: refusedBatchId,
-          reason: admission.refusal,
-        });
-        log(`delegate_tasks refused: ${admission.refusal}`);
-        return {
-          content: [{ type: "text" as const, text: admission.refusal }],
-          isError: true,
-        };
-      }
-
-      const routingAdvisory = routingAdvisoryLine(
-        batch.routingPreflight,
-        {
-          mode: batch.mode,
-          taskCount: batch.tasks.length,
-          allowOverlappingScopes: batch.allowOverlappingScopes,
-        },
-        admission.policy,
-      );
-
-      // Every task carries the batch's resolved envelope, so a per-task failure
-      // decision is bounded by the policy this batch was admitted under rather
-      // than by the installation baseline it may have narrowed.
-      const admittedTasks = (batch.tasks as DelegateTaskInput[]).map((task) => ({
-        ...task,
-        computePolicy: cloneComputePolicy(admission.policy),
-      }));
-
-      try {
-        const result = await runBatch(admittedTasks, {
-          mode: batch.mode,
-          workingDirectory: batch.workingDirectory,
-          allowOverlappingScopes: batch.allowOverlappingScopes,
-          integrate: batch.integrate,
-          automaticRecovery: batch.automaticRecovery,
-          signal: extra?.signal,
-          continuationRegistrar: registerContinuation,
-          handoffStore,
-          protectedWorktreePaths: continuationStore.protectedWorkingDirectories(),
-          routingPreflight: batch.routingPreflight,
-          computePolicy: admission.policy,
-        });
-        log(
-          `batch done: ${result.passed}/${result.taskCount} passed in ` +
-            `${result.durationSeconds}s, integrated=${result.integrated}`,
-        );
-
-        const structuredContent = structuredBatchForDetail(
-          result,
-          batch.resultDetail ?? "handoff",
-        );
-
-        const rendered = renderBatch(result);
-        const response = {
-          content: [
-            {
-              type: "text" as const,
-              text: routingAdvisory ? `${routingAdvisory}\n${rendered}` : rendered,
-            },
-          ],
-        };
-        return structuredContent ? { ...response, structuredContent } : response;
-      } catch (error) {
-        const message =
-          error instanceof BatchRejectedError || error instanceof WorkspaceError
-            ? error.message
-            : `Batch delegation failed: ${(error as Error).message}`;
-        log(`batch error: ${message}`);
-        return {
-          content: [{ type: "text" as const, text: message }],
-          isError: true,
-        };
-      }
+      return handleDelegateTasks(input as DelegateTasksInput, extra?.signal);
     },
   );
 }
@@ -1571,15 +1869,55 @@ function makePreflightId(): string {
   return `p${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
 }
 
-/**
- * The advisory surface.
- *
- * Registered as a real tool because the decision it informs happens before the
- * parent has spent anything, and a tool call is the only place the parent can ask
- * a question at that point. It refuses nothing, creates nothing, and its only
- * side effect is one telemetry record — deliberately, so that calling it and then
- * choosing zero workers is indistinguishable from a normal successful outcome.
- */
+export interface RoutingPreflightHandlerDependencies {
+  emit: EventEmitter;
+  makePreflightId: () => string;
+}
+
+export function handleRoutingPreflight(
+  input: RoutingPreflightInput,
+  overrides: Partial<RoutingPreflightHandlerDependencies> = {},
+): { content: Array<{ type: "text"; text: string }> } {
+  const dependencies: RoutingPreflightHandlerDependencies = {
+    emit: emitEvent,
+    makePreflightId,
+    ...overrides,
+  };
+  const card = asRoutingCard(input);
+  const { evaluation, selection } = evaluateAdaptiveCard({
+    card,
+    context: { mode: "preflight" },
+    policy: DEFAULT_COMPUTE_POLICY,
+  });
+  const preflightId = dependencies.makePreflightId();
+  dependencies.emit({
+    type: "routing.preflight",
+    preflightId,
+    route: evaluation.route,
+    seamCount: evaluation.seamCount,
+    unknownCount: evaluation.unknownCount,
+    gates: evaluation.gates,
+    signals: evaluation.signals,
+    parallelEligible: evaluation.parallelEligible,
+    recommendedMechanism: evaluation.shape?.mechanism,
+    recommendedWorkerCount: evaluation.shape?.workerCount,
+    recommendedConcurrency: evaluation.shape?.concurrency,
+    recommendedEffort: evaluation.shape?.effort,
+    selectedModel: selection.model,
+    selectedEffort: selection.effort,
+    selectionReason: selection.reason,
+    ...declaredRoutingFields(card),
+  });
+  log(
+    `routing_preflight: route=${evaluation.route} seams=${evaluation.seamCount} ` +
+      `unknown=${evaluation.unknownCount} parallelEligible=${evaluation.parallelEligible} ` +
+      `shape=${evaluation.shape?.mechanism ?? "none"}`,
+  );
+  return {
+    content: [{ type: "text" as const, text: renderRoutingPreflight(evaluation) }],
+  };
+}
+
 function registerRoutingPreflight(): void {
   server.registerTool(
     "routing_preflight",
@@ -1589,41 +1927,7 @@ function registerRoutingPreflight(): void {
       inputSchema: routingPreflightMcpInputShape,
     },
     (input) => {
-      const card = asRoutingCard(input as RoutingPreflightInput);
-      // The operator baseline, passed in rather than read by routing itself, so
-      // the shape it recommends is bounded by the envelope this installation
-      // would actually run — and so the evaluator keeps depending on nothing.
-      const { evaluation, selection } = evaluateAdaptiveCard({
-        card,
-        context: { mode: "preflight" },
-        policy: DEFAULT_COMPUTE_POLICY,
-      });
-      emitEvent({
-        type: "routing.preflight",
-        preflightId: makePreflightId(),
-        route: evaluation.route,
-        seamCount: evaluation.seamCount,
-        unknownCount: evaluation.unknownCount,
-        gates: evaluation.gates,
-        signals: evaluation.signals,
-        parallelEligible: evaluation.parallelEligible,
-        recommendedMechanism: evaluation.shape?.mechanism,
-        recommendedWorkerCount: evaluation.shape?.workerCount,
-        recommendedConcurrency: evaluation.shape?.concurrency,
-        recommendedEffort: evaluation.shape?.effort,
-        selectedModel: selection.model,
-        selectedEffort: selection.effort,
-        selectionReason: selection.reason,
-        ...declaredRoutingFields(card),
-      });
-      log(
-        `routing_preflight: route=${evaluation.route} seams=${evaluation.seamCount} ` +
-          `unknown=${evaluation.unknownCount} parallelEligible=${evaluation.parallelEligible} ` +
-          `shape=${evaluation.shape?.mechanism ?? "none"}`,
-      );
-      return {
-        content: [{ type: "text" as const, text: renderRoutingPreflight(evaluation) }],
-      };
+      return handleRoutingPreflight(input as RoutingPreflightInput);
     },
   );
 }

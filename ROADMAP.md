@@ -24,20 +24,20 @@ Cost matters, but it is not the primary objective. The orchestrator should use p
 
 ## Priorities at a glance
 
-| Priority | Item                                                   | Status / dependency                                                             |
-| -------- | ------------------------------------------------------ | ------------------------------------------------------------------------------- |
-| P0       | Context Capsule v2; Compact Evidence Packets           | Shipped in v0.7.0                                                               |
-| P0.2a    | Explicit Change Intent Contracts                       | Shipped in v0.9.0                                                               |
-| P0.3     | Worker Continuation                                    | Shipped in v0.9.0; depends on P0.2a                                             |
-| P0.4     | Bounded Repair Loop                                    | Shipped in v0.9.0; depends on P0.3 and P0.2a                                    |
-| P1.0     | Parent Identity, Billing, and Post-Hoc Cost Foundation | Shipped foundation in v0.9.0; attempt-evidence hardening complete, unreleased   |
-| P1.1     | Reasoned Retry and Effort Escalation                   | Complete, unreleased; built on P0.4 and completed P1.0 hardening                |
-| P1.2     | Adaptive Worker Routing and Compute Policy             | Complete, unreleased                                                            |
-| P1.3     | Automatic Context Lifecycle Management                 | P1.3A Core & P1.3B Policy complete, unreleased; depends on P0.1, P0.2, and P0.3 |
-| P2.1     | Optional Explorer                                      | Depends on P1.2                                                                 |
-| P2.2     | Lightweight Cross-Session Handoff                      | Depends on P1.3                                                                 |
-| P2.3     | End-to-End Automated Workflow                          | Depends on P1.2, P1.3, P2.1, and P2.2                                           |
-| P2.4     | Mature Benchmark and Acceptance Pass                   | Depends on P2.3                                                                 |
+| Priority | Item                                                   | Status / dependency                                                           |
+| -------- | ------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| P0       | Context Capsule v2; Compact Evidence Packets           | Shipped in v0.7.0                                                             |
+| P0.2a    | Explicit Change Intent Contracts                       | Shipped in v0.9.0                                                             |
+| P0.3     | Worker Continuation                                    | Shipped in v0.9.0; depends on P0.2a                                           |
+| P0.4     | Bounded Repair Loop                                    | Shipped in v0.9.0; depends on P0.3 and P0.2a                                  |
+| P1.0     | Parent Identity, Billing, and Post-Hoc Cost Foundation | Shipped foundation in v0.9.0; attempt-evidence hardening complete, unreleased |
+| P1.1     | Reasoned Retry and Effort Escalation                   | Complete, unreleased; built on P0.4 and completed P1.0 hardening              |
+| P1.2     | Adaptive Worker Routing and Compute Policy             | Complete, unreleased                                                          |
+| P1.3     | Automatic Context Lifecycle Management                 | Complete, unreleased; depends on P0.1, P0.2, and P0.3                         |
+| P2.1     | Optional Explorer                                      | Depends on P1.2                                                               |
+| P2.2     | Lightweight Cross-Session Handoff                      | Depends on P1.3                                                               |
+| P2.3     | End-to-End Automated Workflow                          | Depends on P1.2, P1.3, P2.1, and P2.2                                         |
+| P2.4     | Mature Benchmark and Acceptance Pass                   | Depends on P2.3                                                               |
 
 The order is intentional: continuation, repair, failure classification, and
 policy discovery should precede stronger-executor routing. Explorer, handoff,
@@ -173,7 +173,7 @@ only when applicable billing evidence is known; otherwise it remains qualitative
 
 ## P1.3 Automatic Context Lifecycle Management
 
-**P1.3A Core & P1.3B Policy complete, unreleased.**
+**Complete, unreleased.**
 
 Compact repeated tool output, logs, worker turns, and stale context at safe
 handoff, continuation, repair, retry, and review boundaries while retaining
@@ -197,19 +197,31 @@ The implemented P1.3 scope encompasses:
    tool overhead, reclaimable ratio) against strict safety and protected-evidence block
    conditions (unsafe lifecycle boundary gating, no new turns since compaction,
    insufficient reclaimable gain, and authoritative turn-based cooldown hysteresis).
-   Issued handoffs and continuations can survive compaction because their originating
-   authority and issued/unconsumed state remain in the compact projection; pressure
-   metrics expose counts, not capability values. Failure, conflict, security/scope,
+   Issued handoffs and continuations survive compaction because their originating
+   authority and issued/unconsumed state remain represented in the compact projection;
+   neither projections nor pressure metrics expose capability values. Failure, conflict, security/scope,
    lineage, and unresolved review evidence remain protected by the P1.3A projection.
-   Explicit reason codes (`trigger:*`, `block:*`, `noop:*`) explain every decision.
-
-**Remaining P1.3 work.** Live runtime integration across delegation lifecycles
-(`delegate_task`, `delegate_tasks`, `continue_task`).
+   Explicit reason codes (`trigger:*`, `block:*`, `noop:*`) accompany all evaluations.
+3. **Live Context Lifecycle Integration (P1.3C):** Wired context pressure evaluation
+   and compaction into live execution lifecycles (`delegate_task`, `delegate_tasks`,
+   and `continue_task`) through an in-memory registry of isolated authoritative
+   `ContextLifecycleStore` instances. Fresh calls and batches receive distinct contexts;
+   only a server-issued continuation or handoff may restore its own lineage context.
+   Execution leases are reference-counted, so compaction occurs only at safe
+   post-execution boundaries (`post-delegation`, `post-batch`, `post-continuation`) after
+   all relevant repair, recovery, reconciliation, and cleanup work has finished, and is
+   blocked while any related execution remains in flight. The advisory
+   `routing_preflight` call emits routing telemetry but cannot mutate or compact an
+   execution context. Canonical runtime evidence and cooldown state remain authoritative;
+   only projected views compact, and a new authoritative turn invalidates an older
+   projection before reevaluation. Live `ContinuationStore` and `HandoffStore` state
+   determines reference eligibility, preventing stale or consumed authority from appearing
+   active. Factual telemetry events (`context.evaluated`, `context.compacted`) emit exact
+   metrics without leaking secrets, prompts, sensitive output, or capability tokens.
 
 **Constraints.** Compaction must be bounded and observable and must not discard
 acceptance criteria, failure or conflict evidence, scope, or the distinction
-between claimed and verified results. Compaction is not yet wired into live delegation
-lifecycles. Depends on P0.1, P0.2, and P0.3.
+between claimed and verified results. Depends on P0.1, P0.2, and P0.3.
 
 ## P2.1 Optional Explorer
 
