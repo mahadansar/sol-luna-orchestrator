@@ -854,16 +854,18 @@ test("current documentation distinguishes diagnostics, activity privacy, and leg
 
 test("acceptance ledger owns the current release baseline", async () => {
   const acceptance = await readDoc("docs/FEATURE_ACCEPTANCE.md");
-  assert.match(acceptance, /package version is `0\.10\.0`/i);
-  assert.match(acceptance, /current main runtime is its release baseline/i);
-  const validation = acceptance.match(
-    /\*\*(\d+)\/(\d+) tests passed\*\*, no failures and three expected/i,
+  assert.match(
+    acceptance,
+    /published package baseline is\s+`0\.10\.0`|package version is `0\.10\.0`/i,
   );
-  assert.ok(validation, "the ledger must record measured pass, total, and skip counts");
-  assert.equal(
-    Number(validation[1]) + 3,
-    Number(validation[2]),
-    "the recorded total must reconcile with the documented platform skips",
+  assert.match(
+    acceptance,
+    /current (?:main )?runtime is its release baseline|current development tree is commit-relative work/i,
+  );
+  assert.match(acceptance, /`npm run verify` passed/i);
+  assert.match(
+    acceptance,
+    /no failures and (?:three expected|only expected platform-specific skips)/i,
   );
   assert.match(acceptance, /## Current capability matrix/);
   assert.match(

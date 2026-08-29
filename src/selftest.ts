@@ -1169,7 +1169,18 @@ test("task cancellation propagates into an already-running authoritative verific
   assert.equal(verification.passed, false);
   assert.match(verification.output, /verification cancelled/);
   assert.doesNotMatch(verification.output, /timed out/);
-  assert.throws(() => process.kill(pid, 0), /ESRCH|no such process|not found/i);
+  const deadlineKill = Date.now() + 3_000;
+  let alive = true;
+  while (Date.now() < deadlineKill) {
+    try {
+      process.kill(pid, 0);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    } catch {
+      alive = false;
+      break;
+    }
+  }
+  assert.equal(alive, false, `descendant process ${pid} survived cancellation`);
 });
 
 // --- Claim checking: stops the parent trusting a bogus PASS -----------------

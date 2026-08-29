@@ -162,8 +162,8 @@ Benchmark V3 is the fresh, frozen routing holdout for future Solo Medium versus
 Adaptive Medium campaigns. Its nine unseen engineering fixtures, evaluator-only
 routing categories, deterministic graders, campaign arms, credit-first economic
 analysis, and predeclared repetition policy are specified in
-[`bench/V3_METHODOLOGY.md`](bench/V3_METHODOLOGY.md). No live V3 cells were run
-while creating the suite. Raw tokens remain diagnostics rather than equivalent
+[`bench/V3_METHODOLOGY.md`](bench/V3_METHODOLOGY.md). No live V3 cells have been
+executed under any methodology freeze. Raw tokens remain diagnostics rather than equivalent
 cost. Production cost terminology remains in
 [Configuration](docs/CONFIGURATION.md#cost).
 

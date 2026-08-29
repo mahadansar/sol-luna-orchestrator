@@ -38,7 +38,7 @@ Cost matters, but it is not the primary objective. The orchestrator should use p
 | P2.2     | Lightweight Cross-Session Handoff                      | Complete, unreleased; depends on P1.3                                         |
 | P2.3     | End-to-End Automated Workflow                          | Complete, unreleased; depends on P1.2, P1.3, P2.1, and P2.2                   |
 | P2.4A    | Acceptance Harness and Benchmark V3 Methodology        | Complete, unreleased; methodology and harness frozen, no V3 run               |
-| P2.4B    | Benchmark V3 Execution and Mature Acceptance Pass      | Not started; depends on P2.4A and an operator launch decision                 |
+| P2.4B    | Benchmark V3 Execution and Mature Acceptance Pass      | NOT EXECUTED; depends on P2.4A and an operator launch decision                |
 
 The order is intentional: continuation, repair, failure classification, and
 policy discovery should precede stronger-executor routing. Explorer, handoff,
@@ -370,8 +370,9 @@ a second orchestration system.
     recommended, and executed compute remain distinct; prompts, paths, raw output, verification
     output, and capability references are absent.
 
-The deterministic workflow suite contains 30 tests: 29 coordinator scenarios and one
-report-rendering test. It is included in the canonical `npm test` and `npm run verify` gates.
+The deterministic workflow suite covers coordinator scenarios and report
+rendering. It is included in the canonical `npm test` and `npm run verify` gates;
+its exact test count is validation output rather than a roadmap contract.
 
 **Constraints.** Supervisor remains the orchestration authority. File scopes remain detective, and
 independent verification remains authoritative. Model list position is never a strength hierarchy; explicit
@@ -424,7 +425,7 @@ against V3. Quarantine covers missing evidence only, never an unwelcome result.
 
 ### P2.4B Benchmark V3 execution and mature acceptance pass
 
-**Not started.** Runs the frozen campaign and reports it. Blocked on an operator
+**NOT EXECUTED.** Runs the frozen campaign and reports it. Blocked on an operator
 launch decision, pricing revalidation, and a clean recorded baseline commit.
 
 ## Research and platform work

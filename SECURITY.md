@@ -180,6 +180,15 @@ an untrusted repository's hands, do not put it in the environment that launches
 this server. `SOL_LUNA_VERIFY_ENV_PASSTHROUGH` does not affect this path in
 either direction.
 
+Exploration narrows file admission further before creating its disposable
+surface. In addition to `.git`, `.sol-luna`, and caller-supplied
+`forbiddenFiles`, it categorically excludes `.env`, `.env.*`, `.envrc`, `.npmrc`,
+`.netrc`, `_netrc`, `.aws/credentials`, and `.git-credentials` at any depth.
+This is a small denylist for conventional credential files, not a secret
+scanner: deliberately broad patterns such as `*.pem`, `*.key`, `id_rsa`, and
+`secrets*` are not automatically excluded because repositories commonly contain
+non-secret fixtures with those names. Add them to `forbiddenFiles` when needed.
+
 ### Parallel batches write inside your repository
 
 A parallel batch creates one git worktree per worker under
@@ -190,9 +199,11 @@ tree, and only when no two workers touched the same file **and the task that
 produced them stayed inside its declared scope**. A task with scope violations is
 excluded from integration entirely: finishing its turn is not authorization for
 its changes, and the whole point of declaring a scope is that work outside it was
-never asked for. Nothing is discarded — the worktree keeps every byte, the
-violation appears in that task's scope evidence, an `integration.blocked` event
-records the exclusion, and the batch cannot reach the terminal verified state.
+never asked for. The violation appears in that task's scope evidence, an
+`integration.blocked` event records the exclusion, and the batch cannot reach
+the terminal verified state. The isolated bytes remain available only until
+finalization; `SOL_LUNA_KEEP_WORKTREES` then decides whether that worktree is
+retained, and `never` attempts to remove it.
 Clean siblings still integrate, because parallel tasks are required to declare
 disjoint scopes and that is what makes them independent; when a call sets
 `allowOverlappingScopes:true` it withdraws that declaration, so a single
@@ -282,6 +293,14 @@ history. Both are single-use and TTL-bounded in memory; restarting the server
 invalidates them rather than reconstructing authority from retained logs or
 caller-supplied history.
 
+An `hdf_*` next-action reference has an atomic `ready -> reserved -> consumed`
+lifecycle. Admission reserves it before gates that may still refuse the call, so
+a concurrent consumer cannot also execute. A refusal before execution releases
+the reservation with its original expiry; an expiry while reserved retires it,
+and entry into worker execution commits consumption. Release never grants a new
+TTL or reconstructs a capability. `ctr_*` continuation references are likewise
+consumed once, but do not use the pre-execution handoff-reservation path.
+
 Cross-session handoff artifacts are different: they are portable, caller-held
 historical context and are never bearer capabilities or authenticated runtime
 evidence. Their schema proves structure only. On import, objective and scope are
@@ -332,7 +351,8 @@ the exact file-selection, ownership, opt-out, and removal behavior.
   prompt. Scope violations are detected **after** the fact and reported; the
   write itself is not prevented. What _is_ prevented is an unauthorized change
   reaching your working tree through integration — a parallel task that violated
-  its scope is excluded, and the change stays in the worktree. That does not
+  its scope is excluded, and the change remains only in the isolated worktree
+  until retention-policy finalization. That does not
   help a single delegation or a sequential batch, which write into your
   workspace directly and have nothing to exclude. Use version control.
 - **Verification runs outside the Codex sandbox.** The allowlist constrains

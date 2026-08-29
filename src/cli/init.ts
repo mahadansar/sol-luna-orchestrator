@@ -424,7 +424,7 @@ function printSummary(serverEntry: string, configText: string): void {
     ["Worker", serverConfig.workerModel],
     ["Workers", `max ${serverConfig.maxParallel}`],
     ["Verify", serverConfig.verificationMode],
-    ["Roots", serverConfig.allowedRoots ?? "any existing directory"],
+    ["Roots", serverConfig.allowedRoots || "any existing directory"],
     [
       "Activity",
       fromTomlValue(readKey(configText, serverEnvTable(), "SOL_LUNA_EVENTS")) ??

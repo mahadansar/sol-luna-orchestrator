@@ -1,8 +1,10 @@
 # Feature Acceptance Ledger
 
 This is the authoritative current capability, evidence, freshness, and
-confidence ledger for the repository. The package version is `0.10.0`, and the
-current main runtime is its release baseline. The current development tree adds
+confidence ledger for the repository. The published package baseline is
+`0.10.0`; the current development tree is commit-relative work after that
+release and still carries the same package version until the release workflow
+performs a deliberate bump. The development tree adds
 P1.0 attempt-usage and failure-evidence hardening plus P1.1 reasoned failure
 decisions to the Thin Supervisor, terminal batch verification, and bounded
 parallel recovery baseline described below. Shipped history belongs in
@@ -10,15 +12,16 @@ parallel recovery baseline described below. Shipped history belongs in
 
 ## Current baseline
 
-- **Runtime baseline:** commit-relative current main for v0.10.0 after the Thin
-  Supervisor work above. Package and lockfile versions are `0.10.0`.
+- **Runtime baseline:** commit-relative current development tree after the
+  published v0.10.0 Thin Supervisor baseline. Package and lockfile versions
+  remain `0.10.0`; that does not make unreleased features part of v0.10.0.
 - **Latest full deterministic validation:** `npm run verify` passed on
-  2026-08-29 with **986/989 tests passed**, no failures and three expected
-  platform-specific Windows skips, plus typecheck and the deterministic MCP
-  protocol smoke test. The count includes the 31 P2.4A acceptance-harness tests
-  in `src/bench/harness.test.ts`. `npm run bench:v3:validate` also passed: every
-  V3 starting state fails, every hidden reference passes, and every mutation and
-  immutable-specification check discriminates.
+  2026-08-29 with no failures and only expected platform-specific skips, plus
+  typecheck and the deterministic MCP protocol smoke test. `npm run verify`
+  invokes `bench:validate`, whose default suite includes V3: every V3 starting
+  state fails, every hidden reference passes, and every mutation and
+  immutable-specification check discriminates. Exact test totals belong in the
+  validation output, not this ledger, so adding a test cannot stale this status.
 - **Current native platform evidence:** deterministic CI covers Windows, Linux,
   and macOS. Focused Linux/POSIX symlink, dependency-link, and process-group
   paths passed natively. Live Codex delegation has representative Windows and
@@ -60,7 +63,7 @@ parallel recovery baseline described below. Shipped history belongs in
 | P1.3 Context lifecycle management (P1.3A/B/C)           | PASS     | PASS          | NOT TESTED    | Strong        |
 | P2.1 Optional Explorer                                  | PASS     | PASS          | NOT TESTED    | Strong        |
 | P2.2 Lightweight Cross-Session Handoff                  | PASS     | PASS          | NOT TESTED    | Strong        |
-| P2.3 End-to-End Automated Workflow                      | PASS     | DEEP PASS     | NOT TESTED    | Strong        |
+| P2.3 End-to-End Automated Workflow                      | PASS     | DEEP PASS     | NOT TESTED    | Basic         |
 | `failureCauses` and verification contradiction handling | PASS     | PASS          | PASS          | Strong        |
 
 Dates, provenance, dependencies, and retest triggers are recorded below. A live
@@ -221,8 +224,9 @@ safe post-delegation context compaction. Handler-owned repair and recovery remai
 the workflow neither re-verifies nor reimplements them. Unrecoverable verification failures, scope violations, untrusted
 results, or missing capabilities yield cleanly to `PARENT_TAKEOVER`. Telemetry events (`workflow.started`,
 `workflow.transition`, `workflow.completed`) contain only allowlisted structural fields and distinguish
-requested, recommended, and executed compute. The 30-test file contains 29 workflow scenarios
-and one report renderer. It proves zero-worker parent takeover, advisory explorer-to-delegation,
+requested, recommended, and executed compute. The workflow suite covers the
+coordinator scenarios and report renderer without treating their count as an
+acceptance contract. It proves zero-worker parent takeover, advisory explorer-to-delegation,
 single delegation, parallel batches, sequential batches, repair, recovery, continuations, effort escalation,
 stronger-executor fallback via explicit `allowedModels` + `executorOrder`, compact authoritative evidence
 on the normal thin-handoff path, failed verification parent takeover,
@@ -250,7 +254,7 @@ universal savings.
 ## Final acceptance boundary (P2.4A)
 
 This is the frozen acceptance boundary for the completed orchestrator, covering
-everything shipped from P1.0 through P2.3. It separates three evidence classes
+everything implemented from P1.0 through P2.3. It separates three evidence classes
 that the rest of this ledger sometimes reports in one column, because they
 support different claims:
 

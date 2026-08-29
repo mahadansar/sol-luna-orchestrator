@@ -66,11 +66,12 @@ Records are appended as the run progresses: batch started, completed, cancelled
 or rejected; task queued; worker started, completed, failed, cancelled or timed
 out; canonical attempt started and completed; worktree created, removed or
 retained; verification started and completed;
-scope conflicts; integration conflicts, applied file counts, and completed,
+scope conflicts; integration conflicts, applied file counts, blocked integration, and completed,
 not-attempted, partial or failed integration; final-workspace verification
 started and completed; bounded repair started and completed; bounded recovery
 skipped, started, and completed; cheap routing preflight, declaration, and
-contradiction records; and safe context pressure evaluation and compaction events.
+contradiction records; safe context pressure evaluation and compaction events;
+and automated workflow started, transition, and completion events.
 
 Every execution for which the runtime invokes the worker SDK has a unique
 `executionId` and emits `attempt.started` before invocation. Unless the host
@@ -89,6 +90,20 @@ categories are `completed`, `timed-out`, `cancelled`, `turn-failed`,
 `runtime-error`; their text is not promoted to a network, transport, provider,
 or implementation classification. Terminal messages and verification output
 remain in structured tool-result evidence, not attempt activity events.
+
+The family list above describes the raw JSONL writer, not the narrower
+`activity` snapshot schema. The current reducer recognizes delegation/attempt,
+worktree, verification, repair/recovery, integration-summary, and exploration
+lifecycle records. It deliberately does not project routing, context,
+`integration.blocked`, or workflow records into the latest-batch snapshot; those
+remain available to consumers of the raw event stream. Unknown records are
+validated out rather than treated as snapshot facts.
+
+There is no separate `shutdown.*` family. Caller cancellation or graceful
+`SIGINT`/`SIGTERM` shutdown uses the ordinary `worker.cancelled`,
+`batch.cancelled`, and canonical cancelled-attempt evidence when those
+lifecycles can settle. If the host process dies before emission, a terminal
+record may be absent; the event log does not manufacture one on restart.
 
 Parallel recovery keeps the original batchId/taskId and emits an explicit attempt
 ordinal. Its classification and concise evidence identify a timeout continuation
@@ -261,6 +276,16 @@ source excerpts, thread ids, raw worker output, capability references, or free-f
 Canonical `attempt.started` and `attempt.completed` records carry the same bounded compute and
 termination evidence as other worker-capacity consumers.
 
+### Workflow telemetry
+
+The automated workflow coordinator emits allowlisted structural events:
+
+- `workflow.started`: emitted when an automated workflow begins execution; records `workflowId`, optional `batchId`, `taskCount`, `requestedMode`, `requestedWorkerCount`, `requestedModels`, `requestedEfforts`, `maxSteps`, `maxEscalations`, `maxContinuations`, `importedContext` flag, and admitted `computePolicy`.
+- `workflow.transition`: emitted on each state machine step transition; records `workflowId`, optional `batchId`, `fromState`, `toState`, `reasonCode`, `stepNumber`, and optional advisory routing fields (`recommendedMode`, `recommendedWorkerCount`, `recommendedConcurrency`, `recommendedEffort`, `selectedModel`, `selectedEffort`).
+- `workflow.completed`: emitted when the workflow reaches a terminal state; records `workflowId`, optional `batchId`, `finalState`, terminal `status`, `durationMs`, `totalSteps`, `passed`, `delegated`, `explored`, `escalated`, `executionMode`, and actually observed executed compute (`executedModels`, `executedEfforts`).
+
+Workflow telemetry uses allowlisted structural fields and never includes prompts, objectives, task context, working-directory or source paths, file contents, raw worker output, verification command outputs, or bearer capability references (`ctr_*`, `hdf_*`). Requested, recommended, and executed compute remain explicitly separated.
+
 ## The two representations of a single delegation
 
 Current behaviour, and the thing most likely to trip up anyone parsing the JSONL
@@ -324,6 +349,10 @@ unknown because they did not prove that every attempted copy succeeded. Human
 and watch views render integration facts without claiming a worktree was kept;
 an actual `worktree.retained` event supplies that separate warning. They do not
 render command output, objectives, thread ids, or raw retention paths.
+Raw `integration.blocked` records identify the excluded task and either a
+`scope-violation` or `protected-control-path` reason; the current reduced
+snapshot derives its public integration summary from the terminal integration
+events above rather than projecting `integration.blocked` itself.
 
 Typed `integration.verification.started` and
 `integration.verification.completed` events are reduced into a separate final

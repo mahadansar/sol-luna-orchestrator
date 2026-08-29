@@ -5,9 +5,9 @@ These instructions apply to the TypeScript runtime, smoke programs, and tests un
 
 ## Architecture and invariants
 
-- `server.ts` exposes `delegate_task` and `delegate_tasks` over stdio. Never write
-  diagnostics to stdout; it is the JSON-RPC transport. Importing `server.ts` must not
-  start the server.
+- `server.ts` exposes `delegate_task`, `delegate_tasks`, `continue_task`,
+  `routing_preflight`, and `explore` over stdio. Never write diagnostics to stdout;
+  it is the JSON-RPC transport. Importing `server.ts` must not start the server.
 - `contract.ts` is the public schema boundary. The hand-written worker output JSON
   Schema must remain strict (`required` fields and `additionalProperties: false`) and
   aligned with parsing, rendering, and tests. Batch task inputs intentionally reuse the
@@ -45,8 +45,8 @@ The same supervisor policy appears in tool descriptions, server instructions,
 `SOL_RULES.md`, and portions of the README. Keep these surfaces consistent. In
 particular:
 
-- routine delegation should explicitly prefer compact result detail, while the schema
-  default remains `full` for compatibility;
+- routine delegation uses the default `resultDetail: "handoff"` for a thin text handoff
+  on clean PASS, while `compact` and `full` explicitly retain structured compatibility forms;
 - compact mode removes only successful verification output from structured results;
 - context capsules are optional, bounded, and omit empty fields;
 - clean verified results use risk-based review, while suspicious evidence still demands

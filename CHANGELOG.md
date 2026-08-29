@@ -41,8 +41,11 @@ All notable changes to this project are documented here. Format follows
   is created. `allowOverlappingScopes: true` downgrades the shared-core gate
   only. Declaring `unknown` biases advice toward solo but never refuses, coupling
   advice never blocks execution, and the card is optional: with none attached,
-  behavior is unchanged. Routing reads no effort, recommends no worker count, and
-  changes no concurrency. New `routing.preflight`, `routing.declared`, and
+  behavior is unchanged. The card itself declares no model or effort. The
+  evaluator derives a bounded execution shape and starting compute selection
+  only from the active operator envelope; those fields remain advisory and
+  never rewrite an admitted task contract or widen concurrency. New
+  `routing.preflight`, `routing.declared`, and
   `routing.contradiction` telemetry records raw declared values, counts, gates,
   signals, and eligibility, and never seam labels, objectives, rationale, scores,
   or cost estimates. Metadata budgets now measure the schemas the server actually
@@ -61,7 +64,13 @@ All notable changes to this project are documented here. Format follows
 - Added the frozen Benchmark V3 routing holdout: nine new deterministic
   engineering fixtures, hidden references, evaluator-only routing categories,
   Solo/Adaptive campaign support, pricing revalidation, checkpoint-compatible
-  evidence, and routing/economic analysis. No model-backed V3 campaign was run.
+  evidence, and routing/economic analysis. The P2.4A freeze-2 review and
+  deterministic harness closure are complete. No model-backed V3 campaign was
+  run; P2.4B remains not executed.
+- Completed the unreleased P1.2 compute-policy/selection, P1.3 context-lifecycle,
+  P2.1 read-only explorer, P2.2 informational cross-session handoff, and P2.3
+  bounded workflow composition surfaces. Their current acceptance is
+  deterministic only; they are not part of the published v0.10.0 package.
 
 ### Fixed
 
@@ -136,8 +145,10 @@ successful response.
   Solo/Adaptive/Forced arms, schema-4 credit telemetry, resumable campaign
   checkpoints, Pareto reporting, selective third-repetition recommendations,
   and committed evidence-qualified campaign results.
-- Added the P2.4A acceptance harness and froze the Benchmark V3 methodology
-  before any model-backed V3 run. The benchmark runner now captures
+- Added the initial P2.4A acceptance-harness foundation and froze Benchmark V3
+  methodology freeze 1 before any model-backed V3 run. The current freeze-2
+  completion is recorded under Unreleased, not as v0.10.0 behavior. The
+  benchmark runner now captures
   reproducibility evidence with every shard — git commit, branch, describe,
   working-tree cleanliness, Node/platform/OS/CPU/timezone, package, npm, Codex
   CLI and SDK versions, the exact invocation, and allowlisted orchestrator

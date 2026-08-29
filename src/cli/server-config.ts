@@ -35,8 +35,8 @@ export interface RegisteredServerConfig {
 }
 
 const configuredEnv = (configText: string, key: string): string | null => {
-  const value = fromTomlValue(readKey(configText, serverEnvTable(), key))?.trim();
-  return value || null;
+  const value = fromTomlValue(readKey(configText, serverEnvTable(), key));
+  return value !== null ? value.trim() : null;
 };
 
 /**

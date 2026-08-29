@@ -83,7 +83,7 @@ function statusCommand(): number {
     ["Max workers", String(serverConfig.maxParallel)],
     ["Compute policy", describeComputePolicy(serverConfig.computePolicy)],
     ["Verification", serverConfig.verificationMode],
-    ["Workspace roots", serverConfig.allowedRoots ?? "any existing directory"],
+    ["Workspace roots", serverConfig.allowedRoots || "any existing directory"],
     [
       "Activity log",
       // Same resolver `activity` uses. Reporting only this shell's environment

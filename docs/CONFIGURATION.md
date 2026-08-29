@@ -147,6 +147,12 @@ separability rather than a worker target.
 
 ### Metadata and thin result fast path
 
+The stdio server registers exactly five MCP tools in a normal parent process:
+`delegate_task`, `delegate_tasks`, `continue_task`, `routing_preflight`, and
+`explore`. A process marked `SOL_LUNA_WORKER=1` registers none. The P2.2
+`SessionHandoffArtifact` helpers and P2.3 `executeWorkflow` coordinator are
+exported programmatic APIs, not additional MCP tools or CLI commands.
+
 The MCP registration advertises a compact routing card and bounded input
 metadata. Output schemas are intentionally not advertised in tool metadata, and
 the advertised input schemas reuse the exact runtime validators/defaults without
@@ -156,8 +162,8 @@ delegation and the parent has to be able to see that from the schema.
 Deterministic metadata-size budgets protect this boundary.
 
 Every budget is checked against the schema the server actually registers.
-`advertisedTotal` is the honest ceiling: instructions, all four tool
-descriptions, and all four input schemas, with the routing card included where it
+`advertisedTotal` is the honest ceiling: instructions, all five tool
+descriptions, and all five input schemas, with the routing card included where it
 is really advertised. `delegationContract` and `routingCombined` split that same
 total by owner so a regression can be attributed to the delegation protocol or to
 routing, and they sum to it exactly — no ceiling is reached by excluding one
@@ -270,6 +276,48 @@ appropriate as an explicit trusted-machine workaround, such as for a diagnosed
 The orchestrator's scope and evidence controls remain active, but they do not
 replace filesystem confinement. After changing an MCP environment value, close
 the current Codex session and open a new one so the server reloads it.
+
+Parsing is intentionally variable-specific; there is no generic permissive
+environment parser:
+
+- `LUNA_TIMEOUT_SECONDS` and `LUNA_VERIFY_TIMEOUT_SECONDS` accept any finite
+  number greater than zero. An empty, non-numeric, zero, negative, or infinite
+  value falls back to its documented default with a startup warning.
+- `SOL_LUNA_MAX_PARALLEL` is converted with `Number`, floored, and clamped to
+  `1..8`; invalid or values below one resolve to `1`.
+  `SOL_LUNA_MAX_WORKERS_PER_BATCH` is likewise floored and capped at `12`, but
+  invalid or values below one resolve to the default `12`. These corrections do
+  not produce a startup warning, so use `status` or `doctor` to inspect the
+  resolved envelope.
+- `SOL_LUNA_ALLOWED_EFFORTS` is case-insensitive, comma-separated, and
+  order-insensitive. Unknown entries are dropped when at least one usable effort
+  remains; an empty or wholly unusable list falls back to all four efforts. That
+  fallback can be wider than a mistyped intended restriction, so confirm it with
+  `status` or `doctor`.
+- `SOL_LUNA_ALLOWED_MODELS` and `SOL_LUNA_EXECUTOR_ORDER` are comma-separated,
+  trimmed model names. The configured `LUNA_MODEL` is always added to the
+  authorized model set. An executor order grants no model membership and is
+  ignored with a warning unless it is the complete duplicate-free authorized
+  set starting at `LUNA_MODEL`.
+- The escalation flags are opt-outs: only the exact value `0` disables them.
+  The network, dirty-worktree, verification-environment passthrough, and worker
+  marker flags are opt-ins: only the exact value `1` enables them.
+- `SOL_LUNA_VERIFY_MODE` is case-insensitive but not whitespace-trimmed; an
+  unrecognized value falls back to `allowlist` with a warning.
+  `SOL_LUNA_VERIFY_ALLOW` and `SOL_LUNA_WORKTREE_LINK` are comma-separated and
+  trimmed. Extra verification entries may be bare executable names or explicit
+  operator-authorized paths; worktree-link entries name shared directories, so
+  an empty list disables dependency linking.
+- `SOL_LUNA_ALLOWED_ROOTS` uses the platform path-list delimiter (`;` on
+  Windows, `:` on POSIX). Each delegation canonicalizes the requested workspace
+  and configured roots before applying the boundary. An unset or empty list
+  permits any existing non-control-metadata directory; it never overrides the
+  protected `.git` and `.sol-luna` rules.
+- `LUNA_MODEL`, `SOL_LUNA_SERVER_NAME`, `SOL_LUNA_EVENTS`, and `SOL_LUNA_LOG`
+  are literal strings with no runtime value validation. An unset or empty log
+  path disables that sink. `init` supplies non-empty defaults and the registered
+  server name; a hand-written empty or incorrect model/server value can instead
+  cause execution or recursion-isolation setup to fail.
 
 Every variable above configures this orchestrator and its workers. None of them
 reaches the parent — the parent model and effort are set in your Codex session,
@@ -433,10 +481,11 @@ removed, the continuation reference is omitted, and its lease is released.
 
 Detailed information about the diagnostic log (`SOL_LUNA_LOG`), the structured event stream (`SOL_LUNA_EVENTS`), privacy implications, and telemetry representations can be found in [Observability](OBSERVABILITY.md).
 
-The effective log paths are resolved in this order, highest first:
+The activity path used by the standalone CLI is resolved in this order, highest
+first:
 
-1. `SOL_LUNA_EVENTS` / `SOL_LUNA_LOG` in the current process — a deliberate one-off override.
-2. `SOL_LUNA_EVENTS` / `SOL_LUNA_LOG` in the registered server's `env` table, which is what `init` writes and the running server uses.
+1. `SOL_LUNA_EVENTS` in the current CLI process — a deliberate one-off override.
+2. `SOL_LUNA_EVENTS` in the registered server's `env` table, which is what `init` writes and the running server uses.
 3. Nothing, in which case `activity` tells you to run `init`.
 
 The default is `sol-luna-orchestrator.events.jsonl` inside your Codex home, so
@@ -446,7 +495,11 @@ you happened to run `init` from. Choose another with
 existing value because you asked it to; a plain `init` never overwrites a path
 you set. `--log` behaves the same way for the diagnostic log.
 
-`sol-luna-orchestrator status` shows the effective path and where it came from.
+`sol-luna-orchestrator status` shows the effective activity path and where it
+came from. The diagnostic sink is simpler: the MCP server reads
+`SOL_LUNA_LOG` from its own process environment. `init` normally supplies that
+through the registered server's `env` table, while the standalone CLI neither
+reads nor overrides the already-running server's diagnostic destination.
 The CLI and the server are separate processes: exporting `SOL_LUNA_EVENTS` in
 the shell you run the CLI from changes what the CLI reads, not what the
 already-running server writes. When the two disagree, the running server and
@@ -549,7 +602,9 @@ reasoning-effort value.
 ## End-to-end automated workflow
 
 The orchestrator includes a unified workflow engine (`executeWorkflow` in `src/workflow.ts`)
-that automates the end-to-end delegation lifecycle within strict supervisory bounds:
+that automates the end-to-end delegation lifecycle within strict supervisory bounds.
+It is currently a programmatic composition surface, not a sixth registered MCP
+tool and not a CLI command:
 
 1. **State Machine Lifecycle:** Executes a bounded 13-state sequence:
    - `assessing`: Validates input contracts, objectives, and optional historical context.

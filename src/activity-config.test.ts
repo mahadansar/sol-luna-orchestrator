@@ -81,6 +81,24 @@ test("registered policy keeps model authorization separate from executor order",
   assert.deepEqual(resolved.executorOrder, ["base-model", "stronger-model"]);
 });
 
+test("registered configuration preserves explicit empty strings without converting them to unset nulls", () => {
+  let config = REALISTIC;
+  config = upsertKey(config, serverEnvTable(), "LUNA_MODEL", "");
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_MAX_PARALLEL", "");
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_SERVER_NAME", "");
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_VERIFY_MODE", "");
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_ALLOWED_ROOTS", "");
+
+  const resolved = resolveRegisteredServerConfig(config);
+  assert.equal(resolved.workerModel, "");
+  assert.equal(resolved.maxParallel, 1);
+  assert.equal(resolved.recursionDisableTarget, "");
+  assert.equal(resolved.verificationMode, "allowlist");
+  assert.equal(resolved.allowedRoots, "");
+  assert.deepEqual(resolved.computePolicy.allowedModels, [""]);
+  assert.equal(resolved.computePolicy.maxConcurrency, 1);
+});
+
 /** What a v0.6.0 install looks like: registered, configured, no event path. */
 const V060 = `[mcp_servers.sol-luna-orchestrator]
 command = "/usr/bin/node"

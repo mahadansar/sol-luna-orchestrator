@@ -257,9 +257,9 @@ export async function collectChecks(): Promise<Check[]> {
   checks.push({
     name: "Workspace confinement",
     status: "ok",
-    detail:
-      serverConfig.allowedRoots ??
-      "any existing directory (SOL_LUNA_ALLOWED_ROOTS unset)",
+    detail: serverConfig.allowedRoots
+      ? serverConfig.allowedRoots
+      : "any existing directory (SOL_LUNA_ALLOWED_ROOTS unset)",
   });
 
   return checks;

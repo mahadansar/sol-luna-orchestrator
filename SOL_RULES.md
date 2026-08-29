@@ -84,9 +84,12 @@ API, or documentation before designing task boundaries or deciding whether to de
   - `recommendedSeams`: suggested decoupled seams for supervisor delegation planning.
 - **No Delegation or Implementation**: The explorer implements nothing and cannot delegate
   further or spawn recursive explorers.
-- **Explicit Read Admission**: `scope` is required. Forbidden files, `.git`, `.sol-luna`, and
-  environment files are not copied into the disposable surface. Model-reported file references
-  cannot expand the admitted scope.
+- **Explicit Read Admission**: `scope` is required. Caller-forbidden files,
+  `.git`, `.sol-luna`, and the fixed conventional-credential denylist (`.env`,
+  `.env.*`, `.envrc`, `.npmrc`, `.netrc`, `_netrc`, `.aws/credentials`, and
+  `.git-credentials`, at any depth) are not copied into the disposable surface.
+  This is not a general secret scanner; add broader exclusions explicitly.
+  Model-reported file references cannot expand the admitted scope.
 - **Context Compaction**: Clean exploration turns compact structured findings into context
   history, preserving facts, inferences, and candidate seams across the session.
 
