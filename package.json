@@ -85,7 +85,6 @@
     "@openai/codex-sdk": "^0.147.0",
     "cross-spawn": "^7.0.6",
     "picomatch": "^4.0.5",
-    "smol-toml": "^1.8.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -93,6 +92,7 @@
     "@types/node": "^26.2.0",
     "@types/picomatch": "^4.0.3",
     "prettier": "^3.9.6",
+    "smol-toml": "^1.8.0",
     "tsx": "^4.23.12",
     "typescript": "^7.0.2"
   }

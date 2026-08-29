@@ -101,7 +101,7 @@ export interface CheckpointFinding {
   location?: string;
 }
 
-const sha256 = (value: string): string =>
+const sha256 = (value: string | Buffer): string =>
   crypto.createHash("sha256").update(value, "utf8").digest("hex");
 
 const trimmed = (value: string | null): string | null => {
@@ -398,9 +398,32 @@ interface V3ShardSummary {
 interface V3EventStreamSummary {
   file: string;
   byteLength: number | null;
-  /** Which shard, if any, shares this stream's timestamp prefix. */
-  attribution: "v3" | "v2" | "other-suite" | "ambiguous";
+  contentSha256: string | null;
+  attribution: "v3" | "v2" | "other-suite" | "historical-non-v3" | "ambiguous";
+  attributionEvidence:
+    | "same-stamp-v3-shard"
+    | "same-stamp-v2-shard"
+    | "same-stamp-other-suite-shard"
+    | "reviewed-pre-v3-content-sha256"
+    | "unclassified";
 }
+
+/**
+ * Content identities independently reviewed as pre-V3 benchmark activity.
+ * Filenames are intentionally absent: a byte-for-byte copy has the same
+ * provenance, while any mutation falls back to conservative ambiguity.
+ */
+export const REVIEWED_PRE_V3_EVENT_STREAM_SHA256 = new Set([
+  "f7ada115134d32ed21ddb019727acfd16bbb66a0fe2985906665aa2f276a1f68",
+  "113408454bc3f4e06c9009b6ed50960a399a3a479b1ec833c5b6b4e5e77b549b",
+  "dead19ae3827268f12b5d118e50b963f39ca42879d32a3859f2682815c5d14fb",
+  "2b99857fc256d6a8c96fb62aeb61ed2ca90eee5854bfa308e1836d019f8623ea",
+  "bbdb15197348b58618bccd90550d158a541e596e1f828d4eca24402668b57c78",
+  "ed126130e113e8dad6b2cfaa0f38b949dadf20b1cb37a76a182ac0a2623d7799",
+  "5a1ef71fa41c75ce2aca06b181b6141937489691102535b454d484ee63d57261",
+  "e13a8d9e1310fd845bf4a57bc10066c70dd1390227b4861b1dc725b6358b1f81",
+  "4824af3c246bc7a34f834b72cc406744f6c4457902cdb7d73dcbe7390bd6d8ea",
+]);
 
 interface V3LaunchMarkerSummary {
   file: string;
@@ -536,29 +559,62 @@ export function deriveV3ExecutionHistory(
     });
   }
 
-  const attributionOf = (stamp: string): V3EventStreamSummary["attribution"] => {
+  const attributionOf = (
+    stamp: string,
+    contentSha256: string | null,
+  ): Pick<V3EventStreamSummary, "attribution" | "attributionEvidence"> => {
     const v3 = shards.find((shard) => shard.file === `${stamp}.v3.json`);
-    if (v3 !== undefined) return v3.classification === "valid" ? "v3" : "ambiguous";
-    if (names.includes(`${stamp}.v2.json`)) return "v2";
+    if (v3 !== undefined) {
+      return {
+        attribution: v3.classification === "valid" ? "v3" : "ambiguous",
+        attributionEvidence: "same-stamp-v3-shard",
+      };
+    }
+    if (names.includes(`${stamp}.v2.json`)) {
+      return { attribution: "v2", attributionEvidence: "same-stamp-v2-shard" };
+    }
     const knownOtherSuite = [
       `${stamp}.json`,
       `${stamp}.parallel.json`,
       `${stamp}.scale.json`,
     ].some((candidate) => names.includes(candidate));
-    return knownOtherSuite ? "other-suite" : "ambiguous";
+    if (knownOtherSuite) {
+      return {
+        attribution: "other-suite",
+        attributionEvidence: "same-stamp-other-suite-shard",
+      };
+    }
+    if (
+      contentSha256 !== null &&
+      REVIEWED_PRE_V3_EVENT_STREAM_SHA256.has(contentSha256)
+    ) {
+      return {
+        attribution: "historical-non-v3",
+        attributionEvidence: "reviewed-pre-v3-content-sha256",
+      };
+    }
+    return { attribution: "ambiguous", attributionEvidence: "unclassified" };
   };
 
   for (const name of names.filter((candidate) => candidate.endsWith(".events.jsonl"))) {
     let byteLength: number | null = null;
+    let contentSha256: string | null = null;
     try {
-      byteLength = fs.statSync(path.join(resultsDir, name)).size;
+      const content = fs.readFileSync(path.join(resultsDir, name));
+      byteLength = content.byteLength;
+      contentSha256 = sha256(content);
     } catch {
       byteLength = null;
     }
+    const attribution = attributionOf(
+      name.slice(0, -".events.jsonl".length),
+      contentSha256,
+    );
     eventStreams.push({
       file: name,
       byteLength,
-      attribution: attributionOf(name.slice(0, -".events.jsonl".length)),
+      contentSha256,
+      ...attribution,
     });
   }
 
@@ -663,12 +719,14 @@ export function deriveV3ExecutionHistory(
     derivation:
       "Derived from valid, invalid, and unreadable bench/results/*.v3.json shards; " +
       "the durable *.v3-launch.json record written immediately before the first " +
-      "SDK call; and non-empty event streams. Campaign identity comes from valid " +
-      "live evidence, never from a checkpoint.",
+      "SDK call; and non-empty event streams attributed by same-stamp suite evidence " +
+      "or reviewed pre-V3 content identity. Campaign identity comes from valid live " +
+      "evidence, never from a checkpoint.",
     limitation:
-      "A non-empty stream without a valid same-stamp suite shard is ambiguous. It " +
-      "blocks freshness rather than being treated as proof that V3 never ran. " +
-      "Inherited SDK, CLI, and OS state remains outside repository control.",
+      "A non-empty stream without same-stamp suite evidence or an exact reviewed " +
+      "pre-V3 content identity is ambiguous. It blocks freshness rather than being " +
+      "treated as proof that V3 never ran. Inherited SDK, CLI, and OS state remains " +
+      "outside repository control.",
   };
 }
 

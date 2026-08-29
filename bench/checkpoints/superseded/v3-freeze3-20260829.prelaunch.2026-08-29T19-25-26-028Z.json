@@ -1,7 +1,7 @@
 {
   "schema": "sol-luna/bench/v3-prelaunch-checkpoint@3",
   "title": "Benchmark V3 / freeze 3 pre-launch checkpoint",
-  "generatedAt": "2026-08-29T19:25:21.704Z",
+  "generatedAt": "2026-08-29T18:45:15.882Z",
   "generatedBy": "npm run bench:v3:checkpoint (dist/bench/prelaunch.js)",
   "launchReadiness": "blocked",
   "blockers": [
@@ -14,6 +14,15 @@
       "clears": "Commit the frozen bench/V3_METHODOLOGY.md, repin BENCHMARK_V3_FREEZE_SHA to that commit, and set BENCHMARK_V3_FREEZE_SHA_IS_CURRENT to true."
     },
     {
+      "id": "prior-live-v3-execution-evidence",
+      "severity": "blocking",
+      "summary": "Fresh V3 launch cannot be proven from bench/results: 0 valid completed run record(s), plus 9 ambiguous event stream(s).",
+      "why": "Freshness is derived from authoritative and ambiguous evidence, never asserted. A false positive requires operator review; a false claim that V3 never launched would invalidate the freeze boundary.",
+      "ownedBy": "benchmark owner",
+      "clears": "Review the existing V3 evidence and decide explicitly whether this is a new campaign, a resumption, or a re-analysis before launching.",
+      "location": "bench/results"
+    },
+    {
       "id": "pricing-profile-unverified",
       "severity": "blocking",
       "summary": "The configured pricing profile benchmark-v2-chatgpt-plus-codex-credits-2026-08-24 has not been revalidated against the account and credit schedule that will execute V3.",
@@ -24,7 +33,7 @@
     {
       "id": "working-tree-not-clean",
       "severity": "blocking-procedural",
-      "summary": "8 path(s) differ from the recorded commit, including this checkpoint itself.",
+      "summary": "21 path(s) differ from the recorded commit, including this checkpoint itself.",
       "why": "A V3 launch refuses a dirty tree because the recorded commit would not describe the code that ran.",
       "ownedBy": "launch operator",
       "clears": "Commit the freeze revision and this checkpoint — the methodology requires the checkpoint be retained before live execution — then confirm `git status --porcelain` is empty immediately before launching."
@@ -36,12 +45,6 @@
       "severity": "non-blocking",
       "summary": "currentCampaignCompatibility and buildResultsSnapshot use the frozen V2 pricing profile for V3; there is no CLI flag to select another.",
       "impact": "If revalidation finds rate drift, a harness change is required before launch. That is a harness change, not a methodology change, and does not disturb the digest gate."
-    },
-    {
-      "id": "head-is-not-the-production-baseline",
-      "severity": "non-blocking",
-      "summary": "HEAD (728a8b04beb46a4adf27ad5c88f163a9cf1decb8) is not the pinned production baseline df215a170e6a88a6097c56f7ca404358d9d4b050.",
-      "impact": "The commit that actually executes is recorded separately in environment.git.commit; a report must not present HEAD as the baseline."
     }
   ],
   "campaign": {
@@ -63,7 +66,7 @@
     "reusesEarlierFreezeCampaignIdentity": false,
     "liveV3RunsExecutedToDate": 0,
     "liveV3RunsForThisCampaign": 0,
-    "freshLaunch": true
+    "freshLaunch": false
   },
   "executionHistory": {
     "resultsDirectory": "bench/results",
@@ -73,191 +76,137 @@
       {
         "file": "2026-08-14T17-34-04-390Z.events.jsonl",
         "byteLength": 7108,
-        "contentSha256": "92eb277851bd154f749d93d7bdc0204a6cef1236c880dc0ffc9acb6103ece5ea",
-        "attribution": "other-suite",
-        "attributionEvidence": "same-stamp-other-suite-shard"
+        "attribution": "other-suite"
       },
       {
         "file": "2026-08-14T17-38-51-964Z.events.jsonl",
         "byteLength": 14240,
-        "contentSha256": "7645ad493fb47acb5681c127ff2e140d72d6f6e4f9d0bcd0c01458f3e61a4e06",
-        "attribution": "other-suite",
-        "attributionEvidence": "same-stamp-other-suite-shard"
+        "attribution": "other-suite"
       },
       {
         "file": "2026-08-14T17-57-16-992Z.events.jsonl",
         "byteLength": 21169,
-        "contentSha256": "aa6652d07585a1a20121e002dcf27df05a005ad1e7bee62203ba4d7587230b5d",
-        "attribution": "other-suite",
-        "attributionEvidence": "same-stamp-other-suite-shard"
+        "attribution": "other-suite"
       },
       {
         "file": "2026-08-14T18-23-37-381Z.events.jsonl",
         "byteLength": 1995,
-        "contentSha256": "f3c60b78af34524d392f7ccf766a58db05cc801594b3a40cd43f3dfdf0f54b03",
-        "attribution": "other-suite",
-        "attributionEvidence": "same-stamp-other-suite-shard"
+        "attribution": "other-suite"
       },
       {
         "file": "2026-08-20T18-12-03-761Z.events.jsonl",
         "byteLength": 15040,
-        "contentSha256": "f7ada115134d32ed21ddb019727acfd16bbb66a0fe2985906665aa2f276a1f68",
-        "attribution": "historical-non-v3",
-        "attributionEvidence": "reviewed-pre-v3-content-sha256"
+        "attribution": "ambiguous"
       },
       {
         "file": "2026-08-20T18-15-24-879Z.events.jsonl",
         "byteLength": 10645,
-        "contentSha256": "113408454bc3f4e06c9009b6ed50960a399a3a479b1ec833c5b6b4e5e77b549b",
-        "attribution": "historical-non-v3",
-        "attributionEvidence": "reviewed-pre-v3-content-sha256"
+        "attribution": "ambiguous"
       },
       {
         "file": "2026-08-20T18-57-45-324Z.events.jsonl",
         "byteLength": 10585,
-        "contentSha256": "dead19ae3827268f12b5d118e50b963f39ca42879d32a3859f2682815c5d14fb",
-        "attribution": "historical-non-v3",
-        "attributionEvidence": "reviewed-pre-v3-content-sha256"
+        "attribution": "ambiguous"
       },
       {
         "file": "2026-08-20T19-06-41-710Z.events.jsonl",
         "byteLength": 21056,
-        "contentSha256": "2b99857fc256d6a8c96fb62aeb61ed2ca90eee5854bfa308e1836d019f8623ea",
-        "attribution": "historical-non-v3",
-        "attributionEvidence": "reviewed-pre-v3-content-sha256"
+        "attribution": "ambiguous"
       },
       {
         "file": "2026-08-21T15-39-16-196Z.events.jsonl",
         "byteLength": 10644,
-        "contentSha256": "bbdb15197348b58618bccd90550d158a541e596e1f828d4eca24402668b57c78",
-        "attribution": "historical-non-v3",
-        "attributionEvidence": "reviewed-pre-v3-content-sha256"
+        "attribution": "ambiguous"
       },
       {
         "file": "2026-08-21T15-47-28-275Z.events.jsonl",
         "byteLength": 21067,
-        "contentSha256": "ed126130e113e8dad6b2cfaa0f38b949dadf20b1cb37a76a182ac0a2623d7799",
-        "attribution": "historical-non-v3",
-        "attributionEvidence": "reviewed-pre-v3-content-sha256"
+        "attribution": "ambiguous"
       },
       {
         "file": "2026-08-21T16-33-10-271Z.events.jsonl",
         "byteLength": 10651,
-        "contentSha256": "5a1ef71fa41c75ce2aca06b181b6141937489691102535b454d484ee63d57261",
-        "attribution": "historical-non-v3",
-        "attributionEvidence": "reviewed-pre-v3-content-sha256"
+        "attribution": "ambiguous"
       },
       {
         "file": "2026-08-21T16-46-14-787Z.events.jsonl",
         "byteLength": 21072,
-        "contentSha256": "e13a8d9e1310fd845bf4a57bc10066c70dd1390227b4861b1dc725b6358b1f81",
-        "attribution": "historical-non-v3",
-        "attributionEvidence": "reviewed-pre-v3-content-sha256"
+        "attribution": "ambiguous"
       },
       {
         "file": "2026-08-21T18-33-29-191Z.events.jsonl",
         "byteLength": 8495,
-        "contentSha256": "4824af3c246bc7a34f834b72cc406744f6c4457902cdb7d73dcbe7390bd6d8ea",
-        "attribution": "historical-non-v3",
-        "attributionEvidence": "reviewed-pre-v3-content-sha256"
+        "attribution": "ambiguous"
       },
       {
         "file": "2026-08-24T17-57-14-853Z.events.jsonl",
         "byteLength": 31691,
-        "contentSha256": "32be2d860b9561a59c5da502ad94ac5196490eb302650a76c891b93f763189f7",
-        "attribution": "v2",
-        "attributionEvidence": "same-stamp-v2-shard"
+        "attribution": "v2"
       },
       {
         "file": "2026-08-24T19-13-58-251Z.events.jsonl",
         "byteLength": 42566,
-        "contentSha256": "5e9a413dca02e8cab27429e3cd966623a49c6751f8ce9da46047ffb6732f1ce0",
-        "attribution": "v2",
-        "attributionEvidence": "same-stamp-v2-shard"
+        "attribution": "v2"
       },
       {
         "file": "2026-08-24T20-22-56-716Z.events.jsonl",
         "byteLength": 17542,
-        "contentSha256": "bc2b9a34f1875c2f54ce6d42c19a1a807cea0f067ad3c3a47d99a6b015b16398",
-        "attribution": "v2",
-        "attributionEvidence": "same-stamp-v2-shard"
+        "attribution": "v2"
       },
       {
         "file": "2026-08-24T20-45-06-971Z.events.jsonl",
         "byteLength": 16088,
-        "contentSha256": "c8ce24375fadb361aac09e798ddb2efd40235d63f2be3a6f1ae19d58923391c1",
-        "attribution": "v2",
-        "attributionEvidence": "same-stamp-v2-shard"
+        "attribution": "v2"
       },
       {
         "file": "2026-08-24T22-19-09-889Z.events.jsonl",
         "byteLength": 14144,
-        "contentSha256": "0927f90524ce9f878c0ae7fd98d2913add9b1578481bfc9804aebc9815a73a76",
-        "attribution": "v2",
-        "attributionEvidence": "same-stamp-v2-shard"
+        "attribution": "v2"
       },
       {
         "file": "2026-08-24T22-40-55-465Z.events.jsonl",
         "byteLength": 8041,
-        "contentSha256": "eed33ce85b0334745956d5a62502cfb5753107bd8a709d7de916b8c7a6a85432",
-        "attribution": "v2",
-        "attributionEvidence": "same-stamp-v2-shard"
+        "attribution": "v2"
       },
       {
         "file": "2026-08-24T23-03-32-785Z.events.jsonl",
         "byteLength": 14141,
-        "contentSha256": "648f2d3e16a6349d556612cc97e3ceb5ce99a5e2fee4a2ed81612326ac1f03d7",
-        "attribution": "v2",
-        "attributionEvidence": "same-stamp-v2-shard"
+        "attribution": "v2"
       },
       {
         "file": "2026-08-24T23-22-14-757Z.events.jsonl",
         "byteLength": 8045,
-        "contentSha256": "307a3999f54ac4f985ae25944be80559a0e7b857799389b570147a5a7b17cc0b",
-        "attribution": "v2",
-        "attributionEvidence": "same-stamp-v2-shard"
+        "attribution": "v2"
       },
       {
         "file": "2026-08-25T03-03-00-164Z.events.jsonl",
         "byteLength": 14664,
-        "contentSha256": "89fbc30e148a7b51b74a8ec23160c28a902381634925bc2ad6708fb50a233b53",
-        "attribution": "v2",
-        "attributionEvidence": "same-stamp-v2-shard"
+        "attribution": "v2"
       },
       {
         "file": "2026-08-25T03-18-30-270Z.events.jsonl",
         "byteLength": 8320,
-        "contentSha256": "eedc379e4ef2d0c84b17e65a60b1ce4aecb19f8fc875e59485c0482081f2cb55",
-        "attribution": "v2",
-        "attributionEvidence": "same-stamp-v2-shard"
+        "attribution": "v2"
       },
       {
         "file": "2026-08-25T03-26-06-648Z.events.jsonl",
         "byteLength": 47786,
-        "contentSha256": "8e65ab982c70da66cddbef9b5a4fdb6a3a6ff666687c0619d90d64a5f883fbda",
-        "attribution": "v2",
-        "attributionEvidence": "same-stamp-v2-shard"
+        "attribution": "v2"
       },
       {
         "file": "2026-08-25T04-40-36-356Z.events.jsonl",
         "byteLength": 45981,
-        "contentSha256": "cd22ce65eff292f32b84da459f2cd4950ef7f60f55252d2196ef66706dbe4ad8",
-        "attribution": "v2",
-        "attributionEvidence": "same-stamp-v2-shard"
+        "attribution": "v2"
       },
       {
         "file": "2026-08-25T05-11-18-503Z.events.jsonl",
         "byteLength": 14695,
-        "contentSha256": "0ac9618b5a6d26c6b0b8beb0ad4e9ace69e34711b5aa69ebd9ec6432767b0d3f",
-        "attribution": "v2",
-        "attributionEvidence": "same-stamp-v2-shard"
+        "attribution": "v2"
       },
       {
         "file": "2026-08-25T05-24-19-654Z.events.jsonl",
         "byteLength": 6368,
-        "contentSha256": "47b2cbb4e790ce9e5e8904944f7923af3b5e68677bc173694afe8bf3309e1e58",
-        "attribution": "v2",
-        "attributionEvidence": "same-stamp-v2-shard"
+        "attribution": "v2"
       }
     ],
     "launchMarkers": [],
@@ -273,21 +222,31 @@
     "invalidV3Shards": [],
     "unreadableV3Shards": [],
     "v3EventStreamsWithTelemetry": [],
-    "ambiguousEventStreams": [],
+    "ambiguousEventStreams": [
+      "2026-08-20T18-12-03-761Z.events.jsonl",
+      "2026-08-20T18-15-24-879Z.events.jsonl",
+      "2026-08-20T18-57-45-324Z.events.jsonl",
+      "2026-08-20T19-06-41-710Z.events.jsonl",
+      "2026-08-21T15-39-16-196Z.events.jsonl",
+      "2026-08-21T15-47-28-275Z.events.jsonl",
+      "2026-08-21T16-33-10-271Z.events.jsonl",
+      "2026-08-21T16-46-14-787Z.events.jsonl",
+      "2026-08-21T18-33-29-191Z.events.jsonl"
+    ],
     "invalidOrUnreadableLaunchMarkers": [],
     "launchMarkerCampaignIds": [],
     "launchMarkerExistsForThisCampaign": false,
     "collidesWithPriorResultCampaignId": false,
     "retainedCheckpointExistsForThisCampaign": true,
-    "freshLaunch": true,
-    "derivation": "Derived from valid, invalid, and unreadable bench/results/*.v3.json shards; the durable *.v3-launch.json record written immediately before the first SDK call; and non-empty event streams attributed by same-stamp suite evidence or reviewed pre-V3 content identity. Campaign identity comes from valid live evidence, never from a checkpoint.",
-    "limitation": "A non-empty stream without same-stamp suite evidence or an exact reviewed pre-V3 content identity is ambiguous. It blocks freshness rather than being treated as proof that V3 never ran. Inherited SDK, CLI, and OS state remains outside repository control."
+    "freshLaunch": false,
+    "derivation": "Derived from valid, invalid, and unreadable bench/results/*.v3.json shards; the durable *.v3-launch.json record written immediately before the first SDK call; and non-empty event streams. Campaign identity comes from valid live evidence, never from a checkpoint.",
+    "limitation": "A non-empty stream without a valid same-stamp suite shard is ambiguous. It blocks freshness rather than being treated as proof that V3 never ran. Inherited SDK, CLI, and OS state remains outside repository control."
   },
   "freezeIntegrity": {
     "methodologyPath": "bench/V3_METHODOLOGY.md",
     "freezeReview": "freeze 3 (P2.4B pre-launch)",
-    "expectedDigest": "b7b7f5e504646e59040c24a0f0f82cf39c337c0d748a7c6dc2fe8ecc39f012f7",
-    "workingTreeDigest": "b7b7f5e504646e59040c24a0f0f82cf39c337c0d748a7c6dc2fe8ecc39f012f7",
+    "expectedDigest": "a08ccb260c6691faa3fd3722dcccc67791f495e843c6231ae591d8af11409f94",
+    "workingTreeDigest": "a08ccb260c6691faa3fd3722dcccc67791f495e843c6231ae591d8af11409f94",
     "digestGate": "pass",
     "digestRecomputedBy": "methodologyDigest() over the committed document",
     "supersededFreeze2Digest": "af4860bed58f21c103c5f921c4ae3bd561cf2e0943cd1dd12b899a34a4bacc87",
@@ -306,9 +265,9 @@
       "committedAt": "2026-08-29T20:21:53+05:00",
       "packageVersionAtBaseline": "0.11.0"
     },
-    "headCommit": "728a8b04beb46a4adf27ad5c88f163a9cf1decb8",
-    "headBranch": "benchmark-v3-wip",
-    "headIsProductionBaseline": false,
+    "headCommit": "df215a170e6a88a6097c56f7ca404358d9d4b050",
+    "headBranch": "main",
+    "headIsProductionBaseline": true,
     "distinction": "holdoutFreezeSha identifies the reviewed methodology; productionBaseline identifies the released product under evaluation. They are different concepts and are never set from one another."
   },
   "productionBaselineRuntime": {
@@ -734,13 +693,13 @@
     ]
   },
   "environment": {
-    "capturedAt": "2026-08-29T19:25:21.706Z",
+    "capturedAt": "2026-08-29T18:45:15.884Z",
     "git": {
-      "commit": "728a8b04beb46a4adf27ad5c88f163a9cf1decb8",
-      "branch": "benchmark-v3-wip",
-      "describe": "v0.11.0-1-g728a8b0-dirty",
+      "commit": "df215a170e6a88a6097c56f7ca404358d9d4b050",
+      "branch": "main",
+      "describe": "v0.11.0-dirty",
       "workingTreeClean": false,
-      "dirtyPathCount": 8
+      "dirtyPathCount": 21
     },
     "runtime": {
       "nodeVersion": "v26.7.0",
@@ -791,9 +750,15 @@
         "DISPLAY",
         "DriverData",
         "EDITOR",
+        "EFC_5104_1262719628",
         "EFC_5104_1592913036",
+        "EFC_5104_2283032206",
+        "EFC_5104_2775293581",
+        "EFC_5104_3789132940",
         "EFC_5104_4126798990",
         "EXEPATH",
+        "FPS_BROWSER_APP_PROFILE_STRING",
+        "FPS_BROWSER_USER_PROFILE_STRING",
         "GDAL_DATA",
         "GH_PAGER",
         "GIT_ASKPASS",
@@ -903,8 +868,8 @@
         "npm_package_name",
         "npm_package_version"
       ],
-      "nameCount": 138,
-      "namesSha256": "0c77f801aa40f9c1402acae38b516451a4b84f970feba2eccdf07a7d738bd32e",
+      "nameCount": 144,
+      "namesSha256": "6a6c42ecbf4753ebed1f6864bc94bc1b00bbd51acecd8cf71a33b21d217ccf30",
       "entries": [
         {
           "name": "ACLOCAL_PATH",
@@ -1026,7 +991,23 @@
           "representation": "presence-only"
         },
         {
+          "name": "EFC_5104_1262719628",
+          "representation": "presence-only"
+        },
+        {
           "name": "EFC_5104_1592913036",
+          "representation": "presence-only"
+        },
+        {
+          "name": "EFC_5104_2283032206",
+          "representation": "presence-only"
+        },
+        {
+          "name": "EFC_5104_2775293581",
+          "representation": "presence-only"
+        },
+        {
+          "name": "EFC_5104_3789132940",
           "representation": "presence-only"
         },
         {
@@ -1035,6 +1016,14 @@
         },
         {
           "name": "EXEPATH",
+          "representation": "presence-only"
+        },
+        {
+          "name": "FPS_BROWSER_APP_PROFILE_STRING",
+          "representation": "presence-only"
+        },
+        {
+          "name": "FPS_BROWSER_USER_PROFILE_STRING",
           "representation": "presence-only"
         },
         {
@@ -1477,13 +1466,13 @@
         "verbatim": 2,
         "url-redacted": 0,
         "trust-material-fingerprint": 1,
-        "presence-only": 134,
+        "presence-only": 140,
         "credential-opaque": 1
       },
       "credentialShapedNames": [
         "CODEX_SESSION_ID"
       ],
-      "opaqueValueCount": 135
+      "opaqueValueCount": 141
     },
     "codex": {
       "homeSource": "default",
@@ -1566,18 +1555,18 @@
         "driftPrevention": "src/bench/harness.test.ts performs a defense-in-depth syntactic scan for the explicitly supported direct process.env access forms and fails when one is in neither list. It is not a semantic proof of computed, indirect, or future access patterns, and detects nothing read by the Codex SDK, the Codex CLI, Node, or the operating system."
       },
       "ambient": {
-        "nameCount": 138,
-        "namesSha256": "0c77f801aa40f9c1402acae38b516451a4b84f970feba2eccdf07a7d738bd32e",
+        "nameCount": 144,
+        "namesSha256": "6a6c42ecbf4753ebed1f6864bc94bc1b00bbd51acecd8cf71a33b21d217ccf30",
         "counts": {
           "production-owned": 0,
           "verbatim": 2,
           "url-redacted": 0,
           "trust-material-fingerprint": 1,
-          "presence-only": 134,
+          "presence-only": 140,
           "credential-opaque": 1
         },
         "credentialShapedNameCount": 1,
-        "opaqueValueCount": 135,
+        "opaqueValueCount": 141,
         "safeValueKeys": [
           "LANG",
           "LC_ALL",

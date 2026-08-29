@@ -145,6 +145,38 @@ export const SUITES = {
 } as const;
 export type SuiteName = keyof typeof SUITES;
 
+export interface RunArmTimingPreparation {
+  /** Retained only for Adaptive V3's mandatory post-cell identity comparison. */
+  readonly baselinePre: ProductionBaselineRuntime | null;
+  readonly startedAt: string;
+  readonly startMs: number;
+}
+
+/**
+ * Equalize V3's sealed-artifact cache preparation before either arm's clock.
+ * Solo deliberately discards the observation; Adaptive retains it for the
+ * frozen-digest preflight and post-cell comparison.
+ */
+export function prepareRunArmTiming(
+  suite: SuiteName,
+  delegationEnabled: boolean,
+  dependencies: {
+    captureBaseline?: () => ProductionBaselineRuntime;
+    now?: () => number;
+  } = {},
+): RunArmTimingPreparation {
+  const captureBaseline =
+    dependencies.captureBaseline ?? captureProductionBaselineRuntime;
+  const now = dependencies.now ?? Date.now;
+  const observed = suite === "v3" ? captureBaseline() : null;
+  const startMs = now();
+  return {
+    baselinePre: suite === "v3" && delegationEnabled ? observed : null,
+    startedAt: new Date(startMs).toISOString(),
+    startMs,
+  };
+}
+
 /**
  * Benchmark V2 arms. Supervisor model and effort are intentionally identical.
  *
@@ -1132,9 +1164,15 @@ async function runArm(
   const workspace = await materialize(task);
   const runId = crypto.randomUUID();
   const fixtureRevision = fixtureRevisionOf(task);
-  const startedAt = new Date().toISOString();
-  const start = Date.now();
   const armSpec = ARMS[arm];
+  // The ~390 MB sealed-manifest walk happens for both V3 arms before this
+  // timing anchor. That excludes the scan from wall-clock and telemetry phase
+  // timing while giving both arms equivalent filesystem-cache preparation.
+  const {
+    baselinePre,
+    startedAt,
+    startMs: start,
+  } = prepareRunArmTiming(suite, armSpec.delegation);
 
   const before = new Map<string, string>();
   for (const name of task.immutable) {
@@ -1161,11 +1199,10 @@ async function runArm(
   });
   const maxParallel = concurrency.maxParallel;
 
-  // Every measured Adaptive V3 cell obtains a fresh sealed observation. The
+  // Every measured Adaptive V3 cell retains its fresh sealed observation. The
   // absolute entry point authorized by this exact preflight is the one passed
-  // to Codex below; no campaign-global observation is reused.
-  const baselinePre =
-    suite === "v3" && armSpec.delegation ? captureProductionBaselineRuntime() : null;
+  // to Codex below; no campaign-global observation is reused. Solo performed
+  // the equivalent scan before the timing anchor and discarded its identity.
   const baselineServer = baselinePre === null ? null : baselineMcpServer(baselinePre);
 
   // A delegation-enabled V3 arm names the orchestrator command explicitly, from

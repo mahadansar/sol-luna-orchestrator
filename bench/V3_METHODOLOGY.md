@@ -11,7 +11,7 @@ routing, or model-performance claim.
   whose content commit was `c9b6bbe657a91808c9b91d3f46105f61b3243866`, which in
   turn superseded the freeze-1 content commit
   `544d217967646e5f48b9aa73e936567e87d87c8b`.
-- Methodology content digest: `a08ccb260c6691faa3fd3722dcccc67791f495e843c6231ae591d8af11409f94`, verified at launch by `assertMethodologyFrozen`.
+- Methodology content digest: `b7b7f5e504646e59040c24a0f0f82cf39c337c0d748a7c6dc2fe8ecc39f012f7`, verified at launch by `assertMethodologyFrozen`.
 - Production baseline under evaluation: **v0.11.0**, the commit the `v0.11.0`
   release tag resolves to, `df215a170e6a88a6097c56f7ca404358d9d4b050`.
 - Initial normal campaign: nine tasks, two arms, and exactly two repetitions per
@@ -668,16 +668,24 @@ package name and version, the version recorded at the baseline commit, installed
 declared dependencies, and a regular, contained, absolute entry point. Null or
 unreadable evidence fails closed.
 
-Every measured Adaptive V3 cell freshly computes the sealed manifest immediately
-before the SDK call that launches the orchestrator, launches using the absolute
-entry point authorized by that observation, and computes it again after the cell
-and deterministic grading finish but before a result can be returned or written.
-The record carries the expected digest and both observed digests plus entry-point
-identities. Both observations must match the frozen digest and each other. A
-modified dist file, dependency byte, package/lock file, symlink/substitution,
-unreadable manifest, or post-preflight mutation fails the cell/campaign closed;
-no result survives claiming valid v0.11.0 execution. Nothing about v0.11.0
-production behavior is modified.
+Before measured wall-clock and telemetry timing begins, every V3 cell computes
+the sealed manifest once. Solo discards that identity after using the scan for
+equivalent filesystem-cache preparation. Adaptive retains it, verifies it
+against the independently frozen digest, and launches using the absolute entry
+point authorized by that observation. After the cell and deterministic grading
+finish, Adaptive computes the manifest again before a result can be returned or
+written. Its record carries the expected digest and both observed digests plus
+entry-point identities. Both observations must match the frozen digest and each
+other. A modified dist file, dependency byte, package/lock file,
+symlink/substitution, unreadable manifest, or post-preflight mutation fails the
+cell/campaign closed; no result survives claiming valid v0.11.0 execution.
+Nothing about v0.11.0 production behavior is modified.
+
+Concurrent hostile mutation of the benchmark host or sealed runtime artifact
+during a measured cell is outside this benchmark's threat model. Ordinary
+accidental or runtime drift remains covered by Adaptive's pre/post sealed-
+manifest verification. The benchmark does not claim an immutable or
+adversarially controlled host.
 
 Each case starts from a freshly materialized workspace built from the immutable
 fixture, with its own run ID and a content-derived fixture revision, and the
@@ -776,8 +784,11 @@ invalid or malformed V3-named shard, no unreadable V3 shard or launch marker,
 and no non-empty or unreadable event stream that could represent V3 but cannot
 be safely attributed. Ambiguity blocks freshness: malformed `{}` shards and
 orphan streams cannot degrade to `runCount: null` while preserving a claim that
-V3 never ran. Evidence explicitly attributed to V2 or the earlier parallel and
-scale suites remains unrelated and does not block V3 freshness.
+V3 never ran. Nine independently reviewed pre-V3 orphan streams are attributed
+by their exact content digests, not their filenames; any byte change loses that
+attribution and returns to ambiguity. Evidence explicitly attributed to V2 or
+the earlier parallel and scale suites remains unrelated and does not block V3
+freshness.
 
 Result-campaign collision, the current campaign's launch-marker state, and a
 retained checkpoint for the current campaign are separate facts. A campaign ID

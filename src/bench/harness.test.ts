@@ -84,6 +84,7 @@ import {
   deriveV3ExecutionHistory,
   parsePrelaunchArgs,
   preserveSupersededCheckpointFiles,
+  REVIEWED_PRE_V3_EVENT_STREAM_SHA256,
   renderCheckpoint,
   V3_CAMPAIGN_ARMS,
   V3_CAMPAIGN_REPETITIONS,
@@ -93,6 +94,7 @@ import {
   assertV3FreezePinned,
   buildResultsSnapshot,
   fixtureRevisionOf,
+  prepareRunArmTiming,
   readTelemetry,
   type RunRecord,
 } from "./run.js";
@@ -1665,6 +1667,40 @@ test("an unparseable Codex config is presence-only and never hashed raw", () => 
   assert.ok(!JSON.stringify(record).includes(secret));
 });
 
+test("the exported TOML sanitizer replaces parser diagnostics with an opaque error", () => {
+  const secret = "malformed-parser-secret-do-not-commit";
+  let caught: Error | null = null;
+  try {
+    redactCodexConfigToml(`headers = { Authorization = "${secret}"`);
+  } catch (error) {
+    caught = error as Error;
+  }
+  assert.ok(caught instanceof Error);
+  assert.equal(caught.message, "Codex config TOML could not be parsed");
+  assert.ok(!String(caught.stack).includes(secret));
+  assert.ok(!String(caught.stack).includes("Authorization"));
+});
+
+test("both V3 arms scan the baseline before the measured timing anchor", () => {
+  for (const delegationEnabled of [false, true]) {
+    const order: string[] = [];
+    const baseline = { verified: true } as never;
+    const prepared = prepareRunArmTiming("v3", delegationEnabled, {
+      captureBaseline: () => {
+        order.push("manifest-scan");
+        return baseline;
+      },
+      now: () => {
+        order.push("timing-anchor");
+        return 1_788_048_000_000;
+      },
+    });
+    assert.deepEqual(order, ["manifest-scan", "timing-anchor"]);
+    assert.equal(prepared.startMs, 1_788_048_000_000);
+    assert.equal(prepared.baselinePre, delegationEnabled ? baseline : null);
+  }
+});
+
 test("Codex authentication is recorded as a mode, never as a credential", () => {
   const apiKey = classifyCodexAuth(
     JSON.stringify({ OPENAI_API_KEY: "sk-live-do-not-commit" }),
@@ -2244,6 +2280,45 @@ test("V3 event telemetry counts, and unrelated benchmark files do not", () => {
   ]);
   assert.equal(history.freshLaunch, false);
   assert.match(history.limitation, /blocks freshness/);
+});
+
+test("reviewed historical orphan streams use content identity, not filenames", () => {
+  const repositoryHistory = deriveV3ExecutionHistory("v3-freeze3-20260829");
+  const reviewed = repositoryHistory.eventStreams.filter(
+    (stream) => stream.attribution === "historical-non-v3",
+  );
+  assert.equal(reviewed.length, 9);
+  assert.ok(
+    reviewed.every(
+      (stream) =>
+        stream.contentSha256 !== null &&
+        REVIEWED_PRE_V3_EVENT_STREAM_SHA256.has(stream.contentSha256) &&
+        stream.attributionEvidence === "reviewed-pre-v3-content-sha256",
+    ),
+  );
+  assert.deepEqual(repositoryHistory.ambiguousEventStreams, []);
+
+  const source = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "..",
+    "bench",
+    "results",
+    reviewed[0]!.file,
+  );
+  const content = fs.readFileSync(source, "utf8");
+  const renamed = deriveV3ExecutionHistory(
+    "v3-freeze3-20260829",
+    historyFixture({ "renamed.events.jsonl": content }),
+  );
+  assert.equal(renamed.eventStreams[0]?.attribution, "historical-non-v3");
+
+  const mutated = deriveV3ExecutionHistory(
+    "v3-freeze3-20260829",
+    historyFixture({ "renamed.events.jsonl": `${content} ` }),
+  );
+  assert.equal(mutated.eventStreams[0]?.attribution, "ambiguous");
+  assert.equal(mutated.freshLaunch, false);
 });
 
 test("unrelated V2, parallel, and scale history does not block V3 freshness", () => {

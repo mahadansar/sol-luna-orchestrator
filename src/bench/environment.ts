@@ -552,7 +552,14 @@ export interface RedactedCodexConfig {
  * Header-bearing structures are conservatively replaced as a whole.
  */
 export function redactCodexConfigToml(text: string): RedactedCodexConfig {
-  const parsed = parseToml(text, { integersAsBigInt: "asNeeded" });
+  let parsed: Record<string, TomlValue>;
+  try {
+    parsed = parseToml(text, { integersAsBigInt: "asNeeded" });
+  } catch {
+    // smol-toml diagnostics may quote the offending input. This exported
+    // boundary must never let parser excerpts or secret-bearing lines escape.
+    throw new Error("Codex config TOML could not be parsed");
+  }
   let redactedAssignments = 0;
 
   const sanitize = (value: TomlValue, segments: readonly string[]): TomlValue => {
