@@ -13,7 +13,12 @@ import {
   VERIFY_MODES,
   type VerifyMode,
 } from "../config.js";
-import { buildComputePolicy, type ComputePolicy } from "../policy.js";
+import {
+  buildComputePolicy,
+  executorOrderDeclaredButUnusable,
+  type ComputePolicy,
+  type ComputePolicyEnvironment,
+} from "../policy.js";
 import { serverEnvTable } from "./settings.js";
 import { fromTomlValue, readKey } from "./toml-edit.js";
 
@@ -25,6 +30,8 @@ export interface RegisteredServerConfig {
   recursionDisableTarget: string;
   /** The operator-owned compute baseline this registration resolves to. */
   computePolicy: ComputePolicy;
+  /** SOL_LUNA_EXECUTOR_ORDER was declared but does not order authorisation. */
+  executorOrderUnusable: boolean;
 }
 
 const configuredEnv = (configText: string, key: string): string | null => {
@@ -54,6 +61,32 @@ export function resolveRegisteredServerConfig(
     Number(configuredEnv(configText, "SOL_LUNA_MAX_PARALLEL") ?? DEFAULT_MAX_PARALLEL),
   );
 
+  const policyEnvironment: ComputePolicyEnvironment = {
+    model: workerModel,
+    allowedModels: parseAllowedModels(
+      configuredEnv(configText, "SOL_LUNA_ALLOWED_MODELS"),
+      workerModel,
+    ),
+    allowedEfforts: parseAllowedEfforts(
+      configuredEnv(configText, "SOL_LUNA_ALLOWED_EFFORTS"),
+    ),
+    maxConcurrency: maxParallel,
+    maxWorkersPerBatch: clampBatchWorkers(
+      Number(
+        configuredEnv(configText, "SOL_LUNA_MAX_WORKERS_PER_BATCH") ?? MAX_BATCH_SIZE,
+      ),
+    ),
+    allowEffortEscalation: parseOptOutFlag(
+      configuredEnv(configText, "SOL_LUNA_ALLOW_EFFORT_ESCALATION"),
+    ),
+    allowStrongerFallback: parseOptOutFlag(
+      configuredEnv(configText, "SOL_LUNA_ALLOW_STRONGER_FALLBACK"),
+    ),
+    executorOrder: parseExecutorOrder(
+      configuredEnv(configText, "SOL_LUNA_EXECUTOR_ORDER"),
+    ),
+  };
+
   return {
     workerModel,
     maxParallel,
@@ -62,30 +95,10 @@ export function resolveRegisteredServerConfig(
     recursionDisableTarget:
       configuredEnv(configText, "SOL_LUNA_SERVER_NAME") ??
       DEFAULT_ORCHESTRATOR_SERVER_NAME,
-    computePolicy: buildComputePolicy({
-      model: workerModel,
-      allowedModels: parseAllowedModels(
-        configuredEnv(configText, "SOL_LUNA_ALLOWED_MODELS"),
-        workerModel,
-      ),
-      allowedEfforts: parseAllowedEfforts(
-        configuredEnv(configText, "SOL_LUNA_ALLOWED_EFFORTS"),
-      ),
-      maxConcurrency: maxParallel,
-      maxWorkersPerBatch: clampBatchWorkers(
-        Number(
-          configuredEnv(configText, "SOL_LUNA_MAX_WORKERS_PER_BATCH") ?? MAX_BATCH_SIZE,
-        ),
-      ),
-      allowEffortEscalation: parseOptOutFlag(
-        configuredEnv(configText, "SOL_LUNA_ALLOW_EFFORT_ESCALATION"),
-      ),
-      allowStrongerFallback: parseOptOutFlag(
-        configuredEnv(configText, "SOL_LUNA_ALLOW_STRONGER_FALLBACK"),
-      ),
-      executorOrder: parseExecutorOrder(
-        configuredEnv(configText, "SOL_LUNA_EXECUTOR_ORDER"),
-      ),
-    }),
+    computePolicy: buildComputePolicy(policyEnvironment),
+    // A ladder the envelope cannot use is discarded rather than applied. Report
+    // it here so `status` and `doctor` do not show a compute policy that quietly
+    // lost the operator's declared fallback order.
+    executorOrderUnusable: executorOrderDeclaredButUnusable(policyEnvironment),
   };
 }

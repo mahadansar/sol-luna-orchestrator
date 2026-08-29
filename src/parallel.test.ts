@@ -25,12 +25,17 @@ import { BatchRejectedError, runBatch as runProductionBatch } from "./batch.js";
 import { CONTINUATION_TTL_MS, ContinuationStore } from "./continuation.js";
 import { HandoffStore } from "./handoff.js";
 import {
+  DEFAULT_TIMEOUT_SECONDS_FALLBACK,
   MAX_PARALLEL,
   MAX_PARALLEL_LIMIT,
+  VERIFY_TIMEOUT_SECONDS_FALLBACK,
   WORKTREE_DIR,
   clampParallel,
+  parseTimeoutSeconds,
+  timeoutSecondsInvalid,
 } from "./config.js";
 import { DEFAULT_COMPUTE_POLICY } from "./policy.js";
+import type { OrchestratorEvent } from "./events.js";
 import {
   delegateTaskInputSchema,
   type BatchOutput,
@@ -145,6 +150,27 @@ test("integration conflicts are found from what workers actually changed", () =>
   assert.deepEqual(conflicts[0]?.tasks, ["t1", "t2"]);
 });
 
+test("an integration conflict reports the observed path, not a case-folded key", () => {
+  // On a case-insensitive filesystem the two spellings are one file, so the
+  // conflict is real. Reporting the folded key put `src/auth.ts` - a path that
+  // may not exist as written - into the conflict evidence, the review checklist,
+  // and the context blocker id derived from it.
+  const conflicts = findIntegrationConflicts([
+    { taskId: "t1", changedFiles: ["src/Auth.ts"] },
+    {
+      taskId: "t2",
+      changedFiles: [
+        process.platform === "win32" || process.platform === "darwin"
+          ? "src/auth.ts"
+          : "src/Auth.ts",
+      ],
+    },
+  ]);
+  assert.equal(conflicts.length, 1);
+  assert.equal(conflicts[0]?.path, "src/Auth.ts");
+  assert.deepEqual(conflicts[0]?.tasks, ["t1", "t2"]);
+});
+
 test("disjoint changes produce no integration conflict", () => {
   assert.deepEqual(
     findIntegrationConflicts([
@@ -164,6 +190,76 @@ test("parallelism is clamped to a sane range", () => {
   assert.equal(clampParallel(Number.NaN), 1);
   assert.equal(clampParallel(2.7), 2);
   assert.equal(clampParallel(9999), MAX_PARALLEL_LIMIT);
+});
+
+test("an unusable timeout budget falls back instead of becoming an instant deadline", () => {
+  // These reach `setTimeout`, which coerces NaN and every non-positive value to
+  // roughly one millisecond. A bare `Number(...)` therefore turned one typo into
+  // an immediate timeout on every worker turn and every verification command -
+  // a failing verdict with no visible cause.
+  assert.equal(parseTimeoutSeconds(undefined, DEFAULT_TIMEOUT_SECONDS_FALLBACK), 1800);
+  assert.equal(parseTimeoutSeconds("900", DEFAULT_TIMEOUT_SECONDS_FALLBACK), 900);
+  assert.equal(parseTimeoutSeconds(" 900 ", DEFAULT_TIMEOUT_SECONDS_FALLBACK), 900);
+  for (const raw of ["abc", "", "0", "-1", "NaN"]) {
+    assert.equal(
+      parseTimeoutSeconds(raw, VERIFY_TIMEOUT_SECONDS_FALLBACK),
+      600,
+      `"${raw}" must fall back`,
+    );
+    assert.equal(timeoutSecondsInvalid(raw), true, `"${raw}" must be reported`);
+  }
+  assert.equal(timeoutSecondsInvalid(undefined), false);
+  assert.equal(timeoutSecondsInvalid("900"), false);
+});
+
+test("a throw out of the parallel execution window surrenders worktree ownership", async () => {
+  const repo = await makeRepo();
+  const controller = new AbortController();
+  const batchId = "bfixedowner";
+  try {
+    // Emitting is a caller-supplied seam. `markCancelled` runs outside the
+    // per-task try, so an emitter that throws there escapes `Promise.all`,
+    // escapes `runParallel`, and used to skip the entire cleanup section -
+    // leaving the renewal timers running and both worktree identities
+    // permanently registered as owned by this process.
+    // Cancel once t1's worktree exists, so t2 takes the pre-worker cancellation
+    // branch of the setup loop - which is outside that loop's try.
+    const hostileEmit = (event: OrchestratorEvent): void => {
+      if (event.type === "worktree.created") controller.abort();
+      if (event.type === "worker.cancelled") throw new Error("emitter exploded");
+    };
+
+    // The local `runBatch` wrapper silences telemetry, so this one goes straight
+    // to the production entry point to keep the hostile emitter.
+    await assert.rejects(
+      runProductionBatch(
+        [
+          makeTask({ allowedFiles: ["src/one/**"] }),
+          makeTask({ allowedFiles: ["src/two/**"] }),
+        ],
+        {
+          mode: "parallel",
+          batchId,
+          workingDirectory: repo,
+          signal: controller.signal,
+          eventEmitter: hostileEmit,
+          executor: fakeExecutor({}),
+        },
+      ),
+      /emitter exploded/,
+    );
+
+    // The identity must be reusable. A leak shows up twice: `activeWorktreePaths`
+    // refuses a path this process still claims, and the persistent lease reserves
+    // it across processes for the task timeout plus grace - about half an hour by
+    // default - while also stopping `pruneStaleWorktrees` from reclaiming it.
+    const base = await prepareWorktreeBase(repo, [["src/one/**"]]);
+    const reclaimed = await createTaskWorktree(base, `${batchId}-t1`, repo);
+    assert.ok(reclaimed.path);
+    await cleanupWorktree(reclaimed, "success", "never");
+  } finally {
+    await cleanupRepo(repo);
+  }
 });
 
 // --- Test helpers -----------------------------------------------------------

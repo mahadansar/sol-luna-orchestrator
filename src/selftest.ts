@@ -872,6 +872,58 @@ test("worker report parses from bare JSON, fenced JSON, and JSON amid prose", ()
   }
 });
 
+test("a structurally malformed worker claim is dropped, not allowed to throw", () => {
+  // This parser also runs on free text that merely contains a JSON object, and
+  // on a merged repair report, so a plausible object with wrongly shaped claim
+  // fields is reachable. It used to be copied through verbatim, and result
+  // construction then threw on `for (const claim of {...})` - losing the whole
+  // result, runtime-observed evidence included, to `Delegation failed: ...`.
+  const parsed = parseWorkerReport(
+    JSON.stringify({
+      status: "FAILED",
+      failureCauses: ["verification"],
+      summary: 42,
+      // An object, not an array: not iterable, and has no `.map`.
+      verification: { "npm test": "failed" },
+      filesChanged: ["src/a.ts", { path: "src/b.ts", change: "modified", why: "fix" }],
+      notes: null,
+      followUps: ["real", 7],
+    }),
+  );
+  assert.ok(parsed);
+  assert.equal(parsed!.summary, "");
+  assert.equal(parsed!.notes, "");
+  assert.deepEqual(parsed!.verification, []);
+  // The bare string is not a claim; the well-formed entry survives intact.
+  assert.deepEqual(parsed!.filesChanged, [
+    { path: "src/b.ts", change: "modified", why: "fix" },
+  ]);
+  assert.deepEqual(parsed!.followUps, ["real"]);
+
+  // And the dropped claims cannot make result construction fail.
+  const result = buildDelegationResult({
+    input: makeTask(),
+    workingDirectory: REPO,
+    observed: makeObserved(null, {
+      filesChanged: [],
+      finalResponse: JSON.stringify({
+        status: "FAILED",
+        failureCauses: ["verification"],
+        verification: { "npm test": "failed" },
+        filesChanged: "src/a.ts",
+        summary: 1,
+        notes: 2,
+        followUps: 3,
+      }),
+    }),
+    orchestratorRuns: [],
+    durationSeconds: 1,
+  });
+  assert.equal(result.verdict, "FAILED");
+  assert.deepEqual(result.filesChanged, []);
+  assert.deepEqual(result.verification, []);
+});
+
 test("worker failure causes enforce the new status invariants", () => {
   const report = {
     summary: "structured cause fixture",

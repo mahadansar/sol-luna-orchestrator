@@ -248,10 +248,14 @@ export async function runBatch(
 
   const running: RunningTask[] = tasks.map((input, index) => {
     const taskId = makeTaskId(index);
-    let resolvedInput: DelegateTaskInput = {
-      ...input,
-      effort: selection?.effort ?? input.effort,
-    };
+    // The batch-level selection is computed with no prior execution evidence,
+    // so its effort is routing's advisory *starting* effort for undeclared
+    // work. Every task here declares its own `effort` with a mandatory
+    // `effortReason`, and adopting the card's single recommendation both
+    // overrode those declarations and flattened them to one value. Only the
+    // per-task selection below — made against evidence restored from a
+    // consumed server handoff — may replace a declared effort.
+    let resolvedInput: DelegateTaskInput = { ...input };
     let model = selection?.model ?? computePolicy.allowedModels[0] ?? LUNA_MODEL;
     let predecessorExecutionId: string | null = null;
     let logicalAttempt = input.previousAttempts.length + 1;
@@ -515,6 +519,31 @@ export async function runBatch(
       );
     }
   } catch (error) {
+    // Anything thrown out of the execution window skips the whole cleanup
+    // section below, so the renewal timers keep firing and every created
+    // worktree stays registered as owned by this process for the rest of its
+    // life - which also makes `pruneStaleWorktrees` refuse to reclaim it. The
+    // directories themselves are deliberately left on disk as evidence; only
+    // the in-process ownership and the timers are surrendered here.
+    for (const task of running) {
+      try {
+        await task.leaseRenewal?.stop();
+      } catch {
+        // Best effort: the batch is already failing with a more useful error.
+      } finally {
+        task.leaseRenewal = null;
+      }
+      if (!task.worktree) continue;
+      if (task.worktree.lease) {
+        // The persistent lease outlives this process by design, so leaving it
+        // held reserved the identity for the task's whole timeout plus grace -
+        // roughly half an hour by default - and made `pruneStaleWorktrees`
+        // refuse to reclaim the directory. The directory itself stays as
+        // evidence; only the reservation is surrendered.
+        await releaseWorktreeLease(task.worktree.lease).catch(() => undefined);
+      }
+      releaseWorktreeOwnership(task.worktree);
+    }
     if (error instanceof WorktreeUnavailableError) {
       emit({ type: "batch.rejected", batchId, reason: error.message });
       throw new BatchRejectedError(error.message);

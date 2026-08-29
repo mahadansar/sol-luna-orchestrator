@@ -8,6 +8,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
   DEFAULT_EFFORT,
   DEFAULT_TIMEOUT_SECONDS,
+  DEFAULT_TIMEOUT_SECONDS_INVALID,
   EVENTS_FILE,
   IS_WORKER_PROCESS,
   LUNA_MODEL,
@@ -15,6 +16,8 @@ import {
   MAX_PARALLEL,
   VERIFY_MODE,
   VERIFY_MODE_INVALID,
+  VERIFY_TIMEOUT_SECONDS,
+  VERIFY_TIMEOUT_SECONDS_INVALID,
   WORKTREE_DIR,
   WORKER_MARKER_ENV,
 } from "./config.js";
@@ -61,6 +64,7 @@ import {
   admitCompute,
   cloneComputePolicy,
   DEFAULT_COMPUTE_POLICY,
+  EXECUTOR_ORDER_UNUSABLE,
   type ComputePolicy,
 } from "./policy.js";
 import { evaluateAdaptiveCard, routeLiveTask } from "./adaptive.js";
@@ -400,6 +404,48 @@ export function refuseSingleDelegation(
     ...declaredRoutingFields(routingCard),
   });
   return routing.refusedGate ? describeRefusal(routing.refusedGate) : null;
+}
+
+/**
+ * Record one lifecycle turn without letting bookkeeping rewrite the outcome.
+ *
+ * Context ingestion is append-only history keeping: it runs *after* the result
+ * has already been verified, telemetered (`worker.completed`, `batch.completed`)
+ * and written to the events file. It also throws on its own invariants -
+ * duplicate turn ids, conflicting lineage for one execution id. Leaving those
+ * throws inside the delegation try-block meant a completed, independently
+ * verified PASS came back to the parent as `Delegation failed: ...` while the
+ * telemetry stream said it had succeeded, and the catch path then emitted a
+ * contradicting `worker.failed` / `batch.completed(failed:1)` pair for a batch
+ * that had already reported completion. The turn is worth losing; the verdict
+ * is not.
+ */
+function recordLifecycleTurn(what: string, record: () => void): void {
+  try {
+    record();
+  } catch (error) {
+    log(`context lifecycle ${what} not recorded: ${(error as Error).message}`);
+  }
+}
+
+/**
+ * Evaluate context pressure at a lifecycle boundary, for the same reason.
+ *
+ * Compaction is a projection over history the parent never sees directly, and
+ * its evaluator asserts its own invariants. It runs on the success path and in
+ * cleanup, after the verdict is final, so letting it throw would turn a
+ * completed run into a transport failure over bookkeeping.
+ */
+function evaluateLifecycleCompaction(
+  store: ContextLifecycleStore,
+  boundary: Parameters<ContextLifecycleStore["evaluateAndMaybeCompact"]>[0],
+  options: Parameters<ContextLifecycleStore["evaluateAndMaybeCompact"]>[1],
+): void {
+  try {
+    store.evaluateAndMaybeCompact(boundary, options);
+  } catch (error) {
+    log(`context pressure not evaluated at ${boundary}: ${(error as Error).message}`);
+  }
 }
 
 function makeSingleBatchId(): string {
@@ -1050,7 +1096,18 @@ export async function handleDelegateTask(
     }
   }
 
-  const targetEffort = liveRouting.selectedEffort ?? resolvedTask.effort;
+  // Routing's starting effort is a recommendation for work whose effort nobody
+  // has declared. `effort` is a declared field with a mandatory `effortReason`,
+  // and `routingPreflight` is advertised as advisory, so an evidence-free
+  // recommendation must not silently raise it (spending compute the supervisor
+  // did not authorise) or lower it (running below the justified level while the
+  // justification still says otherwise). Only a selection made against real
+  // prior execution evidence — the P1.1/P1.2 escalation ladder, reached through
+  // a consumed server handoff — replaces the declared effort.
+  const targetEffort =
+    priorEvidence !== undefined
+      ? (liveRouting.selectedEffort ?? resolvedTask.effort)
+      : resolvedTask.effort;
 
   const admission = admitCompute({
     requested: resolvedTask.computePolicy,
@@ -1234,12 +1291,14 @@ export async function handleDelegateTask(
     );
     dependencies.record(result);
 
-    lifecycleStore.recordDelegationTurn(task, result, {
-      batchId,
-      taskId,
-    });
+    recordLifecycleTurn("delegation turn", () =>
+      lifecycleStore.recordDelegationTurn(task, result, {
+        batchId,
+        taskId,
+      }),
+    );
     releaseExecution();
-    lifecycleStore.evaluateAndMaybeCompact("post-delegation", {
+    evaluateLifecycleCompaction(lifecycleStore, "post-delegation", {
       batchId,
       emit: dependencies.emit,
     });
@@ -1322,7 +1381,7 @@ export async function handleDelegateTask(
       taskId,
     });
     releaseExecution();
-    lifecycleStore.evaluateAndMaybeCompact("post-delegation", {
+    evaluateLifecycleCompaction(lifecycleStore, "post-delegation", {
       batchId,
       emit: dependencies.emit,
     });
@@ -1446,7 +1505,7 @@ export async function handleContinueTask(
       });
       releaseExecution();
       dependencies.store.release(request.continuationReference);
-      lifecycleStore.evaluateAndMaybeCompact("post-continuation", {
+      evaluateLifecycleCompaction(lifecycleStore, "post-continuation", {
         batchId,
         emit: dependencies.emit,
       });
@@ -1567,17 +1626,19 @@ export async function handleContinueTask(
     emitSingleCompletion(batchId, taskId, timeoutSeconds, result, dependencies.emit);
     dependencies.record(result);
 
-    lifecycleStore.recordContinuationTurn(
-      {
-        continuationReference: request.continuationReference,
-        instruction: request.instruction,
-        taskId,
-      },
-      result,
-      { id: batchId },
+    recordLifecycleTurn("continuation turn", () =>
+      lifecycleStore.recordContinuationTurn(
+        {
+          continuationReference: request.continuationReference,
+          instruction: request.instruction,
+          taskId,
+        },
+        result,
+        { id: batchId },
+      ),
     );
     releaseExecution();
-    lifecycleStore.evaluateAndMaybeCompact("post-continuation", {
+    evaluateLifecycleCompaction(lifecycleStore, "post-continuation", {
       batchId,
       emit: dependencies.emit,
     });
@@ -1669,7 +1730,7 @@ export async function handleContinueTask(
       taskId,
     });
     releaseExecution();
-    lifecycleStore.evaluateAndMaybeCompact("post-continuation", {
+    evaluateLifecycleCompaction(lifecycleStore, "post-continuation", {
       batchId,
       emit: dependencies.emit,
     });
@@ -1833,9 +1894,11 @@ export async function handleDelegateTasks(
         `${result.durationSeconds}s, integrated=${result.integrated}`,
     );
 
-    lifecycleStore.recordBatchTurn(batch, result, { id: result.batchId });
+    recordLifecycleTurn("batch turn", () =>
+      lifecycleStore.recordBatchTurn(batch, result, { id: result.batchId }),
+    );
     releaseExecution();
-    lifecycleStore.evaluateAndMaybeCompact("post-batch", {
+    evaluateLifecycleCompaction(lifecycleStore, "post-batch", {
       batchId: result.batchId,
       emit: dependencies.emit,
     });
@@ -1871,7 +1934,7 @@ export async function handleDelegateTasks(
       changeIntent: batch.tasks[0]?.changeIntent ?? "required",
     });
     releaseExecution();
-    lifecycleStore.evaluateAndMaybeCompact("post-batch", {
+    evaluateLifecycleCompaction(lifecycleStore, "post-batch", {
       batchId: contextKey,
       emit: dependencies.emit,
     });
@@ -2181,7 +2244,9 @@ export async function handleExplore(
       model,
     );
 
-    lifecycleStore.recordExplorationTurn(input, result, { id: batchId });
+    recordLifecycleTurn("exploration turn", () =>
+      lifecycleStore.recordExplorationTurn(input, result, { id: batchId }),
+    );
 
     deps.emit({
       type: "explore.completed",
@@ -2249,7 +2314,7 @@ export async function handleExplore(
     };
   } finally {
     releaseLease();
-    lifecycleStore.evaluateAndMaybeCompact("post-exploration", {
+    evaluateLifecycleCompaction(lifecycleStore, "post-exploration", {
       batchId,
       emit: deps.emit,
     });
@@ -2513,6 +2578,25 @@ async function main(): Promise<void> {
     log(`client connected: ${client?.name ?? "unknown"} ${client?.version ?? ""}`);
   };
 
+  if (EXECUTOR_ORDER_UNUSABLE) {
+    log(
+      `WARNING: SOL_LUNA_EXECUTOR_ORDER="${process.env.SOL_LUNA_EXECUTOR_ORDER}" does ` +
+        `not completely order the authorised models starting at ${LUNA_MODEL}, so it ` +
+        `was ignored. Stronger-executor fallback stays unresolvable until it does.`,
+    );
+  }
+  if (DEFAULT_TIMEOUT_SECONDS_INVALID) {
+    log(
+      `WARNING: LUNA_TIMEOUT_SECONDS="${process.env.LUNA_TIMEOUT_SECONDS}" is not a ` +
+        `positive number. Falling back to ${DEFAULT_TIMEOUT_SECONDS}s.`,
+    );
+  }
+  if (VERIFY_TIMEOUT_SECONDS_INVALID) {
+    log(
+      `WARNING: LUNA_VERIFY_TIMEOUT_SECONDS="${process.env.LUNA_VERIFY_TIMEOUT_SECONDS}" ` +
+        `is not a positive number. Falling back to ${VERIFY_TIMEOUT_SECONDS}s.`,
+    );
+  }
   if (VERIFY_MODE_INVALID) {
     log(
       `WARNING: SOL_LUNA_VERIFY_MODE="${process.env.SOL_LUNA_VERIFY_MODE}" is not ` +

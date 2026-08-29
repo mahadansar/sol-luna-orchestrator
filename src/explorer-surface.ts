@@ -4,9 +4,24 @@ import os from "node:os";
 import path from "node:path";
 import picomatch from "picomatch";
 
+// Never admitted into a disposable exploration surface, at any depth.
+//
+// The doubled-star prefixes are load-bearing rather than decorative: a vendored
+// dependency, a submodule, or a fixture repository puts a second `.git`
+// somewhere below the root. An anchored `.git` pattern matches only the root
+// one, so `vendor/x/.git/config` - which routinely carries credentials in a
+// remote URL - matched nothing and was copied into the surface the worker
+// reads. The same anchoring hid nested `.sol-luna` runtime state. `.env`
+// already carried its any-depth variant; these two did not.
 const ALWAYS_FORBIDDEN = [
+  ".git",
   ".git/**",
+  "**/.git",
+  "**/.git/**",
+  ".sol-luna",
   ".sol-luna/**",
+  "**/.sol-luna",
+  "**/.sol-luna/**",
   ".env",
   ".env.*",
   "**/.env",
@@ -70,12 +85,10 @@ async function copyAdmittedTree(
       const source = path.join(sourceDirectory, entry.name);
       const relative = relativePosix(sourceRoot, source);
 
-      if (
-        relative === ".git" ||
-        relative.startsWith(".git/") ||
-        relative === ".sol-luna" ||
-        relative.startsWith(".sol-luna/")
-      ) {
+      // Skip the directories themselves so a large nested repository is never
+      // walked at all, not merely filtered file by file.
+      const segments = relative.split("/");
+      if (segments.includes(".git") || segments.includes(".sol-luna")) {
         continue;
       }
 
@@ -261,11 +274,20 @@ export async function verifyGrounding(
   if (content === null) return "sourceFile could not be read from the isolated surface";
   const needle = evidence.trim();
   if (!needle) return "evidence must not be empty";
-  const index = content.indexOf(needle);
-  if (index < 0) return "evidence text was not present in sourceFile";
-  const actualLine = content.slice(0, index).split(/\r?\n/).length;
-  if (actualLine !== sourceLine) {
-    return `evidence starts at line ${actualLine}, not claimed line ${sourceLine}`;
+  // Every occurrence, not the first. Repeated text is the normal case in source
+  // (`});`, a duplicated import, a boilerplate line), and matching only the
+  // first hit reported a truthful claim about a later occurrence as ungrounded,
+  // turning the grounding status - the whole point of the observed/inferred
+  // split - into a false negative.
+  const startLines: number[] = [];
+  for (let index = content.indexOf(needle); index >= 0;) {
+    startLines.push(content.slice(0, index).split(/\r?\n/).length);
+    index = content.indexOf(needle, index + 1);
+  }
+  if (startLines.length === 0) return "evidence text was not present in sourceFile";
+  if (!startLines.includes(sourceLine)) {
+    const listed = [...new Set(startLines)].slice(0, 5).join(", ");
+    return `evidence starts at line ${listed}, not claimed line ${sourceLine}`;
   }
   return null;
 }

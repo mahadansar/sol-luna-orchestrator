@@ -330,6 +330,17 @@ async function runWorkerThread(
   return observed;
 }
 
+/** Model-supplied values are claims about shape as well as content. */
+const asReportString = (value: unknown): string =>
+  typeof value === "string" ? value : "";
+
+const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+
 /** Parse Luna's final message, tolerating stray prose around the JSON object. */
 export function parseWorkerReport(finalResponse: string): WorkerReport | null {
   const text = finalResponse.trim();
@@ -356,14 +367,52 @@ export function parseWorkerReport(finalResponse: string): WorkerReport | null {
       const status = parsed.status as Status;
       const failureCauses = parseFailureCauses(parsed, status);
       if (!failureCauses) continue;
+      // `status` and `failureCauses` were checked; the rest was taken as
+      // declared. The provider enforces `workerOutputJsonSchema`, but this
+      // parser also runs on free text that merely *contains* a JSON object -
+      // including a merged repair report - and a plausible object with, say, an
+      // object-valued `verification` made `for (const claim of ...)` throw
+      // inside result construction, then made the runtime-failure fallback
+      // throw again on `.map`. The whole result, runtime-observed evidence
+      // included, was lost to `Delegation failed: ...`. Normalise instead:
+      // a claim that is not shaped like a claim is dropped, which leaves the
+      // runtime's own observation to surface it as an unclaimed edit.
       return {
         status,
         failureCauses,
-        summary: parsed.summary ?? "",
-        filesChanged: parsed.filesChanged ?? [],
-        verification: parsed.verification ?? [],
-        notes: parsed.notes ?? "",
-        followUps: parsed.followUps ?? [],
+        summary: asReportString(parsed.summary),
+        filesChanged: asArray(parsed.filesChanged).flatMap((entry) => {
+          const claim = asRecord(entry);
+          const path = claim && typeof claim.path === "string" ? claim.path : null;
+          return path === null
+            ? []
+            : [
+                {
+                  path,
+                  change: asReportString(claim?.change),
+                  why: asReportString(claim?.why),
+                },
+              ];
+        }),
+        verification: asArray(parsed.verification).flatMap((entry) => {
+          const claim = asRecord(entry);
+          const command =
+            claim && typeof claim.command === "string" ? claim.command : null;
+          return command === null
+            ? []
+            : [
+                {
+                  command,
+                  exitCode: typeof claim?.exitCode === "number" ? claim.exitCode : null,
+                  passed: claim?.passed === true,
+                  evidence: asReportString(claim?.evidence),
+                },
+              ];
+        }),
+        notes: asReportString(parsed.notes),
+        followUps: asArray(parsed.followUps).filter(
+          (entry): entry is string => typeof entry === "string",
+        ),
       };
     } catch {
       // Try the next candidate.

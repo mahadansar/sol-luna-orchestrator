@@ -112,12 +112,52 @@ export const DEFAULT_EFFORT: Effort = ALLOWED_EFFORTS.includes("high")
 export type SdkEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
 export const asSdkEffort = (effort: Effort): SdkEffort => effort as SdkEffort;
 
+/**
+ * Seconds budgets, read the same way every other operator bound here is.
+ *
+ * A bare `Number(...)` accepted anything: `abc` became `NaN` and `0` and `-1`
+ * stayed as given. Both reach `setTimeout`, which coerces `NaN` and every
+ * non-positive value to a ~1ms deadline, so one typo silently turned every
+ * worker turn and every verification command into an immediate timeout - i.e.
+ * a failing verdict with no failure the operator could see. Fall back to the
+ * documented default instead, and record that the value was unusable.
+ */
+export function parseTimeoutSeconds(raw: string | undefined, fallback: number): number {
+  if (raw === undefined) return fallback;
+  const value = Number(raw.trim());
+  if (!Number.isFinite(value) || value <= 0) return fallback;
+  return value;
+}
+
+export function timeoutSecondsInvalid(raw: string | undefined): boolean {
+  if (raw === undefined) return false;
+  const value = Number(raw.trim());
+  return !Number.isFinite(value) || value <= 0;
+}
+
+export const DEFAULT_TIMEOUT_SECONDS_FALLBACK = 1800;
+export const VERIFY_TIMEOUT_SECONDS_FALLBACK = 600;
+
 /** Default wall-clock budget for a single delegated task. */
-export const DEFAULT_TIMEOUT_SECONDS = Number(process.env.LUNA_TIMEOUT_SECONDS ?? 1800);
+export const DEFAULT_TIMEOUT_SECONDS = parseTimeoutSeconds(
+  process.env.LUNA_TIMEOUT_SECONDS,
+  DEFAULT_TIMEOUT_SECONDS_FALLBACK,
+);
+
+/** Whether LUNA_TIMEOUT_SECONDS held a value we could not use as given. */
+export const DEFAULT_TIMEOUT_SECONDS_INVALID = timeoutSecondsInvalid(
+  process.env.LUNA_TIMEOUT_SECONDS,
+);
 
 /** Per-verification-command timeout when the orchestrator re-runs them. */
-export const VERIFY_TIMEOUT_SECONDS = Number(
-  process.env.LUNA_VERIFY_TIMEOUT_SECONDS ?? 600,
+export const VERIFY_TIMEOUT_SECONDS = parseTimeoutSeconds(
+  process.env.LUNA_VERIFY_TIMEOUT_SECONDS,
+  VERIFY_TIMEOUT_SECONDS_FALLBACK,
+);
+
+/** Whether LUNA_VERIFY_TIMEOUT_SECONDS held a value we could not use as given. */
+export const VERIFY_TIMEOUT_SECONDS_INVALID = timeoutSecondsInvalid(
+  process.env.LUNA_VERIFY_TIMEOUT_SECONDS,
 );
 
 /** Sandbox the worker runs under. `workspace-write` lets it actually edit code. */

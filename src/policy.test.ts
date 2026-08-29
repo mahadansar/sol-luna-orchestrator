@@ -7,6 +7,7 @@ import {
   cloneComputePolicy,
   DEFAULT_COMPUTE_POLICY,
   describeComputePolicy,
+  executorOrderDeclaredButUnusable,
   narrowPolicy,
   resolveComputePolicy,
   type ComputePolicy,
@@ -578,4 +579,53 @@ test("a released permit hands off to the next waiter exactly once", async () => 
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(thirdAcquired, false, "no extra permit was created");
   a();
+});
+
+// --- Audit regression: a discarded executor ladder must be reportable -------
+
+test("an executor ladder the envelope cannot use is dropped and reported", () => {
+  const base = {
+    model: "gpt-5.6-luna",
+    allowedEfforts: ["medium", "high", "xhigh", "max"] as const,
+    maxConcurrency: 3,
+    maxWorkersPerBatch: 6,
+    allowEffortEscalation: true,
+    allowStrongerFallback: true,
+  };
+
+  // Declared a stronger rung but never authorised it. The ladder is unusable,
+  // so `stronger-executor-fallback` can only ever report `unresolvable` - and
+  // used to do so with nothing in the log, `status`, or `doctor` to explain why.
+  const partial = {
+    ...base,
+    allowedModels: ["gpt-5.6-luna"],
+    executorOrder: ["gpt-5.6-luna", "gpt-5.6-sol"],
+  };
+  assert.equal(buildComputePolicy(partial).executorOrder, undefined);
+  assert.equal(executorOrderDeclaredButUnusable(partial), true);
+
+  // Authorised both, but the ladder does not start at the baseline worker.
+  const misordered = {
+    ...base,
+    allowedModels: ["gpt-5.6-luna", "gpt-5.6-sol"],
+    executorOrder: ["gpt-5.6-sol", "gpt-5.6-luna"],
+  };
+  assert.equal(buildComputePolicy(misordered).executorOrder, undefined);
+  assert.equal(executorOrderDeclaredButUnusable(misordered), true);
+
+  // A complete ladder survives, and declaring none is not a fault to report.
+  const complete = {
+    ...base,
+    allowedModels: ["gpt-5.6-luna", "gpt-5.6-sol"],
+    executorOrder: ["gpt-5.6-luna", "gpt-5.6-sol"],
+  };
+  assert.deepEqual(buildComputePolicy(complete).executorOrder, [
+    "gpt-5.6-luna",
+    "gpt-5.6-sol",
+  ]);
+  assert.equal(executorOrderDeclaredButUnusable(complete), false);
+  assert.equal(
+    executorOrderDeclaredButUnusable({ ...base, allowedModels: ["gpt-5.6-luna"] }),
+    false,
+  );
 });

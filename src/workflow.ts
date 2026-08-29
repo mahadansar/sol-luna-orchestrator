@@ -15,7 +15,7 @@
  * - Continuation (`handleContinueTask`, `ContinuationStore`)
  * - Evidence-earned next-action handoffs (`HandoffStore`)
  * - Automatic context lifecycle management (`ContextLifecycleStore`, `ContextLifecycleRegistry`)
- * - Cross-session informational handoff (`ContextLifecycleRegistry.restoreSessionHandoff`)
+ * - Cross-session informational handoff (`restoreSessionHandoffIntoStore`)
  */
 import {
   type BatchOutput,
@@ -44,7 +44,10 @@ import { emitEvent, type EventEmitter } from "./events.js";
 import { ContextLifecycleStore } from "./context.js";
 import { ContinuationStore } from "./continuation.js";
 import { HandoffStore } from "./handoff.js";
-import type { SessionHandoffArtifact } from "./session-handoff.js";
+import {
+  restoreSessionHandoffIntoStore,
+  type SessionHandoffArtifact,
+} from "./session-handoff.js";
 import {
   ContextLifecycleRegistry,
   handleContinueTask,
@@ -53,7 +56,7 @@ import {
   handleExplore,
   isAuthoritativelyVerifiedPass,
 } from "./server.js";
-import type { Effort } from "./config.js";
+import { DEFAULT_EFFORT, LUNA_MODEL, type Effort } from "./config.js";
 
 /** Explicit states of the end-to-end workflow state machine. */
 export const WORKFLOW_STATES = [
@@ -262,11 +265,21 @@ export async function executeWorkflow(
   // correlation, but must not make concurrent runs share canonical context.
   const contextKey = input.contextKey ? `${input.contextKey}:${workflowId}` : workflowId;
 
-  // Resolve compute policy envelope
+  // Resolve compute policy envelope.
+  //
+  // The probe must name the executor and the efforts this call would actually
+  // run under. Hard-coding the shipped defaults made every installation that
+  // narrows `LUNA_MODEL` or `SOL_LUNA_ALLOWED_EFFORTS` refuse its own workflow
+  // before a single handler ran, because the probe asked about compute the call
+  // was never going to request.
+  const requestedEfforts: Effort[] =
+    input.tasks && input.tasks.length > 0
+      ? [...new Set(input.tasks.map((task) => task.effort))]
+      : [DEFAULT_EFFORT];
   const admission = admitCompute({
     requested: input.computePolicy,
-    model: "gpt-5.6-luna",
-    efforts: ["high"],
+    model: LUNA_MODEL,
+    efforts: requestedEfforts,
     workerCount: input.tasks?.length ?? 1,
   });
   const activeComputePolicy = admission.policy;
@@ -275,14 +288,26 @@ export async function executeWorkflow(
   // to evaluate terminal truth; this does not rerun verification.
   const internalResultDetail = input.resultDetail === "full" ? "full" : "compact";
 
-  // Context Lifecycle Store setup
+  // Context Lifecycle Store setup.
+  //
+  // A session handoff is caller-supplied cross-session data, so a malformed,
+  // oversized, or tampered artifact is an ordinary refusal rather than a
+  // coordinator crash: throwing here escaped `executeWorkflow` entirely, before
+  // `workflow.started` was emitted and before any structured result existed.
+  // The failure is carried into `assessing`, which yields parent takeover.
   let lifecycleStore: ContextLifecycleStore;
+  let sessionHandoffError: string | null = null;
   if (input.sessionHandoff) {
-    const restored = deps.contextRegistry.restoreSessionHandoff(
-      contextKey,
-      input.sessionHandoff,
-    );
-    lifecycleStore = deps.contextStore ?? restored.store;
+    // An injected store is the authority for this run. Restoring into a
+    // registry store it would then replace silently discarded the imported
+    // history the caller asked for.
+    const target = deps.contextStore ?? deps.contextRegistry.getOrCreate(contextKey);
+    lifecycleStore = target;
+    try {
+      restoreSessionHandoffIntoStore(target, input.sessionHandoff);
+    } catch (error) {
+      sessionHandoffError = `session-handoff-rejected: ${(error as Error).message}`;
+    }
   } else {
     lifecycleStore = deps.contextStore ?? deps.contextRegistry.getOrCreate(contextKey);
   }
@@ -395,6 +420,21 @@ export async function executeWorkflow(
       switch (stateToExecute as string) {
         case "assessing": {
           // Input contract validation & initial context setup
+          if (sessionHandoffError) {
+            transitionTo("parent_takeover", sessionHandoffError);
+            steps.push({
+              stepNumber,
+              state: "assessing",
+              action: "assess-contract",
+              startedAt: new Date(stepStart).toISOString(),
+              finishedAt: new Date().toISOString(),
+              durationMs: Date.now() - stepStart,
+              outcome: "failure",
+              details: { reason: "session-handoff-rejected" },
+            });
+            break;
+          }
+
           if (!input.objective || input.objective.trim().length === 0) {
             transitionTo(
               "parent_takeover",
@@ -453,7 +493,7 @@ export async function executeWorkflow(
                   })
                 : exploreInputSchema.parse({
                     target: `Investigate codebase for: ${input.objective}`,
-                    effort: "high",
+                    effort: DEFAULT_EFFORT,
                     effortReason: "Workflow exploration before decomposition",
                     scope:
                       input.allowedFiles && input.allowedFiles.length > 0
@@ -672,7 +712,7 @@ export async function executeWorkflow(
                   changeIntent: input.changeIntent ?? "required",
                   taskCategory: input.taskCategory,
                   verificationCommands: [...(input.verificationCommands ?? [])],
-                  effort: routingResult?.selectedEffort ?? "high",
+                  effort: routingResult?.selectedEffort ?? DEFAULT_EFFORT,
                   effortReason: "Automated workflow single delegation",
                   activityLabel: input.activityLabel,
                   context: input.context,
@@ -742,7 +782,7 @@ export async function executeWorkflow(
                   changeIntent: input.changeIntent ?? "required",
                   taskCategory: input.taskCategory,
                   verificationCommands: [...(input.verificationCommands ?? [])],
-                  effort: routingResult?.selectedEffort ?? "high",
+                  effort: routingResult?.selectedEffort ?? DEFAULT_EFFORT,
                   effortReason: "Automated workflow batch delegation",
                   activityLabel: input.activityLabel,
                   automaticRepair: input.automaticRepair ?? true,
@@ -1010,7 +1050,7 @@ export async function executeWorkflow(
             forbiddenFiles: [...(input.forbiddenFiles ?? [])],
             changeIntent: input.changeIntent ?? "required",
             verificationCommands: [...(input.verificationCommands ?? [])],
-            effort: "high",
+            effort: DEFAULT_EFFORT,
             effortReason: "Escalated delegation turn via handoff",
             automaticRepair: input.automaticRepair ?? true,
             computePolicy: activeComputePolicy,
@@ -1077,11 +1117,23 @@ export async function executeWorkflow(
     }
   } finally {
     releaseLease();
-    lifecycleStore.evaluateAndMaybeCompact("post-delegation", {
-      batchId: workflowId,
-      emit: deps.emit,
-    });
-    deps.contextRegistry.releaseIfUnreferenced(contextKey);
+    // Cleanup must not be able to replace a finished `WorkflowOutput` with a
+    // rejected promise. Compaction is a projection over history the supervisor
+    // never reads directly, and both it and registry release assert their own
+    // invariants; a throw here used to discard an already-terminal result.
+    try {
+      lifecycleStore.evaluateAndMaybeCompact("post-delegation", {
+        batchId: workflowId,
+        emit: deps.emit,
+      });
+    } catch {
+      // Bookkeeping only; the workflow verdict below is already decided.
+    }
+    try {
+      deps.contextRegistry.releaseIfUnreferenced(contextKey);
+    } catch {
+      // Same reason: releasing a process-local store cannot fail a workflow.
+    }
   }
 
   const durationMs = Date.now() - startedAt;

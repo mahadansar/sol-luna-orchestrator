@@ -7,7 +7,7 @@ import type {
   FailureDecision,
   HandoffState,
 } from "./contract.js";
-import { LUNA_MODEL } from "./config.js";
+import { EFFORTS, LUNA_MODEL } from "./config.js";
 import { resultWasCancelled } from "./worker.js";
 
 /** How long an unused next-action handoff remains valid in one server process. */
@@ -102,9 +102,15 @@ export class HandoffStore {
     const latestAttempt = result.attempts?.at(-1);
     const executionId = latestAttempt?.executionId ?? predecessorExecutionId ?? null;
     const model = latestAttempt?.requestedModel ?? result.model ?? LUNA_MODEL;
-    const effort = (latestAttempt?.requestedEffort ??
-      result.effort ??
-      input.effort) as Effort;
+    // `requestedEffort` on attempt evidence and `effort` on a result are both
+    // plain strings: they record what a turn was *asked* to run at, including
+    // values this runtime does not know. Casting the first non-null one to
+    // `Effort` wrote an unvalidated string into the restored contract's
+    // `previousAttempts[].effort`, which the schema declares as one of `EFFORTS`.
+    // Take the first candidate this runtime actually recognises instead, and
+    // fall back to the contract's own validated effort.
+    const effort =
+      [latestAttempt?.requestedEffort, result.effort].find(isEffort) ?? input.effort;
     const logicalAttempt =
       (latestAttempt?.logicalAttempt ??
         result.attempt ??
@@ -203,6 +209,11 @@ export class HandoffStore {
       if (now >= retired.until) this.retired.delete(reference);
     }
   }
+}
+
+/** Whether a recorded effort string names a level this runtime knows. */
+function isEffort(value: string | undefined): value is Effort {
+  return value !== undefined && (EFFORTS as readonly string[]).includes(value);
 }
 
 export function isHandoffReference(value: string): boolean {

@@ -1012,3 +1012,46 @@ test("lifecycle - continuation restores only its server-owned lineage context", 
     !JSON.stringify(owner.getAuthoritativeContext()).includes("unrelated lineage"),
   );
 });
+
+// --- Audit regression: history keeping cannot rewrite a delegation outcome ---
+
+test("a context ingestion failure cannot turn a verified delegation into a tool error", async () => {
+  const emitted: OrchestratorEvent[] = [];
+  const store = new ContextLifecycleStore();
+  // Context ingestion throws on its own invariants - duplicate turn ids,
+  // conflicting lineage for one execution id. It runs after the verdict is
+  // final and after `worker.completed` / `batch.completed` have already been
+  // emitted, so a throw there used to report `Delegation failed: ...` for a run
+  // the telemetry stream had already recorded as passing, and then emit a
+  // contradicting `worker.failed` for the same batch.
+  store.recordDelegationTurn = () => {
+    throw new Error("Context turn id already exists: injected");
+  };
+
+  const result = await handleDelegateTask(makeMinimalTask(), undefined, {
+    contextStore: store,
+    contextRegistry: new ContextLifecycleRegistry({
+      continuationStore: new ContinuationStore(),
+      handoffStore: new HandoffStore(),
+      emit: (event) => emitted.push(event),
+    }),
+    handoffStore: new HandoffStore(),
+    continuationStore: new ContinuationStore(),
+    emit: (event) => emitted.push(event),
+    record: () => {},
+    delegateToLuna: async (input, _signal, hooks) => {
+      hooks?.onStarted?.(process.cwd());
+      return makeMinimalOutput({ effort: input.effort });
+    },
+  });
+
+  assert.notEqual(result.isError, true);
+  assert.match(result.content[0]!.text, /VERDICT: PASS/);
+  assert.ok(emitted.some((event) => event.type === "worker.completed"));
+  assert.ok(!emitted.some((event) => event.type === "worker.failed"));
+  assert.equal(
+    emitted.filter((event) => event.type === "batch.completed").length,
+    1,
+    "exactly one terminal batch record",
+  );
+});

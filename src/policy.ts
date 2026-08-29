@@ -133,6 +133,44 @@ export interface ComputePolicyEnvironment {
 }
 
 /**
+ * Whether a declared ladder completely and unambiguously orders authorisation.
+ *
+ * A partial ladder is not a weaker ladder, it is an unusable one: selection
+ * resolves a stronger executor by index, so a list that omits an authorised
+ * model, repeats one, names one that is not authorised, or does not start at the
+ * baseline worker cannot answer "what comes after this rung". Exported because
+ * dropping such a ladder must be *reported* rather than merely done - see
+ * `executorOrderDeclaredButUnusable`.
+ */
+export function executorOrderIsUsable(
+  requestedOrder: readonly string[],
+  allowedModels: readonly string[],
+  baselineModel: string,
+): boolean {
+  return (
+    requestedOrder.length === allowedModels.length &&
+    new Set(requestedOrder).size === requestedOrder.length &&
+    requestedOrder[0] === baselineModel &&
+    requestedOrder.every((model) => allowedModels.includes(model))
+  );
+}
+
+/**
+ * An operator declared an executor ladder that this envelope cannot use.
+ *
+ * The ladder was silently discarded, which left `stronger-executor-fallback`
+ * permanently `stronger-executor-unresolvable` with nothing in the log, the
+ * status table, or `doctor` to say why. Callers surface this the same way they
+ * surface an unrecognised verify mode or a clamped concurrency.
+ */
+export function executorOrderDeclaredButUnusable(env: ComputePolicyEnvironment): boolean {
+  const requestedOrder = env.executorOrder ?? [];
+  if (requestedOrder.length === 0) return false;
+  const allowedModels = [...new Set(env.allowedModels ?? [env.model])];
+  return !executorOrderIsUsable(requestedOrder, allowedModels, env.model);
+}
+
+/**
  * Build a baseline from operator settings, through the same narrowing gate a
  * caller's declaration goes through.
  *
@@ -144,11 +182,7 @@ export interface ComputePolicyEnvironment {
 export function buildComputePolicy(env: ComputePolicyEnvironment): ComputePolicy {
   const allowedModels = [...new Set(env.allowedModels ?? [env.model])];
   const requestedOrder = env.executorOrder ? [...env.executorOrder] : [];
-  const orderIsComplete =
-    requestedOrder.length === allowedModels.length &&
-    new Set(requestedOrder).size === requestedOrder.length &&
-    requestedOrder[0] === env.model &&
-    requestedOrder.every((model) => allowedModels.includes(model));
+  const orderIsComplete = executorOrderIsUsable(requestedOrder, allowedModels, env.model);
   const executorOrder = orderIsComplete ? requestedOrder : [];
   return narrowPolicy(
     {
@@ -177,7 +211,7 @@ export function buildComputePolicy(env: ComputePolicyEnvironment): ComputePolicy
  * none of the variables resolves exactly the envelope the runtime had before
  * the policy existed.
  */
-export const DEFAULT_COMPUTE_POLICY: ComputePolicy = buildComputePolicy({
+export const DEFAULT_COMPUTE_POLICY_ENVIRONMENT: ComputePolicyEnvironment = {
   model: LUNA_MODEL,
   allowedModels: ALLOWED_MODELS,
   allowedEfforts: ALLOWED_EFFORTS,
@@ -186,7 +220,16 @@ export const DEFAULT_COMPUTE_POLICY: ComputePolicy = buildComputePolicy({
   allowEffortEscalation: ALLOW_EFFORT_ESCALATION,
   allowStrongerFallback: ALLOW_STRONGER_FALLBACK,
   executorOrder: EXECUTOR_ORDER,
-});
+};
+
+export const DEFAULT_COMPUTE_POLICY: ComputePolicy = buildComputePolicy(
+  DEFAULT_COMPUTE_POLICY_ENVIRONMENT,
+);
+
+/** Whether SOL_LUNA_EXECUTOR_ORDER named a ladder this installation cannot use. */
+export const EXECUTOR_ORDER_UNUSABLE = executorOrderDeclaredButUnusable(
+  DEFAULT_COMPUTE_POLICY_ENVIRONMENT,
+);
 
 /** Deep copy, so a resolved envelope attached to a task cannot be aliased. */
 export function cloneComputePolicy(policy: ComputePolicy): ComputePolicy {

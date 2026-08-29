@@ -193,8 +193,13 @@ export async function collectChecks(): Promise<Check[]> {
 
   checks.push({
     name: "Compute policy",
-    status: "ok",
+    status: serverConfig.executorOrderUnusable ? "warn" : "ok",
     detail: describeComputePolicy(serverConfig.computePolicy),
+    remedy: serverConfig.executorOrderUnusable
+      ? "SOL_LUNA_EXECUTOR_ORDER was declared but does not list every model in " +
+        "SOL_LUNA_ALLOWED_MODELS exactly once, starting with LUNA_MODEL, so it was " +
+        "ignored and stronger-executor fallback stays unresolvable"
+      : undefined,
   });
 
   const disableTargetMatches = serverConfig.recursionDisableTarget === SERVER_NAME;

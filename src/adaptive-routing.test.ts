@@ -1152,11 +1152,22 @@ test("Live adaptive dispatch routes selected model and effort across batch tasks
   assert.equal(recordedExecutions.length, 2);
   assert.equal(recordedExecutions[0]!.model, "gpt-5.6-luna");
   assert.equal(recordedExecutions[1]!.model, "gpt-5.6-luna");
-  assert.equal(recordedExecutions[0]!.effort, "high");
-  assert.equal(recordedExecutions[1]!.effort, "high");
+  // The card is advisory. Its single starting-effort recommendation is for work
+  // whose effort nobody declared; it must not overwrite - and must not flatten -
+  // the per-task efforts these two contracts declared with their own
+  // `effortReason`. Compute selection replaces a declared effort only on the
+  // evidence-earned escalation ladder, which needs a consumed server handoff.
+  const executedEfforts = new Map(
+    recordedExecutions.map((execution) => [execution.taskId, execution.effort]),
+  );
+  assert.equal(executedEfforts.get("Implement first"), "medium");
+  assert.equal(executedEfforts.get("Implement secon"), "high");
   assert.equal(sdkTurns.length, 2);
   assert.ok(sdkTurns.every((turn) => turn.model === "gpt-5.6-luna"));
-  assert.ok(sdkTurns.every((turn) => turn.modelReasoningEffort === "high"));
+  assert.deepEqual(sdkTurns.map((turn) => turn.modelReasoningEffort).sort(), [
+    "high",
+    "medium",
+  ]);
 });
 
 test("Multi-step escalation ladder climbs effort rungs then stronger executors through handoff references", async () => {
@@ -1738,4 +1749,96 @@ test("Live batch registers handoffs for eligible failed tasks and ignores succes
   } finally {
     fs.rmSync(tempDirectory, { recursive: true, force: true });
   }
+});
+
+// --- Audit regressions: advisory routing must not rewrite declared compute ---
+
+test("an advisory routing card cannot raise or lower a declared single-task effort", async () => {
+  const { handleDelegateTask } = await import("./server.js");
+  const { ContinuationStore } = await import("./continuation.js");
+
+  const runAt = async (effort: "medium" | "high" | "xhigh" | "max") => {
+    let executedEffort: string | null = null;
+    const task = delegateTaskInputSchema.parse({
+      objective: "Implement the substantial declared seam end to end.",
+      effort,
+      effortReason: "The supervisor sized this seam deliberately.",
+      allowedFiles: ["src/declared.ts"],
+      changeIntent: "optional",
+      acceptanceCriteria: ["Passes"],
+      verificationCommands: [],
+      // Resolves to a delegation-plausible shape whose starting effort is `high`.
+      routingPreflight: {
+        seams: ["declared"],
+        seamSize: "substantial",
+        sharedState: "none",
+        coreOverlap: "disjoint",
+        integration: "mechanical",
+        verification: "per-seam",
+      },
+    });
+    await handleDelegateTask(task, undefined, {
+      handoffStore: new HandoffStore(),
+      continuationStore: new ContinuationStore(),
+      emit: () => {},
+      record: () => {},
+      delegateToLuna: async (input) => {
+        executedEffort = input.effort;
+        return makeOutput({ verdict: "PASS", effort: input.effort });
+      },
+    });
+    return executedEffort;
+  };
+
+  // `medium` must not be escalated to the card's `high` recommendation:
+  // spending more compute than the supervisor authorised is policy expansion.
+  assert.equal(await runAt("medium"), "medium");
+  // `max` must not be clamped down to it either: the declared `effortReason`
+  // stays on the result, so a silently substituted effort makes the returned
+  // evidence contradict itself.
+  assert.equal(await runAt("max"), "max");
+});
+
+test("a stale attempt effort this runtime cannot read never enters a restored contract", () => {
+  const store = new HandoffStore();
+  const input = delegateTaskInputSchema.parse({
+    objective: "Implement the declared seam with a sound contract.",
+    effort: "high",
+    effortReason: "Chosen by the supervisor.",
+    allowedFiles: ["src/stale.ts"],
+    changeIntent: "optional",
+    acceptanceCriteria: ["Passes"],
+    verificationCommands: [],
+  });
+  const decision: FailureDecision = {
+    classification: "implementation",
+    action: "retry",
+    reason: "Trustworthy implementation failure.",
+    evidenceExecutionIds: ["exec-stale"],
+    nextEffort: null,
+    automaticHandler: null,
+    automaticRetryCount: 0,
+    automaticRetryLimit: 1,
+  };
+  // `requestedEffort` and the result's `effort` are plain strings on the wire.
+  const result = makeOutput({
+    verdict: "FAILED",
+    effort: "ludicrous",
+    failureDecision: decision,
+    attempts: [
+      {
+        ...makeOutput({}).attempts![0]!,
+        executionId: "exec-stale",
+        requestedEffort: "ludicrous",
+      },
+    ],
+  });
+  const reference = registerHandoff(input, result, store, { authoritativePrior: true });
+  assert.ok(reference);
+  const consumed = store.consume(reference!);
+  assert.equal(consumed.status, "ready");
+  assert.ok(consumed.status === "ready");
+  // Falls back to the contract's own validated effort rather than writing an
+  // unknown level into `previousAttempts[].effort`, which the schema enumerates.
+  assert.equal(consumed.entry.effort, "high");
 });

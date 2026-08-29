@@ -370,7 +370,7 @@ a second orchestration system.
     recommended, and executed compute remain distinct; prompts, paths, raw output, verification
     output, and capability references are absent.
 
-The deterministic workflow suite contains exactly 26 tests: 25 coordinator scenarios and one
+The deterministic workflow suite contains 30 tests: 29 coordinator scenarios and one
 report-rendering test. It is included in the canonical `npm test` and `npm run verify` gates.
 
 **Constraints.** Supervisor remains the orchestration authority. File scopes remain detective, and

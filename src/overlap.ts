@@ -147,24 +147,28 @@ export interface IntegrationConflict {
 export function findIntegrationConflicts(
   results: Array<{ taskId: string; changedFiles: string[] }>,
 ): IntegrationConflict[] {
-  const owners = new Map<string, string[]>();
+  // The key folds case where the filesystem does; the reported path keeps the
+  // spelling the runtime actually observed. Reporting the folded key put a path
+  // that may not exist as written into the conflict evidence, the review
+  // checklist, and the context blocker derived from it.
+  const owners = new Map<string, { path: string; tasks: string[] }>();
   const insensitive = nocase();
 
   for (const result of results) {
     for (const file of result.changedFiles) {
       const key = insensitive ? file.toLowerCase() : file;
-      const list = owners.get(key);
-      if (list) {
-        if (!list.includes(result.taskId)) list.push(result.taskId);
+      const owner = owners.get(key);
+      if (owner) {
+        if (!owner.tasks.includes(result.taskId)) owner.tasks.push(result.taskId);
       } else {
-        owners.set(key, [result.taskId]);
+        owners.set(key, { path: file, tasks: [result.taskId] });
       }
     }
   }
 
   const conflicts: IntegrationConflict[] = [];
-  for (const [file, tasks] of owners) {
-    if (tasks.length > 1) conflicts.push({ path: file, tasks });
+  for (const owner of owners.values()) {
+    if (owner.tasks.length > 1) conflicts.push({ path: owner.path, tasks: owner.tasks });
   }
   return conflicts.sort((a, b) => a.path.localeCompare(b.path));
 }

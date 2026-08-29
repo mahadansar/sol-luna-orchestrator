@@ -50,6 +50,7 @@ import {
   collectExplorationMutations,
   createExplorationSurface,
   removeExplorationSurface,
+  verifyGrounding,
 } from "./explorer-surface.js";
 import { parseEventLine } from "./cli/activity-reducer.js";
 
@@ -1068,4 +1069,72 @@ test("registerExplore registers explore tool with proper schema and description"
   const report = inputMetadataSizeReport();
   assert.ok(report.exploreTool > 0);
   assert.ok(report.exploreTool <= INPUT_METADATA_SIZE_BUDGETS.exploreTool);
+});
+
+// --- Audit regressions: exploration surface admission and grounding ---------
+
+test("a nested repository's .git and .sol-luna never reach the exploration surface", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-explore-nested-"));
+  let surface: Awaited<ReturnType<typeof createExplorationSurface>> | null = null;
+  try {
+    await fs.mkdir(path.join(root, "vendor", "dep", ".git"), { recursive: true });
+    await fs.mkdir(path.join(root, "vendor", "dep", ".sol-luna"), { recursive: true });
+    // A vendored dependency, a submodule, or a fixture repo puts a second .git
+    // below the root, and a git remote URL routinely carries a credential.
+    await fs.writeFile(
+      path.join(root, "vendor", "dep", ".git", "config"),
+      "[remote]\n url = https://user:s3cr3t@example.invalid/x.git\n",
+    );
+    await fs.writeFile(
+      path.join(root, "vendor", "dep", ".sol-luna", "state.json"),
+      '{"kept":"runtime state"}\n',
+    );
+    await fs.writeFile(
+      path.join(root, "vendor", "dep", "index.js"),
+      "export const a=1;\n",
+    );
+    await fs.writeFile(path.join(root, "main.ts"), "export const b = 2;\n");
+
+    surface = await createExplorationSurface(root, ["**"], []);
+    const admitted = [...surface.baseline.keys()].sort();
+    assert.deepEqual(admitted, ["main.ts", "vendor/dep/index.js"]);
+    assert.ok(!admitted.some((file) => file.split("/").includes(".git")));
+    assert.ok(!admitted.some((file) => file.split("/").includes(".sol-luna")));
+  } finally {
+    if (surface) await removeExplorationSurface(surface);
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("grounding accepts a truthful citation of a line whose text repeats earlier", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-explore-ground-"));
+  let surface: Awaited<ReturnType<typeof createExplorationSurface>> | null = null;
+  try {
+    await fs.mkdir(path.join(root, "src"), { recursive: true });
+    // The same statement on lines 1 and 3: entirely ordinary in real source.
+    await fs.writeFile(
+      path.join(root, "src", "repeat.ts"),
+      "export const x = 1;\nconst other = 2;\nexport const x = 1;\n",
+    );
+    surface = await createExplorationSurface(root, ["src/**"], []);
+
+    assert.equal(
+      await verifyGrounding(surface, "src/repeat.ts", 1, "export const x = 1;"),
+      null,
+    );
+    // The later occurrence is just as true; matching only the first hit reported
+    // it as ungrounded and quietly demoted a correct worker fact.
+    assert.equal(
+      await verifyGrounding(surface, "src/repeat.ts", 3, "export const x = 1;"),
+      null,
+    );
+    // A line that holds neither occurrence is still rejected.
+    assert.match(
+      (await verifyGrounding(surface, "src/repeat.ts", 2, "export const x = 1;")) ?? "",
+      /not claimed line 2/,
+    );
+  } finally {
+    if (surface) await removeExplorationSurface(surface);
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });

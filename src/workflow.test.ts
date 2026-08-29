@@ -1373,3 +1373,149 @@ test("renderWorkflowReport: generates compact readable human summary", () => {
   assert.match(report, /TRANSITIONS:/);
   assert.match(report, /TASK RESULT: verdict=PASS/);
 });
+
+// --- Audit regressions: coordinator admission and untrusted intake ----------
+
+test("workflow admission probes the compute this call requests, not shipped defaults", async () => {
+  const emitted: OrchestratorEvent[] = [];
+  const deps = setupTestDeps({}, emitted);
+  let delegatedEffort: string | null = null;
+  deps.handleDelegateTask = async (input) => {
+    delegatedEffort = input.effort;
+    return {
+      content: [{ type: "text", text: "DELEGATION REPORT" }],
+      structuredContent: makeCleanTaskOutput({ effort: input.effort }),
+      isError: false,
+    };
+  };
+
+  const task: DelegateTaskInput = {
+    objective: "Implement the declared seam under a narrowed effort envelope.",
+    effort: "medium",
+    effortReason: "The operator permits only medium here.",
+    allowedFiles: ["src/narrow.ts"],
+    forbiddenFiles: [],
+    changeIntent: "required",
+    acceptanceCriteria: ["Passes"],
+    verificationCommands: ["npm test"],
+    automaticRepair: false,
+    resultDetail: "handoff",
+    previousAttempts: [],
+  };
+
+  const output = await executeWorkflow(
+    {
+      objective: "Implement the declared seam under a narrowed effort envelope.",
+      tasks: [task],
+      executionMode: "single",
+      // The probe used to ask about a hard-coded `high` on a hard-coded model,
+      // so any installation narrowing either refused its own workflow at the
+      // routing step before a single handler ran.
+      computePolicy: { allowedEfforts: ["medium"] },
+    },
+    undefined,
+    deps,
+  );
+
+  assert.ok(
+    !output.transitions.some((t) => t.reason === "compute-policy-refused-execution"),
+    "a narrowed but satisfiable envelope must not refuse the workflow",
+  );
+  assert.ok(output.transitions.some((t) => t.toState === "delegating"));
+  assert.equal(delegatedEffort, "medium");
+});
+
+test("a malformed cross-session handoff yields parent takeover rather than throwing", async () => {
+  const emitted: OrchestratorEvent[] = [];
+  const deps = setupTestDeps({}, emitted);
+
+  // Caller-supplied cross-session data is informational and untrusted. Rejecting
+  // it used to throw straight out of `executeWorkflow`, before `workflow.started`
+  // was emitted and with no structured result for the supervisor to read.
+  const output = await executeWorkflow(
+    {
+      objective: "Resume work from a tampered prior session",
+      sessionHandoff: '{"not":"a valid artifact"}',
+      executionMode: "single",
+    },
+    undefined,
+    deps,
+  );
+
+  assert.equal(output.status, "PARENT_TAKEOVER");
+  assert.equal(output.state, "parent_takeover");
+  assert.ok(
+    output.transitions.some((t) => t.reason.startsWith("session-handoff-rejected")),
+  );
+  assert.ok(emitted.some((event) => event.type === "workflow.started"));
+  assert.ok(emitted.some((event) => event.type === "workflow.completed"));
+});
+
+test("an injected context store receives the restored session handoff", async () => {
+  const emitted: OrchestratorEvent[] = [];
+  const deps = setupTestDeps({}, emitted);
+  const injected = new ContextLifecycleStore();
+  deps.contextStore = injected;
+
+  const artifact = exportSessionHandoff(
+    createOrchestrationContext({
+      objective: "Historical objective from a prior session",
+      acceptanceCriteria: ["Historical acceptance"],
+      allowedFiles: ["src/historical.ts"],
+      forbiddenFiles: [],
+      changeIntent: "required",
+    }),
+    { handoffId: "sho_test_injected_store" },
+  );
+
+  await executeWorkflow(
+    {
+      objective: "Current objective",
+      sessionHandoff: artifact,
+      executionMode: "single",
+    },
+    undefined,
+    deps,
+  );
+
+  // The restore used to land in a registry store that was then replaced by the
+  // injected one, silently discarding the imported history the caller supplied.
+  const restored = injected.getAuthoritativeContext();
+  assert.ok(restored);
+  assert.equal(restored!.importedHistory?.handoffId, "sho_test_injected_store");
+  assert.equal(restored!.importedHistory?.schemaVersion, SESSION_HANDOFF_SCHEMA_VERSION);
+});
+
+test("an installation that renames the worker model still routes its workflows", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { fileURLToPath } = await import("node:url");
+  const workflowModule = fileURLToPath(new URL("./workflow.js", import.meta.url));
+  const script = `
+    const { executeWorkflow } = await import(${JSON.stringify(pathToFileUrlString(workflowModule))});
+    const out = await executeWorkflow(
+      { objective: "Implement the declared seam end to end please" },
+      undefined,
+      {
+        emit: () => {},
+        handleDelegateTask: async () => ({ content: [], isError: true }),
+        handleDelegateTasks: async () => ({ content: [], isError: true }),
+        handleExplore: async () => ({ content: [], isError: true }),
+        handleContinueTask: async () => ({ content: [], isError: true }),
+      },
+    );
+    process.stdout.write(JSON.stringify(out.transitions.map((t) => t.reason)));
+  `;
+  const stdout = execFileSync(process.execPath, ["--input-type=module", "-e", script], {
+    encoding: "utf8",
+    env: { ...process.env, LUNA_MODEL: "gpt-5.6-luna-renamed" },
+  });
+  const reasons = JSON.parse(stdout) as string[];
+  // The admission probe named the shipped default model, so every installation
+  // that set LUNA_MODEL refused its own workflow before any handler ran.
+  assert.ok(!reasons.includes("compute-policy-refused-execution"), stdout);
+});
+
+function pathToFileUrlString(file: string): string {
+  return new URL(`file://${file.startsWith("/") ? "" : "/"}${file.replaceAll("\\", "/")}`)
+    .href;
+}
