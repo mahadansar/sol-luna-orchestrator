@@ -50,9 +50,17 @@ import { V3_SOLUTIONS } from "./bench/v3-solutions.js";
 import {
   BENCHMARK_V3_FREEZE_SHA,
   BENCHMARK_V3_PRODUCTION_BASELINE_SHA,
+  BENCHMARK_V3_PRODUCTION_BASELINE_VERSION,
   V3_TASKS,
 } from "./bench/v3-tasks.js";
 import { buildEnvironmentRecord } from "./bench/environment.js";
+import {
+  BASELINE_RUNTIME_MANIFEST_SCHEMA,
+  BENCHMARK_V3_EXPECTED_RUNTIME_MANIFEST_SHA256,
+  buildBaselineCellRuntimeIdentity,
+  buildProductionBaselineRuntime,
+  type BaselineRuntimeProbe,
+} from "./bench/baseline.js";
 import { repriceHistoricalRecord, renderReport } from "./bench/report.js";
 
 // --- Concurrency measurement ------------------------------------------------
@@ -932,6 +940,47 @@ test("Benchmark V2 refuses to start or snapshot without standard-speed confirmat
 });
 
 /**
+ * A baseline artifact that passes every binding check.
+ *
+ * Written as raw readings rather than by touching a real worktree, so the
+ * verification rules are exercised without provisioning one. The mismatch cases
+ * live in `src/bench/harness.test.ts`.
+ */
+const verifiedBaselineProbe = (
+  overrides: Partial<BaselineRuntimeProbe> = {},
+): BaselineRuntimeProbe => ({
+  directory: "D:\\repo\\bench\\baseline\\v0.11.0",
+  directoryExists: true,
+  isolatedFromDevelopmentTree: true,
+  headCommit: BENCHMARK_V3_PRODUCTION_BASELINE_SHA,
+  headTree: "d".repeat(40),
+  statusPorcelain: "",
+  expectedTree: "d".repeat(40),
+  packageName: "sol-luna-orchestrator",
+  packageVersion: BENCHMARK_V3_PRODUCTION_BASELINE_VERSION,
+  packageVersionAtBaselineCommit: BENCHMARK_V3_PRODUCTION_BASELINE_VERSION,
+  declaredBinPath: "dist/server.js",
+  entryPoint: "D:\\repo\\bench\\baseline\\v0.11.0\\dist\\server.js",
+  entryPointExists: true,
+  entryPointFileType: "file",
+  entryPointRealPath: "D:\\repo\\bench\\baseline\\v0.11.0\\dist\\server.js",
+  entryPointContained: true,
+  entryPointSha256: "e".repeat(64),
+  launcher: "C:\\Program Files\\nodejs\\node.exe",
+  declaredDependencies: ["@openai/codex-sdk"],
+  installedDependencyVersions: { "@openai/codex-sdk": "0.147.0" },
+  runtimeManifest: {
+    schema: BASELINE_RUNTIME_MANIFEST_SCHEMA,
+    entries: [],
+    aggregateSha256: BENCHMARK_V3_EXPECTED_RUNTIME_MANIFEST_SHA256,
+    fileCount: 1,
+    totalBytes: 4096,
+    symlinkCount: 0,
+  },
+  ...overrides,
+});
+
+/**
  * The launch evidence every V3 snapshot now carries. The rules that produce and
  * enforce it are covered in `src/bench/harness.test.ts`; tests below supply it
  * so they can keep asserting what they were written to assert.
@@ -960,7 +1009,13 @@ const V3_LAUNCH_EVIDENCE = {
   }),
   ordering: { mode: "declared" as const, seed: null, sequence: [] },
   methodologyDigest: "c".repeat(64),
+  baselineRuntime: buildProductionBaselineRuntime(verifiedBaselineProbe()),
 };
+
+const V3_SEALED_CELL_IDENTITY = buildBaselineCellRuntimeIdentity(
+  buildProductionBaselineRuntime(verifiedBaselineProbe()),
+  buildProductionBaselineRuntime(verifiedBaselineProbe()),
+);
 
 test("Benchmark V3 requires an explicit pre-campaign pricing revalidation", () => {
   assert.throws(() => assertV3PricingProfileConfirmed(false), /credit-rate profile/);
@@ -989,9 +1044,18 @@ test("Benchmark V3 requires an explicit pre-campaign pricing revalidation", () =
   assert.equal(snapshot.suite, "v3");
   assert.equal(snapshot.holdoutFreezeSha, BENCHMARK_V3_FREEZE_SHA);
   assert.deepEqual(snapshot.productionBaseline, {
-    version: "0.10.0",
+    version: BENCHMARK_V3_PRODUCTION_BASELINE_VERSION,
     sha: BENCHMARK_V3_PRODUCTION_BASELINE_SHA,
   });
+});
+
+test("the V3 production baseline is the released tag commit, not the freeze commit", () => {
+  // The two pins answer different questions: which methodology was reviewed,
+  // and which released product the campaign evaluates. Equal values would mean
+  // one of them had been repointed at the other.
+  assert.equal(BENCHMARK_V3_PRODUCTION_BASELINE_VERSION, "0.11.0");
+  assert.match(BENCHMARK_V3_PRODUCTION_BASELINE_SHA, /^[0-9a-f]{40}$/);
+  assert.notEqual(BENCHMARK_V3_PRODUCTION_BASELINE_SHA, BENCHMARK_V3_FREEZE_SHA);
 });
 
 test("Benchmark V3 enforces the frozen normal-arm repetition policy", () => {
@@ -1292,6 +1356,7 @@ test("V3 campaign analysis and report generation work with synthetic evidence", 
       taskId: "v3-static-site-pipeline",
       routingCategory: "strong-delegation-candidate" as const,
       workloadClass: "delegation-candidate",
+      baselineRuntimeIdentity: V3_SEALED_CELL_IDENTITY,
     };
     const snapshot = buildResultsSnapshot({
       startedAt: "synthetic",

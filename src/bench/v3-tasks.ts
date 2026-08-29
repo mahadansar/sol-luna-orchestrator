@@ -8,16 +8,49 @@
 import type { BenchTask, GradeCommand } from "./tasks.js";
 
 /**
- * Exact commit containing the frozen V3 workload and methodology.
+ * Which freeze review the current V3 methodology, harness, and telemetry
+ * semantics belong to. Bumped by a freeze review, never by a correction.
+ */
+export const BENCHMARK_V3_FREEZE_REVISION = 3 as const;
+
+/**
+ * Commit containing the frozen V3 methodology content.
  *
- * This is still the freeze-1 commit. The P2.4A freeze-2 review has no commit
- * yet, so recording one here would be an invention; `V3_METHODOLOGY_DIGEST` in
- * `./integrity.js` identifies the current reviewed content instead, and this
- * SHA must be updated to the freeze-2 commit before a live campaign launches.
+ * Two different commits matter to a V3 campaign and must not be conflated:
+ * this one identifies the reviewed *methodology*, and
+ * `BENCHMARK_V3_PRODUCTION_BASELINE_SHA` identifies the *product* the campaign
+ * evaluates.
+ *
+ * Freeze identity itself is content-addressed — `V3_METHODOLOGY_DIGEST` in
+ * `./integrity.js` is authoritative and is verified at launch. This SHA is the
+ * commit-addressed companion, and a pin cannot name the commit that contains
+ * it: the methodology is committed first, then this constant is repinned. The
+ * value below is still the freeze-2 content commit because freeze 3 is authored
+ * in a working tree and has no commit yet, which is exactly what
+ * `BENCHMARK_V3_FREEZE_SHA_IS_CURRENT` records.
  */
 export const BENCHMARK_V3_FREEZE_SHA = "c9b6bbe657a91808c9b91d3f46105f61b3243866";
+
+/**
+ * Whether `BENCHMARK_V3_FREEZE_SHA` names the current freeze revision's content
+ * commit.
+ *
+ * False while a freeze review is authored in a working tree. `assertV3FreezePinned`
+ * refuses a live launch in that state rather than recording a SHA that points at
+ * the previous review's text, which would make the shard's own provenance wrong.
+ */
+export const BENCHMARK_V3_FREEZE_SHA_IS_CURRENT = false;
+
+/**
+ * The production release Benchmark V3 evaluates.
+ *
+ * Not the methodology freeze and not a moving HEAD: the exact commit the
+ * `v0.11.0` tag resolves to, so a result can be attributed to a released
+ * product rather than to whatever the working tree happened to contain.
+ */
+export const BENCHMARK_V3_PRODUCTION_BASELINE_VERSION = "0.11.0";
 export const BENCHMARK_V3_PRODUCTION_BASELINE_SHA =
-  "c9b6bbe657a91808c9b91d3f46105f61b3243866";
+  "df215a170e6a88a6097c56f7ca404358d9d4b050";
 
 export type V3RoutingCategory =
   | "expected-solo"

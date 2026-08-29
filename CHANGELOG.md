@@ -6,6 +6,71 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Closed the second independent Freeze 3 review's remaining A/B/C blockers
+  without changing the V3 experiment. Codex `config.toml` is now parsed as TOML,
+  recursively sanitized through nested/inline/array/multiline structures, and
+  canonicalized only after credential-, auth-, cookie-, and header-sensitive
+  paths are redacted; parse failures are presence-only, and raw config length is
+  absent. Trust-material variables retain presence/readability/type and safe
+  content fingerprints but no raw path, basename, or path hash. The environment
+  drift scan is explicitly a syntactic defense-in-depth check, not proof of every
+  possible environment read. The v0.11.0 baseline is now provisioned from a
+  clean exact-tag worktree with `npm ci`, built, runtime-pruned, and sealed by the
+  frozen aggregate manifest digest
+  `d63af9ef92ac99c9a0f8425012fce2777a6dee020c76161bc504aee96dafad17` over
+  package/lock, dist, and runtime dependency bytes. Every Adaptive V3 cell must
+  match that digest immediately before launch and after grading before a result
+  can be written. Finally, the live runner writes a durable campaign launch
+  marker immediately before its first SDK call, and freshness now fails closed
+  on any marker, valid/invalid/unreadable V3 shard, or ambiguous non-empty event
+  stream. Codex SDK provenance and all frozen experimental factors are unchanged.
+- Froze Benchmark V3 methodology **freeze 3 (P2.4B pre-launch)**, superseding
+  freeze 2. It changes no model-facing text, task, grader, hidden reference,
+  mutation case, arm, model, effort, speed profile, pricing applicability,
+  repetition count, or third-run admission rule, and no production runtime
+  behaviour. It reconciles the delegation-call metric with the refusal traces
+  the runtime actually emits — a call the runtime refuses before any worker
+  attempt starts publishes `batch.started` and then `batch.rejected`, and is now
+  counted in `delegationCallsRefused` rather than as an opened worker batch,
+  contributing no batch mode, no queued worker effort, and no phase boundary.
+  Benchmark environment capture now resolves `git`, `npm`, and `codex` through
+  the production executable resolver, so the current directory is never searched
+  and both versions are readable on Windows for the first time. The recorded
+  reproducibility inventory maintains the repository-owned execution settings,
+  anything deliberately excluded carries a recorded reason, and a deterministic
+  syntactic test scans the direct access forms it explicitly supports. That inventory no
+  longer claims more than it establishes: a benchmark record now carries three
+  separate layers — the production-owned settings recorded verbatim, an ambient
+  layer that inventories every inherited variable _name_ and records values only
+  under an explicit safe classification (proxy and endpoint URLs as
+  scheme/host/port with an embedded-credential flag, certificate and trust
+  material without path metadata, everything else including every
+  credential-shaped name as present-and-opaque), and the non-secret identity of
+  the effective Codex configuration (a digest of the structurally parsed and
+  recursively sanitized `config.toml`, its registered MCP server names, and
+  an authentication mode). A `REPRODUCIBILITY_BOUNDARY` record states in the
+  artifact itself what is and is not reproducible, including that the source
+  scan proves nothing about environment reads by the Codex SDK, the Codex CLI,
+  Node, or the operating system, and that credential state is opaque rather than
+  absent. The V3 production baseline under evaluation is repinned to the
+  released `v0.11.0` commit, and a campaign is now _bound_ to it: a
+  delegation-enabled V3 arm launches the orchestrator from a verified baseline
+  artifact — a git worktree of the `v0.11.0` tag built at
+  `bench/baseline/v0.11.0` — whose commit, tree object, cleanliness, package
+  name and version, declared entry point and its digest, installed dependencies,
+  and isolation from the development tree are checked together with its frozen
+  runtime-byte manifest, with an unreadable check counted as a failure. The harness passes that
+  artifact's absolute entry point as the Codex `mcp_servers` command, so a run
+  no longer depends on a mutable external MCP registration, and a V3 snapshot
+  refuses to be written without the verified runtime identity. Added
+  `npm run bench:v3:checkpoint`, which generates the pre-launch checkpoint from
+  the harness rather than by hand, derives live-execution history and campaign
+  identity from the committed evidence directory rather than asserting them, and
+  leaves pricing explicitly unresolved until an authoritative source is read. No
+  model-backed V3 run has been executed under any freeze.
+
 ## [0.11.0] - 2026-08-29
 
 ### Added

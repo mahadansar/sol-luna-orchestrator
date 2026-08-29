@@ -7,8 +7,9 @@ rules, measured evidence, and the limits on interpreting those results.
 V2 is frozen historical architecture evidence. Its BEFORE/AFTER campaigns
 directly informed the Thin Supervisor design, so it is no longer the primary
 unbiased optimization target for routing work. The fresh routing holdout is
-[Benchmark V3](V3_METHODOLOGY.md), frozen under its freeze 2 (P2.4A) review. No
-model-backed V3 campaign has been run under any freeze.
+[Benchmark V3](V3_METHODOLOGY.md), frozen under its freeze 3 (P2.4B pre-launch)
+review and evaluating the released v0.11.0 production baseline. No model-backed
+V3 campaign has been run under any freeze.
 
 V2 and V3 are not two samples of one experiment. They measure different
 architectures on different suites, under different prompt histories, different

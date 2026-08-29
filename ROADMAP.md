@@ -408,13 +408,22 @@ V3 task is executed:
    model-backed behavioural, and benchmark performance/economics. P1.1 through
    P2.3 hold deterministic acceptance only; no live or benchmark evidence is
    claimed for them.
-2. **Frozen V3 methodology (freeze 2).** [`bench/V3_METHODOLOGY.md`](bench/V3_METHODOLOGY.md)
+2. **Frozen V3 methodology (freeze 3).** [`bench/V3_METHODOLOGY.md`](bench/V3_METHODOLOGY.md)
    adds comparison candidates and baselines, a harness configuration boundary, a
    metric catalog with provider-exact measurement semantics, execution ordering
    and randomization, run validity/exclusion and retry treatment, statistical and
-   reporting discipline, and reproducibility controls. Freeze 1's workload,
-   graders, arms, repetition rules, and economic accounting are unchanged. The
-   document is content-addressed and the harness refuses to launch on drift.
+   reporting discipline, and reproducibility controls. Freeze 3 reconciles the
+   delegation-call metric with the refusal traces the runtime actually emits,
+   hardens benchmark executable resolution to the production rule, completes the
+   execution-affecting environment inventory and replaces its overclaimed
+   completeness with a layered record and an explicitly stated reproducibility
+   boundary, identifies the effective Codex configuration without publishing
+   secrets, repins the production baseline under evaluation to the released
+   v0.11.0 commit and binds a campaign to a verified baseline artifact, and
+   derives pre-launch execution history from committed evidence. Freeze 1's
+   workload, graders, arms, repetition rules, and economic accounting are
+   unchanged. The document is content-addressed and the harness refuses to
+   launch on drift.
 3. **Harness maturity.** Reproducibility capture, deterministic seeded ordering,
    predeclared exclusion classification, and orchestration/context metric folding
    reuse the existing benchmark infrastructure. No task identity appears in

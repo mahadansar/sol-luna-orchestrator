@@ -1,0 +1,800 @@
+{
+  "schema": "sol-luna/bench/v3-prelaunch-checkpoint@1",
+  "title": "Benchmark V3 / P2.4B pre-launch checkpoint",
+  "generatedAt": "2026-08-28T20:56:32.259Z",
+  "launchReadiness": "blocked",
+  "blockers": [
+    {
+      "id": "pricing-profile-unverified",
+      "severity": "blocking",
+      "summary": "The configured pricing profile benchmark-v2-chatgpt-plus-codex-credits-2026-08-24 has not been revalidated against the account and credit schedule that will execute V3.",
+      "why": "The frozen methodology makes pricing a measurement dependency that must be revalidated immediately before live execution. No authoritative rate-card or account source is reachable here, and fabricating one is prohibited.",
+      "ownedBy": "launch operator",
+      "clears": "Read the current credit rates for gpt-5.6-sol and gpt-5.6-luna on the executing account. If unchanged, record the validation and launch with --confirm-pricing-profile. If changed, add a new dated profile and select it before launching."
+    },
+    {
+      "id": "checkpoint-untracked-dirties-working-tree",
+      "severity": "blocking-procedural",
+      "summary": "This checkpoint adds untracked files under bench/checkpoints/, so `git status --porcelain` is no longer empty and assertEnvironmentEvidence({ requireCleanWorkingTree: true }) will refuse the launch.",
+      "why": "A V3 launch refuses a dirty tree because the recorded commit would not describe the code that ran. Committing was out of scope for this checkpoint task.",
+      "ownedBy": "launch operator",
+      "clears": "Commit bench/checkpoints/ — the methodology requires the checkpoint be retained before live execution — then confirm `git status --porcelain` is empty immediately before launching."
+    }
+  ],
+  "advisories": [
+    {
+      "id": "stale-docblock-in-v3-tasks",
+      "severity": "non-blocking",
+      "location": "src/bench/v3-tasks.ts:11-17",
+      "summary": "The comment above BENCHMARK_V3_FREEZE_SHA still reads \"This is still the freeze-1 commit ... must be updated to the freeze-2 commit before a live campaign launches\", but 97e71c3 already updated the constant to the freeze-2 commit c9b6bbe. The comment now contradicts the code it documents.",
+      "impact": "Documentation only. It does not affect the pin, the digest gate, fixture revisions, or any recorded value. Left unmodified here because v3-tasks.ts holds the frozen fixtures."
+    },
+    {
+      "id": "baseline-sha-one-commit-behind-head",
+      "severity": "non-blocking",
+      "summary": "productionBaseline.sha is c9b6bbe while the campaign will execute at HEAD 97e71c3. The only difference between the two commits is the two pin constants in src/bench/v3-tasks.ts.",
+      "impact": "Expected and unavoidable: a pin cannot name the commit that contains it. The exact executed commit is recorded separately in environment.git.commit."
+    },
+    {
+      "id": "windows-toolchain-version-capture-returns-null",
+      "severity": "non-blocking",
+      "location": "src/bench/environment.ts readCommand",
+      "summary": "On this Windows machine captureEnvironmentProbe records npmVersion and codexCliVersion as null, because Node refuses to execFile a .cmd shim without a shell (EINVAL, the CVE-2024-27980 mitigation). git and Node read fine.",
+      "impact": "Evidence quality only. Both fields are explicitly nullable and neither is in REQUIRED_ENVIRONMENT_FIELDS, so assertEnvironmentEvidence still passes and the launch is not blocked. The methodology allows each toolchain field to be recorded as read or as null. The true values are captured out of band in environment.toolchainCapture so they are not lost. Left unfixed here to avoid a harness change immediately before launch."
+    },
+    {
+      "id": "no-pricing-profile-selection-flag",
+      "severity": "conditional",
+      "summary": "currentCampaignCompatibility and buildResultsSnapshot hard-code BENCHMARK_V2_PRICING_PROFILE for V3; there is no CLI flag to select another profile.",
+      "impact": "If revalidation finds rate drift, a harness code change is required before launch. That is a harness change, not a methodology change, and does not disturb the digest gate."
+    }
+  ],
+  "campaign": {
+    "campaignId": "v3-freeze2-20260829",
+    "benchmarkVersion": 3,
+    "suite": "v3",
+    "freezeReview": "freeze 2 (P2.4A)",
+    "reason": "Freeze 2 altered telemetry definitions and one harness configuration, so under the post-freeze correction policy it is a new freeze review requiring a new campaign ID. No freeze-1 campaign ID may be resumed under it.",
+    "priorCampaignIdsInRepository": [
+      "benchmark-v2-final-terminal-verification-62d9e00-20260825",
+      "benchmark-v2-initial",
+      "benchmark-v2-minimal-protocol-handoff-c2-76a7b93-20260825",
+      "benchmark-v2-terminal-verification-c3-187f962-20260825",
+      "benchmark-v2-thin-supervisor-recovery-v1-20260825"
+    ],
+    "collidesWithPriorCampaignId": false,
+    "reusesFreeze1CampaignIdentity": false,
+    "freeze1CampaignsLaunched": 0,
+    "existingV3ResultShards": [],
+    "liveV3RunsExecutedToDate": 0
+  },
+  "freezeIntegrity": {
+    "methodologyPath": "bench/V3_METHODOLOGY.md",
+    "freezeReview": "freeze 2 (P2.4A)",
+    "expectedDigest": "af4860bed58f21c103c5f921c4ae3bd561cf2e0943cd1dd12b899a34a4bacc87",
+    "workingTreeDigest": "af4860bed58f21c103c5f921c4ae3bd561cf2e0943cd1dd12b899a34a4bacc87",
+    "digestGate": "pass",
+    "digestGateError": null,
+    "digestAtPinnedFreezeSha": "af4860bed58f21c103c5f921c4ae3bd561cf2e0943cd1dd12b899a34a4bacc87",
+    "digestAtHead": "af4860bed58f21c103c5f921c4ae3bd561cf2e0943cd1dd12b899a34a4bacc87",
+    "digestAtFreeze1Commit": "7ee3026015e09fcfb23e4c5e8f9ff1602a70a9ca00cd16c016f80d5a605da611",
+    "pinnedFreezeSha": "c9b6bbe657a91808c9b91d3f46105f61b3243866",
+    "pinnedFreezeShaExists": true,
+    "pinnedFreezeShaSubject": "bench: freeze benchmark v3 methodology",
+    "pinnedFreezeShaCommittedAt": "2026-08-29T01:38:48+05:00",
+    "pinnedFreezeShaIsFreeze2ContentCommit": true,
+    "supersededFreeze1ContentCommit": "544d217967646e5f48b9aa73e936567e87d87c8b",
+    "freeze1DigestDiffersAsExpected": true,
+    "productionBaselineSha": "c9b6bbe657a91808c9b91d3f46105f61b3243866",
+    "productionBaselineShaExists": true,
+    "productionBaselineIsAncestorOfHead": true,
+    "productionBaselineDeclaredVersion": "0.10.0",
+    "productionBaselinePackageVersion": "0.10.0",
+    "headCommit": "97e71c3ed16fcd9f8163c4c2db4d6dca36684889",
+    "headBranch": "main",
+    "filesChangedBaselineToHead": ["src/bench/v3-tasks.ts"],
+    "workingTreeCleanAtVerification": false,
+    "dirtyPathCountAtVerification": 1,
+    "frozenArtifactsModifiedByThisCheckpoint": []
+  },
+  "pricing": {
+    "status": "unverified-launch-blocked",
+    "harnessConfiguredProfile": {
+      "profileId": "benchmark-v2-chatgpt-plus-codex-credits-2026-08-24",
+      "sourceUrl": "https://help.openai.com/en/articles/20001106",
+      "snapshotDate": "2026-08-24",
+      "units": "credits-per-1m-tokens",
+      "applicability": "Token-based Codex credit rates for the ChatGPT Plus account used by Benchmark V2",
+      "promotionalTerms": null,
+      "rates": {
+        "gpt-5.6-sol": {
+          "input": 125,
+          "cachedInput": 12.5,
+          "output": 750,
+          "cacheWrite": 0
+        },
+        "gpt-5.6-luna": {
+          "input": 5,
+          "cachedInput": 0.5,
+          "output": 30,
+          "cacheWrite": 0
+        }
+      }
+    },
+    "checkpointDate": "2026-08-28",
+    "snapshotAgeDays": 4,
+    "structuralChecks": {
+      "coversEveryModelV3Uses": true,
+      "modelsV3Uses": ["gpt-5.6-sol", "gpt-5.6-luna"],
+      "unitsMatchFrozenAccounting": true,
+      "chargesUncachedAndCachedInputSeparately": true,
+      "cacheWritesUncharged": true,
+      "reasoningTokensNotDoubleCharged": true,
+      "estimateNaming": "rateCardCredits / estimatedCredits",
+      "actualCreditsField": "separate, nullable, never derived by summing estimates",
+      "incompleteUsageYieldsNullNotZero": true,
+      "applicabilityStringStillScopedToV2Account": true
+    },
+    "factualVersusEstimated": {
+      "factualProviderUsage": "Token counts recorded from Codex turn.completed events (inputTokens including cachedInputTokens, outputTokens including reasoningOutputTokens, cacheWriteInputTokens). A turn that never reports usage is counted in usageUnavailableAttempts and yields null credits.",
+      "estimatedCredits": "rateCardCredits / estimatedCredits, computed from the embedded profile. An estimate, never authoritative billing.",
+      "authoritativeBilling": "actualCredits — nullable, populated only from an external accounting source. No such source is available at checkpoint time, so it stays null."
+    },
+    "externalValidation": {
+      "performed": false,
+      "reason": "Revalidation requires the current provider credit schedule for the ChatGPT/Codex account that will execute the campaign. No authoritative account or rate-card source is reachable from this environment, and the frozen methodology forbids inventing one.",
+      "requiredEvidence": [
+        "current provider credit rates for gpt-5.6-sol and gpt-5.6-luna",
+        "confirmation that the account tier and credit schedule are unchanged since 2026-08-24",
+        "confirmation that no promotional term applies where the profile records null"
+      ]
+    },
+    "newProfileCreated": false,
+    "newProfileRationale": "A new dated profile is required only if revalidation shows drift, and it cannot be authored without the real replacement rates. Creating one now would fabricate pricing, which the frozen methodology prohibits.",
+    "operatorAction": "Revalidate the rate card immediately before launch. If unchanged, reuse the existing profile and record --confirm-pricing-profile as the attestation. If changed, add a new dated profile to src/bench/credits.ts and select it in currentCampaignCompatibility and buildResultsSnapshot before launching.",
+    "harnessLimitation": "currentCampaignCompatibility and buildResultsSnapshot hard-code BENCHMARK_V2_PRICING_PROFILE for V3 and expose no profile-selection flag, so drift found at revalidation requires a harness code change (not a methodology change) before launch."
+  },
+  "executionProfile": {
+    "status": "frozen",
+    "speed": {
+      "speedMode": "standard",
+      "fastModeDisabled": true,
+      "serviceTier": null,
+      "serviceTierStatus": "not-exposed-by-codex-sdk",
+      "sdkSpeedPinningSupported": false,
+      "enforcement": "operator-confirmed-pre-run"
+    },
+    "supervisorModel": "gpt-5.6-sol",
+    "supervisorEffort": "medium",
+    "workerModelWhenAdaptiveDelegates": "gpt-5.6-luna",
+    "arms": {
+      "solo-medium": {
+        "label": "Solo Medium",
+        "supervisorModel": "gpt-5.6-sol",
+        "supervisorEffort": "medium",
+        "orchestratorAvailable": false,
+        "orchestratorDisabledAt": "Codex mcp_servers config (enabled:false) — genuinely unreachable, not merely discouraged",
+        "guidanceSha256": "366476245ce571b269b779f1956f85234ae6f9c56de503c18438733eb723ca30"
+      },
+      "adaptive-medium": {
+        "label": "Adaptive Medium",
+        "supervisorModel": "gpt-5.6-sol",
+        "supervisorEffort": "medium",
+        "orchestratorAvailable": true,
+        "orchestratorDisabledAt": null,
+        "guidanceSha256": "0127a6fd96e4501b9d65e273754d9f6ad378c943490d801a8d7d5f791b36dc6f"
+      }
+    },
+    "forcedDelegationExcluded": true,
+    "repetitions": {
+      "initialRepetitionsPerCell": 2,
+      "normalArmRuns": 36,
+      "thirdRepetition": "review input, never automatic",
+      "thirdRunAdmissionConditions": [
+        "the two repetitions have inconsistent pass/fail outcomes",
+        "latency relative range is at least 25%",
+        "total-credit relative range is at least 20%",
+        "Adaptive delegates in one repetition but not the other",
+        "worker-count absolute difference is at least 2",
+        "the non-Solo correctness-equivalent median-credit delta is within 10% of Solo"
+      ],
+      "thirdRunExclusions": [
+        "Solo-vs-Solo near-ties are explicitly not admissible",
+        "a surprising or inconvenient result is not a reason"
+      ],
+      "thirdRunHarnessGate": "assertV3CampaignPolicy refuses --reps 3 without --resume; the review record (triggering cell, metric values, decision, approver, reason) must exist before the third run starts."
+    },
+    "retryPolicy": {
+      "automaticRunRetries": 0,
+      "automaticGradingRetries": 0,
+      "completedCellsAreImmutable": true,
+      "failedRunsRetained": true,
+      "quarantinedRunsRetained": true,
+      "quarantinedRunsExcludedFromAggregates": true,
+      "quarantinedCellReexecution": "review-approved-new-run-identity",
+      "thirdRepetition": "predeclared-review-conditions-only",
+      "harnessLevelWorkerRetries": "none-harness-side"
+    },
+    "quarantineReasons": [
+      "grader-did-not-execute",
+      "agent-transport-error",
+      "delegation-telemetry-unavailable",
+      "fixture-identity-missing",
+      "fixture-revision-drift"
+    ],
+    "terminationReasons": ["completed", "harness-timeout", "agent-error"],
+    "harnessConfigurationBoundary": {
+      "orchestratorEnvironmentSetByHarness": ["SOL_LUNA_EVENTS"],
+      "solLunaMaxParallelPassed": false,
+      "concurrencyPolicy": "production-default",
+      "maxParallelConfigured": null,
+      "perTaskConcurrencyLeaks": 0,
+      "concurrencyProbe": [
+        {
+          "taskId": "v3-csv-dialect",
+          "declaredStreams": 1,
+          "resolvedWhenDelegating": {
+            "policy": "production-default",
+            "maxParallel": null
+          }
+        },
+        {
+          "taskId": "v3-lru-cache-tests",
+          "declaredStreams": 1,
+          "resolvedWhenDelegating": {
+            "policy": "production-default",
+            "maxParallel": null
+          }
+        },
+        {
+          "taskId": "v3-reservation-ledger",
+          "declaredStreams": 1,
+          "resolvedWhenDelegating": {
+            "policy": "production-default",
+            "maxParallel": null
+          }
+        },
+        {
+          "taskId": "v3-workflow-journal",
+          "declaredStreams": 1,
+          "resolvedWhenDelegating": {
+            "policy": "production-default",
+            "maxParallel": null
+          }
+        },
+        {
+          "taskId": "v3-static-site-pipeline",
+          "declaredStreams": 4,
+          "resolvedWhenDelegating": {
+            "policy": "production-default",
+            "maxParallel": null
+          }
+        },
+        {
+          "taskId": "v3-observability-ingestors",
+          "declaredStreams": 3,
+          "resolvedWhenDelegating": {
+            "policy": "production-default",
+            "maxParallel": null
+          }
+        },
+        {
+          "taskId": "v3-markup-renderers",
+          "declaredStreams": 4,
+          "resolvedWhenDelegating": {
+            "policy": "production-default",
+            "maxParallel": null
+          }
+        },
+        {
+          "taskId": "v3-policy-engine",
+          "declaredStreams": 1,
+          "resolvedWhenDelegating": {
+            "policy": "production-default",
+            "maxParallel": null
+          }
+        },
+        {
+          "taskId": "v3-sync-reconciler",
+          "declaredStreams": 2,
+          "resolvedWhenDelegating": {
+            "policy": "production-default",
+            "maxParallel": null
+          }
+        }
+      ],
+      "taskIdentityInHarnessControlFlow": false,
+      "benchmarkOnlyProductionBehaviour": "none"
+    },
+    "shippedProductionDefaults": {
+      "DEFAULT_MAX_PARALLEL": 3,
+      "MAX_PARALLEL_effective": 3,
+      "MAX_PARALLEL_LIMIT": 8,
+      "MAX_BATCH_SIZE": 12,
+      "MAX_WORKERS_PER_BATCH": 12,
+      "DEFAULT_EFFORT": "high",
+      "ALLOWED_EFFORTS": ["medium", "high", "xhigh", "max"],
+      "ALLOWED_MODELS": ["gpt-5.6-luna"],
+      "EXECUTOR_ORDER": [],
+      "ALLOW_EFFORT_ESCALATION": true,
+      "ALLOW_STRONGER_FALLBACK": true,
+      "VERIFY_MODE": "allowlist",
+      "WORKER_SANDBOX": "workspace-write",
+      "WORKER_NETWORK_ACCESS": false,
+      "KEEP_WORKTREES": "onfailure",
+      "CONTEXT_MAX_BYTES": 50000,
+      "CONTEXT_MAX_TURNS": 20,
+      "CONTEXT_MAX_CLEAN_TURNS": 5,
+      "CONTEXT_COOLDOWN_TURNS": 2,
+      "DEFAULT_TIMEOUT_SECONDS": 1800
+    },
+    "harnessTaskTimeoutSeconds": 1500,
+    "harnessTimeoutIsPartOfTaskContract": true
+  },
+  "ordering": {
+    "mode": "seeded",
+    "seed": "v3-freeze2-20260829",
+    "seedChosenBeforeAnyV3ResultExists": true,
+    "seedRationale": "The seed is the campaign ID itself — date plus freeze review, nothing else. It contains no free parameter that could have been tuned, and no V3 result exists to tune against.",
+    "generator": "splitmix32 seeded from sha256(seed + space + label); platform-independent and identical across Node versions",
+    "plannedCellCount": 36,
+    "sequenceSha256": "301d50fc632700a306622802361dbdf82b9c64c5f0e9de85a97fbf2aa7e10dda",
+    "repetitionBlocksInterleaved": false,
+    "sequence": [
+      {
+        "position": 1,
+        "repetition": 1,
+        "taskId": "v3-static-site-pipeline",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 2,
+        "repetition": 1,
+        "taskId": "v3-static-site-pipeline",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 3,
+        "repetition": 1,
+        "taskId": "v3-csv-dialect",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 4,
+        "repetition": 1,
+        "taskId": "v3-csv-dialect",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 5,
+        "repetition": 1,
+        "taskId": "v3-policy-engine",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 6,
+        "repetition": 1,
+        "taskId": "v3-policy-engine",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 7,
+        "repetition": 1,
+        "taskId": "v3-sync-reconciler",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 8,
+        "repetition": 1,
+        "taskId": "v3-sync-reconciler",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 9,
+        "repetition": 1,
+        "taskId": "v3-workflow-journal",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 10,
+        "repetition": 1,
+        "taskId": "v3-workflow-journal",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 11,
+        "repetition": 1,
+        "taskId": "v3-observability-ingestors",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 12,
+        "repetition": 1,
+        "taskId": "v3-observability-ingestors",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 13,
+        "repetition": 1,
+        "taskId": "v3-reservation-ledger",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 14,
+        "repetition": 1,
+        "taskId": "v3-reservation-ledger",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 15,
+        "repetition": 1,
+        "taskId": "v3-lru-cache-tests",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 16,
+        "repetition": 1,
+        "taskId": "v3-lru-cache-tests",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 17,
+        "repetition": 1,
+        "taskId": "v3-markup-renderers",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 18,
+        "repetition": 1,
+        "taskId": "v3-markup-renderers",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 19,
+        "repetition": 2,
+        "taskId": "v3-csv-dialect",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 20,
+        "repetition": 2,
+        "taskId": "v3-csv-dialect",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 21,
+        "repetition": 2,
+        "taskId": "v3-reservation-ledger",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 22,
+        "repetition": 2,
+        "taskId": "v3-reservation-ledger",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 23,
+        "repetition": 2,
+        "taskId": "v3-markup-renderers",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 24,
+        "repetition": 2,
+        "taskId": "v3-markup-renderers",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 25,
+        "repetition": 2,
+        "taskId": "v3-static-site-pipeline",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 26,
+        "repetition": 2,
+        "taskId": "v3-static-site-pipeline",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 27,
+        "repetition": 2,
+        "taskId": "v3-sync-reconciler",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 28,
+        "repetition": 2,
+        "taskId": "v3-sync-reconciler",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 29,
+        "repetition": 2,
+        "taskId": "v3-policy-engine",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 30,
+        "repetition": 2,
+        "taskId": "v3-policy-engine",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 31,
+        "repetition": 2,
+        "taskId": "v3-lru-cache-tests",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 32,
+        "repetition": 2,
+        "taskId": "v3-lru-cache-tests",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 33,
+        "repetition": 2,
+        "taskId": "v3-observability-ingestors",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 34,
+        "repetition": 2,
+        "taskId": "v3-observability-ingestors",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 35,
+        "repetition": 2,
+        "taskId": "v3-workflow-journal",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 36,
+        "repetition": 2,
+        "taskId": "v3-workflow-journal",
+        "arm": "adaptive-medium"
+      }
+    ],
+    "immutability": "assertOrderingCompatibility refuses a resume whose recorded mode or seed differs from this invocation. The seed must not change once launch begins."
+  },
+  "environment": {
+    "capturedAt": "2026-08-28T20:56:31.142Z",
+    "git": {
+      "commit": "97e71c3ed16fcd9f8163c4c2db4d6dca36684889",
+      "branch": "main",
+      "describe": "v0.10.0-19-g97e71c3",
+      "workingTreeClean": false,
+      "dirtyPathCount": 1
+    },
+    "runtime": {
+      "nodeVersion": "v26.7.0",
+      "platform": "win32",
+      "arch": "x64",
+      "osRelease": "10.0.26200",
+      "cpuCount": 12,
+      "totalMemoryBytes": 34151780352,
+      "timezone": "Asia/Karachi"
+    },
+    "toolchain": {
+      "packageVersion": "0.10.0",
+      "npmVersion": null,
+      "codexCliVersion": null,
+      "codexSdkVersion": "0.147.0"
+    },
+    "invocation": {
+      "argv": [
+        "--suite",
+        "v3",
+        "--arms",
+        "solo-medium,adaptive-medium",
+        "--reps",
+        "2",
+        "--campaign",
+        "v3-freeze2-20260829",
+        "--order",
+        "seeded",
+        "--order-seed",
+        "v3-freeze2-20260829",
+        "--confirm-standard-speed",
+        "--confirm-pricing-profile"
+      ],
+      "cwd": "D:/code/gpt-test/sol-luna-orchestrator",
+      "note": "argv shown is the planned launch invocation, not this checkpoint's own invocation"
+    },
+    "environment": {},
+    "allowlistedOverrideKeys": [
+      "BENCH_TASK_TIMEOUT",
+      "LUNA_SANDBOX",
+      "SOL_LUNA_ALLOWED_EFFORTS",
+      "SOL_LUNA_ALLOWED_MODELS",
+      "SOL_LUNA_ALLOW_DIRTY",
+      "SOL_LUNA_ALLOW_EFFORT_ESCALATION",
+      "SOL_LUNA_ALLOW_STRONGER_FALLBACK",
+      "SOL_LUNA_CONTEXT_COOLDOWN_TURNS",
+      "SOL_LUNA_CONTEXT_MAX_BYTES",
+      "SOL_LUNA_CONTEXT_MAX_CLEAN_TURNS",
+      "SOL_LUNA_CONTEXT_MAX_TURNS",
+      "SOL_LUNA_EXECUTOR_ORDER",
+      "SOL_LUNA_KEEP_WORKTREES",
+      "SOL_LUNA_MAX_PARALLEL",
+      "SOL_LUNA_MAX_WORKERS_PER_BATCH",
+      "SOL_LUNA_SERVER_NAME",
+      "SOL_LUNA_VERIFY_MODE"
+    ],
+    "allowlistedOverridesSet": {},
+    "allowlistedOverrideCount": 0,
+    "engineRequirement": {
+      "node": ">=22.12.0"
+    },
+    "nodeSatisfiesEngine": true,
+    "requiredFieldsPresent": true,
+    "toolchainCapture": {
+      "note": "Node refuses to execFile a Windows .cmd shim without a shell (EINVAL, the CVE-2024-27980 mitigation), so captureEnvironmentProbe records npmVersion and codexCliVersion as null on this machine. Both fields are explicitly nullable and are not in REQUIRED_ENVIRONMENT_FIELDS, so this does not block a launch. The true values are read out of band below so the evidence is not lost.",
+      "harnessCapturedNpmVersion": null,
+      "harnessCapturedCodexCliVersion": null,
+      "outOfBandNpmVersion": "11.19.0",
+      "outOfBandCodexCliVersion": "codex-cli 0.150.1",
+      "outOfBandMethod": "execSync with a shell, performed by this checkpoint only"
+    }
+  },
+  "fixtures": {
+    "taskCount": 9,
+    "revisionDerivation": "sha256 over { id, objective, files, immutable, grade[args,label], mutation }. Recomputed per run and compared by classifyRunValidity, which quarantines fixture-revision-drift.",
+    "suiteRevision": "98cb34ef3ba1bf64004037e8b8329cc8ebb0ad5c24fc643d0eefbc97b1cac0a7",
+    "tasks": [
+      {
+        "taskId": "v3-csv-dialect",
+        "evaluatorOnlyCategory": "expected-solo",
+        "workloadClass": "obvious-solo",
+        "declaredStreams": 1,
+        "immutable": ["test/csv-dialect.test.mjs"],
+        "gradeCommands": ["CSV dialect tests pass"],
+        "hasMutationCheck": true,
+        "fixtureRevision": "ce7d8b0150870fc0fe31e27cb4d794da61f8ca46854d5a1f1d27fcc595d3422d"
+      },
+      {
+        "taskId": "v3-lru-cache-tests",
+        "evaluatorOnlyCategory": "expected-solo",
+        "workloadClass": "obvious-solo",
+        "declaredStreams": 1,
+        "immutable": ["src/lru.mjs"],
+        "gradeCommands": ["authored LRU cache tests pass"],
+        "hasMutationCheck": true,
+        "fixtureRevision": "556ab72b4e61f478636a94c08b06cdf55bdcd072c0a6bbb8239a0339c9d6ae9b"
+      },
+      {
+        "taskId": "v3-reservation-ledger",
+        "evaluatorOnlyCategory": "likely-solo",
+        "workloadClass": "coupled-control",
+        "declaredStreams": 1,
+        "immutable": ["test/reservation-ledger.test.mjs"],
+        "gradeCommands": ["reservation ledger tests pass"],
+        "hasMutationCheck": true,
+        "fixtureRevision": "d9f60af2d4598a51d3ac16811068acdbd0edcee4fb7f78bef2c81637f14d65da"
+      },
+      {
+        "taskId": "v3-workflow-journal",
+        "evaluatorOnlyCategory": "likely-solo",
+        "workloadClass": "coupled-control",
+        "declaredStreams": 1,
+        "immutable": ["test/workflow-journal.test.mjs"],
+        "gradeCommands": ["workflow journal tests pass"],
+        "hasMutationCheck": true,
+        "fixtureRevision": "82e6f1e787afa3b75f37a849309a6a630d290d08a6be3fd781dd0c96df4be60a"
+      },
+      {
+        "taskId": "v3-static-site-pipeline",
+        "evaluatorOnlyCategory": "strong-delegation-candidate",
+        "workloadClass": "delegation-candidate",
+        "declaredStreams": 4,
+        "immutable": ["test/static-site.test.mjs"],
+        "gradeCommands": ["static-site pipeline tests pass"],
+        "hasMutationCheck": true,
+        "fixtureRevision": "628762cf1c4e5a72501a40313ee0be3c33f2f079993c3dfcdb594c3184068914"
+      },
+      {
+        "taskId": "v3-observability-ingestors",
+        "evaluatorOnlyCategory": "delegation-candidate",
+        "workloadClass": "delegation-candidate",
+        "declaredStreams": 3,
+        "immutable": ["test/observability-ingestors.test.mjs"],
+        "gradeCommands": ["observability ingestor tests pass"],
+        "hasMutationCheck": true,
+        "fixtureRevision": "0a4a51001b98135b0f8af2a329db22c196500d2270b6ebbeea0c4a18362ccf5b"
+      },
+      {
+        "taskId": "v3-markup-renderers",
+        "evaluatorOnlyCategory": "strong-delegation-candidate",
+        "workloadClass": "delegation-candidate",
+        "declaredStreams": 4,
+        "immutable": ["test/markup-renderers.test.mjs"],
+        "gradeCommands": ["markup renderer tests pass"],
+        "hasMutationCheck": true,
+        "fixtureRevision": "62761819cd60a733704147e6366b5470d8236c71cce8190bfe5f493ee2bdabe7"
+      },
+      {
+        "taskId": "v3-policy-engine",
+        "evaluatorOnlyCategory": "ambiguous",
+        "workloadClass": "ambiguous",
+        "declaredStreams": 1,
+        "immutable": ["test/policy-engine.test.mjs"],
+        "gradeCommands": ["policy engine tests pass"],
+        "hasMutationCheck": true,
+        "fixtureRevision": "0f2cdb166cb51b38cc198ce7ba30f83103d23ee21531f9e0b8333ed3565f0f8f"
+      },
+      {
+        "taskId": "v3-sync-reconciler",
+        "evaluatorOnlyCategory": "ambiguous",
+        "workloadClass": "ambiguous",
+        "declaredStreams": 2,
+        "immutable": ["test/sync-reconciler.test.mjs"],
+        "gradeCommands": ["sync reconciler tests pass"],
+        "hasMutationCheck": true,
+        "fixtureRevision": "56cc8a0267050010f74888e6b9ca91ba2b684b0977ffbacb69768917848b21f0"
+      }
+    ],
+    "evaluatorOnlyCategoriesAreModelFacing": false
+  },
+  "deterministicChecks": {
+    "modelBackedRunsExecuted": 0,
+    "checks": [
+      {
+        "command": "npm run bench:v3:validate",
+        "exitCode": 0,
+        "result": "pass",
+        "detail": "36 fixture checks ok, 0 FAIL. Every V3 starting state fails, every reference solution passes, every mutation is caught, and every immutable-specification change is detected."
+      },
+      {
+        "command": "npm run verify",
+        "exitCode": 0,
+        "result": "pass",
+        "detail": "typecheck + prettier format:check + 889 tests (886 pass, 0 fail, 3 skipped: Windows symlink privileges and POSIX process groups) + protocol smoke."
+      },
+      {
+        "command": "npm audit",
+        "exitCode": 0,
+        "result": "pass",
+        "detail": "found 0 vulnerabilities"
+      },
+      {
+        "command": "git diff --check",
+        "exitCode": 0,
+        "result": "pass",
+        "detail": "no whitespace errors"
+      }
+    ],
+    "deliberatelyNotExecuted": [
+      "npm run bench:v3 (model-backed)",
+      "any model-backed benchmark task",
+      "any inspection or generation of V3 results"
+    ]
+  },
+  "expectedOutputs": {
+    "resultsDirectory": "bench/results/",
+    "rawResultShard": "`bench/results/<stamp>.v3.json` — stamp is the launch ISO timestamp with ':' and '.' replaced by '-'",
+    "eventStream": "`bench/results/<stamp>.events.jsonl` — gitignored raw telemetry; retain out of band as campaign evidence",
+    "generatedSummary": "`bench/results/<stamp>.v3.md` — generated by `npm run bench:report -- <shard>`",
+    "crossRunAnalysis": "`npm run bench:v3:analyze` — deterministic, no model calls",
+    "checkpoint": [
+      "bench/checkpoints/v3-freeze2-20260829.prelaunch.json",
+      "bench/checkpoints/v3-freeze2-20260829.prelaunch.md"
+    ],
+    "shardContents": [
+      "schema 4, benchmarkVersion 3, suite v3",
+      "campaignId, holdoutFreezeSha, productionBaseline{version,sha}",
+      "methodologyDigest verified at launch by assertMethodologyFrozen",
+      "environment: git, runtime, toolchain, invocation, allowlisted overrides",
+      "ordering{mode,seed,sequence}",
+      "retryPolicy",
+      "the complete pricingProfile, embedded in every shard",
+      "per-run records carrying runId and fixtureRevision"
+    ],
+    "atomicCheckpointing": "checkpointResultsShard atomically rewrites the shard after every completed cell, so an interrupted campaign retains completed evidence.",
+    "refusesOverwrite": "The runner refuses to overwrite an existing shard, and planCampaignCells refuses to re-run a completed cell without --resume."
+  },
+  "launchCommand": "npm run bench:v3 -- --campaign v3-freeze2-20260829 --order seeded --order-seed v3-freeze2-20260829 --confirm-standard-speed --confirm-pricing-profile",
+  "scope": "This checkpoint changed no methodology, fixture, grader, routing rule, prompt, threshold, or production behaviour. It executed no model-backed run and inspected no V3 result."
+}

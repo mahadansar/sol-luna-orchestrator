@@ -40,8 +40,18 @@ import {
 import {
   assertEnvironmentEvidence,
   captureEnvironmentRecord,
+  readCodexSdkVersion,
+  readRepositoryPackageVersion,
   type EnvironmentRecord,
 } from "./environment.js";
+import {
+  assertBaselineCellRuntimeIdentity,
+  baselineMcpServer,
+  buildBaselineCellRuntimeIdentity,
+  captureProductionBaselineRuntime,
+  type BaselineCellRuntimeIdentity,
+  type ProductionBaselineRuntime,
+} from "./baseline.js";
 import {
   assertMethodologyFrozen,
   CAMPAIGN_RETRY_POLICY,
@@ -67,36 +77,25 @@ import {
   type CampaignOrdering,
   type CampaignOrderingMode,
 } from "./ordering.js";
+import {
+  createV3LaunchMarker,
+  recordV3LaunchCompletedCell,
+  type V3LaunchMarker,
+} from "./launch.js";
 import type { BenchTask, GradeCommand } from "./tasks.js";
 import { V2_TASKS, type V2BenchTask } from "./v2-tasks.js";
 import {
+  BENCHMARK_V3_FREEZE_REVISION,
   BENCHMARK_V3_FREEZE_SHA,
+  BENCHMARK_V3_FREEZE_SHA_IS_CURRENT,
   BENCHMARK_V3_PRODUCTION_BASELINE_SHA,
+  BENCHMARK_V3_PRODUCTION_BASELINE_VERSION,
   V3_TASKS,
   type V3BenchTask,
 } from "./v3-tasks.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RESULTS_DIR = path.resolve(HERE, "..", "..", "bench", "results");
-
-/** Read a package version for the run record, or leave it unknown. */
-const readVersionOf = (...segments: string[]): string | null => {
-  try {
-    const manifest = JSON.parse(
-      fs.readFileSync(
-        path.resolve(HERE, "..", "..", ...segments, "package.json"),
-        "utf8",
-      ),
-    ) as { version?: unknown };
-    return typeof manifest.version === "string" ? manifest.version : null;
-  } catch {
-    return null;
-  }
-};
-
-const readPackageVersion = (): string | null => readVersionOf();
-const readCodexSdkVersion = (): string | null =>
-  readVersionOf("node_modules", "@openai", "codex-sdk");
 
 export const SUPERVISOR_MODEL = "gpt-5.6-sol" as const;
 const ORCHESTRATOR_NAME = process.env.SOL_LUNA_SERVER_NAME ?? "sol-luna-orchestrator";
@@ -132,7 +131,7 @@ export function currentCampaignCompatibility(
       ? {
           holdoutFreezeSha: BENCHMARK_V3_FREEZE_SHA,
           productionBaseline: {
-            version: "0.10.0",
+            version: BENCHMARK_V3_PRODUCTION_BASELINE_VERSION,
             sha: BENCHMARK_V3_PRODUCTION_BASELINE_SHA,
           },
         }
@@ -330,6 +329,8 @@ export interface RunRecord {
   context?: ContextMetrics;
   /** Predeclared inclusion decision; see `classifyRunValidity`. */
   validity?: RunValidity;
+  /** Required for every V3 Adaptive cell; both observations must verify. */
+  baselineRuntimeIdentity?: BaselineCellRuntimeIdentity;
 }
 
 export interface BenchmarkResultsSnapshot {
@@ -347,7 +348,15 @@ export interface BenchmarkResultsSnapshot {
   reps: number;
   records: RunRecord[];
   holdoutFreezeSha?: string;
-  productionBaseline?: { version: "0.10.0"; sha: string };
+  /** The released product under evaluation, not the methodology freeze. */
+  productionBaseline?: { version: string; sha: string };
+  /**
+   * Evidence that the orchestrator process actually launched for this campaign
+   * was that baseline. Kept out of `productionBaseline` on purpose: campaign
+   * compatibility compares that field across shards by deep equality, and
+   * per-run provenance is not a compatibility key.
+   */
+  productionBaselineRuntime?: ProductionBaselineRuntime;
   /** Commit, branch, runtime, toolchain, and invocation of this shard. */
   environment?: EnvironmentRecord;
   /** Execution order, fixed and published before the first live turn. */
@@ -372,6 +381,35 @@ export function assertV3PricingProfileConfirmed(confirmed: boolean): void {
       "Benchmark V3 requires revalidating the applicable Codex credit-rate profile immediately before execution, then passing --confirm-pricing-profile.",
     );
   }
+}
+
+/**
+ * Refuse a live V3 launch whose freeze pin still names the previous review.
+ *
+ * A shard records `holdoutFreezeSha` as the commit-addressed identity of the
+ * methodology it executed under. While a freeze review is authored in a working
+ * tree that commit does not exist yet, and recording the previous review's
+ * commit would attribute the campaign to text it did not run under. The gate is
+ * separate from the content digest on purpose: the digest proves *what* was
+ * frozen, this proves the record can say *where* it was frozen.
+ */
+export function assertV3FreezePinned(
+  options: {
+    revision?: number;
+    sha?: string;
+    shaIsCurrent?: boolean;
+  } = {},
+): void {
+  const revision = options.revision ?? BENCHMARK_V3_FREEZE_REVISION;
+  const sha = options.sha ?? BENCHMARK_V3_FREEZE_SHA;
+  const shaIsCurrent = options.shaIsCurrent ?? BENCHMARK_V3_FREEZE_SHA_IS_CURRENT;
+  if (shaIsCurrent) return;
+  throw new Error(
+    `Benchmark V3 freeze ${revision} has no content commit yet: BENCHMARK_V3_FREEZE_SHA ` +
+      `still names ${sha}, which is the previous freeze review. Commit the frozen ` +
+      `${V3_METHODOLOGY_PATH}, repin BENCHMARK_V3_FREEZE_SHA to that commit, and set ` +
+      "BENCHMARK_V3_FREEZE_SHA_IS_CURRENT before launching.",
+  );
 }
 
 export function assertV3CampaignPolicy(options: {
@@ -403,6 +441,7 @@ export function buildResultsSnapshot(options: {
   environment?: EnvironmentRecord;
   ordering?: CampaignOrdering;
   methodologyDigest?: string;
+  baselineRuntime?: ProductionBaselineRuntime;
 }): BenchmarkResultsSnapshot {
   assertStandardSpeedConfirmed(options.standardSpeedConfirmed);
   const suite = options.suite ?? "v2";
@@ -424,6 +463,29 @@ export function buildResultsSnapshot(options: {
         `Benchmark V3 snapshots require the verified ${V3_METHODOLOGY_PATH} digest`,
       );
     }
+    // A snapshot may not assert a production baseline it cannot show was the
+    // process under measurement.
+    if (!options.baselineRuntime?.verified) {
+      throw new Error(
+        `Benchmark V3 snapshots require a verified production baseline runtime; ` +
+          `${
+            options.baselineRuntime === undefined
+              ? "none was captured"
+              : `failed: ${options.baselineRuntime.failedChecks.join(", ")}`
+          }`,
+      );
+    }
+    const unsealedAdaptive = options.records.filter(
+      (record) =>
+        (record.arm === "adaptive-medium" || record.delegationEnabled === true) &&
+        record.baselineRuntimeIdentity?.verified !== true,
+    );
+    if (unsealedAdaptive.length > 0) {
+      throw new Error(
+        "Benchmark V3 snapshots refuse Adaptive records without verified pre/post " +
+          "sealed baseline runtime identity",
+      );
+    }
   }
   return {
     schema: 4,
@@ -443,7 +505,7 @@ export function buildResultsSnapshot(options: {
       ? {
           holdoutFreezeSha: BENCHMARK_V3_FREEZE_SHA,
           productionBaseline: {
-            version: "0.10.0" as const,
+            version: BENCHMARK_V3_PRODUCTION_BASELINE_VERSION,
             sha: BENCHMARK_V3_PRODUCTION_BASELINE_SHA,
           },
         }
@@ -452,6 +514,9 @@ export function buildResultsSnapshot(options: {
     ...(options.ordering ? { ordering: options.ordering } : {}),
     ...(options.methodologyDigest
       ? { methodologyDigest: options.methodologyDigest }
+      : {}),
+    ...(options.baselineRuntime
+      ? { productionBaselineRuntime: options.baselineRuntime }
       : {}),
     retryPolicy: CAMPAIGN_RETRY_POLICY,
   };
@@ -757,13 +822,30 @@ export function readTelemetry(
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
-    let parsed: Record<string, unknown>;
     try {
-      parsed = JSON.parse(trimmed) as Record<string, unknown>;
+      parsedEvents.push(JSON.parse(trimmed) as Record<string, unknown>);
     } catch {
       continue;
     }
-    parsedEvents.push(parsed);
+  }
+
+  // Which batch identities the runtime refused before any worker attempt
+  // started. A batch identity is opened before its pre-execution gates run, so
+  // `batch.started` alone does not mean a worker batch was opened; only the
+  // terminal event the same identity later published settles that. Collected
+  // ahead of the main pass because a refusal is appended after the start it
+  // invalidates, and after the `task.queued` rows a rejected parallel batch
+  // has already emitted.
+  const refusedBatchIds = new Set<string>();
+  for (const event of parsedEvents) {
+    if (event.type === "batch.rejected" && typeof event.batchId === "string") {
+      refusedBatchIds.add(event.batchId);
+    }
+  }
+  const refused = (event: Record<string, unknown>): boolean =>
+    typeof event.batchId === "string" && refusedBatchIds.has(event.batchId);
+
+  for (const parsed of parsedEvents) {
     const at = Date.parse(String(parsed.timestamp ?? ""));
     const stamp = Number.isNaN(at) ? null : at;
 
@@ -790,6 +872,9 @@ export function readTelemetry(
 
     switch (parsed.type) {
       case "batch.started":
+        // A refused call opened no worker batch: it must not appear as one,
+        // and it must not anchor the supervisor or worktree phase boundaries.
+        if (refused(parsed)) break;
         batches.push({
           mode: String(parsed.mode),
           taskCount: Number(parsed.taskCount ?? 0),
@@ -804,6 +889,7 @@ export function readTelemetry(
         break;
 
       case "worktree.created":
+        if (refused(parsed)) break;
         if (stamp !== null) {
           lastWorktreeCreated = Math.max(lastWorktreeCreated ?? stamp, stamp);
         }
@@ -828,6 +914,10 @@ export function readTelemetry(
         break;
 
       case "task.queued": {
+        // A parallel batch queues its tasks before the scope and worktree
+        // gates run, so a refused batch can leave queued rows behind. They
+        // describe work no worker ever performed.
+        if (refused(parsed)) break;
         // Effort is chosen per task and is only stated when it is queued.
         const queuedEffort = String(parsed.effort ?? "");
         efforts.push(queuedEffort);
@@ -997,16 +1087,17 @@ export function readTelemetry(
   };
 }
 
-async function runArm(
-  suite: SuiteName,
-  task: V2BenchTask | V3BenchTask,
-  arm: Arm,
-  repetition: number,
-  eventsFile: string,
-): Promise<RunRecord> {
-  const workspace = await materialize(task);
-  const runId = crypto.randomUUID();
-  const fixtureRevision = crypto
+/**
+ * Content hash of everything a fixture contributes to a graded result.
+ *
+ * Exported so the pre-launch checkpoint publishes the same revisions the runner
+ * will record and `fixture-revision-drift` compares against. A checkpoint that
+ * computed its own would be able to agree with itself while disagreeing with
+ * the campaign. Executable paths are excluded: `process.execPath` differs
+ * between machines and says nothing about the fixture.
+ */
+export function fixtureRevisionOf(task: BenchTask): string {
+  return crypto
     .createHash("sha256")
     .update(
       JSON.stringify({
@@ -1028,6 +1119,19 @@ async function runArm(
       }),
     )
     .digest("hex");
+}
+
+async function runArm(
+  suite: SuiteName,
+  task: V2BenchTask | V3BenchTask,
+  arm: Arm,
+  repetition: number,
+  eventsFile: string,
+  beforeModelCall: () => void = () => undefined,
+): Promise<RunRecord> {
+  const workspace = await materialize(task);
+  const runId = crypto.randomUUID();
+  const fixtureRevision = fixtureRevisionOf(task);
   const startedAt = new Date().toISOString();
   const start = Date.now();
   const armSpec = ARMS[arm];
@@ -1057,10 +1161,25 @@ async function runArm(
   });
   const maxParallel = concurrency.maxParallel;
 
+  // Every measured Adaptive V3 cell obtains a fresh sealed observation. The
+  // absolute entry point authorized by this exact preflight is the one passed
+  // to Codex below; no campaign-global observation is reused.
+  const baselinePre =
+    suite === "v3" && armSpec.delegation ? captureProductionBaselineRuntime() : null;
+  const baselineServer = baselinePre === null ? null : baselineMcpServer(baselinePre);
+
+  // A delegation-enabled V3 arm names the orchestrator command explicitly, from
+  // the verified v0.11.0 baseline artifact. Without it the Codex SDK would
+  // launch whatever the operator's mcp_servers registration happens to resolve
+  // to, and the shard's production-baseline claim would rest on external
+  // mutable state. V2 keeps the registered server it was measured with.
   const config = armSpec.delegation
     ? {
         mcp_servers: {
           [ORCHESTRATOR_NAME]: {
+            ...(baselineServer === null
+              ? {}
+              : { command: baselineServer.command, args: [...baselineServer.args] }),
             env: {
               SOL_LUNA_EVENTS: eventsFile,
               ...(maxParallel === null
@@ -1094,6 +1213,20 @@ async function runArm(
     harnessTimedOut = true;
     controller.abort();
   }, TASK_TIMEOUT_SECONDS * 1000);
+
+  // The live V3 runner creates its durable launch marker here: after all
+  // deterministic gates and per-cell setup, immediately before the first SDK
+  // call that can contact a model. A marker failure is a launch failure, not an
+  // agent error that could be graded and serialized as a measured result.
+  try {
+    beforeModelCall();
+  } catch (error) {
+    clearTimeout(timer);
+    await fs.promises
+      .rm(workspace, { recursive: true, force: true, maxRetries: 3 })
+      .catch(() => undefined);
+    throw error;
+  }
 
   try {
     const { events } = await thread.runStreamed(buildPrompt(task, arm), {
@@ -1173,9 +1306,20 @@ async function runArm(
     delegations: telemetry.delegations,
   });
 
+  // Re-read every executable/dependency byte after the cell and its grading,
+  // before returning anything the caller can serialize as a valid result.
+  const baselineRuntimeIdentity =
+    baselinePre === null
+      ? null
+      : buildBaselineCellRuntimeIdentity(baselinePre, captureProductionBaselineRuntime());
+
   await fs.promises
     .rm(workspace, { recursive: true, force: true, maxRetries: 3 })
     .catch(() => undefined);
+
+  if (baselineRuntimeIdentity !== null) {
+    assertBaselineCellRuntimeIdentity(baselineRuntimeIdentity);
+  }
 
   const benchmarkVersion = suite === "v3" ? 3 : 2;
   const validity = classifyRunValidity({
@@ -1227,6 +1371,7 @@ async function runArm(
     orchestration: telemetry.orchestration,
     context: telemetry.context,
     validity,
+    ...(baselineRuntimeIdentity === null ? {} : { baselineRuntimeIdentity }),
   };
 }
 
@@ -1299,21 +1444,32 @@ async function main(): Promise<void> {
 
   assertStandardSpeedConfirmed(standardSpeedConfirmed);
 
+  // Both versions come from the shared derivation in environment.ts, so the
+  // runner, the probe, and the pre-launch checkpoint cannot disagree.
   const environment = captureEnvironmentRecord({
     argv: process.argv.slice(2),
-    packageVersion: readPackageVersion(),
+    packageVersion: readRepositoryPackageVersion(),
     codexSdkVersion: readCodexSdkVersion(),
   });
   let methodologyDigest: string | undefined;
+  let baselineRuntime: ProductionBaselineRuntime | undefined;
   if (suite === "v3") {
     assertV3PricingProfileConfirmed(pricingProfileConfirmed);
     assertV3CampaignPolicy({ reps, arms, resume });
+    assertV3FreezePinned();
     // Reproducibility and the reviewed methodology are launch preconditions,
     // not fields filled in afterwards.
-    assertEnvironmentEvidence(environment, { requireCleanWorkingTree: true });
+    assertEnvironmentEvidence(environment, {
+      requireCleanWorkingTree: true,
+      requireAmbientInventory: true,
+    });
     methodologyDigest = assertMethodologyFrozen(
       fs.readFileSync(path.resolve(HERE, "..", "..", V3_METHODOLOGY_PATH), "utf8"),
     );
+    // Campaign-level availability gate. Each Adaptive cell performs its own
+    // fresh pre/post sealed-manifest observations around the actual launch.
+    baselineRuntime = captureProductionBaselineRuntime();
+    baselineMcpServer(baselineRuntime);
   }
 
   const available = SUITES[suite];
@@ -1410,6 +1566,27 @@ async function main(): Promise<void> {
   console.log(`Results: ${resultsFile}\n`);
 
   const records: RunRecord[] = [];
+  let launchMarker: V3LaunchMarker | null = null;
+  const markFirstLiveV3Call = (): void => {
+    if (suite !== "v3" || launchMarker !== null) return;
+    if (methodologyDigest === undefined || baselineRuntime === undefined) {
+      throw new Error("V3 launch provenance was not established before the SDK call");
+    }
+    launchMarker = createV3LaunchMarker(
+      RESULTS_DIR,
+      {
+        campaignId,
+        methodologyDigest,
+        holdoutFreezeSha: BENCHMARK_V3_FREEZE_SHA,
+        productionBaseline: {
+          version: BENCHMARK_V3_PRODUCTION_BASELINE_VERSION,
+          sha: BENCHMARK_V3_PRODUCTION_BASELINE_SHA,
+          runtimeManifestSha256: baselineRuntime.expected.runtimeManifestSha256,
+        },
+      },
+      { resume },
+    );
+  };
   let index = 0;
 
   for (const cell of plan.remaining) {
@@ -1419,7 +1596,14 @@ async function main(): Promise<void> {
     process.stdout.write(
       `[${index}/${total}] ${task.id} / ${arm} / rep ${cell.repetition} ... `,
     );
-    const record = await runArm(suite, task, arm, cell.repetition, eventsFile);
+    const record = await runArm(
+      suite,
+      task,
+      arm,
+      cell.repetition,
+      eventsFile,
+      markFirstLiveV3Call,
+    );
     records.push(record);
 
     const detail =
@@ -1447,8 +1631,12 @@ async function main(): Promise<void> {
         environment,
         ordering,
         ...(methodologyDigest === undefined ? {} : { methodologyDigest }),
+        ...(baselineRuntime === undefined ? {} : { baselineRuntime }),
       }),
     );
+    if (suite === "v3" && launchMarker !== null) {
+      launchMarker = recordV3LaunchCompletedCell(RESULTS_DIR, launchMarker, cell);
+    }
   }
 
   console.log(`\nWrote ${records.length} records to ${resultsFile}`);

@@ -73,6 +73,8 @@
     "bench:v2:forced": "npm run bench -- --arms forced-delegation --reps 2 --campaign benchmark-v2-initial",
     "bench:v3": "npm run bench -- --suite v3 --arms solo-medium,adaptive-medium --reps 2",
     "bench:v3:validate": "npm run build && node dist/bench/validate.js --suite v3",
+    "bench:v3:baseline": "npm run build && node dist/bench/baseline.js --provision",
+    "bench:v3:checkpoint": "npm run build && node dist/bench/prelaunch.js",
     "bench:report": "npm run build && node dist/bench/report.js",
     "bench:analyze": "npm run build && node dist/bench/analyze.js",
     "bench:v3:analyze": "npm run build && node dist/bench/analyze.js --version 3",
@@ -83,6 +85,7 @@
     "@openai/codex-sdk": "^0.147.0",
     "cross-spawn": "^7.0.6",
     "picomatch": "^4.0.5",
+    "smol-toml": "^1.8.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

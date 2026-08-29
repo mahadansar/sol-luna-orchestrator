@@ -1,0 +1,1590 @@
+{
+  "schema": "sol-luna/bench/v3-prelaunch-checkpoint@2",
+  "title": "Benchmark V3 / freeze 3 pre-launch checkpoint",
+  "generatedAt": "2026-08-29T17:30:30.683Z",
+  "generatedBy": "npm run bench:v3:checkpoint (dist/bench/prelaunch.js)",
+  "launchReadiness": "blocked",
+  "blockers": [
+    {
+      "id": "freeze-content-commit-not-pinned",
+      "severity": "blocking-procedural",
+      "summary": "Freeze 3 is authored in a working tree, so BENCHMARK_V3_FREEZE_SHA still names the freeze-2 content commit c9b6bbe657a91808c9b91d3f46105f61b3243866.",
+      "why": "A pin cannot name the commit that contains it. Recording the previous review's commit would attribute the campaign to text it did not run under, so assertV3FreezePinned refuses the launch instead.",
+      "ownedBy": "launch operator",
+      "clears": "Commit the frozen bench/V3_METHODOLOGY.md, repin BENCHMARK_V3_FREEZE_SHA to that commit, and set BENCHMARK_V3_FREEZE_SHA_IS_CURRENT to true."
+    },
+    {
+      "id": "production-baseline-runtime-unverified",
+      "severity": "blocking",
+      "summary": "The orchestrator that would execute this campaign has not been proven to be production baseline v0.11.0 (df215a170e6a88a6097c56f7ca404358d9d4b050); failed checks: artifact-present, artifact-head-is-baseline-commit, artifact-tree-matches-baseline-commit, artifact-working-tree-clean, artifact-package-name-matches, artifact-package-version-matches, artifact-version-matches-baseline-commit, artifact-declares-server-bin, artifact-entry-point-present, artifact-dependencies-installed.",
+      "why": "A result may not claim a released baseline that the process serving its delegation calls was never shown to be. The MCP registration that would otherwise decide this lives outside the repository and can point at a global install, another checkout, or this development tree.",
+      "ownedBy": "launch operator",
+      "clears": "Provision the baseline artifact: git worktree add bench/baseline/v0.11.0 v0.11.0 && npm ci --prefix bench/baseline/v0.11.0 && npm run build --prefix bench/baseline/v0.11.0",
+      "location": "bench/baseline/v0.11.0"
+    },
+    {
+      "id": "pricing-profile-unverified",
+      "severity": "blocking",
+      "summary": "The configured pricing profile benchmark-v2-chatgpt-plus-codex-credits-2026-08-24 has not been revalidated against the account and credit schedule that will execute V3.",
+      "why": "The frozen methodology makes pricing a measurement dependency that must be revalidated immediately before live execution. No authoritative source was consulted here, and fabricating one is prohibited.",
+      "ownedBy": "launch operator",
+      "clears": "Read the current credit rates on the executing account. If unchanged, record the validation and launch with --confirm-pricing-profile. If changed, add a new dated profile and select it before launching."
+    },
+    {
+      "id": "working-tree-not-clean",
+      "severity": "blocking-procedural",
+      "summary": "19 path(s) differ from the recorded commit, including this checkpoint itself.",
+      "why": "A V3 launch refuses a dirty tree because the recorded commit would not describe the code that ran.",
+      "ownedBy": "launch operator",
+      "clears": "Commit the freeze revision and this checkpoint — the methodology requires the checkpoint be retained before live execution — then confirm `git status --porcelain` is empty immediately before launching."
+    }
+  ],
+  "advisories": [
+    {
+      "id": "no-pricing-profile-selection-flag",
+      "severity": "non-blocking",
+      "summary": "currentCampaignCompatibility and buildResultsSnapshot use the frozen V2 pricing profile for V3; there is no CLI flag to select another.",
+      "impact": "If revalidation finds rate drift, a harness change is required before launch. That is a harness change, not a methodology change, and does not disturb the digest gate."
+    }
+  ],
+  "campaign": {
+    "campaignId": "v3-freeze3-20260829",
+    "benchmarkVersion": 3,
+    "suite": "v3",
+    "freezeReview": "freeze 3 (P2.4B pre-launch)",
+    "reason": "Freeze 3 changed a telemetry definition, the reproducibility record, and the production baseline pin, so under the post-freeze correction policy it is a new freeze review requiring a new campaign ID.",
+    "campaignIdsWithV3Results": [],
+    "otherCampaignIdsWithV3Results": [],
+    "retainedCheckpointCampaignIds": [
+      "v3-freeze2-20260829",
+      "v3-freeze3-20260829"
+    ],
+    "collidesWithPriorResultCampaignId": false,
+    "retainedCheckpointExistsForThisCampaign": true,
+    "reusesEarlierFreezeCampaignIdentity": false,
+    "liveV3RunsExecutedToDate": 0,
+    "liveV3RunsForThisCampaign": 0,
+    "freshLaunch": true
+  },
+  "executionHistory": {
+    "resultsDirectory": "bench/results",
+    "resultsDirectoryExists": true,
+    "shards": [],
+    "eventStreams": [
+      {
+        "file": "2026-08-14T17-34-04-390Z.events.jsonl",
+        "byteLength": 7108,
+        "attribution": "other-suite"
+      },
+      {
+        "file": "2026-08-14T17-38-51-964Z.events.jsonl",
+        "byteLength": 14240,
+        "attribution": "other-suite"
+      },
+      {
+        "file": "2026-08-14T17-57-16-992Z.events.jsonl",
+        "byteLength": 21169,
+        "attribution": "other-suite"
+      },
+      {
+        "file": "2026-08-14T18-23-37-381Z.events.jsonl",
+        "byteLength": 1995,
+        "attribution": "other-suite"
+      },
+      {
+        "file": "2026-08-20T18-12-03-761Z.events.jsonl",
+        "byteLength": 15040,
+        "attribution": "unattributed"
+      },
+      {
+        "file": "2026-08-20T18-15-24-879Z.events.jsonl",
+        "byteLength": 10645,
+        "attribution": "unattributed"
+      },
+      {
+        "file": "2026-08-20T18-57-45-324Z.events.jsonl",
+        "byteLength": 10585,
+        "attribution": "unattributed"
+      },
+      {
+        "file": "2026-08-20T19-06-41-710Z.events.jsonl",
+        "byteLength": 21056,
+        "attribution": "unattributed"
+      },
+      {
+        "file": "2026-08-21T15-39-16-196Z.events.jsonl",
+        "byteLength": 10644,
+        "attribution": "unattributed"
+      },
+      {
+        "file": "2026-08-21T15-47-28-275Z.events.jsonl",
+        "byteLength": 21067,
+        "attribution": "unattributed"
+      },
+      {
+        "file": "2026-08-21T16-33-10-271Z.events.jsonl",
+        "byteLength": 10651,
+        "attribution": "unattributed"
+      },
+      {
+        "file": "2026-08-21T16-46-14-787Z.events.jsonl",
+        "byteLength": 21072,
+        "attribution": "unattributed"
+      },
+      {
+        "file": "2026-08-21T18-33-29-191Z.events.jsonl",
+        "byteLength": 8495,
+        "attribution": "unattributed"
+      },
+      {
+        "file": "2026-08-24T17-57-14-853Z.events.jsonl",
+        "byteLength": 31691,
+        "attribution": "v2"
+      },
+      {
+        "file": "2026-08-24T19-13-58-251Z.events.jsonl",
+        "byteLength": 42566,
+        "attribution": "v2"
+      },
+      {
+        "file": "2026-08-24T20-22-56-716Z.events.jsonl",
+        "byteLength": 17542,
+        "attribution": "v2"
+      },
+      {
+        "file": "2026-08-24T20-45-06-971Z.events.jsonl",
+        "byteLength": 16088,
+        "attribution": "v2"
+      },
+      {
+        "file": "2026-08-24T22-19-09-889Z.events.jsonl",
+        "byteLength": 14144,
+        "attribution": "v2"
+      },
+      {
+        "file": "2026-08-24T22-40-55-465Z.events.jsonl",
+        "byteLength": 8041,
+        "attribution": "v2"
+      },
+      {
+        "file": "2026-08-24T23-03-32-785Z.events.jsonl",
+        "byteLength": 14141,
+        "attribution": "v2"
+      },
+      {
+        "file": "2026-08-24T23-22-14-757Z.events.jsonl",
+        "byteLength": 8045,
+        "attribution": "v2"
+      },
+      {
+        "file": "2026-08-25T03-03-00-164Z.events.jsonl",
+        "byteLength": 14664,
+        "attribution": "v2"
+      },
+      {
+        "file": "2026-08-25T03-18-30-270Z.events.jsonl",
+        "byteLength": 8320,
+        "attribution": "v2"
+      },
+      {
+        "file": "2026-08-25T03-26-06-648Z.events.jsonl",
+        "byteLength": 47786,
+        "attribution": "v2"
+      },
+      {
+        "file": "2026-08-25T04-40-36-356Z.events.jsonl",
+        "byteLength": 45981,
+        "attribution": "v2"
+      },
+      {
+        "file": "2026-08-25T05-11-18-503Z.events.jsonl",
+        "byteLength": 14695,
+        "attribution": "v2"
+      },
+      {
+        "file": "2026-08-25T05-24-19-654Z.events.jsonl",
+        "byteLength": 6368,
+        "attribution": "v2"
+      }
+    ],
+    "liveV3RunsExecutedToDate": 0,
+    "liveV3RunsForThisCampaign": 0,
+    "campaignIdsWithV3Results": [],
+    "otherCampaignIdsWithV3Results": [],
+    "retainedCheckpointCampaignIds": [
+      "v3-freeze2-20260829",
+      "v3-freeze3-20260829"
+    ],
+    "incompleteV3Shards": [],
+    "unreadableV3Shards": [],
+    "v3EventStreamsWithTelemetry": [],
+    "collidesWithPriorResultCampaignId": false,
+    "retainedCheckpointExistsForThisCampaign": true,
+    "freshLaunch": true,
+    "derivation": "Counted from bench/results/*.v3.json records and the <stamp>.events.jsonl stream each run opens beside its shard. Campaign identity comes from each shard's own campaignId, never from a checkpoint's.",
+    "limitation": "An event stream is attributed to a suite by the shard sharing its timestamp prefix. A run aborted before its first cell completed leaves a stream and no shard; such a stream is reported as unattributed rather than counted as V3 execution."
+  },
+  "freezeIntegrity": {
+    "methodologyPath": "bench/V3_METHODOLOGY.md",
+    "freezeReview": "freeze 3 (P2.4B pre-launch)",
+    "expectedDigest": "abbd4cfbed86cdeae602ee52a9aa3da5d98fb75f749e1a0f493bf20014b9f76e",
+    "workingTreeDigest": "abbd4cfbed86cdeae602ee52a9aa3da5d98fb75f749e1a0f493bf20014b9f76e",
+    "digestGate": "pass",
+    "digestRecomputedBy": "methodologyDigest() over the committed document",
+    "supersededFreeze2Digest": "af4860bed58f21c103c5f921c4ae3bd561cf2e0943cd1dd12b899a34a4bacc87",
+    "freeze2DigestDiffersAsExpected": true,
+    "pinnedFreezeSha": "c9b6bbe657a91808c9b91d3f46105f61b3243866",
+    "pinnedFreezeShaIsCurrentReview": false,
+    "pinnedFreezeShaSubject": "bench: freeze benchmark v3 methodology",
+    "productionBaseline": {
+      "version": "0.11.0",
+      "sha": "df215a170e6a88a6097c56f7ca404358d9d4b050",
+      "resolvedFrom": "git rev-list -n 1 v0.11.0",
+      "tagResolvesToPinnedSha": true,
+      "tagResolvesTo": "df215a170e6a88a6097c56f7ca404358d9d4b050",
+      "commitExists": true,
+      "subject": "chore: prepare v0.11.0 release",
+      "committedAt": "2026-08-29T20:21:53+05:00",
+      "packageVersionAtBaseline": "0.11.0"
+    },
+    "headCommit": "df215a170e6a88a6097c56f7ca404358d9d4b050",
+    "headBranch": "main",
+    "headIsProductionBaseline": true,
+    "distinction": "holdoutFreezeSha identifies the reviewed methodology; productionBaseline identifies the released product under evaluation. They are different concepts and are never set from one another."
+  },
+  "productionBaselineRuntime": {
+    "artifactDirectory": "bench/baseline/v0.11.0",
+    "verified": false,
+    "failedChecks": [
+      "artifact-present",
+      "artifact-head-is-baseline-commit",
+      "artifact-tree-matches-baseline-commit",
+      "artifact-working-tree-clean",
+      "artifact-package-name-matches",
+      "artifact-package-version-matches",
+      "artifact-version-matches-baseline-commit",
+      "artifact-declares-server-bin",
+      "artifact-entry-point-present",
+      "artifact-dependencies-installed"
+    ],
+    "checks": {
+      "artifact-present": false,
+      "artifact-isolated-from-development-tree": true,
+      "artifact-head-is-baseline-commit": null,
+      "artifact-tree-matches-baseline-commit": null,
+      "artifact-working-tree-clean": null,
+      "artifact-package-name-matches": null,
+      "artifact-package-version-matches": null,
+      "artifact-version-matches-baseline-commit": null,
+      "artifact-declares-server-bin": false,
+      "artifact-entry-point-present": false,
+      "artifact-dependencies-installed": null,
+      "artifact-launcher-resolved": true
+    },
+    "expected": {
+      "version": "0.11.0",
+      "sha": "df215a170e6a88a6097c56f7ca404358d9d4b050",
+      "packageName": "sol-luna-orchestrator",
+      "artifactDirectory": "bench/baseline/v0.11.0"
+    },
+    "observed": {
+      "artifactDirectory": "D:\\code\\gpt-test\\sol-luna-orchestrator\\bench\\baseline\\v0.11.0",
+      "headCommit": null,
+      "headTree": null,
+      "baselineTree": "915e9b59db03bf0570e964d062534cbe24c0b717",
+      "workingTreeClean": null,
+      "dirtyPathCount": null,
+      "packageName": null,
+      "packageVersion": null,
+      "packageVersionAtBaselineCommit": "0.11.0",
+      "declaredBinPath": null,
+      "entryPoint": null,
+      "entryPointSha256": null,
+      "entryPointBytes": null,
+      "launcher": "C:\\nvm4w\\nodejs\\node.exe",
+      "installedDependencyVersions": {}
+    },
+    "bindingMechanism": "The harness passes the verified artifact's absolute entry point as the Codex mcp_servers command for every delegation-enabled V3 arm, so the run does not depend on the operator's MCP registration and cannot fall back to a global install or to this development checkout.",
+    "provisionCommands": [
+      "git worktree add bench/baseline/v0.11.0 v0.11.0",
+      "npm ci --prefix bench/baseline/v0.11.0",
+      "npm run build --prefix bench/baseline/v0.11.0"
+    ],
+    "dependsOnExternalMcpRegistration": false
+  },
+  "pricing": {
+    "status": "unverified-launch-blocked",
+    "revalidatedDuringThisCheckpoint": false,
+    "harnessConfiguredProfile": {
+      "profileId": "benchmark-v2-chatgpt-plus-codex-credits-2026-08-24",
+      "sourceUrl": "https://help.openai.com/en/articles/20001106",
+      "snapshotDate": "2026-08-24",
+      "units": "credits-per-1m-tokens",
+      "applicability": "Token-based Codex credit rates for the ChatGPT Plus account used by Benchmark V2",
+      "promotionalTerms": null,
+      "rates": {
+        "gpt-5.6-sol": {
+          "input": 125,
+          "cachedInput": 12.5,
+          "output": 750,
+          "cacheWrite": 0
+        },
+        "gpt-5.6-luna": {
+          "input": 5,
+          "cachedInput": 0.5,
+          "output": 30,
+          "cacheWrite": 0
+        }
+      }
+    },
+    "structuralChecks": {
+      "coversEveryModelV3Uses": true,
+      "modelsV3Uses": [
+        "gpt-5.6-sol",
+        "gpt-5.6-luna"
+      ],
+      "unitsMatchFrozenAccounting": true,
+      "chargesUncachedAndCachedInputSeparately": true,
+      "cacheWritesUncharged": true,
+      "reasoningTokensNotDoubleCharged": true,
+      "estimateNaming": "rateCardCredits / estimatedCredits",
+      "actualCreditsField": "separate, nullable, never derived by summing estimates",
+      "incompleteUsageYieldsNullNotZero": true,
+      "applicabilityStillScopedToTheV2Account": true
+    },
+    "externalValidation": {
+      "performed": false,
+      "reason": "Revalidation requires the current provider credit schedule for the account that will execute the campaign. No authoritative rate-card or account source was consulted while generating this checkpoint, and the frozen methodology forbids inventing one.",
+      "requiredEvidence": [
+        "current provider credit rates for gpt-5.6-sol and gpt-5.6-luna",
+        "confirmation that the account tier and credit schedule are unchanged since 2026-08-24",
+        "confirmation that no promotional term applies where the profile records null"
+      ]
+    },
+    "newProfileCreated": false,
+    "operatorAction": "Revalidate the rate card immediately before launch. If unchanged, reuse the profile and record --confirm-pricing-profile as the attestation. If it drifted, add a new dated profile, select it, and leave every V2 record unchanged."
+  },
+  "executionProfile": {
+    "status": "frozen",
+    "speed": {
+      "speedMode": "standard",
+      "fastModeDisabled": true,
+      "serviceTier": null,
+      "serviceTierStatus": "not-exposed-by-codex-sdk",
+      "sdkSpeedPinningSupported": false,
+      "enforcement": "operator-confirmed-pre-run"
+    },
+    "supervisorModel": "gpt-5.6-sol",
+    "workerModelWhenAdaptiveDelegates": "gpt-5.6-luna",
+    "arms": {
+      "solo-medium": {
+        "label": "Solo Medium",
+        "supervisorModel": "gpt-5.6-sol",
+        "supervisorEffort": "medium",
+        "orchestratorAvailable": false,
+        "orchestratorDisabledAt": "Codex mcp_servers config (enabled:false) — genuinely unreachable, not merely discouraged",
+        "guidanceSha256": "366476245ce571b269b779f1956f85234ae6f9c56de503c18438733eb723ca30"
+      },
+      "adaptive-medium": {
+        "label": "Adaptive Medium",
+        "supervisorModel": "gpt-5.6-sol",
+        "supervisorEffort": "medium",
+        "orchestratorAvailable": true,
+        "orchestratorDisabledAt": null,
+        "guidanceSha256": "0127a6fd96e4501b9d65e273754d9f6ad378c943490d801a8d7d5f791b36dc6f"
+      }
+    },
+    "forcedDelegationExcluded": true,
+    "repetitions": {
+      "initialRepetitionsPerCell": 2,
+      "normalArmRuns": 36,
+      "thirdRepetition": "predeclared-review-conditions-only",
+      "thirdRunHarnessGate": "assertV3CampaignPolicy refuses --reps 3 without --resume; the review record must exist before the third run starts."
+    },
+    "retryPolicy": {
+      "automaticRunRetries": 0,
+      "automaticGradingRetries": 0,
+      "completedCellsAreImmutable": true,
+      "failedRunsRetained": true,
+      "quarantinedRunsRetained": true,
+      "quarantinedRunsExcludedFromAggregates": true,
+      "quarantinedCellReexecution": "review-approved-new-run-identity",
+      "thirdRepetition": "predeclared-review-conditions-only",
+      "harnessLevelWorkerRetries": "none-harness-side"
+    },
+    "quarantineReasons": [
+      "grader-did-not-execute",
+      "agent-transport-error",
+      "delegation-telemetry-unavailable",
+      "fixture-identity-missing",
+      "fixture-revision-drift"
+    ],
+    "terminationReasons": [
+      "completed",
+      "harness-timeout",
+      "agent-error"
+    ],
+    "harnessConfigurationBoundary": {
+      "orchestratorEnvironmentSetByHarness": [
+        "SOL_LUNA_EVENTS"
+      ],
+      "solLunaMaxParallelPassed": false,
+      "concurrencyPolicy": "production-default",
+      "maxParallelConfigured": null,
+      "everyV3TaskResolvesToProductionDefault": true,
+      "noTaskIdentityInHarnessControlFlow": true
+    },
+    "telemetrySemantics": {
+      "delegationCall": "A batch identity that published batch.started and did not publish batch.rejected. A refused call is counted in delegationCallsRefused, contributes no mode, no queued worker effort, and no phase boundary.",
+      "cancelledBatch": "An opened call whose outcome was cancellation; counted in delegationCallsCancelled, which is a subset of delegationCalls."
+    }
+  },
+  "ordering": {
+    "mode": "seeded",
+    "seed": "v3-freeze3-20260829",
+    "seedRationale": "The seed is the campaign ID itself — freeze review plus date, nothing else. It holds no free parameter that could have been tuned, and no V3 result exists to tune against.",
+    "generator": "splitmix32 seeded from sha256(seed + space + label); platform-independent",
+    "plannedCellCount": 36,
+    "sequenceSha256": "532990884ccdbba99f352ddc2ba17789be01037a0d083bf24c58f1145688b885",
+    "repetitionBlocksInterleaved": false,
+    "sequence": [
+      {
+        "position": 1,
+        "repetition": 1,
+        "taskId": "v3-lru-cache-tests",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 2,
+        "repetition": 1,
+        "taskId": "v3-lru-cache-tests",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 3,
+        "repetition": 1,
+        "taskId": "v3-reservation-ledger",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 4,
+        "repetition": 1,
+        "taskId": "v3-reservation-ledger",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 5,
+        "repetition": 1,
+        "taskId": "v3-workflow-journal",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 6,
+        "repetition": 1,
+        "taskId": "v3-workflow-journal",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 7,
+        "repetition": 1,
+        "taskId": "v3-static-site-pipeline",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 8,
+        "repetition": 1,
+        "taskId": "v3-static-site-pipeline",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 9,
+        "repetition": 1,
+        "taskId": "v3-observability-ingestors",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 10,
+        "repetition": 1,
+        "taskId": "v3-observability-ingestors",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 11,
+        "repetition": 1,
+        "taskId": "v3-policy-engine",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 12,
+        "repetition": 1,
+        "taskId": "v3-policy-engine",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 13,
+        "repetition": 1,
+        "taskId": "v3-markup-renderers",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 14,
+        "repetition": 1,
+        "taskId": "v3-markup-renderers",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 15,
+        "repetition": 1,
+        "taskId": "v3-csv-dialect",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 16,
+        "repetition": 1,
+        "taskId": "v3-csv-dialect",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 17,
+        "repetition": 1,
+        "taskId": "v3-sync-reconciler",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 18,
+        "repetition": 1,
+        "taskId": "v3-sync-reconciler",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 19,
+        "repetition": 2,
+        "taskId": "v3-markup-renderers",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 20,
+        "repetition": 2,
+        "taskId": "v3-markup-renderers",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 21,
+        "repetition": 2,
+        "taskId": "v3-static-site-pipeline",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 22,
+        "repetition": 2,
+        "taskId": "v3-static-site-pipeline",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 23,
+        "repetition": 2,
+        "taskId": "v3-sync-reconciler",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 24,
+        "repetition": 2,
+        "taskId": "v3-sync-reconciler",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 25,
+        "repetition": 2,
+        "taskId": "v3-lru-cache-tests",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 26,
+        "repetition": 2,
+        "taskId": "v3-lru-cache-tests",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 27,
+        "repetition": 2,
+        "taskId": "v3-csv-dialect",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 28,
+        "repetition": 2,
+        "taskId": "v3-csv-dialect",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 29,
+        "repetition": 2,
+        "taskId": "v3-observability-ingestors",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 30,
+        "repetition": 2,
+        "taskId": "v3-observability-ingestors",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 31,
+        "repetition": 2,
+        "taskId": "v3-policy-engine",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 32,
+        "repetition": 2,
+        "taskId": "v3-policy-engine",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 33,
+        "repetition": 2,
+        "taskId": "v3-workflow-journal",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 34,
+        "repetition": 2,
+        "taskId": "v3-workflow-journal",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 35,
+        "repetition": 2,
+        "taskId": "v3-reservation-ledger",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 36,
+        "repetition": 2,
+        "taskId": "v3-reservation-ledger",
+        "arm": "adaptive-medium"
+      }
+    ]
+  },
+  "environment": {
+    "capturedAt": "2026-08-29T17:30:30.685Z",
+    "git": {
+      "commit": "df215a170e6a88a6097c56f7ca404358d9d4b050",
+      "branch": "main",
+      "describe": "v0.11.0-dirty",
+      "workingTreeClean": false,
+      "dirtyPathCount": 19
+    },
+    "runtime": {
+      "nodeVersion": "v26.7.0",
+      "platform": "win32",
+      "arch": "x64",
+      "osRelease": "10.0.26200",
+      "cpuCount": 12,
+      "totalMemoryBytes": 34151780352,
+      "timezone": "Asia/Karachi"
+    },
+    "toolchain": {
+      "packageVersion": "0.11.0",
+      "npmVersion": "11.19.0",
+      "codexCliVersion": "codex-cli 0.151.0",
+      "codexSdkVersion": "0.147.0"
+    },
+    "invocation": {
+      "argv": [],
+      "cwd": "D:\\code\\gpt-test\\sol-luna-orchestrator"
+    },
+    "environment": {},
+    "ambient": {
+      "names": [
+        "AI_AGENT",
+        "ALLUSERSPROFILE",
+        "ANDROID_HOME",
+        "APPDATA",
+        "APPLICATION_INSIGHTS_NO_STATSBEAT",
+        "CHROME_CRASHPAD_PIPE_NAME",
+        "CLAUDECODE",
+        "CLAUDE_AGENT_SDK_VERSION",
+        "CLAUDE_CODE_CHILD_SESSION",
+        "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING",
+        "CLAUDE_CODE_ENABLE_TASKS",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CODE_EXECPATH",
+        "CLAUDE_CODE_MESSAGING_SOCKET",
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_EFFORT",
+        "CLAUDE_PID",
+        "COMMONPROGRAMFILES",
+        "COMPUTERNAME",
+        "COMSPEC",
+        "COPILOT_OTEL_FILE_EXPORTER_PATH",
+        "COREPACK_ENABLE_AUTO_PIN",
+        "CURL_CA_BUNDLE",
+        "ChocolateyInstall",
+        "ChocolateyLastPathUpdate",
+        "CommonProgramFiles(x86)",
+        "CommonProgramW6432",
+        "DriverData",
+        "EFC_5104_1262719628",
+        "EFC_5104_1592913036",
+        "EFC_5104_2283032206",
+        "EFC_5104_2775293581",
+        "EFC_5104_3789132940",
+        "EFC_5104_4126798990",
+        "ELECTRON_RUN_AS_NODE",
+        "EXEPATH",
+        "FPS_BROWSER_APP_PROFILE_STRING",
+        "FPS_BROWSER_USER_PROFILE_STRING",
+        "GDAL_DATA",
+        "GIT_EDITOR",
+        "HOME",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "JAVA_HOME",
+        "LOCALAPPDATA",
+        "LOGONSERVER",
+        "MCP_CONNECTION_NONBLOCKING",
+        "MSYS",
+        "MSYSTEM",
+        "MXC_BIN_DIR",
+        "NUMBER_OF_PROCESSORS",
+        "NVM_HOME",
+        "NVM_SYMLINK",
+        "NoDefaultCurrentDirectoryInExePath",
+        "OPENSSL_CONF",
+        "OS",
+        "OneDrive",
+        "OneDriveConsumer",
+        "PATH",
+        "PATHEXT",
+        "PLINK_PROTOCOL",
+        "POSTGIS_ENABLE_OUTDB_RASTERS",
+        "POSTGIS_GDAL_ENABLED_DRIVERS",
+        "PROCESSOR_ARCHITECTURE",
+        "PROCESSOR_IDENTIFIER",
+        "PROCESSOR_LEVEL",
+        "PROCESSOR_REVISION",
+        "PROGRAMFILES",
+        "PROJ_LIB",
+        "PSModulePath",
+        "PUBLIC",
+        "PWD",
+        "ProgramData",
+        "ProgramFiles(x86)",
+        "ProgramW6432",
+        "SESSIONNAME",
+        "SHELL",
+        "SHLVL",
+        "SYSTEMDRIVE",
+        "SYSTEMROOT",
+        "TEMP",
+        "TERM",
+        "TMP",
+        "USERDOMAIN",
+        "USERDOMAIN_ROAMINGPROFILE",
+        "USERNAME",
+        "USERPROFILE",
+        "VSCODE_CODE_CACHE_PATH",
+        "VSCODE_CRASH_REPORTER_PROCESS_TYPE",
+        "VSCODE_CWD",
+        "VSCODE_ESM_ENTRYPOINT",
+        "VSCODE_HANDLES_UNCAUGHT_ERRORS",
+        "VSCODE_IPC_HOOK",
+        "VSCODE_L10N_BUNDLE_LOCATION",
+        "VSCODE_NLS_CONFIG",
+        "VSCODE_PID",
+        "WINDIR",
+        "_",
+        "__COMPAT_LAYER"
+      ],
+      "nameCount": 100,
+      "namesSha256": "9872f16c8a35490528a95466c445400ba596406682a8a2207d651fe14ae927db",
+      "entries": [
+        {
+          "name": "AI_AGENT",
+          "representation": "presence-only"
+        },
+        {
+          "name": "ALLUSERSPROFILE",
+          "representation": "presence-only"
+        },
+        {
+          "name": "ANDROID_HOME",
+          "representation": "presence-only"
+        },
+        {
+          "name": "APPDATA",
+          "representation": "presence-only"
+        },
+        {
+          "name": "APPLICATION_INSIGHTS_NO_STATSBEAT",
+          "representation": "presence-only"
+        },
+        {
+          "name": "CHROME_CRASHPAD_PIPE_NAME",
+          "representation": "presence-only"
+        },
+        {
+          "name": "CLAUDECODE",
+          "representation": "presence-only"
+        },
+        {
+          "name": "CLAUDE_AGENT_SDK_VERSION",
+          "representation": "presence-only"
+        },
+        {
+          "name": "CLAUDE_CODE_CHILD_SESSION",
+          "representation": "presence-only"
+        },
+        {
+          "name": "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING",
+          "representation": "presence-only"
+        },
+        {
+          "name": "CLAUDE_CODE_ENABLE_TASKS",
+          "representation": "presence-only"
+        },
+        {
+          "name": "CLAUDE_CODE_ENTRYPOINT",
+          "representation": "presence-only"
+        },
+        {
+          "name": "CLAUDE_CODE_EXECPATH",
+          "representation": "presence-only"
+        },
+        {
+          "name": "CLAUDE_CODE_MESSAGING_SOCKET",
+          "representation": "presence-only"
+        },
+        {
+          "name": "CLAUDE_CODE_MESSAGING_TOKEN",
+          "representation": "credential-opaque"
+        },
+        {
+          "name": "CLAUDE_CODE_SESSION_ID",
+          "representation": "credential-opaque"
+        },
+        {
+          "name": "CLAUDE_EFFORT",
+          "representation": "presence-only"
+        },
+        {
+          "name": "CLAUDE_PID",
+          "representation": "presence-only"
+        },
+        {
+          "name": "COMMONPROGRAMFILES",
+          "representation": "presence-only"
+        },
+        {
+          "name": "COMPUTERNAME",
+          "representation": "presence-only"
+        },
+        {
+          "name": "COMSPEC",
+          "representation": "presence-only"
+        },
+        {
+          "name": "COPILOT_OTEL_FILE_EXPORTER_PATH",
+          "representation": "presence-only"
+        },
+        {
+          "name": "COREPACK_ENABLE_AUTO_PIN",
+          "representation": "presence-only"
+        },
+        {
+          "name": "CURL_CA_BUNDLE",
+          "representation": "path-fingerprint",
+          "path": {
+            "basename": "ca-bundle.crt",
+            "absolute": true,
+            "pathSha256": "1d1b758f4c142997256f9a8f97f43204fd47943b639001df8ff0a75700e98872",
+            "file": {
+              "inspected": true,
+              "exists": true,
+              "isDirectory": false,
+              "byteLength": 234847,
+              "sha256": "189d3cf6d103185fba06d76c1af915263c6d42225481a1759e853b33ac857540"
+            }
+          }
+        },
+        {
+          "name": "ChocolateyInstall",
+          "representation": "presence-only"
+        },
+        {
+          "name": "ChocolateyLastPathUpdate",
+          "representation": "presence-only"
+        },
+        {
+          "name": "CommonProgramFiles(x86)",
+          "representation": "presence-only"
+        },
+        {
+          "name": "CommonProgramW6432",
+          "representation": "presence-only"
+        },
+        {
+          "name": "DriverData",
+          "representation": "presence-only"
+        },
+        {
+          "name": "EFC_5104_1262719628",
+          "representation": "presence-only"
+        },
+        {
+          "name": "EFC_5104_1592913036",
+          "representation": "presence-only"
+        },
+        {
+          "name": "EFC_5104_2283032206",
+          "representation": "presence-only"
+        },
+        {
+          "name": "EFC_5104_2775293581",
+          "representation": "presence-only"
+        },
+        {
+          "name": "EFC_5104_3789132940",
+          "representation": "presence-only"
+        },
+        {
+          "name": "EFC_5104_4126798990",
+          "representation": "presence-only"
+        },
+        {
+          "name": "ELECTRON_RUN_AS_NODE",
+          "representation": "presence-only"
+        },
+        {
+          "name": "EXEPATH",
+          "representation": "presence-only"
+        },
+        {
+          "name": "FPS_BROWSER_APP_PROFILE_STRING",
+          "representation": "presence-only"
+        },
+        {
+          "name": "FPS_BROWSER_USER_PROFILE_STRING",
+          "representation": "presence-only"
+        },
+        {
+          "name": "GDAL_DATA",
+          "representation": "presence-only"
+        },
+        {
+          "name": "GIT_EDITOR",
+          "representation": "presence-only"
+        },
+        {
+          "name": "HOME",
+          "representation": "presence-only"
+        },
+        {
+          "name": "HOMEDRIVE",
+          "representation": "presence-only"
+        },
+        {
+          "name": "HOMEPATH",
+          "representation": "presence-only"
+        },
+        {
+          "name": "JAVA_HOME",
+          "representation": "presence-only"
+        },
+        {
+          "name": "LOCALAPPDATA",
+          "representation": "presence-only"
+        },
+        {
+          "name": "LOGONSERVER",
+          "representation": "presence-only"
+        },
+        {
+          "name": "MCP_CONNECTION_NONBLOCKING",
+          "representation": "presence-only"
+        },
+        {
+          "name": "MSYS",
+          "representation": "presence-only"
+        },
+        {
+          "name": "MSYSTEM",
+          "representation": "presence-only"
+        },
+        {
+          "name": "MXC_BIN_DIR",
+          "representation": "presence-only"
+        },
+        {
+          "name": "NUMBER_OF_PROCESSORS",
+          "representation": "presence-only"
+        },
+        {
+          "name": "NVM_HOME",
+          "representation": "presence-only"
+        },
+        {
+          "name": "NVM_SYMLINK",
+          "representation": "presence-only"
+        },
+        {
+          "name": "NoDefaultCurrentDirectoryInExePath",
+          "representation": "presence-only"
+        },
+        {
+          "name": "OPENSSL_CONF",
+          "representation": "presence-only"
+        },
+        {
+          "name": "OS",
+          "representation": "presence-only"
+        },
+        {
+          "name": "OneDrive",
+          "representation": "presence-only"
+        },
+        {
+          "name": "OneDriveConsumer",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PATH",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PATHEXT",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PLINK_PROTOCOL",
+          "representation": "presence-only"
+        },
+        {
+          "name": "POSTGIS_ENABLE_OUTDB_RASTERS",
+          "representation": "presence-only"
+        },
+        {
+          "name": "POSTGIS_GDAL_ENABLED_DRIVERS",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PROCESSOR_ARCHITECTURE",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PROCESSOR_IDENTIFIER",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PROCESSOR_LEVEL",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PROCESSOR_REVISION",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PROGRAMFILES",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PROJ_LIB",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PSModulePath",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PUBLIC",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PWD",
+          "representation": "presence-only"
+        },
+        {
+          "name": "ProgramData",
+          "representation": "presence-only"
+        },
+        {
+          "name": "ProgramFiles(x86)",
+          "representation": "presence-only"
+        },
+        {
+          "name": "ProgramW6432",
+          "representation": "presence-only"
+        },
+        {
+          "name": "SESSIONNAME",
+          "representation": "presence-only"
+        },
+        {
+          "name": "SHELL",
+          "representation": "presence-only"
+        },
+        {
+          "name": "SHLVL",
+          "representation": "presence-only"
+        },
+        {
+          "name": "SYSTEMDRIVE",
+          "representation": "presence-only"
+        },
+        {
+          "name": "SYSTEMROOT",
+          "representation": "presence-only"
+        },
+        {
+          "name": "TEMP",
+          "representation": "presence-only"
+        },
+        {
+          "name": "TERM",
+          "representation": "presence-only"
+        },
+        {
+          "name": "TMP",
+          "representation": "presence-only"
+        },
+        {
+          "name": "USERDOMAIN",
+          "representation": "presence-only"
+        },
+        {
+          "name": "USERDOMAIN_ROAMINGPROFILE",
+          "representation": "presence-only"
+        },
+        {
+          "name": "USERNAME",
+          "representation": "presence-only"
+        },
+        {
+          "name": "USERPROFILE",
+          "representation": "presence-only"
+        },
+        {
+          "name": "VSCODE_CODE_CACHE_PATH",
+          "representation": "presence-only"
+        },
+        {
+          "name": "VSCODE_CRASH_REPORTER_PROCESS_TYPE",
+          "representation": "presence-only"
+        },
+        {
+          "name": "VSCODE_CWD",
+          "representation": "presence-only"
+        },
+        {
+          "name": "VSCODE_ESM_ENTRYPOINT",
+          "representation": "presence-only"
+        },
+        {
+          "name": "VSCODE_HANDLES_UNCAUGHT_ERRORS",
+          "representation": "presence-only"
+        },
+        {
+          "name": "VSCODE_IPC_HOOK",
+          "representation": "presence-only"
+        },
+        {
+          "name": "VSCODE_L10N_BUNDLE_LOCATION",
+          "representation": "presence-only"
+        },
+        {
+          "name": "VSCODE_NLS_CONFIG",
+          "representation": "presence-only"
+        },
+        {
+          "name": "VSCODE_PID",
+          "representation": "presence-only"
+        },
+        {
+          "name": "WINDIR",
+          "representation": "presence-only"
+        },
+        {
+          "name": "_",
+          "representation": "presence-only"
+        },
+        {
+          "name": "__COMPAT_LAYER",
+          "representation": "presence-only"
+        }
+      ],
+      "counts": {
+        "production-owned": 0,
+        "verbatim": 0,
+        "url-redacted": 0,
+        "path-fingerprint": 1,
+        "presence-only": 97,
+        "credential-opaque": 2
+      },
+      "credentialShapedNames": [
+        "CLAUDE_CODE_MESSAGING_TOKEN",
+        "CLAUDE_CODE_SESSION_ID"
+      ],
+      "opaqueValueCount": 99
+    },
+    "codex": {
+      "homeSource": "default",
+      "homeIsDefaultLocation": true,
+      "homePathSha256": "61baf6bcf108eb5bbc6ae5eaf096607b928d918c73997cf8517aaf7e1c33ba0a",
+      "config": {
+        "present": true,
+        "byteLength": 27870,
+        "lineCount": 537,
+        "redactedCanonicalSha256": "d894e101be0b6a1de46eac0b374f5c18dba8d62dfecda33c59406fb0c96a7c55",
+        "redactedAssignments": 0,
+        "mcpServerNames": [
+          "node_repl",
+          "sol-luna-orchestrator"
+        ],
+        "representation": "redacted-canonical-digest"
+      },
+      "auth": {
+        "present": true,
+        "mode": "chatgpt",
+        "containsSecretMaterial": true,
+        "representation": "presence-and-mode-only"
+      }
+    },
+    "boundary": {
+      "captured": [
+        "Every named Sol-Luna and harness execution setting the production sources read, recorded verbatim, with a source scan proving the inventory still matches those sources.",
+        "The complete sorted name inventory of the inherited environment, so ambient state is never silently invisible, plus a digest of that inventory for run-to-run comparison.",
+        "Values for ambient names explicitly classified as safe and reproducibility-relevant; proxy and endpoint URLs as scheme/host/port with an embedded-credential flag; certificate and trust paths as basename, path digest, and file digest.",
+        "The non-secret identity of the effective Codex configuration: a digest of the canonical config.toml with secret-shaped assignments redacted, its registered MCP server names, and the authentication mode.",
+        "Git commit, branch, describe, and working-tree cleanliness; Node, platform, architecture, OS release, CPU, memory, and timezone; package, npm, Codex CLI, and Codex SDK versions; and the exact invocation."
+      ],
+      "notCaptured": [
+        "Raw values of ambient variables that are not explicitly classified as safe. They are recorded as present-and-opaque, not omitted.",
+        "Any credential: API keys, tokens, passwords, cookies, authorization headers, proxy userinfo, and the contents of auth.json. Presence is recorded, value never is, so a run authenticated by a rotated or different credential is not distinguishable from this record alone.",
+        "Environment reads performed by the Codex SDK, the Codex CLI, Node, or the operating system. The production source scan covers this repository's own reads and proves nothing about theirs.",
+        "Machine and account state outside the environment: installed system certificates, network policy, DNS, clock skew, and provider-side model or account configuration."
+      ],
+      "statement": "A finite allowlist of names proves only that this repository's own execution-affecting variables are recorded. It does not prove the inherited runtime environment is fully captured, and this record never claims it does. Ambient and credential state is surfaced as present-and-opaque so an unreproducible difference between two runs is visible rather than hidden."
+    },
+    "reproducibilityInventory": {
+      "productionOwned": {
+        "recordedKeys": [
+          "BENCH_TASK_TIMEOUT",
+          "CODEX_HOME",
+          "LUNA_MODEL",
+          "LUNA_NETWORK_ACCESS",
+          "LUNA_SANDBOX",
+          "LUNA_TIMEOUT_SECONDS",
+          "LUNA_VERIFY_TIMEOUT_SECONDS",
+          "SOL_LUNA_ALLOWED_EFFORTS",
+          "SOL_LUNA_ALLOWED_MODELS",
+          "SOL_LUNA_ALLOWED_ROOTS",
+          "SOL_LUNA_ALLOW_DIRTY",
+          "SOL_LUNA_ALLOW_EFFORT_ESCALATION",
+          "SOL_LUNA_ALLOW_STRONGER_FALLBACK",
+          "SOL_LUNA_EXECUTOR_ORDER",
+          "SOL_LUNA_MAX_PARALLEL",
+          "SOL_LUNA_MAX_WORKERS_PER_BATCH",
+          "SOL_LUNA_CONTEXT_COOLDOWN_TURNS",
+          "SOL_LUNA_CONTEXT_MAX_BYTES",
+          "SOL_LUNA_CONTEXT_MAX_CLEAN_TURNS",
+          "SOL_LUNA_CONTEXT_MAX_TURNS",
+          "SOL_LUNA_KEEP_WORKTREES",
+          "SOL_LUNA_WORKTREE_LINK",
+          "SOL_LUNA_SERVER_NAME",
+          "SOL_LUNA_WORKER",
+          "SOL_LUNA_VERIFY_ALLOW",
+          "SOL_LUNA_VERIFY_ENV_PASSTHROUGH",
+          "SOL_LUNA_VERIFY_MODE"
+        ],
+        "recordedKeyCount": 27,
+        "excludedKeys": {
+          "SOL_LUNA_EVENTS": "Telemetry destination. The harness sets it explicitly in the orchestrator configuration of every delegation-enabled arm, so an ambient value never reaches the process under measurement, and a solo arm has no orchestrator to read it. The effective path is recorded as campaign evidence instead.",
+          "SOL_LUNA_LOG": "Diagnostic log destination. It decides only where already-emitted stderr text is teed, a failed append is swallowed, and it feeds no model, admission, routing, verification, or grading decision.",
+          "NO_COLOR": "Terminal rendering in the CLI surface. A benchmark cell drives the MCP server and the Codex SDK; no CLI renderer participates in a measured run.",
+          "TERM": "Terminal rendering in the CLI surface. A benchmark cell drives the MCP server and the Codex SDK; no CLI renderer participates in a measured run.",
+          "TERM_PROGRAM": "Terminal capability detection in the CLI surface only; no measured run renders CLI output.",
+          "WT_SESSION": "Terminal capability detection in the CLI surface only; no measured run renders CLI output."
+        },
+        "capturePolicy": "An allowlist of names, never an environment dump. A listed key's value is recorded verbatim, so no credential-shaped name may be listed; only keys actually set appear in a record.",
+        "driftPrevention": "src/bench/harness.test.ts scans this repository's production sources and fails when a process.env read is in neither list. That scan covers this repository's own reads only; it detects nothing about variables read by the Codex SDK, the Codex CLI, Node, or the operating system."
+      },
+      "ambient": {
+        "nameCount": 100,
+        "namesSha256": "9872f16c8a35490528a95466c445400ba596406682a8a2207d651fe14ae927db",
+        "counts": {
+          "production-owned": 0,
+          "verbatim": 0,
+          "url-redacted": 0,
+          "path-fingerprint": 1,
+          "presence-only": 97,
+          "credential-opaque": 2
+        },
+        "credentialShapedNameCount": 2,
+        "opaqueValueCount": 99,
+        "safeValueKeys": [
+          "LANG",
+          "LC_ALL",
+          "NODE_ENV",
+          "NODE_NO_WARNINGS",
+          "NODE_OPTIONS",
+          "NODE_PATH",
+          "NODE_TLS_REJECT_UNAUTHORIZED",
+          "NODE_USE_ENV_PROXY",
+          "NO_PROXY",
+          "OPENAI_ORG_ID",
+          "OPENAI_PROJECT_ID",
+          "TZ",
+          "UV_THREADPOOL_SIZE",
+          "UV_USE_IO_URING"
+        ],
+        "urlRedactedKeys": [
+          "ALL_PROXY",
+          "FTP_PROXY",
+          "HTTPS_PROXY",
+          "HTTP_PROXY",
+          "NPM_CONFIG_REGISTRY",
+          "OPENAI_API_BASE",
+          "OPENAI_BASE_URL",
+          "PROXY"
+        ],
+        "pathFingerprintedKeys": [
+          "CURL_CA_BUNDLE",
+          "NODE_EXTRA_CA_CERTS",
+          "REQUESTS_CA_BUNDLE",
+          "SSL_CERT_DIR",
+          "SSL_CERT_FILE"
+        ],
+        "capturePolicy": "Every inherited name is recorded. A value is recorded only where the name is explicitly classified safe; proxy and endpoint URLs keep scheme, host, port, and an embedded-credential flag; certificate and trust paths keep a basename, a path digest, and a file digest. Everything else, including every credential-shaped name, is present-and-opaque."
+      },
+      "codex": {
+        "homeSource": "default",
+        "configPresent": true,
+        "configRedactedCanonicalSha256": "d894e101be0b6a1de46eac0b374f5c18dba8d62dfecda33c59406fb0c96a7c55",
+        "configRedactedAssignments": 0,
+        "registeredMcpServerNames": [
+          "node_repl",
+          "sol-luna-orchestrator"
+        ],
+        "authMode": "chatgpt",
+        "authRepresentation": "presence-and-mode-only",
+        "capturePolicy": "The effective Codex configuration is identified by a digest of its canonical text with every secret-shaped assignment redacted first. auth.json never enters the record: only its presence and mode do."
+      },
+      "boundary": {
+        "captured": [
+          "Every named Sol-Luna and harness execution setting the production sources read, recorded verbatim, with a source scan proving the inventory still matches those sources.",
+          "The complete sorted name inventory of the inherited environment, so ambient state is never silently invisible, plus a digest of that inventory for run-to-run comparison.",
+          "Values for ambient names explicitly classified as safe and reproducibility-relevant; proxy and endpoint URLs as scheme/host/port with an embedded-credential flag; certificate and trust paths as basename, path digest, and file digest.",
+          "The non-secret identity of the effective Codex configuration: a digest of the canonical config.toml with secret-shaped assignments redacted, its registered MCP server names, and the authentication mode.",
+          "Git commit, branch, describe, and working-tree cleanliness; Node, platform, architecture, OS release, CPU, memory, and timezone; package, npm, Codex CLI, and Codex SDK versions; and the exact invocation."
+        ],
+        "notCaptured": [
+          "Raw values of ambient variables that are not explicitly classified as safe. They are recorded as present-and-opaque, not omitted.",
+          "Any credential: API keys, tokens, passwords, cookies, authorization headers, proxy userinfo, and the contents of auth.json. Presence is recorded, value never is, so a run authenticated by a rotated or different credential is not distinguishable from this record alone.",
+          "Environment reads performed by the Codex SDK, the Codex CLI, Node, or the operating system. The production source scan covers this repository's own reads and proves nothing about theirs.",
+          "Machine and account state outside the environment: installed system certificates, network policy, DNS, clock skew, and provider-side model or account configuration."
+        ],
+        "statement": "A finite allowlist of names proves only that this repository's own execution-affecting variables are recorded. It does not prove the inherited runtime environment is fully captured, and this record never claims it does. Ambient and credential state is surfaced as present-and-opaque so an unreproducible difference between two runs is visible rather than hidden."
+      }
+    },
+    "missingRequiredEvidence": [],
+    "toolResolution": "git, npm, and codex are resolved with src/executable.ts: PATH only, current directory never searched, absolute path handed to the launcher."
+  },
+  "fixtures": {
+    "suite": "v3",
+    "taskCount": 9,
+    "frozenTaskIds": [
+      "v3-csv-dialect",
+      "v3-lru-cache-tests",
+      "v3-reservation-ledger",
+      "v3-workflow-journal",
+      "v3-static-site-pipeline",
+      "v3-observability-ingestors",
+      "v3-markup-renderers",
+      "v3-policy-engine",
+      "v3-sync-reconciler"
+    ],
+    "tasks": [
+      {
+        "taskId": "v3-csv-dialect",
+        "evaluatorOnlyCategory": "expected-solo",
+        "workloadClass": "obvious-solo",
+        "tier": "A",
+        "declaredStreams": 1,
+        "immutableSpecificationFiles": [
+          "test/csv-dialect.test.mjs"
+        ],
+        "gradeCommands": [
+          "CSV dialect tests pass"
+        ],
+        "hasMutationCheck": true,
+        "fixtureRevision": "ce7d8b0150870fc0fe31e27cb4d794da61f8ca46854d5a1f1d27fcc595d3422d"
+      },
+      {
+        "taskId": "v3-lru-cache-tests",
+        "evaluatorOnlyCategory": "expected-solo",
+        "workloadClass": "obvious-solo",
+        "tier": "A",
+        "declaredStreams": 1,
+        "immutableSpecificationFiles": [
+          "src/lru.mjs"
+        ],
+        "gradeCommands": [
+          "authored LRU cache tests pass"
+        ],
+        "hasMutationCheck": true,
+        "fixtureRevision": "556ab72b4e61f478636a94c08b06cdf55bdcd072c0a6bbb8239a0339c9d6ae9b"
+      },
+      {
+        "taskId": "v3-reservation-ledger",
+        "evaluatorOnlyCategory": "likely-solo",
+        "workloadClass": "coupled-control",
+        "tier": "coupled",
+        "declaredStreams": 1,
+        "immutableSpecificationFiles": [
+          "test/reservation-ledger.test.mjs"
+        ],
+        "gradeCommands": [
+          "reservation ledger tests pass"
+        ],
+        "hasMutationCheck": true,
+        "fixtureRevision": "d9f60af2d4598a51d3ac16811068acdbd0edcee4fb7f78bef2c81637f14d65da"
+      },
+      {
+        "taskId": "v3-workflow-journal",
+        "evaluatorOnlyCategory": "likely-solo",
+        "workloadClass": "coupled-control",
+        "tier": "coupled",
+        "declaredStreams": 1,
+        "immutableSpecificationFiles": [
+          "test/workflow-journal.test.mjs"
+        ],
+        "gradeCommands": [
+          "workflow journal tests pass"
+        ],
+        "hasMutationCheck": true,
+        "fixtureRevision": "82e6f1e787afa3b75f37a849309a6a630d290d08a6be3fd781dd0c96df4be60a"
+      },
+      {
+        "taskId": "v3-static-site-pipeline",
+        "evaluatorOnlyCategory": "strong-delegation-candidate",
+        "workloadClass": "delegation-candidate",
+        "tier": "D",
+        "declaredStreams": 4,
+        "immutableSpecificationFiles": [
+          "test/static-site.test.mjs"
+        ],
+        "gradeCommands": [
+          "static-site pipeline tests pass"
+        ],
+        "hasMutationCheck": true,
+        "fixtureRevision": "628762cf1c4e5a72501a40313ee0be3c33f2f079993c3dfcdb594c3184068914"
+      },
+      {
+        "taskId": "v3-observability-ingestors",
+        "evaluatorOnlyCategory": "delegation-candidate",
+        "workloadClass": "delegation-candidate",
+        "tier": "C",
+        "declaredStreams": 3,
+        "immutableSpecificationFiles": [
+          "test/observability-ingestors.test.mjs"
+        ],
+        "gradeCommands": [
+          "observability ingestor tests pass"
+        ],
+        "hasMutationCheck": true,
+        "fixtureRevision": "0a4a51001b98135b0f8af2a329db22c196500d2270b6ebbeea0c4a18362ccf5b"
+      },
+      {
+        "taskId": "v3-markup-renderers",
+        "evaluatorOnlyCategory": "strong-delegation-candidate",
+        "workloadClass": "delegation-candidate",
+        "tier": "D",
+        "declaredStreams": 4,
+        "immutableSpecificationFiles": [
+          "test/markup-renderers.test.mjs"
+        ],
+        "gradeCommands": [
+          "markup renderer tests pass"
+        ],
+        "hasMutationCheck": true,
+        "fixtureRevision": "62761819cd60a733704147e6366b5470d8236c71cce8190bfe5f493ee2bdabe7"
+      },
+      {
+        "taskId": "v3-policy-engine",
+        "evaluatorOnlyCategory": "ambiguous",
+        "workloadClass": "ambiguous",
+        "tier": "B",
+        "declaredStreams": 1,
+        "immutableSpecificationFiles": [
+          "test/policy-engine.test.mjs"
+        ],
+        "gradeCommands": [
+          "policy engine tests pass"
+        ],
+        "hasMutationCheck": true,
+        "fixtureRevision": "0f2cdb166cb51b38cc198ce7ba30f83103d23ee21531f9e0b8333ed3565f0f8f"
+      },
+      {
+        "taskId": "v3-sync-reconciler",
+        "evaluatorOnlyCategory": "ambiguous",
+        "workloadClass": "ambiguous",
+        "tier": "B",
+        "declaredStreams": 2,
+        "immutableSpecificationFiles": [
+          "test/sync-reconciler.test.mjs"
+        ],
+        "gradeCommands": [
+          "sync reconciler tests pass"
+        ],
+        "hasMutationCheck": true,
+        "fixtureRevision": "56cc8a0267050010f74888e6b9ca91ba2b684b0977ffbacb69768917848b21f0"
+      }
+    ],
+    "fixtureRevisionSource": "fixtureRevisionOf() in src/bench/run.ts — the same function the runner records and fixture-revision-drift compares against.",
+    "evaluatorOnlyCategoriesAreNeverModelFacing": true
+  },
+  "deterministicChecks": {
+    "modelBackedRunsExecuted": 0,
+    "checks": [
+      {
+        "command": "assertMethodologyFrozen(bench/V3_METHODOLOGY.md)",
+        "exitCode": 0,
+        "result": "pass",
+        "detail": "The committed methodology matches V3_METHODOLOGY_DIGEST."
+      },
+      {
+        "command": "git diff --check",
+        "exitCode": 0,
+        "result": "pass",
+        "detail": "No whitespace errors."
+      },
+      {
+        "command": "npm run verify",
+        "exitCode": 0,
+        "result": "pass",
+        "detail": "Externally observed canonical gate: typecheck, format:check, the full test suite, the protocol smoke, and bench:validate."
+      }
+    ],
+    "deliberatelyNotExecuted": [
+      "npm run bench:v3 (model-backed)",
+      "any model-backed benchmark task",
+      "any inspection or generation of V3 results"
+    ]
+  },
+  "expectedOutputs": {
+    "resultsDirectory": "bench/results/",
+    "rawResultShard": "bench/results/<stamp>.v3.json",
+    "eventStream": "bench/results/<stamp>.events.jsonl (gitignored raw telemetry)",
+    "generatedSummary": "bench/results/<stamp>.v3.md via npm run bench:report",
+    "crossRunAnalysis": "npm run bench:v3:analyze (deterministic, no model calls)",
+    "checkpoint": [
+      "bench/checkpoints/v3-freeze3-20260829.prelaunch.json",
+      "bench/checkpoints/v3-freeze3-20260829.prelaunch.md"
+    ],
+    "refusesOverwrite": "The runner refuses to overwrite an existing shard, and planCampaignCells refuses to re-run a completed cell without --resume."
+  },
+  "launchCommand": "npm run bench:v3 -- --campaign v3-freeze3-20260829 --order seeded --order-seed v3-freeze3-20260829 --confirm-standard-speed --confirm-pricing-profile",
+  "scope": "This checkpoint executed no model-backed run and inspected no V3 result. It changed no methodology, fixture, grader, routing rule, prompt, threshold, or production behaviour."
+}

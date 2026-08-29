@@ -7,33 +7,108 @@ before the first live V3 result was collected, and no live V3 run has been
 executed under any freeze. It contains no V3 result, pass rate, cost, latency,
 routing, or model-performance claim.
 
-- Freeze review: **freeze 2 (P2.4A)**, superseding the freeze-1 content commit
+- Freeze review: **freeze 3 (P2.4B pre-launch)**, superseding freeze 2 (P2.4A),
+  whose content commit was `c9b6bbe657a91808c9b91d3f46105f61b3243866`, which in
+  turn superseded the freeze-1 content commit
   `544d217967646e5f48b9aa73e936567e87d87c8b`.
-- Methodology content digest: `af4860bed58f21c103c5f921c4ae3bd561cf2e0943cd1dd12b899a34a4bacc87`, verified at launch by `assertMethodologyFrozen`.
+- Methodology content digest: `a08ccb260c6691faa3fd3722dcccc67791f495e843c6231ae591d8af11409f94`, verified at launch by `assertMethodologyFrozen`.
+- Production baseline under evaluation: **v0.11.0**, the commit the `v0.11.0`
+  release tag resolves to, `df215a170e6a88a6097c56f7ca404358d9d4b050`.
 - Initial normal campaign: nine tasks, two arms, and exactly two repetitions per
   task/arm cell (36 live runs).
 - Any post-freeze correction follows the correction policy below and cannot
   silently change a task, arm, prompt, grader, repetition rule, or result.
 
 Freeze 1 fixed the workload, arms, graders, repetition rules, holdout
-protections, and economic accounting. Those are unchanged and remain in force.
-Freeze 2 changes nothing a model can observe. It adds the measurement,
+protections, and economic accounting. Freeze 2 added the measurement,
 reproducibility, exclusion, and reporting discipline in the sections below, and
-makes one deliberate change to what the harness configures: V3 no longer passes
-a per-fixture worker-concurrency ceiling, because that ceiling was derived from
-the same stream count that defines the evaluator-only routing category. Neither
-change is comparable to a mid-campaign edit: no V3 run existed under freeze 1,
-so nothing is being reinterpreted after the fact.
+made one deliberate change to what the harness configures: V3 no longer passes a
+per-fixture worker-concurrency ceiling, because that ceiling was derived from
+the same stream count that defines the evaluator-only routing category. Both
+remain in force and are unchanged.
 
-Because freeze 2 alters telemetry definitions and harness configuration, it is a
-new freeze review under the correction policy below and requires a new campaign
-ID. No freeze-1 campaign ID may be resumed under it.
+Freeze 3 changes nothing a model can observe either. It corrects the
+measurement, reproducibility, and attribution defects found while preparing the
+launch, and repins the product the campaign evaluates:
 
-Identity is content-addressed rather than commit-addressed. The digest above is
-the sha256 of this file with line endings normalized and the digest line itself
-removed, so the gate works in a working tree, a published tarball, or a checkout
-whose history was rewritten. `src/bench/integrity.ts` holds the expected value
-and `assertMethodologyFrozen` enforces it at launch.
+- **A refused delegation call is no longer counted as an opened worker batch.**
+  The runtime opens a batch identity before its pre-execution gates run, so a
+  call that admission, routing structure, scope overlap, or worktree
+  availability then refuses publishes `batch.started` and afterwards
+  `batch.rejected`, with zero worker attempts. Counting those starts inflated
+  `delegationCalls`, `batchesByMode`, and the queued worker efforts of a refused
+  parallel batch, and let a refusal anchor the supervisor and worktree phase
+  boundaries. The metric fold now reads the terminal event each batch identity
+  published; production telemetry is unchanged, because it never claimed
+  `batch.started` meant a worker ran.
+- **Benchmark environment capture resolves its tools the way production does.**
+  The probe used to hand bare `git`, `npm`, and `codex` names to a launcher,
+  which on Windows searches the current directory ahead of `PATH`. It now uses
+  the production resolver — `PATH` only, current directory never searched,
+  absolute path handed to the launcher, current-directory lookup pinned off in
+  the child environment. The production resolver is used unchanged; nothing in
+  it was relaxed for the benchmark.
+- **The recorded environment inventory covers every execution-affecting
+  production variable, and states its own boundary.** The freeze-2 allowlist
+  omitted variables that change the worker model, the Codex configuration
+  directory, timeouts, network access, workspace roots, worktree linking,
+  verification allowances and environment passthrough, and the
+  recursive-delegation backstop. A campaign recorded under the old inventory
+  could not be reproduced from its own record. The allowlist also carried a
+  claim it could not support — that a finite list of names captured the
+  execution environment. It does not, and the record now says so: a second
+  layer inventories every inherited variable _name_, records safe values only,
+  represents proxy and trust state without credentials, and marks everything
+  else present-and-opaque. See "Reproducibility and integrity controls" below.
+- **The effective Codex configuration is identified without publishing it.**
+  `config.toml` is structurally parsed, recursively sanitized through nested and
+  multiline values, and only then canonicalized and hashed; header-bearing
+  structures are conservatively redacted. `auth.json` contributes a mode and a
+  presence marker and nothing else. Trust-material paths and raw config lengths
+  are not retained.
+- **The production baseline is repinned to the released v0.11.0 commit, and a
+  campaign is bound to it.** The pin previously named a pre-release commit, so
+  the campaign would not have been evaluating a shipped release. Pinning alone
+  was also not enough: the orchestrator a delegation-enabled arm actually
+  launches was decided by an MCP registration outside the repository. V3 now
+  deterministically provisions a byte-sealed baseline artifact, freezes its
+  aggregate runtime-manifest digest, launches its absolute entry point, and
+  verifies all execution-affecting bytes before and after every Adaptive cell.
+- **The pre-launch checkpoint derives execution history instead of asserting
+  it.** A durable marker written immediately before the first model call proves
+  even an abort before cell 1. Valid, malformed, and unreadable V3 shards,
+  launch markers, and ambiguous non-empty event streams are all read from the
+  evidence directory and conservatively block a fresh-launch claim.
+
+None of this is comparable to a mid-campaign edit: no live V3 run exists under
+any freeze, so no result is reinterpreted and no evidence is rewritten.
+
+Because freeze 3 changes a telemetry definition, the reproducibility record, and
+how a campaign is bound to the product it evaluates, it is a new freeze review
+under the correction policy below and requires a new campaign ID. No freeze-1 or
+freeze-2 campaign ID may be resumed under it.
+
+### Two commits, two questions
+
+A V3 record carries two commit identities and they must never be conflated:
+
+| Identity                    | Question it answers                                       | Where it lives                                                  |
+| --------------------------- | --------------------------------------------------------- | --------------------------------------------------------------- |
+| Methodology / freeze commit | Which reviewed specification did this campaign run under? | `holdoutFreezeSha`, alongside the authoritative content digest. |
+| Production baseline commit  | Which released product was evaluated?                     | `productionBaseline{version, sha}` — v0.11.0 at `df215a1`.      |
+
+The freeze commit describes this document. The production baseline describes the
+orchestrator under test. A change to one is not a change to the other, and a
+report that cites only one has not identified the experiment.
+
+Freeze identity itself is content-addressed rather than commit-addressed. The
+digest above is the sha256 of this file with line endings normalized and the
+digest line itself removed, so the gate works in a working tree, a published
+tarball, or a checkout whose history was rewritten. `src/bench/integrity.ts`
+holds the expected value and `assertMethodologyFrozen` enforces it at launch.
+The commit-addressed companion pin is repinned after this document is committed,
+because a pin cannot name the commit that contains it; `assertV3FreezePinned`
+refuses a live launch while that pin still names the previous review.
 
 ## Question and interpretation boundary
 
@@ -188,8 +263,9 @@ diagnostic review rules.
 ## Comparison candidates and baselines
 
 The campaign compares exactly two candidates on identical work. Both run the
-current Thin Supervisor / adaptive runtime at the same commit; the only
-difference is whether that runtime's orchestration path is reachable.
+same Thin Supervisor / adaptive runtime at the same commit — the v0.11.0
+production baseline named in the freeze status above — and the only difference
+is whether that runtime's orchestration path is reachable.
 
 | Candidate       | What it is                                                                                                                                                          | Role                       |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
@@ -292,12 +368,34 @@ substituted for, end-to-end wall-clock. A phase never observed is `null`.
 | Metric                                       | Semantics                                                                                       |
 | -------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | `workerCount`                                | Distinct worker delegations observed. Zero is a valid, first-class Adaptive outcome.            |
-| `delegationCalls`, `batchesByMode`           | Delegation calls that opened a batch, split by single / sequential / parallel.                  |
+| `delegationCalls`, `batchesByMode`           | Delegation calls that opened a worker batch, split by single / sequential / parallel.           |
+| `delegationCallsRefused`                     | Calls the runtime refused before any worker attempt started.                                    |
+| `refusedBatchesByMode`                       | Modes of refused calls, where the refusal came late enough for a mode to be observed.           |
+| `delegationCallsCancelled`                   | Opened batches later cancelled. A subset of `delegationCalls`, not a refusal.                   |
 | `attemptsStarted`, `attemptsCompleted`       | Individual worker SDK invocations, from canonical `attempt.*` lineage.                          |
 | `attemptsByRole`                             | `initial`, `automatic-repair`, `manual-continuation`, `timeout-recovery`, `process-retry`.      |
 | `explorations`, `explorationsRejected`       | Read-only `explore` calls admitted and refused.                                                 |
 | `routingPreflights`, `routingDeclarations*`  | Advisory routing evaluations, and whether a call attached a declaration at all.                 |
 | `maxParallelConfigured`, `concurrencyPolicy` | What the harness configured, and under which rule. For V3 always `null` / `production-default`. |
+
+A delegation call **opened a worker batch** when the runtime admitted it past
+every pre-execution gate: its batch identity published `batch.started` and did
+not publish `batch.rejected`. `batch.started` on its own does not establish
+this. The identity is created before admission, routing structure, scope
+overlap, and worktree availability are checked, so a refused call publishes
+`batch.started` and then `batch.rejected` having started no worker attempt —
+`batch.started` → `batch.rejected`, and `batch.started` → `routing.declared` →
+`batch.rejected` are both ordinary refusal traces. Such a call is a routing
+observation, counted in `delegationCallsRefused`, and it is never reported as a
+delegation, never contributes a mode to `batchesByMode`, never contributes a
+worker effort from the `task.queued` rows a refused parallel batch leaves
+behind, and never anchors `supervisorBeforeSeconds` or `worktreeSetupSeconds`.
+Cancellation is different in kind: a cancelled batch passed every gate, so it is
+an opened call whose outcome is recorded separately.
+
+This is a reading rule, not a change to the product. `batch.started` means the
+runtime opened a batch identity, which is what it has always meant and what the
+activity surfaces depend on; freeze 2 read it as something it never claimed.
 
 ### Token usage
 
@@ -455,13 +553,131 @@ Every shard records, and the harness refuses to launch a V3 campaign without:
 - Node version, platform, architecture, OS release, CPU count, memory, and
   timezone;
 - package version, npm version, Codex CLI version, and Codex SDK version, each
-  recorded as read or as `null`;
+  recorded as read or as `null`. Those tools are located through the production
+  executable resolver: `PATH` only, never the current directory, absolute path
+  handed to the launcher. Evidence a file planted in the audited directory could
+  answer is not evidence, and the same resolution rule protects the shipped
+  runtime, so the benchmark reuses it rather than copying a weaker one;
 - the exact campaign invocation and working directory;
-- allowlisted orchestrator environment overrides in effect — an allowlist, not
-  an environment dump, so a committed record cannot leak credentials;
+- the environment, in three layers with three different guarantees (below);
+- the verified identity of the orchestrator that will actually execute (below);
 - the verified methodology content digest;
 - the execution ordering mode, seed, and full planned sequence; and
 - the predeclared retry and exclusion policy.
+
+### What the environment record establishes, and what it does not
+
+The environment record is deliberately layered, because a single "environment"
+blob would let its weakest part borrow its strongest part's credibility.
+
+**Production-owned execution settings.** An allowlist of _names_, never a dump
+of the environment, because the value of a listed name is committed verbatim and
+an unbounded snapshot would publish credentials. The allowlist is derived from
+the production configuration a run executes under — a delegation-enabled arm
+launches the orchestrator through Codex, which inherits the launching
+environment — and covers the worker model, the Codex configuration directory,
+sandbox and network access, task and verification timeouts, compute-policy and
+executor admission, workspace roots, worktree lifecycle and linking,
+context-lifecycle thresholds, verification mode/allowances/environment
+passthrough, server identity, the recursive-delegation backstop, and the harness
+task bound. A production variable deliberately left out carries a recorded
+argument that it cannot affect a measured run. As defense in depth, a
+deterministic syntactic test detects the direct `process.env.NAME`,
+`process.env["NAME"]`, and resolvable constant-key forms the scanner explicitly
+supports. It is not a semantic proof of every possible repository environment
+read: computed, indirect, or novel future access can fall outside those forms.
+It also detects no variable read by the Codex SDK, the Codex CLI, Node, or the
+operating system, and is not evidence that the execution environment is fully
+captured. No name whose value would be a credential may be added to the
+allowlist.
+
+**Ambient inherited environment.** Every other variable the benchmark process
+inherited, and therefore passes to the Codex SDK and to the orchestrator it
+launches, is inventoried by _name_, sorted, with a digest of the inventory for
+run-to-run comparison. Values are recorded only under an explicit
+classification: safe scalar settings verbatim (locale, timezone, Node options,
+TLS verification state); proxy and endpoint URLs as scheme, host, port and an
+embedded-credential flag, never as the raw URL, because a proxy URL routinely
+carries `user:password@`; explicitly safe certificate and trust-material
+variables as presence, readability, file category, and a digest of readable
+file content. Their raw paths, basenames, and path hashes are never persisted.
+Credential-shaped path variables remain presence-only and no secret value is
+hashed. Everything else, including every credential-shaped name, is recorded as
+_present-and-opaque_: the name appears, the value never does. Opaque is the
+honest answer, and it is not the same as absent — an unreproducible difference
+between two runs stays visible rather than being hidden by omission.
+
+**Effective Codex configuration.** A real TOML parser first constructs the
+complete nested `config.toml` value graph, including tables, inline tables,
+arrays/tables, comments, and multiline values. The graph is recursively
+sanitized before canonical serialization or hashing: any credential-, secret-,
+authentication-, token-, password-, cookie-, bearer-, key-, or header-sensitive
+key/path segment is redacted, and a header-bearing structure is conservatively
+replaced as a whole. The digest of that sanitized canonical structure and its
+registered MCP server names are recorded. Raw config byte length is not
+recorded. An unparseable config records presence and parse failure but no digest.
+`CODEX_HOME` records only whether it is the default or an override; its raw path
+and path hash are absent. `auth.json` contributes a presence marker and an
+authentication mode (`api-key`, `chatgpt`, `unknown`) and nothing else; no
+credential, and no digest of one, enters a committed artifact.
+
+The boundary is therefore stated precisely, and is committed inside every
+record: **reproducible** are the maintained repository-owned settings detected in
+the explicitly supported access forms, the complete ambient name inventory, the
+classified-safe ambient values, the non-secret identity of the Codex
+configuration, and the git/runtime/toolchain facts. **Not reproducible** are
+computed, indirect, or otherwise undetected repository environment reads; the
+raw values of unclassified ambient variables; every credential; environment
+reads performed by the Codex SDK, the Codex CLI, Node, or the operating system;
+and machine or account state outside the environment — system trust stores,
+network policy, DNS, clock skew, and provider-side model or account
+configuration. A campaign whose two runs differ only in opaque state will show
+that the opaque state existed; it cannot show what it was.
+
+### Binding a run to the production baseline
+
+A V3 record claims that the orchestrator under evaluation is the released
+v0.11.0 product at `df215a1`. Stamping that pair into a record establishes
+nothing on its own: the Codex SDK launches whatever the `mcp_servers`
+registration resolves to, and that registration lives outside the repository, is
+edited by hand, and can point at a global install, another checkout, or the
+benchmark-development tree.
+
+So V3 does not rely on it. The canonical `npm run bench:v3:baseline` path removes
+any prior artifact, materializes detached commit
+`df215a170e6a88a6097c56f7ca404358d9d4b050` (the exact `v0.11.0` tag target),
+runs `npm ci` from that commit's lockfile, builds that exact source, and runs
+`npm prune --omit=dev` so the installed tree contains runtime dependencies only.
+It writes a canonical manifest whose sorted entries cryptographically identify
+`package.json`, `package-lock.json`, every file under `dist`, and every file
+under `node_modules` except `.bin` command shims and the manifest itself. `.bin`
+is irrelevant because the harness launches the absolute Node executable and
+absolute `dist/server.js`, and Node module resolution does not consult command
+shims. Paths use canonical `/` separators and the aggregate hashes the manifest
+schema plus every path, type, byte length, and file-content digest. Symlinks in
+the included runtime material fail verification rather than being followed out
+of the sealed tree.
+
+The expected aggregate runtime-manifest digest frozen by Freeze 3 is
+`d63af9ef92ac99c9a0f8425012fce2777a6dee020c76161bc504aee96dafad17`.
+This is distinct from both the v0.11.0 git commit/tree and any freshly observed
+digest. A new observation is accepted only when it equals that independent
+expected value; provisioning cannot bless an arbitrary new digest. The artifact
+also must have the exact commit and tree, a clean tracked worktree, the expected
+package name and version, the version recorded at the baseline commit, installed
+declared dependencies, and a regular, contained, absolute entry point. Null or
+unreadable evidence fails closed.
+
+Every measured Adaptive V3 cell freshly computes the sealed manifest immediately
+before the SDK call that launches the orchestrator, launches using the absolute
+entry point authorized by that observation, and computes it again after the cell
+and deterministic grading finish but before a result can be returned or written.
+The record carries the expected digest and both observed digests plus entry-point
+identities. Both observations must match the frozen digest and each other. A
+modified dist file, dependency byte, package/lock file, symlink/substitution,
+unreadable manifest, or post-preflight mutation fails the cell/campaign closed;
+no result survives claiming valid v0.11.0 execution. Nothing about v0.11.0
+production behavior is modified.
 
 Each case starts from a freshly materialized workspace built from the immutable
 fixture, with its own run ID and a content-derived fixture revision, and the
@@ -543,6 +759,33 @@ pricing validation or new pricing profile, launch configuration, task order or
 seed, arm list, repetition plan, and expected raw-output locations. The launch
 must assign a unique campaign ID and include it in every raw record.
 
+The live runner creates a durable `*.v3-launch.json` campaign marker immediately
+before the first model-backed SDK call, after every deterministic launch gate
+and per-cell setup has passed. It records schema, campaign ID, methodology
+digest/freeze identity, production baseline including the expected sealed
+runtime digest, timestamp, `state: started`, and initially zero completed cells.
+It is updated atomically as accepted cells complete and is never erased. A crash
+after marker creation but before cell 1 completes therefore remains authoritative
+proof that V3 launched. Checkpoint generation, deterministic validation, and
+baseline provisioning never create this marker.
+
+The checkpoint's account of execution history is derived, never transcribed.
+`freshLaunch` is true only when the authoritative evidence directory contains no
+launch marker, no valid V3 result shard (including a zero-record shard), no
+invalid or malformed V3-named shard, no unreadable V3 shard or launch marker,
+and no non-empty or unreadable event stream that could represent V3 but cannot
+be safely attributed. Ambiguity blocks freshness: malformed `{}` shards and
+orphan streams cannot degrade to `runCount: null` while preserving a claim that
+V3 never ran. Evidence explicitly attributed to V2 or the earlier parallel and
+scale suites remains unrelated and does not block V3 freshness.
+
+Result-campaign collision, the current campaign's launch-marker state, and a
+retained checkpoint for the current campaign are separate facts. A campaign ID
+that already carries results may not be reused; any current or other campaign
+launch marker is prior live evidence; and a retained checkpoint alone is not
+live execution because the deterministic generator writes it before launch.
+All of these readiness facts appear in both checkpoint JSON and Markdown.
+
 At completion, retain raw per-run records, event/telemetry evidence, verifier
 outputs, grader outputs, campaign configuration, pricing evidence, and any
 review decision for a third repetition. Generated summaries are derived views;
@@ -578,18 +821,33 @@ significance.
 
 ## Freeze review log
 
-| Freeze | Date       | Scope                                                                                                                                                                                                                                                                                                           | Campaign IDs                       |
-| ------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| 1      | 2026-08-25 | Workload suite, graders, hidden references, arms, repetitions and third-run rules, holdout protections, pricing and economic accounting, primary decision order. Content commit `544d217`.                                                                                                                      | None launched.                     |
-| 2      | 2026-08-29 | P2.4A. Adds comparison candidates and baselines, harness configuration boundary, metric catalog and measurement semantics, execution ordering, run validity and retry treatment, statistical and reporting discipline, and reproducibility controls. Removes the per-fixture worker-concurrency ceiling for V3. | Requires a new campaign ID prefix. |
+| Freeze | Date       | Scope                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Campaign IDs                       |
+| ------ | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| 1      | 2026-08-25 | Workload suite, graders, hidden references, arms, repetitions and third-run rules, holdout protections, pricing and economic accounting, primary decision order. Content commit `544d217`.                                                                                                                                                                                                                                                                                                                                                                                                         | None launched.                     |
+| 2      | 2026-08-29 | P2.4A. Adds comparison candidates and baselines, harness configuration boundary, metric catalog and measurement semantics, execution ordering, run validity and retry treatment, statistical and reporting discipline, and reproducibility controls. Removes the per-fixture worker-concurrency ceiling for V3. Content commit `c9b6bbe`.                                                                                                                                                                                                                                                          | Requires a new campaign ID prefix. |
+| 3      | 2026-08-29 | P2.4B pre-launch. Reconciles the delegation-call metric with the refusal traces production actually emits, hardens benchmark executable resolution to the production rule, completes the execution-affecting environment inventory and replaces its overclaimed completeness with a layered record and a stated boundary, identifies the effective Codex configuration without publishing secrets, repins the production baseline to the released v0.11.0 commit `df215a1` and binds a campaign to a verified baseline artifact, and derives pre-launch execution history from committed evidence. | Requires a new campaign ID prefix. |
 
-Freeze 2 changed no model-facing text, no task, no grader, no hidden reference,
+Freeze 3 changed no model-facing text, no task, no grader, no hidden reference,
 no mutation case, no arm, no model, no effort, no speed profile, no pricing
 applicability, no repetition count, and no third-run admission rule. It changed
-telemetry definitions (additively) and one harness configuration, which under
-the correction policy above makes it a new freeze review rather than a
-correction. No live V3 run existed under freeze 1, so no result is reinterpreted
-and no evidence is rewritten.
+one telemetry definition, the reproducibility record, the production baseline
+pin and how a run is bound to it, and how pre-launch execution history is
+established, which under the correction policy above makes it a new freeze
+review rather than a correction. It changed no production runtime behaviour: the
+refusal defect was in how the benchmark read `batch.started`, not in what the
+runtime published, and the baseline binding checks out, builds, verifies, and
+executes v0.11.0 exactly as released. No live V3 run existed under freeze 1 or
+freeze 2, so no result is reinterpreted and no evidence is rewritten.
 
-Reviewer of record and the freeze-2 content commit are recorded in the campaign
+The second independent review narrowed the remaining Freeze 3 repair to Findings
+A, B, and C. Those corrections replaced line-based config redaction and sensitive
+path metadata with structural secret sanitation, replaced source/version-only
+baseline attribution with the frozen byte manifest and per-cell pre/post gate,
+and replaced result/event inference with authoritative launch evidence and
+conservative malformed/ambiguous history classification. Finding D, Codex SDK
+provenance, is unchanged. The nine tasks, two Medium arms, two repetitions, 36
+cells, deterministic/external grading, evaluator-only routing categories,
+credit-first analysis, and repetition policy are unchanged.
+
+Reviewer of record and the freeze-3 content commit are recorded in the campaign
 checkpoint at launch, alongside the digest the harness verified.

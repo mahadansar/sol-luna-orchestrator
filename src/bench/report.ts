@@ -452,8 +452,8 @@ export function renderReport(
 
   lines.push("## Orchestration behaviour by run", "");
   lines.push(
-    "| Task | Strategy | Rep | Delegation calls | Explorations | Attempts | Repairs | Recoveries | Continuations | Effort escalations | Executor changes | Wasted attempts | Usage unavailable | Scope conflicts |",
-    "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+    "| Task | Strategy | Rep | Delegation calls | Refused calls | Explorations | Attempts | Repairs | Recoveries | Continuations | Effort escalations | Executor changes | Wasted attempts | Usage unavailable | Scope conflicts |",
+    "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
   );
   for (const record of records) {
     const orchestration = record.orchestration;
@@ -461,7 +461,9 @@ export function renderReport(
       value === undefined ? "unknown" : String(value);
     lines.push(
       `| ${record.taskId} | ${record.arm} | ${record.repetition} | ` +
-        `${cell(orchestration?.delegationCalls)} | ${cell(orchestration?.explorations)} | ` +
+        `${cell(orchestration?.delegationCalls)} | ` +
+        `${cell(orchestration?.delegationCallsRefused)} | ` +
+        `${cell(orchestration?.explorations)} | ` +
         `${cell(orchestration?.attemptsCompleted)} | ${cell(orchestration?.repairsCompleted)} | ` +
         `${cell(orchestration?.recoveriesCompleted)} | ${cell(orchestration?.continuations)} | ` +
         `${cell(orchestration?.effortEscalations)} | ${cell(orchestration?.executorChanges)} | ` +

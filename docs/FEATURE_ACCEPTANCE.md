@@ -310,8 +310,8 @@ that capability.
 - **No performance, latency, or economic claim is made for any P1 or P2
   capability.** No campaign has measured them. Benchmark V3 is designed to
   produce that evidence and has not been run.
-- **No Benchmark V3 result exists**, under freeze 1 or freeze 2. Every V3
-  statement in this repository describes method, never outcome.
+- **No Benchmark V3 result exists**, under freeze 1, freeze 2, or freeze 3.
+  Every V3 statement in this repository describes method, never outcome.
 - **Adaptive orchestration is not claimed to be cheaper, faster, or better than
   solo execution.** V2's seven fully priced task medians were about 2% more
   expensive than Solo, and the full Adaptive total is unknown.
@@ -326,7 +326,8 @@ that capability.
 
 P2.4A is complete: the acceptance boundary above and the Benchmark V3
 methodology in [`bench/V3_METHODOLOGY.md`](../bench/V3_METHODOLOGY.md) are
-frozen under freeze 2, and the harness enforcing them is covered by
+frozen under freeze 3 (P2.4B pre-launch), which evaluates the released v0.11.0
+production baseline, and the harness enforcing them is covered by
 `src/bench/harness.test.ts` in the canonical gate. P2.4 and Benchmark V3 remain
 incomplete; no model-backed V3 task has been executed.
 
