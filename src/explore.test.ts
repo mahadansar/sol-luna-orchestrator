@@ -1270,3 +1270,131 @@ test("grounding fails closed when the surface could not be proven unmodified", a
     await fs.rm(root, { recursive: true, force: true });
   }
 });
+
+// --- Credential files are never copied into the surface ---------------------
+
+test("credential-bearing files are never admitted into the exploration surface", async () => {
+  // The invariant: exploration copies real bytes into a surface a model then
+  // reads, so a file whose documented purpose is to hold a secret must never be
+  // admitted — including under the broadest scope a caller can declare.
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-creds-"));
+  try {
+    const secrets = [
+      ".env",
+      ".env.production",
+      ".envrc",
+      ".npmrc",
+      ".netrc",
+      "_netrc",
+      ".git-credentials",
+      "packages/api/.env",
+      "packages/api/.npmrc",
+      "vendor/tool/.envrc",
+    ];
+    await fs.mkdir(path.join(root, "packages", "api"), { recursive: true });
+    await fs.mkdir(path.join(root, "vendor", "tool"), { recursive: true });
+    await fs.mkdir(path.join(root, ".aws"), { recursive: true });
+    for (const secret of [...secrets, ".aws/credentials"]) {
+      await fs.writeFile(path.join(root, ...secret.split("/")), "TOKEN=super-secret\n");
+    }
+    // Ordinary files that must still be admitted; over-matching here would
+    // silently blind exploration to real source.
+    await fs.mkdir(path.join(root, "src"), { recursive: true });
+    await fs.writeFile(path.join(root, "src", "env.ts"), "export const env = 1;\n");
+    await fs.writeFile(path.join(root, "environment.md"), "# environment\n");
+    await fs.writeFile(
+      path.join(root, "src", "netrc-parser.ts"),
+      "export const p = 1;\n",
+    );
+
+    const surface = await createExplorationSurface(root, ["**"], []);
+    try {
+      for (const secret of [...secrets, ".aws/credentials"]) {
+        assert.equal(
+          surface.baseline.has(secret),
+          false,
+          `${secret} must not reach the surface`,
+        );
+        await assert.rejects(
+          fs.stat(path.join(surface.path, ...secret.split("/"))),
+          `${secret} must not exist on disk in the surface`,
+        );
+      }
+      for (const ordinary of ["src/env.ts", "environment.md", "src/netrc-parser.ts"]) {
+        assert.equal(
+          surface.baseline.has(ordinary),
+          true,
+          `${ordinary} is an ordinary file and must still be admitted`,
+        );
+      }
+    } finally {
+      await removeExplorationSurface(surface);
+    }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a worker cannot report a credential file back as an in-scope finding", async () => {
+  // Surface construction and claim validation must give the same answer. A
+  // path that was refused admission cannot re-enter as a reported finding.
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-creds-claim-"));
+  try {
+    await fs.mkdir(path.join(root, "src"), { recursive: true });
+    await fs.writeFile(path.join(root, "src", "a.ts"), "export const a = 1;\n");
+    await fs.writeFile(path.join(root, ".npmrc"), "//registry/:_authToken=secret\n");
+    await fs.writeFile(path.join(root, ".envrc"), "export TOKEN=secret\n");
+
+    const surface = await createExplorationSurface(root, ["**"], []);
+    try {
+      const input = exploreInputSchema.parse({
+        target: "Report which files matter for the packaging seam",
+        effortReason: "Deterministic credential-admission probe",
+        scope: ["**"],
+      });
+      const validated = await validateExploreFindings(
+        input,
+        surface,
+        {
+          status: "PASS",
+          summary: "",
+          observedFacts: [],
+          inferences: [],
+          unknowns: [],
+          relevantFiles: [
+            { path: "src/a.ts", why: "admitted" },
+            { path: ".npmrc", why: "claimed registry token" },
+            { path: ".envrc", why: "claimed exported token" },
+          ],
+          recommendedSeams: [
+            {
+              label: "packaging",
+              description: "advisory",
+              candidateFiles: ["src/a.ts", ".npmrc", ".envrc"],
+            },
+          ],
+          notes: "",
+        },
+        [],
+      );
+
+      assert.deepEqual(
+        validated.findings?.relevantFiles.map((file) => file.path),
+        ["src/a.ts"],
+      );
+      assert.deepEqual(validated.findings?.recommendedSeams[0]?.candidateFiles, [
+        "src/a.ts",
+      ]);
+      for (const secret of [".npmrc", ".envrc"]) {
+        assert.ok(
+          validated.discrepancies.some((entry) => entry.includes(secret)),
+          `${secret} must be reported as discarded`,
+        );
+      }
+    } finally {
+      await removeExplorationSurface(surface);
+    }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});

@@ -307,6 +307,17 @@ export type OrchestratorEvent =
       reason: "evidence-failure";
     }
   | {
+      /**
+       * One task's changes were deliberately not copied into the workspace.
+       * Distinct from `integration.failed`, which records a copy that was
+       * attempted and did not complete: nothing was attempted here.
+       */
+      type: "integration.blocked";
+      batchId: string;
+      taskId: string;
+      reason: "scope-violation" | "protected-control-path";
+    }
+  | {
       type: "integration.partial";
       batchId: string;
       taskId: string;

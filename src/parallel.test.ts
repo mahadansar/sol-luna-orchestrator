@@ -4723,3 +4723,209 @@ test("routing paths - routing changes no worker count, concurrency, or effort", 
     await cleanupRepo(repo);
   }
 });
+
+// --- Scope-violating tasks are never integrated ------------------------------
+
+/**
+ * A batch where one task writes outside its declared scope.
+ *
+ * The violation is produced through the real path: the executor writes a file
+ * the contract does not allow, and `reconcileParallelWorktreeEvidence` derives
+ * `scopeViolations` from the worktree's own git evidence. Nothing is stubbed.
+ */
+function scopeViolatingBatch(overrides: { allowOverlappingScopes?: boolean } = {}) {
+  const clean = makeTask({ allowedFiles: ["src/clean/**"] });
+  const violating = makeTask({ allowedFiles: ["src/owned/**"] });
+  return {
+    tasks: [clean, violating],
+    options: {
+      mode: "parallel" as const,
+      ...overrides,
+      executor: fakeExecutor({
+        writes: (task): Record<string, string> =>
+          moduleOf(task) === "clean"
+            ? { "src/clean/ok.ts": "clean\n" }
+            : {
+                "src/owned/ok.ts": "owned\n",
+                // Outside `src/owned/**`: never asked for.
+                "src/elsewhere/stolen.ts": "unauthorized\n",
+              },
+      }),
+    },
+  };
+}
+
+test("a scope-violating task is excluded from integration while clean siblings apply", async () => {
+  const repo = await makeRepo();
+  const events: Array<Record<string, unknown>> = [];
+  try {
+    const { tasks, options } = scopeViolatingBatch();
+    const result = await runProductionBatch(tasks, {
+      ...options,
+      workingDirectory: repo,
+      eventEmitter: (event) => events.push(event),
+    });
+
+    const violating = result.tasks.find(
+      (task) => (task.result?.scopeViolations.length ?? 0) > 0,
+    );
+    assert.ok(violating, describeBatch(result));
+
+    // The invariant: an unauthorized change never reaches the workspace merely
+    // because the worker's turn completed.
+    await assert.rejects(
+      fs.stat(path.join(repo, "src", "elsewhere", "stolen.ts")),
+      "an out-of-scope file must not be copied into the workspace",
+    );
+    // Nor does the violating task's in-scope work ride along with it: the task,
+    // not the individual file, is the unit that lost authorization.
+    await assert.rejects(fs.stat(path.join(repo, "src", "owned", "ok.ts")));
+
+    // The clean sibling is independent by declaration, so it still integrates.
+    assert.equal(
+      await fs.readFile(path.join(repo, "src", "clean", "ok.ts"), "utf8"),
+      "clean\n",
+    );
+
+    // Evidence is preserved rather than discarded.
+    assert.ok(
+      events.some(
+        (event) =>
+          event.type === "integration.blocked" && event.reason === "scope-violation",
+      ),
+      JSON.stringify(events.map((event) => event.type)),
+    );
+    assert.ok(
+      result.warnings.some((warning) => /excluded from integration/i.test(warning)),
+      JSON.stringify(result.warnings),
+    );
+    assert.match(result.integrationSummary, /excluded for changing files outside/i);
+    // The supervisor must still be told to look.
+    assert.equal(result.completionState, "needs-supervisor");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("allowOverlappingScopes makes one violation block the whole batch", async () => {
+  // The flag withdraws the disjoint-scope declaration that makes selective
+  // exclusion safe, so integrating the sibling alone could leave the workspace
+  // holding half of a change set that was never independent.
+  const repo = await makeRepo();
+  const events: Array<Record<string, unknown>> = [];
+  try {
+    const { tasks, options } = scopeViolatingBatch({ allowOverlappingScopes: true });
+    const result = await runProductionBatch(tasks, {
+      ...options,
+      workingDirectory: repo,
+      eventEmitter: (event) => events.push(event),
+    });
+
+    for (const orphan of [
+      ["src", "elsewhere", "stolen.ts"],
+      ["src", "owned", "ok.ts"],
+      ["src", "clean", "ok.ts"],
+    ]) {
+      await assert.rejects(
+        fs.stat(path.join(repo, ...orphan)),
+        `${orphan.join("/")} must not be integrated`,
+      );
+    }
+
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(result.integrationSummary, /allowOverlappingScopes/);
+    assert.ok(
+      events.some(
+        (event) =>
+          event.type === "integration.blocked" && event.reason === "scope-violation",
+      ),
+    );
+    assert.equal(result.completionState, "needs-supervisor");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("a clean batch still integrates exactly as before", async () => {
+  // The control for the three tests above: nothing about the new gate changes
+  // the ordinary path.
+  const repo = await makeRepo();
+  try {
+    const result = await runProductionBatch(
+      [
+        makeTask({ allowedFiles: ["src/alpha/**"] }),
+        makeTask({ allowedFiles: ["src/beta/**"] }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        eventEmitter: () => undefined,
+        executor: fakeExecutor({
+          writes: (task) => ({ [`src/${moduleOf(task)}/value.ts`]: "ok\n" }),
+        }),
+      },
+    );
+    assert.equal(result.integrated, true, describeBatch(result));
+    assert.doesNotMatch(result.integrationSummary, /excluded/i);
+    for (const module of ["alpha", "beta"]) {
+      assert.equal(
+        await fs.readFile(path.join(repo, "src", module, "value.ts"), "utf8"),
+        "ok\n",
+      );
+    }
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("a sequential scope violation is reported as already-in-place, not withheld", async () => {
+  // Sequential tasks write into the workspace as they run, so there is no
+  // integration step to withhold. The supervisor must be told that plainly
+  // rather than being left to infer it from "changes are already in place".
+  const repo = await makeRepo();
+  const events: Array<Record<string, unknown>> = [];
+  try {
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/owned/**"] })],
+      {
+        mode: "sequential",
+        workingDirectory: repo,
+        eventEmitter: (event) => events.push(event),
+        executor: fakeExecutor({
+          writes: () => ({
+            "src/owned/ok.ts": "owned\n",
+            "src/elsewhere/stolen.ts": "unauthorized\n",
+          }),
+          // Sequential tasks have no worktree, so nothing re-derives scope from
+          // git evidence afterwards: the violation is whatever the per-task
+          // result carries out of `buildDelegationResult`. The fixture stands in
+          // for that step, which the executor override replaces.
+          output: () => ({
+            verdict: "FAILED" as const,
+            trustworthy: false,
+            scopeViolations: ["src/elsewhere/stolen.ts (outside allowedFiles)"],
+          }),
+        }),
+      },
+    );
+
+    assert.ok(
+      (result.tasks[0]?.result?.scopeViolations.length ?? 0) > 0,
+      describeBatch(result),
+    );
+    assert.ok(
+      result.warnings.some((warning) =>
+        /write\s+directly into the workspace/i.test(warning),
+      ),
+      JSON.stringify(result.warnings),
+    );
+    assert.equal(result.completionState, "needs-supervisor");
+    // Telemetry must not claim something was blocked when nothing was.
+    assert.equal(
+      events.some((event) => event.type === "integration.blocked"),
+      false,
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});

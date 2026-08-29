@@ -32,7 +32,8 @@ import {
   workerSandboxInvalid,
 } from "./config.js";
 import { WorkspaceError, resolveWorkspace } from "./workspace.js";
-import { buildExploreResult } from "./worker.js";
+import { buildDelegationResult, buildExploreResult } from "./worker.js";
+import { delegateTaskInputSchema } from "./contract.js";
 
 const POLICY: CommandPolicy = { allowed: DEFAULT_ALLOWED_EXECUTABLES };
 
@@ -713,6 +714,168 @@ test("traversal via .. is caught regardless of allowlist breadth", () => {
     assert.equal(violations.length, 1, `${attempt} should be a violation`);
     assert.match(violations[0] ?? "", /outside the workspace/);
   }
+});
+
+// --- Protected control metadata ---------------------------------------------
+
+const CONTROL_PATHS = [
+  ".git",
+  ".git/config",
+  ".git/hooks/pre-commit",
+  ".sol-luna",
+  ".sol-luna/worktrees/b-1/x.ts",
+  "vendor/dep/.git/config",
+  "fixtures/repo/.git/hooks/post-checkout",
+  "packages/a/.sol-luna/state.json",
+];
+
+test("repository and orchestrator control metadata is a violation under any allowlist", () => {
+  // The invariant: `allowedFiles` grants nothing here. A caller declaring the
+  // broadest possible scope, or naming the path outright, still cannot
+  // authorize a worker to write a git hook that runs on the operator's next
+  // commit, or to edit the lease state this runtime later trusts.
+  for (const declared of [
+    [] as string[], // empty allowlist means "unrestricted within the workspace"
+    ["**"],
+    ["**/*"],
+    [".git/**", ".sol-luna/**"], // named outright
+    ["**/.git/**"],
+  ]) {
+    const violations = findScopeViolations(CONTROL_PATHS, declared, [], WORKSPACE);
+    assert.equal(
+      violations.length,
+      CONTROL_PATHS.length,
+      `allowedFiles ${JSON.stringify(declared)} must not authorize any control path`,
+    );
+    for (const violation of violations) {
+      assert.match(violation, /protected repository or orchestrator control metadata/);
+    }
+  }
+});
+
+test("control-path protection outranks allowedFiles but not the workspace boundary", () => {
+  // Precedence is observable in the reported reason, which is what the parent
+  // reads. An escape is still reported as an escape.
+  assert.match(
+    findScopeViolations([".git/config"], ["**"], [], WORKSPACE)[0] ?? "",
+    /protected repository or orchestrator control metadata/,
+  );
+  assert.match(
+    findScopeViolations(["../.git/config"], ["**"], [], WORKSPACE)[0] ?? "",
+    /outside the workspace/,
+  );
+});
+
+test("control-path protection does not catch ordinary files that merely look similar", () => {
+  // Over-matching here would break real work: these are normal tracked files.
+  const ordinary = [
+    ".gitignore",
+    ".gitattributes",
+    ".gitmodules",
+    ".github/workflows/ci.yml",
+    "src/.gitkeep",
+    "src/git/index.ts",
+    "docs/git-workflow.md",
+    "sol-luna.config.ts",
+    "src/sol-luna/client.ts",
+  ];
+  assert.deepEqual(findScopeViolations(ordinary, ["**"], [], WORKSPACE), []);
+  // And with no allowlist at all, which is the permissive default.
+  assert.deepEqual(findScopeViolations(ordinary, [], [], WORKSPACE), []);
+});
+
+test("a parallel worktree's own files are never read as orchestrator control state", () => {
+  // Scope is always resolved against the *task's* workspace. A parallel task
+  // runs inside `.sol-luna/worktrees/<id>/`, so its files are `src/x.ts` and
+  // not `.sol-luna/...`. If that were not true, protecting `.sol-luna` would
+  // have made every parallel task fail its own scope check.
+  const worktree = path.join(WORKSPACE, ".sol-luna", "worktrees", "b-1");
+  const resolver: RealPathResolver = (target) => path.resolve(target);
+  assert.deepEqual(
+    findScopeViolations(["src/x.ts", "README.md"], ["**"], [], worktree, resolver),
+    [],
+  );
+  // The same file named from the repository root is control state, and is
+  // refused — that is the direction the protection is for.
+  assert.match(
+    findScopeViolations(
+      [".sol-luna/worktrees/b-1/src/x.ts"],
+      ["**"],
+      [],
+      WORKSPACE,
+      resolver,
+    )[0] ?? "",
+    /protected repository or orchestrator control metadata/,
+  );
+});
+
+test("a single delegation that writes a git hook fails on protected control metadata", async (t) => {
+  // The end-to-end shape for the surface that can actually reach it. A single
+  // delegation runs in the repository root, where `.git` is a real directory —
+  // unlike a parallel worktree, where `.git` is a file and the write fails for
+  // unrelated reasons. `allowedFiles: ["**"]` is the broadest grant a caller
+  // can make, and it still does not authorize this.
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-control-"));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(repo, ".git", "hooks"), { recursive: true });
+  fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "src", "real.ts"), "export const a = 1;\n");
+  fs.writeFileSync(path.join(repo, ".git", "hooks", "pre-commit"), "#!/bin/sh\n");
+
+  const input = delegateTaskInputSchema.parse({
+    objective: "Do a bounded piece of work in the assigned module.",
+    effortReason: "Bounded implementation work.",
+    acceptanceCriteria: ["It works."],
+    allowedFiles: ["**"],
+  });
+
+  const result = buildDelegationResult({
+    input,
+    workingDirectory: repo,
+    observed: {
+      threadId: "thread-control",
+      finalResponse: JSON.stringify({
+        status: "PASS",
+        failureCauses: [],
+        summary: "did the work",
+        filesChanged: [{ path: "src/real.ts", change: "modified", why: "work" }],
+        verification: [],
+        notes: "",
+        followUps: [],
+      }),
+      // What the runtime actually saw, which is what decides scope.
+      filesChanged: [
+        { path: "src/real.ts", kind: "update" },
+        { path: ".git/hooks/pre-commit", kind: "update" },
+      ],
+      errors: [],
+      usage: null,
+      timedOut: false,
+      cancelled: false,
+      termination: "completed",
+      terminationMessage: null,
+    },
+    orchestratorRuns: [],
+    durationSeconds: 1,
+  });
+
+  assert.ok(
+    result.scopeViolations.some((violation) =>
+      /^\.git\/hooks\/pre-commit \(protected repository or orchestrator control metadata\)$/.test(
+        violation,
+      ),
+    ),
+    `expected a protected-path violation, got ${JSON.stringify(result.scopeViolations)}`,
+  );
+  // Reported truthfully through the existing evidence channels, not a new one.
+  assert.equal(result.verdict, "FAILED");
+  assert.equal(result.trustworthy, false);
+  assert.ok(result.discrepancies.some((entry) => /scope was violated/i.test(entry)));
+  // The in-scope edit is still reported as the ordinary change it is.
+  assert.deepEqual(
+    result.scopeViolations.filter((violation) => violation.startsWith("src/")),
+    [],
+  );
 });
 
 test("absolute paths outside the workspace are caught", () => {

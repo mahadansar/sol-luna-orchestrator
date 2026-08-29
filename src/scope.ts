@@ -75,6 +75,56 @@ export const toRelativePosix = (
 ): string => resolvePath(filePath, workingDirectory, resolver).relative;
 
 /**
+ * Control metadata no delegated task may modify, whatever it was allowed.
+ *
+ * Two directories, each protected for its own reason:
+ *
+ *   `.git` is the repository's own control surface. `hooks/pre-commit` runs the
+ *   next time the *operator* commits, and `config` alone reaches code execution
+ *   several ways (`core.pager`, `core.fsmonitor`, `core.sshCommand`). A worker
+ *   that can write there converts a bounded, reviewable file edit into
+ *   persistent execution on the operator's machine, outside anything this
+ *   runtime observes. No delegated implementation task legitimately edits it —
+ *   `.gitignore`, `.gitattributes` and `.github/` are ordinary files and are
+ *   deliberately *not* matched.
+ *
+ *   `.sol-luna` is this orchestrator's own control state: worktree identities
+ *   and the filesystem leases that decide which run owns which directory. It is
+ *   authoritative runtime state that the runtime later trusts, so a worker able
+ *   to edit it could make the orchestrator misread its own evidence. Treating
+ *   it as data a task may write would be exactly the confusion this project
+ *   exists to prevent.
+ *
+ * Protected at every depth, not just at the workspace root. A vendored
+ * dependency, a submodule, or a fixture repository puts a second `.git`
+ * somewhere below, and a hook planted there still executes whenever anyone runs
+ * git in that subtree — the escalation does not become safe for being nested.
+ * Deliberately creating a nested repository is therefore refused too; that is a
+ * rare ask, and a loud scope violation the parent can act on is the right
+ * outcome for it.
+ *
+ * This never blocks the orchestrator's own worktree management. Every scope
+ * check resolves paths relative to the *task's* workspace, and a parallel task's
+ * workspace is the worktree directory itself, so its files are `src/x.ts`
+ * rather than `.sol-luna/worktrees/…/src/x.ts`. Worktree creation and removal
+ * do not pass through scope checking at all.
+ */
+export const PROTECTED_CONTROL_PATHS = [
+  ".git",
+  ".git/**",
+  "**/.git",
+  "**/.git/**",
+  ".sol-luna",
+  ".sol-luna/**",
+  "**/.sol-luna",
+  "**/.sol-luna/**",
+] as const;
+
+/** How a protected-path violation reads in scope evidence. */
+export const PROTECTED_CONTROL_VIOLATION =
+  "protected repository or orchestrator control metadata";
+
+/**
  * Decide whether a set of touched files respects the task contract.
  *
  * Precedence, highest first:
@@ -82,8 +132,14 @@ export const toRelativePosix = (
  *      globs are workspace-relative, so a broad pattern like `**` must never be
  *      read as authorization to write to `../`, another drive, or through a
  *      symlink.
- *   2. `forbiddenFiles` beats `allowedFiles`.
- *   3. An empty `allowedFiles` means unrestricted *within* the workspace.
+ *   2. `PROTECTED_CONTROL_PATHS` is a violation regardless of what the caller
+ *      declared. It sits above `allowedFiles` rather than inside
+ *      `forbiddenFiles` on purpose: `forbiddenFiles` is caller-supplied and a
+ *      caller could simply omit it, whereas this is a property of the runtime.
+ *      Nothing a caller, a worker, or a model emits can switch it off.
+ *   3. `forbiddenFiles` beats `allowedFiles`.
+ *   4. An empty `allowedFiles` means unrestricted *within* the workspace, minus
+ *      the protected paths above.
  */
 export function findScopeViolations(
   touchedFiles: string[],
@@ -100,6 +156,7 @@ export function findScopeViolations(
     nocase: process.platform === "win32" || process.platform === "darwin",
   };
 
+  const isProtected = picomatch([...PROTECTED_CONTROL_PATHS], options);
   const isForbidden =
     forbiddenFiles.length > 0 ? picomatch(forbiddenFiles, options) : () => false;
   const isAllowed =
@@ -111,6 +168,8 @@ export function findScopeViolations(
 
     if (outside) {
       violations.push(`${relative} (outside the workspace)`);
+    } else if (isProtected(relative)) {
+      violations.push(`${relative} (${PROTECTED_CONTROL_VIOLATION})`);
     } else if (isForbidden(relative)) {
       violations.push(`${relative} (matches forbiddenFiles)`);
     } else if (!isAllowed(relative)) {

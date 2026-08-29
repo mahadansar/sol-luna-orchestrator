@@ -50,7 +50,7 @@ import { verificationCommandsEquivalent } from "./command.js";
 import { buildExplorerPrompt, buildWorkerPrompt } from "./prompt.js";
 import { findScopeViolations, toRelativePosix } from "./scope.js";
 import {
-  ALWAYS_FORBIDDEN as EXPLORATION_ALWAYS_FORBIDDEN,
+  CREDENTIAL_FILES,
   collectExplorationMutations,
   createExplorationSurface,
   removeExplorationSurface,
@@ -2327,11 +2327,15 @@ export async function validateExploreFindings(
   // only `input.scope` let a broad pattern such as `**` readmit `.git/config`
   // or `.env` as a reported path, even though `createExplorationSurface` had
   // refused to copy them - two different answers to "is this file in scope".
+  //
+  // Only the credential files are passed here: `findScopeViolations` enforces
+  // the repository and orchestrator control paths itself, for every surface,
+  // and reports them under their own reason rather than as a caller rule.
   const pathViolation = (candidate: string): string | null => {
     const violations = findScopeViolations(
       [candidate],
       input.scope,
-      [...EXPLORATION_ALWAYS_FORBIDDEN, ...input.forbiddenFiles],
+      [...CREDENTIAL_FILES, ...input.forbiddenFiles],
       surface.sourceWorkspace,
     );
     return violations[0] ?? null;

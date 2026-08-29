@@ -3,29 +3,70 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import picomatch from "picomatch";
+import { PROTECTED_CONTROL_PATHS } from "./scope.js";
 
-// Never admitted into a disposable exploration surface, at any depth.
-//
-// The doubled-star prefixes are load-bearing rather than decorative: a vendored
-// dependency, a submodule, or a fixture repository puts a second `.git`
-// somewhere below the root. An anchored `.git` pattern matches only the root
-// one, so `vendor/x/.git/config` - which routinely carries credentials in a
-// remote URL - matched nothing and was copied into the surface the worker
-// reads. The same anchoring hid nested `.sol-luna` runtime state. `.env`
-// already carried its any-depth variant; these two did not.
-export const ALWAYS_FORBIDDEN = [
-  ".git",
-  ".git/**",
-  "**/.git",
-  "**/.git/**",
-  ".sol-luna",
-  ".sol-luna/**",
-  "**/.sol-luna",
-  "**/.sol-luna/**",
+/**
+ * Files whose ordinary contents are credentials.
+ *
+ * Exploration copies real repository bytes into a surface a model then reads,
+ * so anything admitted here is disclosed to a provider. That makes the cost of
+ * admitting a credential file categorically different from the cost of a worker
+ * merely being able to open one, and it is why this list exists at all.
+ *
+ * Deliberately short. Each entry is a file whose *documented purpose* is to hold
+ * a secret, so excluding it cannot surprise anyone:
+ *
+ *   `.env` / `.env.*`   the convention this project already excluded.
+ *   `.envrc`            direnv; routinely `export`s tokens, and was missed by
+ *                       `.env.*` because that pattern requires a dot.
+ *   `.npmrc`            `//registry:_authToken=` registry credentials.
+ *   `.netrc` / `_netrc` machine/login/password, plaintext by definition.
+ *   `.aws/credentials`  long-lived access keys.
+ *   `.git-credentials`  URLs with embedded passwords; the same credential
+ *                       concern that already justifies excluding `.git/config`.
+ *
+ * What is *not* here matters as much. No `*.pem`, `*.key`, `id_rsa`, or
+ * `secrets*` globs: repositories legitimately contain test certificates and
+ * fixtures under those names, and excluding them would silently blind
+ * exploration to real source while giving only speculative protection. A
+ * caller wanting more can add `forbiddenFiles`; a general-purpose secret
+ * scanner is not something this list should pretend to be.
+ */
+export const CREDENTIAL_FILES = [
   ".env",
   ".env.*",
   "**/.env",
   "**/.env.*",
+  ".envrc",
+  "**/.envrc",
+  ".npmrc",
+  "**/.npmrc",
+  ".netrc",
+  "**/.netrc",
+  "_netrc",
+  "**/_netrc",
+  ".aws/credentials",
+  "**/.aws/credentials",
+  ".git-credentials",
+  "**/.git-credentials",
+] as const;
+
+/**
+ * Never admitted into a disposable exploration surface, at any depth.
+ *
+ * Repository and orchestrator control metadata is shared with the delegation
+ * scope rule (`PROTECTED_CONTROL_PATHS`) so the two surfaces cannot drift on
+ * what counts as control state. The doubled-star prefixes there are load-bearing
+ * rather than decorative: a vendored dependency, a submodule, or a fixture
+ * repository puts a second `.git` somewhere below the root, and
+ * `vendor/x/.git/config` routinely carries credentials in a remote URL.
+ *
+ * Exploration adds the credential files on top, because it is the one surface
+ * that copies bytes to a model.
+ */
+export const ALWAYS_FORBIDDEN = [
+  ...PROTECTED_CONTROL_PATHS,
+  ...CREDENTIAL_FILES,
 ] as const;
 
 const matchOptions: picomatch.PicomatchOptions = {

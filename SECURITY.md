@@ -98,6 +98,17 @@ batch state.
 - `SOL_LUNA_ALLOWED_ROOTS` optionally confines delegation to specific roots.
 - Glob matching is case-insensitive on Windows and macOS so `SRC/x` cannot slip
   past an `src/**` rule on a case-insensitive filesystem.
+- **`.git/**` and `.sol-luna/**` are always violations**, at any depth, whatever
+  `allowedFiles` says. `.git` is a code-execution surface: a `hooks/pre-commit`
+  planted there runs the next time _you_ commit, and `core.pager`,
+  `core.fsmonitor` and `core.sshCommand` each reach execution from `config`
+  alone. `.sol-luna` is this orchestrator's own worktree and lease state, which
+  the runtime later reads as authoritative. The rule sits above `allowedFiles`
+  rather than inside `forbiddenFiles` because `forbiddenFiles` is caller-supplied
+  and a caller can simply omit it; nothing a caller, a worker, or a model emits
+  turns this off. Nested repositories are covered too — a hook in
+  `vendor/x/.git/hooks/` still runs whenever anyone uses git there. `.gitignore`,
+  `.gitattributes` and `.github/` are ordinary files and are not matched.
 
 ### Worker isolation
 
@@ -119,14 +130,47 @@ model's own answer is not evidence.
 into the existing table and every server still starts. This was verified against
 codex-cli 0.147.0 and is why guard 1 is written the way it is.
 
+**The worker inherits your full environment.** The worker's Codex process is
+launched with a copy of the orchestrator's own environment plus
+`SOL_LUNA_WORKER=1`. Nothing is removed from it — the worker needs your provider
+credentials to run at all, so it gets `OPENAI_API_KEY` and everything beside it,
+including variables belonging to unrelated tools.
+
+This is **not** the filtered environment described under
+[verification commands](#verification-commands-are-not-shell-strings). Those two
+subprocesses are deliberately different: a verification command is a test suite
+that has no business holding your keys and whose output is fed back into a
+transcript, while the worker is the agent that must authenticate to the model
+provider. Credential-shaped filtering applies to the first and not the second.
+
+What follows from that: a worker running under `workspace-write` can read its own
+environment, and a repository whose test or build tooling the worker chooses to
+run inherits it too. If a variable would be damaging in a model transcript or in
+an untrusted repository's hands, do not put it in the environment that launches
+this server. `SOL_LUNA_VERIFY_ENV_PASSTHROUGH` does not affect this path in
+either direction.
+
 ### Parallel batches write inside your repository
 
 A parallel batch creates one git worktree per worker under
 `.sol-luna/worktrees/` and adds that path to `.git/info/exclude`. Each worker
 edits **real files** in its own worktree — the isolation is between workers, not
 between a worker and your disk. Integration copies files back into your working
-tree, and only when no two workers touched the same file. A batch is refused up
-front if two tasks declare overlapping scopes, or if the repository has
+tree, and only when no two workers touched the same file **and the task that
+produced them stayed inside its declared scope**. A task with scope violations is
+excluded from integration entirely: finishing its turn is not authorization for
+its changes, and the whole point of declaring a scope is that work outside it was
+never asked for. Nothing is discarded — the worktree keeps every byte, the
+violation appears in that task's scope evidence, an `integration.blocked` event
+records the exclusion, and the batch cannot reach the terminal verified state.
+Clean siblings still integrate, because parallel tasks are required to declare
+disjoint scopes and that is what makes them independent; when a call sets
+`allowOverlappingScopes:true` it withdraws that declaration, so a single
+violation there blocks integration for the whole batch rather than leaving the
+workspace holding half of a set of changes that were never independent.
+Sequential batches have no integration step at all — those tasks write directly
+into the workspace — so there a violation is reported, not undone. A batch is
+refused up front if two tasks declare overlapping scopes, or if the repository has
 uncommitted changes inside a declared scope. `SOL_LUNA_ALLOW_DIRTY=1` is an
 explicit escape hatch with consequences: workers still branch from `HEAD`, so
 they neither see nor preserve uncommitted work inside their scopes, and
@@ -255,8 +299,12 @@ the exact file-selection, ownership, opt-out, and removal behavior.
 
 - **The worker writes real files.** It runs under Codex's `workspace-write`
   sandbox with `approvalPolicy: never`, because there is no human to answer a
-  prompt. Scope violations are detected **after** the fact and reported; they are
-  not prevented. Use version control.
+  prompt. Scope violations are detected **after** the fact and reported; the
+  write itself is not prevented. What _is_ prevented is an unauthorized change
+  reaching your working tree through integration — a parallel task that violated
+  its scope is excluded, and the change stays in the worktree. That does not
+  help a single delegation or a sequential batch, which write into your
+  workspace directly and have nothing to exclude. Use version control.
 - **Verification runs outside the Codex sandbox.** The allowlist constrains
   _which_ executable runs, not what that executable then does. `npm test`
   executes your project's own test code, which can do anything your user account

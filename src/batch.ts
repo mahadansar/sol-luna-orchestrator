@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import picomatch from "picomatch";
 import {
   DEFAULT_TIMEOUT_SECONDS,
   LUNA_MODEL,
@@ -59,7 +60,11 @@ import {
   workerSlots,
   Semaphore,
 } from "./worker.js";
-import { findScopeViolations } from "./scope.js";
+import {
+  findScopeViolations,
+  PROTECTED_CONTROL_PATHS,
+  PROTECTED_CONTROL_VIOLATION,
+} from "./scope.js";
 import {
   cleanupWorktree,
   createTaskWorktree,
@@ -655,6 +660,16 @@ export async function runBatch(
   const completed = running.filter(
     (task) => task.state === "completed" && task.result.changedFiles.length > 0,
   );
+
+  // A worker that edited outside its declared scope produced unauthorized
+  // changes. "Completed" only says the turn ended; it says nothing about the
+  // changes being ones the caller asked for, and copying them into the
+  // authoritative workspace on the strength of the turn having finished is the
+  // one outcome the scope contract exists to prevent. The worktree keeps every
+  // byte, the violation is reported, and the parent decides.
+  const scopeViolatingTasks = completed.filter(
+    (task) => (task.result.result?.scopeViolations.length ?? 0) > 0,
+  );
   const integrationConflicts =
     mode === "parallel"
       ? findIntegrationConflicts(
@@ -694,6 +709,21 @@ export async function runBatch(
     integrated = true;
     integrationSummary =
       "Sequential tasks worked directly in the workspace, so their changes are already in place.";
+    // Sequential tasks write into the workspace as they run, so there is no
+    // integration step to withhold and nothing to un-apply. Say so plainly
+    // rather than letting "already in place" imply the changes were authorized.
+    if (scopeViolatingTasks.length > 0) {
+      const violators = scopeViolatingTasks.map((task) => task.taskId).join(", ");
+      warnings.push(
+        `${violators} changed files outside declared scope. Sequential tasks write ` +
+          `directly into the workspace, so those changes are already there and were ` +
+          `not withheld the way a parallel task's would be. Review the per-task scope ` +
+          `evidence and revert what you did not ask for.`,
+      );
+      // Deliberately no `integration.blocked` event here: nothing was blocked.
+      // The changes are in the workspace, and telemetry saying otherwise would
+      // be the opposite of the truth a reader needs.
+    }
   } else if (options.integrate === false) {
     emit({ type: "integration.disabled", batchId });
     integrationSummary =
@@ -717,16 +747,64 @@ export async function runBatch(
       `after cleanup is listed per task.`;
   } else if (completed.length === 0) {
     integrationSummary = "No worker produced changes, so there was nothing to integrate.";
+  } else if (scopeViolatingTasks.length > 0 && options.allowOverlappingScopes) {
+    // Selective exclusion is only safe because parallel tasks are normally
+    // required to declare disjoint scopes, which is what makes one task's
+    // changes independent of another's. `allowOverlappingScopes` is the caller
+    // withdrawing exactly that declaration, so integrating the clean siblings
+    // of a violating task could leave the workspace holding one half of a set
+    // of changes that were never independent. Refuse the whole batch instead of
+    // choosing which half to apply.
+    integrationIncomplete = true;
+    const violators = scopeViolatingTasks.map((task) => task.taskId).join(", ");
+    warnings.push(
+      `Nothing was integrated: ${violators} violated declared file scope, and this ` +
+        `batch set allowOverlappingScopes:true, so the remaining tasks are not ` +
+        `declared independent of it. Every worktree is retained for review.`,
+    );
+    integrationSummary =
+      `Nothing was integrated: ${scopeViolatingTasks.length} task(s) changed files ` +
+      `outside their declared scope, and allowOverlappingScopes:true means the ` +
+      `siblings cannot be integrated on their own. Scope evidence is per task; any ` +
+      `worktree retained after cleanup is listed there too.`;
+    for (const task of scopeViolatingTasks) {
+      emit({
+        type: "integration.blocked",
+        batchId,
+        taskId: task.taskId,
+        reason: "scope-violation",
+      });
+    }
   } else {
-    const applied = await integrateWorktrees(batchId, completed, workspace, emit);
+    const integrable = completed.filter((task) => !scopeViolatingTasks.includes(task));
+    for (const task of scopeViolatingTasks) {
+      warnings.push(
+        `${task.taskId} was excluded from integration because it changed files ` +
+          `outside its declared scope: ${task.result.result?.scopeViolations.join("; ")}. ` +
+          `Its worktree keeps the full change for review.`,
+      );
+      emit({
+        type: "integration.blocked",
+        batchId,
+        taskId: task.taskId,
+        reason: "scope-violation",
+      });
+    }
+    const applied = await integrateWorktrees(batchId, integrable, workspace, emit);
     integrationIncomplete = applied.warnings.length > 0;
     integrated = !integrationIncomplete;
     warnings.push(...applied.warnings);
+    const excluded =
+      scopeViolatingTasks.length > 0
+        ? ` ${scopeViolatingTasks.length} task(s) were excluded for changing files ` +
+          `outside their declared scope; their changes remain only in their own ` +
+          `worktrees and were not copied into the workspace.`
+        : "";
     integrationSummary = integrationIncomplete
       ? `Integration was incomplete after copying ${applied.fileCount} file(s). ` +
-        `Any worktree that remains after cleanup is listed per task.`
-      : `Copied ${applied.fileCount} file(s) from ${completed.length} worker(s) into ` +
-        `the workspace. No two workers touched the same file.`;
+        `Any worktree that remains after cleanup is listed per task.${excluded}`
+      : `Copied ${applied.fileCount} file(s) from ${integrable.length} worker(s) into ` +
+        `the workspace. No two workers touched the same file.${excluded}`;
     if (!integrationIncomplete) emit({ type: "integration.completed", batchId });
   }
 
@@ -2152,11 +2230,36 @@ async function integrateWorktrees(
   const warnings: string[] = [];
   let fileCount = 0;
 
+  const isProtectedControlPath = picomatch([...PROTECTED_CONTROL_PATHS], {
+    dot: true,
+    nocase: process.platform === "win32" || process.platform === "darwin",
+  });
+
   for (const task of tasks) {
     if (!task.worktree) continue;
     let applied = 0;
 
     for (const file of task.result.changedFiles) {
+      // Unreachable in normal flow: `changedFiles` is a subset of the paths
+      // `findScopeViolations` already judged, so a protected path here would
+      // have failed the task and excluded it from `tasks` before this ran.
+      // Kept anyway because this loop is the actual write into the operator's
+      // tree, and that write is worth being independently unable to touch
+      // `.git` or `.sol-luna` no matter how it was reached.
+      if (isProtectedControlPath(file)) {
+        warnings.push(
+          `Refused to integrate ${file} from ${task.taskId}: ` +
+            `${PROTECTED_CONTROL_VIOLATION} is never copied into the workspace.`,
+        );
+        emit({
+          type: "integration.blocked",
+          batchId,
+          taskId: task.taskId,
+          reason: "protected-control-path",
+        });
+        continue;
+      }
+
       const source = path.join(task.worktree.path, ...file.split("/"));
       const destination = path.join(workspace, ...file.split("/"));
 
