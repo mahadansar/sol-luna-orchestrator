@@ -1,7 +1,7 @@
 {
   "schema": "sol-luna/bench/v3-prelaunch-checkpoint@3",
   "title": "Benchmark V3 / freeze 3 pre-launch checkpoint",
-  "generatedAt": "2026-08-29T19:25:21.704Z",
+  "generatedAt": "2026-08-29T19:59:20.619Z",
   "generatedBy": "npm run bench:v3:checkpoint (dist/bench/prelaunch.js)",
   "launchReadiness": "blocked",
   "blockers": [
@@ -24,7 +24,7 @@
     {
       "id": "working-tree-not-clean",
       "severity": "blocking-procedural",
-      "summary": "8 path(s) differ from the recorded commit, including this checkpoint itself.",
+      "summary": "4 path(s) differ from the recorded commit, including this checkpoint itself.",
       "why": "A V3 launch refuses a dirty tree because the recorded commit would not describe the code that ran.",
       "ownedBy": "launch operator",
       "clears": "Commit the freeze revision and this checkpoint — the methodology requires the checkpoint be retained before live execution — then confirm `git status --porcelain` is empty immediately before launching."
@@ -40,7 +40,7 @@
     {
       "id": "head-is-not-the-production-baseline",
       "severity": "non-blocking",
-      "summary": "HEAD (728a8b04beb46a4adf27ad5c88f163a9cf1decb8) is not the pinned production baseline df215a170e6a88a6097c56f7ca404358d9d4b050.",
+      "summary": "HEAD (f177b377dfb680b23bc960f75dc37bf9d7beda3c) is not the pinned production baseline df215a170e6a88a6097c56f7ca404358d9d4b050.",
       "impact": "The commit that actually executes is recorded separately in environment.git.commit; a report must not present HEAD as the baseline."
     }
   ],
@@ -280,14 +280,14 @@
     "collidesWithPriorResultCampaignId": false,
     "retainedCheckpointExistsForThisCampaign": true,
     "freshLaunch": true,
-    "derivation": "Derived from valid, invalid, and unreadable bench/results/*.v3.json shards; the durable *.v3-launch.json record written immediately before the first SDK call; and non-empty event streams attributed by same-stamp suite evidence or reviewed pre-V3 content identity. Campaign identity comes from valid live evidence, never from a checkpoint.",
-    "limitation": "A non-empty stream without same-stamp suite evidence or an exact reviewed pre-V3 content identity is ambiguous. It blocks freshness rather than being treated as proof that V3 never ran. Inherited SDK, CLI, and OS state remains outside repository control."
+    "derivation": "Derived from valid, invalid, and unreadable bench/results/*.v3.json shards; the durable *.v3-launch.json record written immediately before the first SDK call; and non-empty event streams attributed by validated same-stamp suite contents or reviewed pre-V3 content identity. Campaign identity comes from valid live evidence, never from a checkpoint.",
+    "limitation": "A non-empty stream without validated same-stamp suite contents or an exact reviewed pre-V3 content identity is ambiguous. A sibling that is unreadable, malformed, or internally inconsistent does not suppress that ambiguity. It blocks freshness rather than being treated as proof that V3 never ran. Inherited SDK, CLI, and OS state remains outside repository control."
   },
   "freezeIntegrity": {
     "methodologyPath": "bench/V3_METHODOLOGY.md",
     "freezeReview": "freeze 3 (P2.4B pre-launch)",
-    "expectedDigest": "b7b7f5e504646e59040c24a0f0f82cf39c337c0d748a7c6dc2fe8ecc39f012f7",
-    "workingTreeDigest": "b7b7f5e504646e59040c24a0f0f82cf39c337c0d748a7c6dc2fe8ecc39f012f7",
+    "expectedDigest": "0994a7090ffacaa4f59641f36501430047a8215626e87de4f810e254fd8aea4c",
+    "workingTreeDigest": "0994a7090ffacaa4f59641f36501430047a8215626e87de4f810e254fd8aea4c",
     "digestGate": "pass",
     "digestRecomputedBy": "methodologyDigest() over the committed document",
     "supersededFreeze2Digest": "af4860bed58f21c103c5f921c4ae3bd561cf2e0943cd1dd12b899a34a4bacc87",
@@ -306,7 +306,7 @@
       "committedAt": "2026-08-29T20:21:53+05:00",
       "packageVersionAtBaseline": "0.11.0"
     },
-    "headCommit": "728a8b04beb46a4adf27ad5c88f163a9cf1decb8",
+    "headCommit": "f177b377dfb680b23bc960f75dc37bf9d7beda3c",
     "headBranch": "benchmark-v3-wip",
     "headIsProductionBaseline": false,
     "distinction": "holdoutFreezeSha identifies the reviewed methodology; productionBaseline identifies the released product under evaluation. They are different concepts and are never set from one another."
@@ -734,13 +734,13 @@
     ]
   },
   "environment": {
-    "capturedAt": "2026-08-29T19:25:21.706Z",
+    "capturedAt": "2026-08-29T19:59:20.621Z",
     "git": {
-      "commit": "728a8b04beb46a4adf27ad5c88f163a9cf1decb8",
+      "commit": "f177b377dfb680b23bc960f75dc37bf9d7beda3c",
       "branch": "benchmark-v3-wip",
-      "describe": "v0.11.0-1-g728a8b0-dirty",
+      "describe": "v0.11.0-2-gf177b37-dirty",
       "workingTreeClean": false,
-      "dirtyPathCount": 8
+      "dirtyPathCount": 4
     },
     "runtime": {
       "nodeVersion": "v26.7.0",

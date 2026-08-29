@@ -2099,6 +2099,36 @@ const v3Shard = (campaignId: string, runs: number): Record<string, unknown> => (
   records: Array.from({ length: runs }, (_, index) => ({ taskId: `t${index}` })),
 });
 
+const historicalShard = (
+  suite: "v2" | "parallel" | "scale" | "legacy",
+): Record<string, unknown> => {
+  const identity =
+    suite === "v2"
+      ? { schema: 4, benchmarkVersion: 2, suite: "v2" }
+      : suite === "parallel"
+        ? { schema: 2, suite: "parallel" }
+        : suite === "scale"
+          ? { schema: 3, suite: "scale" }
+          : { schema: 1 };
+  const recordIdentity = suite === "legacy" ? {} : { suite };
+  return {
+    ...identity,
+    ...(suite === "v2" ? { campaignId: "benchmark-v2-regression" } : {}),
+    supervisorModel: "gpt-test",
+    startedAt: "2026-08-24T00:00:00.000Z",
+    reps: 1,
+    records: [
+      {
+        ...recordIdentity,
+        ...(suite === "v2" ? { benchmarkVersion: 2 } : {}),
+        taskId: `${suite}-task`,
+        arm: "solo",
+        repetition: 1,
+      },
+    ],
+  };
+};
+
 const v3LaunchMarker = (
   campaignId: string,
   completedCells = 0,
@@ -2254,9 +2284,9 @@ test("an unreadable V3-named filesystem artifact blocks freshness", () => {
 test("V3 event telemetry counts, and unrelated benchmark files do not", () => {
   const fixture = historyFixture({
     // V2 and older-suite evidence in the same directory must not be counted.
-    "2026-08-24T00-00-00-000Z.v2.json": { schema: 4, benchmarkVersion: 2, suite: "v2" },
+    "2026-08-24T00-00-00-000Z.v2.json": historicalShard("v2"),
     "2026-08-24T00-00-00-000Z.events.jsonl": "{}\n",
-    "2026-08-14T00-00-00-000Z.scale.json": { records: [1, 2, 3] },
+    "2026-08-14T00-00-00-000Z.scale.json": historicalShard("scale"),
     "2026-08-14T00-00-00-000Z.events.jsonl": "{}\n",
     // An orphan stream cannot be safely attributed and is ambiguous evidence.
     "2026-08-20T00-00-00-000Z.events.jsonl": "{}\n",
@@ -2321,15 +2351,90 @@ test("reviewed historical orphan streams use content identity, not filenames", (
   assert.equal(mutated.freshLaunch, false);
 });
 
+test("misleading historical sibling filenames fail closed", () => {
+  const cases = [
+    { sibling: "empty.v2.json", body: "", stream: "empty.events.jsonl" },
+    {
+      sibling: "malformed.scale.json",
+      body: "{ truncated",
+      stream: "malformed.events.jsonl",
+    },
+    {
+      sibling: "invalid.parallel.json",
+      body: { schema: 2, suite: "parallel", records: [1] },
+      stream: "invalid.events.jsonl",
+    },
+  ];
+
+  for (const probe of cases) {
+    const history = deriveV3ExecutionHistory(
+      "v3-freeze3-20260829",
+      historyFixture({ [probe.sibling]: probe.body, [probe.stream]: "{}\n" }),
+    );
+    assert.equal(history.eventStreams[0]?.attribution, "ambiguous", probe.sibling);
+    assert.deepEqual(history.ambiguousEventStreams, [probe.stream], probe.sibling);
+    assert.equal(history.freshLaunch, false, probe.sibling);
+  }
+
+  const unreadable = historyFixture({ "unreadable.events.jsonl": "{}\n" });
+  fs.mkdirSync(path.join(unreadable.resultsDir, "unreadable.scale.json"));
+  const unreadableHistory = deriveV3ExecutionHistory("v3-freeze3-20260829", unreadable);
+  assert.equal(unreadableHistory.eventStreams[0]?.attribution, "ambiguous");
+  assert.equal(unreadableHistory.freshLaunch, false);
+});
+
+test("validated historical result contents classify matching streams", () => {
+  const history = deriveV3ExecutionHistory(
+    "v3-freeze3-20260829",
+    historyFixture({
+      "v2.v2.json": historicalShard("v2"),
+      "v2.events.jsonl": "{}\n",
+      "legacy.json": historicalShard("legacy"),
+      "legacy.events.jsonl": "{}\n",
+      "scale.scale.json": historicalShard("scale"),
+      "scale.events.jsonl": "{}\n",
+      "parallel.parallel.json": historicalShard("parallel"),
+      "parallel.events.jsonl": "{}\n",
+    }),
+  );
+  assert.deepEqual(
+    Object.fromEntries(
+      history.eventStreams.map((stream) => [stream.file, stream.attribution]),
+    ),
+    {
+      "legacy.events.jsonl": "other-suite",
+      "parallel.events.jsonl": "other-suite",
+      "scale.events.jsonl": "other-suite",
+      "v2.events.jsonl": "v2",
+    },
+  );
+  assert.deepEqual(history.ambiguousEventStreams, []);
+  assert.equal(history.freshLaunch, true);
+});
+
+test("historical sibling metadata must be internally consistent", () => {
+  const inconsistent = historicalShard("v2");
+  (inconsistent["records"] as Array<Record<string, unknown>>)[0]!["suite"] = "scale";
+  const history = deriveV3ExecutionHistory(
+    "v3-freeze3-20260829",
+    historyFixture({
+      "mismatch.v2.json": inconsistent,
+      "mismatch.events.jsonl": "{}\n",
+    }),
+  );
+  assert.equal(history.eventStreams[0]?.attribution, "ambiguous");
+  assert.equal(history.freshLaunch, false);
+});
+
 test("unrelated V2, parallel, and scale history does not block V3 freshness", () => {
   const history = deriveV3ExecutionHistory(
     "v3-freeze3-20260829",
     historyFixture({
-      "v2.v2.json": { schema: 4, benchmarkVersion: 2, suite: "v2" },
+      "v2.v2.json": historicalShard("v2"),
       "v2.events.jsonl": "{}\n",
-      "scale.scale.json": { records: [1] },
+      "scale.scale.json": historicalShard("scale"),
       "scale.events.jsonl": "{}\n",
-      "parallel.parallel.json": { records: [1] },
+      "parallel.parallel.json": historicalShard("parallel"),
       "parallel.events.jsonl": "{}\n",
     }),
   );

@@ -425,6 +425,87 @@ export const REVIEWED_PRE_V3_EVENT_STREAM_SHA256 = new Set([
   "4824af3c246bc7a34f834b72cc406744f6c4457902cdb7d73dcbe7390bd6d8ea",
 ]);
 
+type HistoricalResultSuite = "v2" | "parallel" | "scale" | "legacy";
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === "string" && value.trim() !== "";
+
+/**
+ * Validate the historical result formats that shared bench/results with V3.
+ * A filename is only a candidate; unreadable or inconsistent contents prove
+ * nothing about the matching event stream and therefore fail closed.
+ */
+const isHistoricalResultForSuite = (
+  value: unknown,
+  suite: HistoricalResultSuite,
+): boolean => {
+  if (!isRecord(value)) return false;
+
+  const expected =
+    suite === "v2"
+      ? { schema: 4, suite: "v2", benchmarkVersion: 2 }
+      : suite === "parallel"
+        ? { schema: 2, suite: "parallel", benchmarkVersion: undefined }
+        : suite === "scale"
+          ? { schema: 3, suite: "scale", benchmarkVersion: undefined }
+          : { schema: 1, suite: undefined, benchmarkVersion: undefined };
+
+  if (
+    value["schema"] !== expected.schema ||
+    value["suite"] !== expected.suite ||
+    value["benchmarkVersion"] !== expected.benchmarkVersion ||
+    !isNonEmptyString(value["supervisorModel"]) ||
+    !isNonEmptyString(value["startedAt"]) ||
+    !Number.isInteger(value["reps"]) ||
+    (value["reps"] as number) < 1 ||
+    !Array.isArray(value["records"]) ||
+    value["records"].length === 0
+  ) {
+    return false;
+  }
+
+  const campaignId = value["campaignId"];
+  if (suite === "v2" && !isNonEmptyString(campaignId)) return false;
+  if (suite !== "v2" && campaignId !== undefined) return false;
+
+  return value["records"].every((candidate) => {
+    if (
+      !isRecord(candidate) ||
+      candidate["suite"] !== expected.suite ||
+      candidate["benchmarkVersion"] !== expected.benchmarkVersion ||
+      !isNonEmptyString(candidate["taskId"]) ||
+      !isNonEmptyString(candidate["arm"]) ||
+      !Number.isInteger(candidate["repetition"]) ||
+      (candidate["repetition"] as number) < 1
+    ) {
+      return false;
+    }
+    return (
+      candidate["campaignId"] === undefined || candidate["campaignId"] === campaignId
+    );
+  });
+};
+
+const hasValidatedHistoricalResult = (
+  resultsDir: string,
+  names: readonly string[],
+  filename: string,
+  suite: HistoricalResultSuite,
+): boolean => {
+  if (!names.includes(filename)) return false;
+  try {
+    return isHistoricalResultForSuite(
+      JSON.parse(fs.readFileSync(path.join(resultsDir, filename), "utf8")),
+      suite,
+    );
+  } catch {
+    return false;
+  }
+};
+
 interface V3LaunchMarkerSummary {
   file: string;
   readableAndValid: boolean;
@@ -570,14 +651,18 @@ export function deriveV3ExecutionHistory(
         attributionEvidence: "same-stamp-v3-shard",
       };
     }
-    if (names.includes(`${stamp}.v2.json`)) {
+    if (hasValidatedHistoricalResult(resultsDir, names, `${stamp}.v2.json`, "v2")) {
       return { attribution: "v2", attributionEvidence: "same-stamp-v2-shard" };
     }
-    const knownOtherSuite = [
-      `${stamp}.json`,
-      `${stamp}.parallel.json`,
-      `${stamp}.scale.json`,
-    ].some((candidate) => names.includes(candidate));
+    const knownOtherSuite =
+      hasValidatedHistoricalResult(resultsDir, names, `${stamp}.json`, "legacy") ||
+      hasValidatedHistoricalResult(
+        resultsDir,
+        names,
+        `${stamp}.parallel.json`,
+        "parallel",
+      ) ||
+      hasValidatedHistoricalResult(resultsDir, names, `${stamp}.scale.json`, "scale");
     if (knownOtherSuite) {
       return {
         attribution: "other-suite",
@@ -719,14 +804,15 @@ export function deriveV3ExecutionHistory(
     derivation:
       "Derived from valid, invalid, and unreadable bench/results/*.v3.json shards; " +
       "the durable *.v3-launch.json record written immediately before the first " +
-      "SDK call; and non-empty event streams attributed by same-stamp suite evidence " +
-      "or reviewed pre-V3 content identity. Campaign identity comes from valid live " +
-      "evidence, never from a checkpoint.",
+      "SDK call; and non-empty event streams attributed by validated same-stamp " +
+      "suite contents or reviewed pre-V3 content identity. Campaign identity comes " +
+      "from valid live evidence, never from a checkpoint.",
     limitation:
-      "A non-empty stream without same-stamp suite evidence or an exact reviewed " +
-      "pre-V3 content identity is ambiguous. It blocks freshness rather than being " +
-      "treated as proof that V3 never ran. Inherited SDK, CLI, and OS state remains " +
-      "outside repository control.",
+      "A non-empty stream without validated same-stamp suite contents or an exact " +
+      "reviewed pre-V3 content identity is ambiguous. A sibling that is unreadable, " +
+      "malformed, or internally inconsistent does not suppress that ambiguity. It " +
+      "blocks freshness rather than being treated as proof that V3 never ran. " +
+      "Inherited SDK, CLI, and OS state remains outside repository control.",
   };
 }
 

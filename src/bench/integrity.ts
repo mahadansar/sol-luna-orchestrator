@@ -27,7 +27,7 @@ export const V3_METHODOLOGY_PATH = "bench/V3_METHODOLOGY.md" as const;
  * transcribing a value — recompute it with `methodologyDigest`.
  */
 export const V3_METHODOLOGY_DIGEST =
-  "b7b7f5e504646e59040c24a0f0f82cf39c337c0d748a7c6dc2fe8ecc39f012f7" as const;
+  "0994a7090ffacaa4f59641f36501430047a8215626e87de4f810e254fd8aea4c" as const;
 
 /**
  * Normalize before hashing.

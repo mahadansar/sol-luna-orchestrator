@@ -11,7 +11,7 @@ routing, or model-performance claim.
   whose content commit was `c9b6bbe657a91808c9b91d3f46105f61b3243866`, which in
   turn superseded the freeze-1 content commit
   `544d217967646e5f48b9aa73e936567e87d87c8b`.
-- Methodology content digest: `b7b7f5e504646e59040c24a0f0f82cf39c337c0d748a7c6dc2fe8ecc39f012f7`, verified at launch by `assertMethodologyFrozen`.
+- Methodology content digest: `0994a7090ffacaa4f59641f36501430047a8215626e87de4f810e254fd8aea4c`, verified at launch by `assertMethodologyFrozen`.
 - Production baseline under evaluation: **v0.11.0**, the commit the `v0.11.0`
   release tag resolves to, `df215a170e6a88a6097c56f7ca404358d9d4b050`.
 - Initial normal campaign: nine tasks, two arms, and exactly two repetitions per
@@ -787,8 +787,11 @@ orphan streams cannot degrade to `runCount: null` while preserving a claim that
 V3 never ran. Nine independently reviewed pre-V3 orphan streams are attributed
 by their exact content digests, not their filenames; any byte change loses that
 attribution and returns to ambiguity. Evidence explicitly attributed to V2 or
-the earlier parallel and scale suites remains unrelated and does not block V3
-freshness.
+the earlier legacy, parallel, and scale suites remains unrelated and does not
+block V3 freshness only when its same-stamp result sibling parses successfully
+and its schema, suite/version identity, campaign metadata where applicable, and
+task records are internally consistent. Empty, malformed, unreadable, or
+structurally inconsistent siblings do not resolve event-stream ambiguity.
 
 Result-campaign collision, the current campaign's launch-marker state, and a
 retained checkpoint for the current campaign are separate facts. A campaign ID
