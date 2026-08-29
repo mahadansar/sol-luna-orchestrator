@@ -524,6 +524,31 @@ test("exploreWithLuna grounds claims in a disposable scoped surface with selecte
     assert.equal(turnOptions.outputSchema, explorerOutputJsonSchema);
     await assert.rejects(fs.stat(threadOptions.workingDirectory));
     assert.match(await fs.readFile(path.join(root, "src", "log.ts"), "utf8"), /pino/);
+
+    const cleanupFailure = await exploreWithLuna(
+      exploreInputSchema.parse({
+        target: "Inspect the logger while proving exceptional surface cleanup semantics",
+        effort: "xhigh",
+        effortReason: "Cleanup failure must retain authoritative exploration evidence",
+        scope: ["src/**"],
+        workingDirectory: root,
+      }),
+      undefined,
+      {},
+      "gpt-5.6-luna",
+      {
+        codex,
+        removeSurface: async (surface) => {
+          await removeExplorationSurface(surface);
+          throw new Error("injected removal failure");
+        },
+      },
+    );
+    assert.equal(cleanupFailure.verdict, "FAILED");
+    assert.equal(cleanupFailure.trustworthy, false);
+    assert.equal(cleanupFailure.findings.observedFacts.length, 1);
+    assert.match(cleanupFailure.errors[0] ?? "", /surface cleanup failed.*injected/i);
+    await assert.rejects(fs.stat(threadOptions.workingDirectory));
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -791,6 +816,16 @@ test("handleExplore executes exploration, records turn, and emits lifecycle even
   assert.ok(compactResponse.structuredContent);
   assert.equal("workerThreadId" in compactResponse.structuredContent, false);
   assert.equal("usage" in compactResponse.structuredContent, false);
+
+  const renderFailure = await handleExplore(input, undefined, {
+    exploreWithLuna: mockExploreWithLuna as any,
+    contextStore: new ContextLifecycleStore(),
+    render: () => {
+      throw new Error("exploration renderer unavailable");
+    },
+  });
+  assert.match(renderFailure.content[0]?.text ?? "", /evidence is preserved/);
+  assert.equal(renderFailure.structuredContent?.verdict, "PASS");
 });
 
 test("handleExplore enforces compute policy narrowing and refuses disallowed configurations", async () => {

@@ -622,6 +622,24 @@ export function createEventEmitter(file = EVENTS_FILE): EventEmitter {
 /** Shared emitter used by the orchestrator. */
 export const emitEvent: EventEmitter = createEventEmitter();
 
+/**
+ * Keep an injected observability sink outside the execution authority boundary.
+ *
+ * Production file emission is already best-effort, but deterministic tests and
+ * embedders may provide their own callback.  Every runtime composition point
+ * wraps that callback with this helper so a telemetry outage cannot skip
+ * verification, cleanup, capability settlement, or context-lease release.
+ */
+export function isolateEventEmitter(emit: EventEmitter): EventEmitter {
+  return (event): void => {
+    try {
+      emit(event);
+    } catch {
+      // Observability is deliberately non-authoritative.
+    }
+  };
+}
+
 /** Select concise, already-known failure context for the human activity view. */
 export function activityFailureReason(
   result: Pick<

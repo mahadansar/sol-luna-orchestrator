@@ -166,9 +166,23 @@ export function findScopeViolations(
   for (const file of touchedFiles) {
     const { relative, outside } = resolvePath(file, workingDirectory, resolver);
 
+    // Canonicalisation is necessary for symlink and junction escapes, but it
+    // can also erase a control-metadata path component.  For example, a
+    // workspace-local `.git` symlink may resolve to an ordinary directory in
+    // the same workspace.  Keep the lexical spelling as a second security
+    // signal so that `.git/config` and `.sol-luna/state.json` remain protected
+    // even when their target has a different canonical name.
+    const lexicalAbsolute = path.isAbsolute(file)
+      ? path.resolve(file)
+      : path.resolve(workingDirectory, file);
+    const lexicalRelative = path
+      .relative(path.resolve(workingDirectory), lexicalAbsolute)
+      .split(path.sep)
+      .join("/");
+
     if (outside) {
       violations.push(`${relative} (outside the workspace)`);
-    } else if (isProtected(relative)) {
+    } else if (isProtected(relative) || isProtected(lexicalRelative)) {
       violations.push(`${relative} (${PROTECTED_CONTROL_VIOLATION})`);
     } else if (isForbidden(relative)) {
       violations.push(`${relative} (matches forbiddenFiles)`);

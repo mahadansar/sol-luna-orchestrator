@@ -57,11 +57,13 @@ import {
 } from "./worker.js";
 import { collectWorktreeChanges, type WorktreeChanges } from "./git.js";
 import { WorkspaceError } from "./workspace.js";
+import { ShutdownCoordinator } from "./shutdown.js";
 import {
   activityFailureReason,
   emitAttemptCompleted,
   emitAttemptStarted,
   emitEvent,
+  isolateEventEmitter,
   type EventEmitter,
 } from "./events.js";
 import {
@@ -178,6 +180,20 @@ export class ContextLifecycleRegistry {
     }
   }
 
+  get size(): number {
+    return this.stores.size;
+  }
+
+  dispose(): void {
+    const inFlight = [...this.stores.values()].filter((store) =>
+      store.isInFlight(),
+    ).length;
+    if (inFlight > 0) {
+      throw new Error(`Cannot dispose ${inFlight} in-flight context lifecycle store(s).`);
+    }
+    this.stores.clear();
+  }
+
   restoreSessionHandoff(
     contextKey: string,
     input: string | unknown,
@@ -197,6 +213,13 @@ export class ContextLifecycleRegistry {
 }
 
 const contextRegistry = new ContextLifecycleRegistry();
+const serverLifecycle = new ShutdownCoordinator();
+serverLifecycle.registerCleanup(() => continuationStore.dispose());
+serverLifecycle.registerCleanup(() => handoffStore.dispose());
+serverLifecycle.registerCleanup(() => contextRegistry.dispose());
+
+export const shutdownServerRuntime = (timeoutMs?: number) =>
+  serverLifecycle.shutdown(timeoutMs);
 
 function registerContinuation(
   input: DelegateTaskInput,
@@ -1014,6 +1037,7 @@ export interface DelegateTaskHandlerDependencies {
   delegateToLuna: typeof delegateToLuna;
   emit: EventEmitter;
   record: typeof recordEvent;
+  render: typeof renderResult;
   makeBatchId: () => string;
 }
 
@@ -1031,10 +1055,11 @@ export async function handleDelegateTask(
     continuationStore,
     contextRegistry,
     delegateToLuna,
-    emit: emitEvent,
     record: recordEvent,
+    render: renderResult,
     makeBatchId: makeSingleBatchId,
     ...overrides,
+    emit: isolateEventEmitter(overrides.emit ?? emitEvent),
   };
   const batchId = dependencies.makeBatchId();
   const taskId = "t1";
@@ -1341,7 +1366,11 @@ export async function handleDelegateTask(
       `done: verdict=${result.verdict} claimed=${result.workerClaimedStatus} ` +
         `thread=${result.workerThreadId ?? "?"} in ${result.durationSeconds}s`,
     );
-    dependencies.record(result);
+    try {
+      dependencies.record(result);
+    } catch (error) {
+      log(`delegation event record not written: ${(error as Error).message}`);
+    }
 
     recordLifecycleTurn("delegation turn", () =>
       lifecycleStore.recordDelegationTurn(task, result, {
@@ -1355,16 +1384,24 @@ export async function handleDelegateTask(
       emit: dependencies.emit,
     });
 
-    const structuredContent = structuredResultForDetail(
+    let structuredContent = structuredResultForDetail(
       result,
       task.resultDetail ?? "handoff",
     );
-
-    const rendered = renderResult(result, {
-      batchId,
-      taskId,
-      integration: "single-task workspace",
-    });
+    let rendered: string;
+    try {
+      rendered = dependencies.render(result, {
+        batchId,
+        taskId,
+        integration: "single-task workspace",
+      });
+    } catch (error) {
+      log(`delegate_task result rendering failed: ${(error as Error).message}`);
+      structuredContent ??= result;
+      rendered =
+        `VERDICT: ${result.verdict}\n` +
+        "Authoritative execution evidence is preserved in structuredContent; result rendering failed.";
+    }
     const response = {
       content: [
         {
@@ -1425,17 +1462,19 @@ export async function handleDelegateTask(
     }
 
     log(`error: ${message}`);
-    lifecycleStore.recordRuntimeFailure({
-      id: `blk_runtime_${batchId}_${taskId}`,
-      description: message,
-      objective: task.objective,
-      acceptanceCriteria: task.acceptanceCriteria,
-      allowedFiles: task.allowedFiles,
-      forbiddenFiles: task.forbiddenFiles,
-      changeIntent: task.changeIntent,
-      taskCategory: task.taskCategory,
-      taskId,
-    });
+    recordLifecycleTurn("delegation runtime failure", () =>
+      lifecycleStore.recordRuntimeFailure({
+        id: `blk_runtime_${batchId}_${taskId}`,
+        description: message,
+        objective: task.objective,
+        acceptanceCriteria: task.acceptanceCriteria,
+        allowedFiles: task.allowedFiles,
+        forbiddenFiles: task.forbiddenFiles,
+        changeIntent: task.changeIntent,
+        taskCategory: task.taskCategory,
+        taskId,
+      }),
+    );
     releaseExecution();
     evaluateLifecycleCompaction(lifecycleStore, "post-delegation", {
       batchId,
@@ -1454,7 +1493,11 @@ export async function handleDelegateTask(
     handoffReservation?.release();
     releaseExecution();
     if (persistedContextKey) {
-      dependencies.contextRegistry.releaseIfUnreferenced(persistedContextKey);
+      try {
+        dependencies.contextRegistry.releaseIfUnreferenced(persistedContextKey);
+      } catch (error) {
+        log(`context registry release failed: ${(error as Error).message}`);
+      }
     }
   }
 }
@@ -1468,7 +1511,9 @@ function registerDelegateTask(): void {
       inputSchema: delegateTaskMcpInputShape,
     },
     async (input, extra) => {
-      return handleDelegateTask(input as DelegateTaskInput, extra?.signal);
+      return serverLifecycle.run(extra?.signal, (signal) =>
+        handleDelegateTask(input as DelegateTaskInput, signal),
+      );
     },
   );
 }
@@ -1484,6 +1529,7 @@ export interface ContinuationHandlerDependencies {
   releaseLease: typeof releaseWorktreeLease;
   emit: EventEmitter;
   record: typeof recordEvent;
+  render: typeof renderResult;
   makeBatchId: () => string;
 }
 
@@ -1505,10 +1551,11 @@ export async function handleContinueTask(
     reconcile: reconcileRetainedContinuationEvidence,
     refreshLease: refreshWorktreeLease,
     releaseLease: releaseWorktreeLease,
-    emit: emitEvent,
     record: recordEvent,
+    render: renderResult,
     makeBatchId: makeSingleBatchId,
     ...overrides,
+    emit: isolateEventEmitter(overrides.emit ?? emitEvent),
   };
   const reserved = dependencies.store.consume(request.continuationReference);
   if (reserved.status !== "ready") {
@@ -1552,17 +1599,19 @@ export async function handleContinueTask(
         message += ` Worktree lease cleanup also failed: ${(cleanupError as Error).message}`;
       }
       log(`continue_task rejected: ${message}`);
-      lifecycleStore.recordRuntimeFailure({
-        id: `blk_runtime_${batchId}_${taskId}`,
-        description: message,
-        objective: entry.input.objective,
-        acceptanceCriteria: entry.input.acceptanceCriteria,
-        allowedFiles: entry.input.allowedFiles,
-        forbiddenFiles: entry.input.forbiddenFiles,
-        changeIntent: entry.input.changeIntent,
-        taskCategory: entry.input.taskCategory,
-        taskId,
-      });
+      recordLifecycleTurn("continuation setup failure", () =>
+        lifecycleStore.recordRuntimeFailure({
+          id: `blk_runtime_${batchId}_${taskId}`,
+          description: message,
+          objective: entry.input.objective,
+          acceptanceCriteria: entry.input.acceptanceCriteria,
+          allowedFiles: entry.input.allowedFiles,
+          forbiddenFiles: entry.input.forbiddenFiles,
+          changeIntent: entry.input.changeIntent,
+          taskCategory: entry.input.taskCategory,
+          taskId,
+        }),
+      );
       releaseExecution();
       dependencies.store.release(request.continuationReference);
       evaluateLifecycleCompaction(lifecycleStore, "post-continuation", {
@@ -1694,7 +1743,11 @@ export async function handleContinueTask(
     );
     emitSingleCompletion(batchId, taskId, timeoutSeconds, result, dependencies.emit);
     terminalOutcomeEmitted = true;
-    dependencies.record(result);
+    try {
+      dependencies.record(result);
+    } catch (error) {
+      log(`continuation event record not written: ${(error as Error).message}`);
+    }
 
     recordLifecycleTurn("continuation turn", () =>
       lifecycleStore.recordContinuationTurn(
@@ -1713,21 +1766,31 @@ export async function handleContinueTask(
       emit: dependencies.emit,
     });
 
-    const structuredContent = structuredResultForDetail(
+    let structuredContent = structuredResultForDetail(
       result,
       request.resultDetail ?? "handoff",
     );
+    let rendered: string;
+    try {
+      rendered = dependencies.render(result, {
+        batchId,
+        taskId,
+        integration: entry.reconcileFinalGit
+          ? "retained workspace reconciled"
+          : "single-task workspace",
+      });
+    } catch (error) {
+      log(`continue_task result rendering failed: ${(error as Error).message}`);
+      structuredContent ??= result;
+      rendered =
+        `VERDICT: ${result.verdict}\n` +
+        "Authoritative continuation evidence is preserved in structuredContent; result rendering failed.";
+    }
     const response = {
       content: [
         {
           type: "text" as const,
-          text: renderResult(result, {
-            batchId,
-            taskId,
-            integration: entry.reconcileFinalGit
-              ? "retained workspace reconciled"
-              : "single-task workspace",
-          }),
+          text: rendered,
         },
       ],
     };
@@ -1790,17 +1853,19 @@ export async function handleContinueTask(
         worktreeLeaseFinalized = true;
       }
     }
-    lifecycleStore.recordRuntimeFailure({
-      id: `blk_runtime_${batchId}_${taskId}`,
-      description: message,
-      objective: entry.input.objective,
-      acceptanceCriteria: entry.input.acceptanceCriteria,
-      allowedFiles: entry.input.allowedFiles,
-      forbiddenFiles: entry.input.forbiddenFiles,
-      changeIntent: entry.input.changeIntent,
-      taskCategory: entry.input.taskCategory,
-      taskId,
-    });
+    recordLifecycleTurn("continuation runtime failure", () =>
+      lifecycleStore.recordRuntimeFailure({
+        id: `blk_runtime_${batchId}_${taskId}`,
+        description: message,
+        objective: entry.input.objective,
+        acceptanceCriteria: entry.input.acceptanceCriteria,
+        allowedFiles: entry.input.allowedFiles,
+        forbiddenFiles: entry.input.forbiddenFiles,
+        changeIntent: entry.input.changeIntent,
+        taskCategory: entry.input.taskCategory,
+        taskId,
+      }),
+    );
     releaseExecution();
     evaluateLifecycleCompaction(lifecycleStore, "post-continuation", {
       batchId,
@@ -1821,7 +1886,11 @@ export async function handleContinueTask(
       }
     }
     if (persistedContextKey) {
-      dependencies.contextRegistry.releaseIfUnreferenced(persistedContextKey);
+      try {
+        dependencies.contextRegistry.releaseIfUnreferenced(persistedContextKey);
+      } catch (error) {
+        log(`context registry release failed: ${(error as Error).message}`);
+      }
     }
   }
 }
@@ -1835,7 +1904,9 @@ function registerContinueTask(): void {
       inputSchema: continueTaskMcpInputShape,
     },
     async (input, extra) => {
-      return handleContinueTask(input as ContinueTaskInput, extra?.signal);
+      return serverLifecycle.run(extra?.signal, (signal) =>
+        handleContinueTask(input as ContinueTaskInput, signal),
+      );
     },
   );
 }
@@ -1854,6 +1925,7 @@ export interface DelegateTasksHandlerDependencies {
   runBatch: typeof runBatch;
   emit: EventEmitter;
   makeBatchId: () => string;
+  render: typeof renderBatch;
 }
 
 export async function handleDelegateTasks(
@@ -1870,9 +1942,10 @@ export async function handleDelegateTasks(
     continuationStore,
     contextRegistry,
     runBatch,
-    emit: emitEvent,
     makeBatchId: makeSingleBatchId,
+    render: renderBatch,
     ...overrides,
+    emit: isolateEventEmitter(overrides.emit ?? emitEvent),
   };
   log(
     `delegate_tasks: mode=${batch.mode} tasks=${batch.tasks.length} ` +
@@ -1976,12 +2049,20 @@ export async function handleDelegateTasks(
       emit: dependencies.emit,
     });
 
-    const structuredContent = structuredBatchForDetail(
+    let structuredContent = structuredBatchForDetail(
       result,
       batch.resultDetail ?? "handoff",
     );
-
-    const rendered = renderBatch(result);
+    let rendered: string;
+    try {
+      rendered = dependencies.render(result);
+    } catch (error) {
+      log(`delegate_tasks result rendering failed: ${(error as Error).message}`);
+      structuredContent ??= result;
+      rendered =
+        `TERMINAL: ${result.completionState === "verified-complete" ? "VERIFIED_COMPLETE" : "NEEDS_SUPERVISOR"}\n` +
+        "Authoritative batch evidence is preserved in structuredContent; result rendering failed.";
+    }
     const response = {
       content: [
         {
@@ -1997,15 +2078,17 @@ export async function handleDelegateTasks(
         ? error.message
         : `Batch delegation failed: ${(error as Error).message}`;
     log(`batch error: ${message}`);
-    lifecycleStore.recordRuntimeFailure({
-      id: `blk_runtime_${contextKey}`,
-      description: message,
-      objective: batch.tasks[0]?.objective ?? "Batch delegation",
-      acceptanceCriteria: batch.tasks.flatMap((task) => task.acceptanceCriteria),
-      allowedFiles: [...new Set(batch.tasks.flatMap((task) => task.allowedFiles))],
-      forbiddenFiles: [...new Set(batch.tasks.flatMap((task) => task.forbiddenFiles))],
-      changeIntent: batch.tasks[0]?.changeIntent ?? "required",
-    });
+    recordLifecycleTurn("batch runtime failure", () =>
+      lifecycleStore.recordRuntimeFailure({
+        id: `blk_runtime_${contextKey}`,
+        description: message,
+        objective: batch.tasks[0]?.objective ?? "Batch delegation",
+        acceptanceCriteria: batch.tasks.flatMap((task) => task.acceptanceCriteria),
+        allowedFiles: [...new Set(batch.tasks.flatMap((task) => task.allowedFiles))],
+        forbiddenFiles: [...new Set(batch.tasks.flatMap((task) => task.forbiddenFiles))],
+        changeIntent: batch.tasks[0]?.changeIntent ?? "required",
+      }),
+    );
     releaseExecution();
     evaluateLifecycleCompaction(lifecycleStore, "post-batch", {
       batchId: contextKey,
@@ -2018,7 +2101,11 @@ export async function handleDelegateTasks(
   } finally {
     releaseExecution();
     if (persistedContextKey) {
-      dependencies.contextRegistry.releaseIfUnreferenced(persistedContextKey);
+      try {
+        dependencies.contextRegistry.releaseIfUnreferenced(persistedContextKey);
+      } catch (error) {
+        log(`context registry release failed: ${(error as Error).message}`);
+      }
     }
   }
 }
@@ -2032,7 +2119,9 @@ function registerDelegateTasks(): void {
       inputSchema: delegateTasksMcpInputShape,
     },
     async (input, extra) => {
-      return handleDelegateTasks(input as DelegateTasksInput, extra?.signal);
+      return serverLifecycle.run(extra?.signal, (signal) =>
+        handleDelegateTasks(input as DelegateTasksInput, signal),
+      );
     },
   );
 }
@@ -2098,8 +2187,10 @@ function registerRoutingPreflight(): void {
       description: ROUTING_PREFLIGHT_TOOL_DESCRIPTION,
       inputSchema: routingPreflightMcpInputShape,
     },
-    (input) => {
-      return handleRoutingPreflight(input as RoutingPreflightInput);
+    (input, extra) => {
+      return serverLifecycle.run(extra?.signal, async () =>
+        handleRoutingPreflight(input as RoutingPreflightInput),
+      );
     },
   );
 }
@@ -2239,6 +2330,7 @@ export interface ExploreHandlerDependencies {
   contextStore?: ContextLifecycleStore;
   contextRegistry: ContextLifecycleRegistry;
   admitCompute: typeof admitCompute;
+  render: typeof renderExploreResult;
 }
 
 export async function handleExplore(
@@ -2252,10 +2344,11 @@ export async function handleExplore(
 }> {
   const deps: ExploreHandlerDependencies = {
     exploreWithLuna: overrides?.exploreWithLuna ?? exploreWithLuna,
-    emit: overrides?.emit ?? emitEvent,
+    emit: isolateEventEmitter(overrides?.emit ?? emitEvent),
     contextRegistry: overrides?.contextRegistry ?? contextRegistry,
     contextStore: overrides?.contextStore,
     admitCompute: overrides?.admitCompute ?? admitCompute,
+    render: overrides?.render ?? renderExploreResult,
   };
 
   const batchId = `exp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -2336,13 +2429,22 @@ export async function handleExplore(
       usage: result.usage,
     });
 
-    const rendered = renderExploreResult(result, input.resultDetail);
-    const structuredContent =
+    let structuredContent =
       input.resultDetail === "compact"
         ? compactExploreResult(result)
         : input.resultDetail === "full" || !isCleanExplore(result)
           ? (result as unknown as Record<string, unknown>)
           : undefined;
+    let rendered: string;
+    try {
+      rendered = deps.render(result, input.resultDetail);
+    } catch (error) {
+      log(`explore result rendering failed: ${(error as Error).message}`);
+      structuredContent ??= result as unknown as Record<string, unknown>;
+      rendered =
+        `VERDICT: ${result.verdict}\n` +
+        "Authoritative exploration evidence is preserved in structuredContent; result rendering failed.";
+    }
 
     return {
       content: [{ type: "text", text: rendered }],
@@ -2351,14 +2453,16 @@ export async function handleExplore(
     };
   } catch (error) {
     const errMessage = (error as Error).message;
-    lifecycleStore.recordRuntimeFailure({
-      id: `err_${batchId}`,
-      description: errMessage,
-      objective: input.target,
-      acceptanceCriteria: input.questions ?? [],
-      changeIntent: "forbidden",
-      taskCategory: "investigation",
-    });
+    recordLifecycleTurn("exploration runtime failure", () =>
+      lifecycleStore.recordRuntimeFailure({
+        id: `err_${batchId}`,
+        description: errMessage,
+        objective: input.target,
+        acceptanceCriteria: input.questions ?? [],
+        changeIntent: "forbidden",
+        taskCategory: "investigation",
+      }),
+    );
     if (executionStarted) {
       deps.emit({
         type: "explore.completed",
@@ -2391,7 +2495,11 @@ export async function handleExplore(
       batchId,
       emit: deps.emit,
     });
-    deps.contextRegistry.releaseIfUnreferenced(contextKey);
+    try {
+      deps.contextRegistry.releaseIfUnreferenced(contextKey);
+    } catch (error) {
+      log(`context registry release failed: ${(error as Error).message}`);
+    }
   }
 }
 
@@ -2404,8 +2512,10 @@ export function registerExplore(targetServer: McpServer = server): void {
       inputSchema: exploreMcpInputShape,
     },
     async (input, extra) => {
-      const parsed = exploreInputSchema.parse(input);
-      return await handleExplore(parsed, extra?.signal);
+      return serverLifecycle.run(extra?.signal, async (signal) => {
+        const parsed = exploreInputSchema.parse(input);
+        return await handleExplore(parsed, signal);
+      });
     },
   );
 }
@@ -2700,6 +2810,25 @@ async function main(): Promise<void> {
   }
 
   await server.connect(transport);
+  let shutdownStarted = false;
+  const shutdownFromSignal = (signalName: "SIGINT" | "SIGTERM"): void => {
+    if (shutdownStarted) return;
+    shutdownStarted = true;
+    log(`${signalName} received; stopping admission and cancelling active work.`);
+    void (async () => {
+      try {
+        await shutdownServerRuntime();
+        await server.close();
+        log("graceful shutdown complete");
+      } catch (error) {
+        process.exitCode = 1;
+        log(`shutdown failed closed: ${(error as Error).message}`);
+        await server.close().catch(() => undefined);
+      }
+    })();
+  };
+  process.once("SIGINT", () => shutdownFromSignal("SIGINT"));
+  process.once("SIGTERM", () => shutdownFromSignal("SIGTERM"));
   log(
     `ready in ${Math.round(process.uptime() * 1000)}ms | worker model ${LUNA_MODEL} | ` +
       `default effort ${DEFAULT_EFFORT} | verification ${VERIFY_MODE}`,

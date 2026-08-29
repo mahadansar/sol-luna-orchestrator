@@ -602,7 +602,11 @@ worktree tests create actual git worktrees and directory links, and the CLI test
 spawn the real binary, so each runner tests its own filesystem and process
 semantics (path separators, case sensitivity, symlink support, file locking).
 Windows uses junctions and `taskkill /T` for process-tree cleanup; POSIX uses
-directory symlinks and process-group kills.
+directory symlinks and process-group kills. Verification cancellation waits for
+the relevant process-tree termination before it returns; timeout and external
+cancellation remain separate result states. On `SIGINT` or `SIGTERM`, the MCP
+server closes admission, cancels active operations, and waits up to 30 seconds
+for operation and owned-resource cleanup before failing closed.
 
 What that means in practice: the code paths that differ per platform are proven
 on all three. Windows and Linux have also been driven end to end with live

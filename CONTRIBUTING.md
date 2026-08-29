@@ -199,10 +199,13 @@ npm run typecheck
 npm test
 ```
 
-Also run the model-free smoke suites, `npm run smoke` (the MCP protocol
-handshake) and `npm run smoke:cli`, plus `npm run bench:validate` (benchmark
-fixture validation). Record the real totals, including skips: a test skipped for
-a platform permission is a skip, not a pass.
+`npm run verify` also runs the model-free MCP protocol handshake and frozen
+benchmark-fixture validation. `npm run smoke:cli` is an additional deterministic
+installed-CLI check, but it requires a real Codex CLI installation and login
+state, so it is intentionally not part of the clean-environment npm/CI gate.
+Run it for CLI compatibility or release acceptance when that dependency is
+available. Record the real totals, including skips: a test skipped for a
+platform permission is a skip, not a pass.
 
 `smoke:isolation`, `smoke:parallel` and `smoke:live` are not deterministic
 checks. They drive real Codex turns and spend model tokens, so they belong to

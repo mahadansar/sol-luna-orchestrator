@@ -94,6 +94,7 @@ export class HandoffStore {
   >();
   private readonly now: () => number;
   private readonly tokenFactory: () => string;
+  private disposed = false;
 
   constructor(options: HandoffStoreOptions = {}) {
     this.now = options.now ?? Date.now;
@@ -109,6 +110,7 @@ export class HandoffStore {
     predecessorExecutionId: string | null = null,
     contextKey: string | null = null,
   ): string {
+    if (this.disposed) throw new Error("Handoff store is shut down.");
     const now = this.now();
     this.prune(now);
 
@@ -174,6 +176,7 @@ export class HandoffStore {
    * pre-execution gate refused and nothing ran).
    */
   reserve(reference: string): HandoffReserveResult {
+    if (this.disposed) return { status: "unknown" };
     const taken = this.take(reference);
     if (taken.status !== "ready") return taken;
     const { record, entry } = taken;
@@ -218,6 +221,7 @@ export class HandoffStore {
    * that have no pre-execution gate left to run between the two.
    */
   consume(reference: string): HandoffConsumeResult {
+    if (this.disposed) return { status: "unknown" };
     const taken = this.take(reference);
     if (taken.status !== "ready") return taken;
     return { status: "ready", entry: taken.entry };
@@ -294,6 +298,15 @@ export class HandoffStore {
       return retired.status === "used" ? "consumed" : "unavailable";
     }
     return "unavailable";
+  }
+
+  /** Invalidate all process-local authority during server shutdown. */
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.active.clear();
+    this.reserved.clear();
+    this.retired.clear();
   }
 
   /**

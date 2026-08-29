@@ -13,7 +13,7 @@ parallel recovery baseline described below. Shipped history belongs in
 - **Runtime baseline:** commit-relative current main for v0.10.0 after the Thin
   Supervisor work above. Package and lockfile versions are `0.10.0`.
 - **Latest full deterministic validation:** `npm run verify` passed on
-  2026-08-29 with **971/974 tests passed**, no failures and three expected
+  2026-08-29 with **986/989 tests passed**, no failures and three expected
   platform-specific Windows skips, plus typecheck and the deterministic MCP
   protocol smoke test. The count includes the 31 P2.4A acceptance-harness tests
   in `src/bench/harness.test.ts`. `npm run bench:v3:validate` also passed: every
@@ -60,7 +60,7 @@ parallel recovery baseline described below. Shipped history belongs in
 | P1.3 Context lifecycle management (P1.3A/B/C)           | PASS     | PASS          | NOT TESTED    | Strong        |
 | P2.1 Optional Explorer                                  | PASS     | PASS          | NOT TESTED    | Strong        |
 | P2.2 Lightweight Cross-Session Handoff                  | PASS     | PASS          | NOT TESTED    | Strong        |
-| P2.3 End-to-End Automated Workflow                      | PASS     | PASS          | NOT TESTED    | Basic         |
+| P2.3 End-to-End Automated Workflow                      | PASS     | DEEP PASS     | NOT TESTED    | Strong        |
 | `failureCauses` and verification contradiction handling | PASS     | PASS          | PASS          | Strong        |
 
 Dates, provenance, dependencies, and retest triggers are recorded below. A live
@@ -269,27 +269,27 @@ support different claims:
 Vocabulary is the ledger's own: **N/A**, **NOT TESTED**, **PARTIAL**, **PASS**,
 **DEEP PASS**, **STALE**.
 
-| Roadmap capability                                        | Deterministic | Live model-backed | Benchmark economics | Primary deterministic evidence                                                                                 |
-| --------------------------------------------------------- | ------------- | ----------------- | ------------------- | -------------------------------------------------------------------------------------------------------------- |
-| P0 Context Capsule v2 / Compact Evidence Packets          | PASS          | PASS              | PARTIAL (V2)        | `src/evidence.test.ts`, `src/prompt.test.ts`                                                                   |
-| P0.2a Explicit Change Intent Contracts                    | PASS          | DEEP PASS         | PARTIAL (V2)        | `src/evidence.test.ts`, `src/selftest.ts`                                                                      |
-| P0.3 Worker Continuation                                  | DEEP PASS     | DEEP PASS         | NOT TESTED          | `src/parallel.test.ts`, `src/evidence.test.ts`                                                                 |
-| P0.4 Bounded Repair Loop                                  | PASS          | DEEP PASS         | NOT TESTED          | `src/evidence.test.ts`, `src/parallel.test.ts`                                                                 |
-| Thin Supervisor terminal verification / handoff           | PASS          | DEEP PASS         | PASS (V2)           | `src/evidence.test.ts`, `src/selftest.ts`                                                                      |
-| Parallel batches, worktree isolation, bounded concurrency | DEEP PASS     | DEEP PASS         | PASS (V1/V2)        | `src/parallel.test.ts`, `src/security.test.ts`                                                                 |
-| Bounded parallel automatic recovery                       | PASS          | PASS              | PARTIAL (V2)        | `src/parallel.test.ts`                                                                                         |
-| P1.0 Parent identity, billing, post-hoc cost              | PASS          | N/A               | PASS (V2 profile)   | `src/bench/credits.test.ts`, `src/evidence.test.ts`                                                            |
-| P1.0 Per-execution attempt, failure, and usage evidence   | DEEP PASS     | PARTIAL           | PARTIAL (V2)        | `src/evidence.test.ts`, `src/parallel.test.ts`                                                                 |
-| P1.1 Reasoned retry and effort escalation                 | DEEP PASS     | NOT TESTED        | NOT TESTED          | `src/evidence.test.ts`, `src/policy.test.ts`                                                                   |
-| P1.2 User-owned compute policy and enforcement            | PASS          | NOT TESTED        | NOT TESTED          | `src/policy.test.ts`, `src/selection.test.ts`                                                                  |
-| P1.2 Adaptive routing, seam planning, selection           | PASS          | NOT TESTED        | NOT TESTED          | `src/adaptive-routing.test.ts`, `src/routing.test.ts`, `src/seam-plan.test.ts`, `src/selection.test.ts`        |
-| P1.3A Retention and compaction core                       | PASS          | NOT TESTED        | NOT TESTED          | `src/context.test.ts`                                                                                          |
-| P1.3B Context pressure metrics and trigger policy         | PASS          | NOT TESTED        | NOT TESTED          | `src/context.test.ts`                                                                                          |
-| P1.3C Live context lifecycle integration                  | PASS          | NOT TESTED        | NOT TESTED          | `src/context-lifecycle.test.ts`                                                                                |
-| P2.1 Optional Explorer                                    | PASS          | NOT TESTED        | NOT TESTED          | `src/explore.test.ts`, `src/security.test.ts`                                                                  |
-| P2.2 Lightweight Cross-Session Handoff                    | PASS          | NOT TESTED        | NOT TESTED          | `src/session-handoff.test.ts`                                                                                  |
-| P2.3 End-to-End Automated Workflow                        | PASS          | NOT TESTED        | NOT TESTED          | `src/workflow.test.ts` (30 tests; handler seams injected)                                                      |
-| Benchmark harness and acceptance methodology (P2.4A)      | PASS          | N/A               | N/A                 | `src/bench.test.ts`, `src/bench/harness.test.ts`, `src/bench/v3-analysis.test.ts`, `src/bench/credits.test.ts` |
+| Roadmap capability                                        | Deterministic | Live model-backed | Benchmark economics | Primary deterministic evidence                                                                                              |
+| --------------------------------------------------------- | ------------- | ----------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| P0 Context Capsule v2 / Compact Evidence Packets          | PASS          | PASS              | PARTIAL (V2)        | `src/evidence.test.ts`, `src/prompt.test.ts`                                                                                |
+| P0.2a Explicit Change Intent Contracts                    | PASS          | DEEP PASS         | PARTIAL (V2)        | `src/evidence.test.ts`, `src/selftest.ts`                                                                                   |
+| P0.3 Worker Continuation                                  | DEEP PASS     | DEEP PASS         | NOT TESTED          | `src/parallel.test.ts`, `src/evidence.test.ts`                                                                              |
+| P0.4 Bounded Repair Loop                                  | PASS          | DEEP PASS         | NOT TESTED          | `src/evidence.test.ts`, `src/parallel.test.ts`                                                                              |
+| Thin Supervisor terminal verification / handoff           | PASS          | DEEP PASS         | PASS (V2)           | `src/evidence.test.ts`, `src/selftest.ts`                                                                                   |
+| Parallel batches, worktree isolation, bounded concurrency | DEEP PASS     | DEEP PASS         | PASS (V1/V2)        | `src/parallel.test.ts`, `src/security.test.ts`                                                                              |
+| Bounded parallel automatic recovery                       | PASS          | PASS              | PARTIAL (V2)        | `src/parallel.test.ts`                                                                                                      |
+| P1.0 Parent identity, billing, post-hoc cost              | PASS          | N/A               | PASS (V2 profile)   | `src/bench/credits.test.ts`, `src/evidence.test.ts`                                                                         |
+| P1.0 Per-execution attempt, failure, and usage evidence   | DEEP PASS     | PARTIAL           | PARTIAL (V2)        | `src/evidence.test.ts`, `src/parallel.test.ts`                                                                              |
+| P1.1 Reasoned retry and effort escalation                 | DEEP PASS     | NOT TESTED        | NOT TESTED          | `src/evidence.test.ts`, `src/policy.test.ts`                                                                                |
+| P1.2 User-owned compute policy and enforcement            | PASS          | NOT TESTED        | NOT TESTED          | `src/policy.test.ts`, `src/selection.test.ts`                                                                               |
+| P1.2 Adaptive routing, seam planning, selection           | PASS          | NOT TESTED        | NOT TESTED          | `src/adaptive-routing.test.ts`, `src/routing.test.ts`, `src/seam-plan.test.ts`, `src/selection.test.ts`                     |
+| P1.3A Retention and compaction core                       | PASS          | NOT TESTED        | NOT TESTED          | `src/context.test.ts`                                                                                                       |
+| P1.3B Context pressure metrics and trigger policy         | PASS          | NOT TESTED        | NOT TESTED          | `src/context.test.ts`                                                                                                       |
+| P1.3C Live context lifecycle integration                  | PASS          | NOT TESTED        | NOT TESTED          | `src/context-lifecycle.test.ts`                                                                                             |
+| P2.1 Optional Explorer                                    | PASS          | NOT TESTED        | NOT TESTED          | `src/explore.test.ts`, `src/security.test.ts`                                                                               |
+| P2.2 Lightweight Cross-Session Handoff                    | PASS          | NOT TESTED        | NOT TESTED          | `src/session-handoff.test.ts`                                                                                               |
+| P2.3 End-to-End Automated Workflow                        | DEEP PASS     | NOT TESTED        | NOT TESTED          | `src/workflow.test.ts` (state-machine seams plus real single-handler composition and authoritative subprocess verification) |
+| Benchmark harness and acceptance methodology (P2.4A)      | PASS          | N/A               | N/A                 | `src/bench.test.ts`, `src/bench/harness.test.ts`, `src/bench/v3-analysis.test.ts`, `src/bench/credits.test.ts`              |
 
 ### Reading this table against the matrix above
 
@@ -339,7 +339,7 @@ incomplete; no model-backed V3 task has been executed.
   `high` selections. No natural `xhigh` or `max` selection is claimed, and those
   optional observations are not required for Strong confidence.
 - A fresh whole-system native coverage report was produced on 2026-08-29 with
-  Node's built-in test coverage: **93.21% lines, 86.59% branches, and 90.73%
+  Node's built-in test coverage: **93.16% lines, 86.29% branches, and 90.76%
   functions**. Its percentages are diagnostic, not acceptance evidence; branch
   and cleanup gaps still require manual review.
 - Raw transcripts, diagnostic logs, event streams, and some structured live
@@ -356,15 +356,18 @@ incomplete; no model-backed V3 task has been executed.
   failed-turn, stream/runtime, and abnormal-exit paths. The runtime now records
   that unknown explicitly; no test or local timing can recover the missing
   provider fact.
-- Running verification subprocesses do not yet receive external cancellation;
-  cancellation can therefore wait for the verification timeout.
-- Recovery/integration cleanup after a caller-supplied event sink throws, graceful
-  shutdown of active requests, Windows process-tree termination completion, and
-  nested repository/control-directory evidence remain incompletely tested.
-- Workflow tests still inject handler outcomes rather than composing real
-  continuation/handoff stores with the server handlers. Explorer surface
-  creation/copy/removal failures and long chains of separately issued
-  continuation references also lack complete lifecycle tests.
+- Verification cancellation, event-sink isolation, bounded graceful shutdown,
+  nested control-metadata boundaries, explorer removal failure, and long
+  continuation expiry/reclamation now have focused deterministic regressions.
+  Windows awaits `taskkill /T /F`; POSIX process-group behavior remains exercised
+  only on POSIX CI because it is not reachable on Windows.
+- The workflow suite now includes one deterministic composition through the real
+  single-delegation handler and authoritative subprocess verification. Batch,
+  repair, recovery, continuation, and escalation workflow branches retain
+  handler-contract injection; they are not claimed as fully composed or live.
+- Shutdown coordination is covered without destructive signals in-process.
+  Native signal delivery and a deliberately hung Windows descendant remain
+  platform/integration risks rather than accepted evidence.
 
 **Confirmed defects exposed by the 2026-08-29 pre-release audit were fixed with
 regressions in the same change.** The remaining items above are release risks,

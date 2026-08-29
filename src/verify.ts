@@ -86,21 +86,52 @@ export function buildVerificationEnv(
  * `npm test` spawns node, which spawns a test runner. Killing only the direct
  * child orphans the rest, which then keeps holding the workspace.
  */
-function killProcessTree(pid: number): void {
+function killProcessTree(pid: number): Promise<void> {
   if (process.platform === "win32") {
-    try {
-      // Absolute path only: this runs with the orchestrator's own cwd, which is
-      // routinely the workspace a worker just wrote to, and Windows would
-      // otherwise prefer a `taskkill.cmd` sitting there.
-      nodeSpawn(resolveExecutable("taskkill"), ["/pid", String(pid), "/T", "/F"], {
-        stdio: "ignore",
-        windowsHide: true,
-        env: withoutCwdExecutableLookup(process.env),
-      });
-    } catch {
-      // Best effort.
-    }
-    return;
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (): void => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      try {
+        // Absolute path only: this runs with the orchestrator's own cwd, which
+        // is routinely the workspace a worker just wrote to, and Windows would
+        // otherwise prefer a `taskkill.cmd` sitting there.
+        const killer = nodeSpawn(
+          resolveExecutable("taskkill"),
+          ["/pid", String(pid), "/T", "/F"],
+          {
+            stdio: "ignore",
+            windowsHide: true,
+            env: withoutCwdExecutableLookup(process.env),
+          },
+        );
+        const killDirectChild = (): void => {
+          try {
+            // A restricted Windows environment can deny taskkill even though
+            // the verifier still owns its direct child. Preserve cleanup by
+            // terminating that child as a fallback; /T already handled the
+            // full tree when taskkill succeeded.
+            process.kill(pid, "SIGKILL");
+          } catch {
+            // Already gone.
+          }
+        };
+        killer.once("error", () => {
+          killDirectChild();
+          finish();
+        });
+        killer.once("close", (code) => {
+          if (code !== 0) killDirectChild();
+          finish();
+        });
+      } catch {
+        // Best effort.
+        finish();
+      }
+    });
   }
   try {
     // Negative pid targets the process group created by `detached: true`.
@@ -112,6 +143,7 @@ function killProcessTree(pid: number): void {
       // Already gone.
     }
   }
+  return Promise.resolve();
 }
 
 /**
@@ -128,6 +160,7 @@ export function runVerificationCommand(
     timeoutSeconds?: number;
     policy?: CommandPolicy;
     env?: NodeJS.ProcessEnv;
+    signal?: AbortSignal;
   } = {},
 ): Promise<VerificationRun> {
   const mode = options.mode ?? VERIFY_MODE;
@@ -226,6 +259,16 @@ export function runVerificationCommand(
     }
   }
 
+  if (options.signal?.aborted) {
+    return Promise.resolve({
+      command,
+      exitCode: null,
+      passed: false,
+      execution: useShell ? "shell" : "argv",
+      output: "[orchestrator] verification cancelled before launch",
+    });
+  }
+
   return new Promise((resolve) => {
     const child = useShell
       ? nodeSpawn(command, {
@@ -245,6 +288,10 @@ export function runVerificationCommand(
 
     let output = "";
     let settled = false;
+    let closeResolve: ((code: number | null) => void) | undefined;
+    const closePromise = new Promise<number | null>((resolveClose) => {
+      closeResolve = resolveClose;
+    });
 
     const append = (chunk: Buffer): void => {
       // Bound memory on pathologically chatty commands; only an excerpt is
@@ -258,6 +305,9 @@ export function runVerificationCommand(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (options.signal && onAbort) {
+        options.signal.removeEventListener("abort", onAbort);
+      }
 
       const notes: string[] = [];
       if (scrubbed.length > 0) {
@@ -278,10 +328,84 @@ export function runVerificationCommand(
       });
     };
 
+    const cancelAfterTermination = async (): Promise<void> => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (options.signal && onAbort) {
+        options.signal.removeEventListener("abort", onAbort);
+      }
+
+      if (child.pid) {
+        // Wait for both the tree terminator and the child's close event. The
+        // latter reaps the direct child; the former waits for taskkill on
+        // Windows and kills the detached process group on POSIX.
+        await Promise.all([killProcessTree(child.pid), closePromise]);
+      }
+
+      const notes: string[] = [];
+      if (scrubbed.length > 0) {
+        notes.push(
+          `\n[orchestrator] ${scrubbed.length} credential-shaped env var(s) were ` +
+            `hidden from this command (${scrubbed.slice(0, 5).join(", ")}` +
+            `${scrubbed.length > 5 ? ", ..." : ""}). ` +
+            `Set SOL_LUNA_VERIFY_ENV_PASSTHROUGH=1 if the suite genuinely needs them.`,
+        );
+      }
+
+      resolve({
+        command,
+        exitCode: null,
+        passed: false,
+        execution: useShell ? "shell" : "argv",
+        output: truncate(
+          (output + "\n[orchestrator] verification cancelled" + notes.join("")).trim(),
+        ),
+      });
+    };
+
+    const onAbort = (): void => {
+      void cancelAfterTermination();
+    };
+
     const timer = setTimeout(() => {
-      if (child.pid) killProcessTree(child.pid);
-      finish(null, `\n[orchestrator] timed out after ${timeoutSeconds}s`);
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (options.signal) {
+        options.signal.removeEventListener("abort", onAbort);
+      }
+      const pid = child.pid;
+      const finishTimeout = async (): Promise<void> => {
+        if (pid) await Promise.all([killProcessTree(pid), closePromise]);
+        const notes: string[] = [];
+        if (scrubbed.length > 0) {
+          notes.push(
+            `\n[orchestrator] ${scrubbed.length} credential-shaped env var(s) were ` +
+              `hidden from this command (${scrubbed.slice(0, 5).join(", ")}` +
+              `${scrubbed.length > 5 ? ", ..." : ""}). ` +
+              `Set SOL_LUNA_VERIFY_ENV_PASSTHROUGH=1 if the suite genuinely needs them.`,
+          );
+        }
+        resolve({
+          command,
+          exitCode: null,
+          passed: false,
+          execution: useShell ? "shell" : "argv",
+          output: truncate(
+            (
+              output +
+              `\n[orchestrator] timed out after ${timeoutSeconds}s` +
+              notes.join("")
+            ).trim(),
+          ),
+        });
+      };
+      void finishTimeout();
     }, timeoutSeconds * 1000);
+
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    if (options.signal?.aborted) void cancelAfterTermination();
 
     child.on("error", (error: NodeJS.ErrnoException) => {
       const hint =
@@ -289,6 +413,7 @@ export function runVerificationCommand(
       finish(null, `\n[orchestrator] failed to launch: ${error.message}${hint}`);
     });
     child.on("close", (code: number | null) => finish(code));
+    child.on("close", (code: number | null) => closeResolve?.(code));
   });
 }
 
@@ -296,10 +421,17 @@ export function runVerificationCommand(
 export async function runVerifications(
   commands: string[],
   workingDirectory: string,
+  options: { signal?: AbortSignal } = {},
 ): Promise<VerificationRun[]> {
   const results: VerificationRun[] = [];
   for (const command of commands) {
-    results.push(await runVerificationCommand(command, workingDirectory));
+    if (options.signal?.aborted) break;
+    results.push(
+      await runVerificationCommand(command, workingDirectory, {
+        signal: options.signal,
+      }),
+    );
+    if (options.signal?.aborted) break;
   }
   return results;
 }

@@ -26,7 +26,7 @@ import type {
 } from "./contract.js";
 import type { ContinuationStore } from "./continuation.js";
 import type { HandoffStore } from "./handoff.js";
-import type { EventEmitter } from "./events.js";
+import { isolateEventEmitter, type EventEmitter } from "./events.js";
 import {
   CONTEXT_COOLDOWN_TURNS,
   CONTEXT_MAX_BYTES,
@@ -2524,7 +2524,7 @@ export class ContextLifecycleStore {
     this.config = resolveContextPressureConfig(options.config);
     this.continuationStore = options.continuationStore;
     this.handoffStore = options.handoffStore;
-    this.emit = options.emit;
+    this.emit = options.emit ? isolateEventEmitter(options.emit) : undefined;
     if (options.initialContext) {
       this.authoritativeContext = structuredClone(options.initialContext);
     }

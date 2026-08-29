@@ -10,6 +10,49 @@ export class WorkspaceError extends Error {
   }
 }
 
+function controlName(name: string): string {
+  return process.platform === "win32" || process.platform === "darwin"
+    ? name.toLowerCase()
+    : name;
+}
+
+function hasControlMetadataComponent(
+  target: string,
+  allowInternalWorktree: boolean,
+): boolean {
+  const parts = path.resolve(target).split(path.sep).filter(Boolean);
+  for (let index = 0; index < parts.length; index += 1) {
+    const name = controlName(parts[index]!);
+    if (name === ".git") return true;
+    if (name !== ".sol-luna") continue;
+
+    // `.sol-luna/worktrees/<id>` (and files below that real worktree) is the
+    // one control-tree exception.  A second control directory below it is
+    // still blocked by the next loop iteration.
+    const isInternalWorktree =
+      allowInternalWorktree &&
+      controlName(parts[index + 1] ?? "") === "worktrees" &&
+      index + 2 < parts.length;
+    if (!isInternalWorktree) return true;
+  }
+  return false;
+}
+
+function assertWorkspaceIsNotControlMetadata(
+  lexical: string,
+  real: string,
+  allowInternalWorktree: boolean,
+): void {
+  if (
+    hasControlMetadataComponent(lexical, allowInternalWorktree) ||
+    hasControlMetadataComponent(real, allowInternalWorktree)
+  ) {
+    throw new WorkspaceError(
+      `workingDirectory "${real}" is repository or orchestrator control metadata.`,
+    );
+  }
+}
+
 /**
  * Validate and canonicalise the directory a worker will run in.
  *
@@ -22,6 +65,7 @@ export function resolveWorkspace(
   requested: string | undefined,
   allowedRoots: readonly string[] = ALLOWED_WORKSPACE_ROOTS,
   resolver = defaultRealPathResolver,
+  options: { allowInternalWorktree?: boolean } = {},
 ): string {
   const candidate = requested ?? process.cwd();
 
@@ -42,6 +86,16 @@ export function resolveWorkspace(
   }
 
   const real = resolver(candidate);
+
+  // Check both spellings.  A symlink or junction can hide a control directory
+  // from either the requested path or its canonical target, and a workspace
+  // rooted at that directory would otherwise reset the scope boundary around
+  // the metadata itself.
+  assertWorkspaceIsNotControlMetadata(
+    candidate,
+    real,
+    options.allowInternalWorktree === true,
+  );
 
   if (allowedRoots.length > 0) {
     const permitted = allowedRoots.some((root) => {

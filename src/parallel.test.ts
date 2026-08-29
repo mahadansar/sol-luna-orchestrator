@@ -212,16 +212,13 @@ test("an unusable timeout budget falls back instead of becoming an instant deadl
   assert.equal(timeoutSecondsInvalid("900"), false);
 });
 
-test("a throw out of the parallel execution window surrenders worktree ownership", async () => {
+test("a throwing event sink cannot escape the parallel execution window or retain ownership", async () => {
   const repo = await makeRepo();
   const controller = new AbortController();
   const batchId = "bfixedowner";
   try {
-    // Emitting is a caller-supplied seam. `markCancelled` runs outside the
-    // per-task try, so an emitter that throws there escapes `Promise.all`,
-    // escapes `runParallel`, and used to skip the entire cleanup section -
-    // leaving the renewal timers running and both worktree identities
-    // permanently registered as owned by this process.
+    // Emitting is a caller-supplied seam. A throw from this branch used to
+    // escape `Promise.all`, skip cleanup, and retain worktree ownership.
     // Cancel once t1's worktree exists, so t2 takes the pre-worker cancellation
     // branch of the setup loop - which is outside that loop's try.
     const hostileEmit = (event: OrchestratorEvent): void => {
@@ -231,22 +228,23 @@ test("a throw out of the parallel execution window surrenders worktree ownership
 
     // The local `runBatch` wrapper silences telemetry, so this one goes straight
     // to the production entry point to keep the hostile emitter.
-    await assert.rejects(
-      runProductionBatch(
-        [
-          makeTask({ allowedFiles: ["src/one/**"] }),
-          makeTask({ allowedFiles: ["src/two/**"] }),
-        ],
-        {
-          mode: "parallel",
-          batchId,
-          workingDirectory: repo,
-          signal: controller.signal,
-          eventEmitter: hostileEmit,
-          executor: fakeExecutor({}),
-        },
-      ),
-      /emitter exploded/,
+    const result = await runProductionBatch(
+      [
+        makeTask({ allowedFiles: ["src/one/**"] }),
+        makeTask({ allowedFiles: ["src/two/**"] }),
+      ],
+      {
+        mode: "parallel",
+        batchId,
+        workingDirectory: repo,
+        signal: controller.signal,
+        eventEmitter: hostileEmit,
+        executor: fakeExecutor({}),
+      },
+    );
+    assert.equal(
+      result.tasks.every((task) => task.state === "cancelled"),
+      true,
     );
 
     // The identity must be reusable. A leak shows up twice: `activeWorktreePaths`
@@ -609,6 +607,72 @@ test("retention policy precedence covers every cleanup reason", () => {
       outcomes,
       policy,
     );
+  }
+});
+
+test("cleanup failure after authoritative PASS preserves evidence and releases ownership", async () => {
+  const repo = await makeRepo();
+  let ownedWorktree: Parameters<typeof cleanupWorktree>[0] | null = null;
+  try {
+    const result = await runProductionBatch(
+      [
+        makeTask({
+          allowedFiles: ["src/cleanup/**"],
+          verificationCommands: ["node --version"],
+        }),
+      ],
+      {
+        mode: "parallel",
+        batchId: "bcleanupfailure",
+        workingDirectory: repo,
+        eventEmitter: () => undefined,
+        executor: fakeExecutor({
+          writes: () => ({ "src/cleanup/value.ts": "export const value = 1;\n" }),
+          output: () => ({
+            verification: [
+              {
+                command: "node --version",
+                source: "orchestrator",
+                execution: "argv",
+                passed: true,
+                exitCode: 0,
+                output: "v-test",
+              },
+            ],
+          }),
+        }),
+        integrationVerifier: async (commands) =>
+          commands.map((command) => ({
+            command,
+            source: "orchestrator" as const,
+            execution: "argv" as const,
+            passed: true,
+            exitCode: 0,
+            output: "final pass",
+          })),
+        worktreeCleaner: async (worktree) => {
+          ownedWorktree = worktree;
+          throw new Error("injected cleanup failure");
+        },
+      },
+    );
+
+    assert.equal(result.tasks[0]?.result?.verdict, "PASS");
+    assert.equal(result.completionState, "needs-supervisor");
+    assert.match(result.tasks[0]?.error ?? "", /cleanup failed.*injected/i);
+    assert.match(result.warnings.join("\n"), /evidence has been retained/i);
+    assert.ok(ownedWorktree);
+    const capturedWorktree = ownedWorktree as Parameters<typeof cleanupWorktree>[0];
+    assert.equal(
+      await new WorktreeLeaseStore().isProtected(capturedWorktree.path),
+      false,
+      "cleanup failure must not leave a persistent lease",
+    );
+  } finally {
+    if (ownedWorktree) {
+      await cleanupWorktree(ownedWorktree, "success", "never").catch(() => undefined);
+    }
+    await cleanupRepo(repo);
   }
 });
 
@@ -2764,7 +2828,12 @@ test("parallel timeout recovery resumes the same thread and integrates final evi
       {
         mode: "parallel",
         workingDirectory: repo,
-        eventEmitter: (event) => events.push(event),
+        eventEmitter: (event) => {
+          events.push(event);
+          if (event.type === "recovery.started") {
+            throw new Error("injected recovery telemetry failure");
+          }
+        },
         executor: async (input, options) => {
           calls.push({
             directory: options.workingDirectory,

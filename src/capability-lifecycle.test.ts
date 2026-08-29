@@ -32,6 +32,7 @@ import type {
 } from "./contract.js";
 import type { OrchestratorEvent } from "./events.js";
 import type { WorktreeLease } from "./worktree.js";
+import { ShutdownCoordinator } from "./shutdown.js";
 
 const LUNA = "gpt-5.6-luna";
 
@@ -820,10 +821,16 @@ test("a late failure after a published result does not publish a second outcome"
       // A bookkeeping sink that fails after the outcome is already final.
       throw new Error("telemetry sink unavailable");
     },
+    render: () => {
+      throw new Error("renderer unavailable");
+    },
     makeBatchId: () => "b_late",
   });
 
-  assert.equal(response.isError, true);
+  assert.notEqual(response.isError, true);
+  assert.match(response.content[0]?.text ?? "", /VERDICT: FAILED/);
+  assert.match(response.content[0]?.text ?? "", /evidence is preserved/);
+  assert.equal(response.structuredContent?.verdict, "FAILED");
   const terminal = events.filter(
     (event) =>
       event.type === "batch.completed" ||
@@ -982,4 +989,154 @@ test("resetting a context does not report a live execution as idle", () => {
   );
   release();
   assert.equal(store.isInFlight(), false);
+});
+
+test("a long continuation lineage expires and reclaims without resurrection or evidence loss", async () => {
+  let now = 20_000_000;
+  let token = 0;
+  const released: WorktreeLease[] = [];
+  const continuationStore = new ContinuationStore({
+    now: () => now,
+    tokenFactory: () => `ctr_${String(++token).padStart(32, "a")}`,
+    releaseLease: (lease) => {
+      released.push(lease);
+    },
+  });
+  const handoffStore = new HandoffStore({ now: () => now });
+  const registry = new ContextLifecycleRegistry({ handoffStore, continuationStore });
+  const contextKey = "ctx_long_continuation_lineage";
+  const contextStore = registry.getOrCreate(contextKey);
+  const task = makeTask({ changeIntent: "optional" });
+  const consumed: string[] = [];
+
+  for (let turn = 1; turn <= 64; turn += 1) {
+    const reference = continuationStore.issue(
+      task,
+      "thread-long-chain",
+      process.cwd(),
+      false,
+      null,
+      turn === 1 ? null : `exec_${turn - 1}`,
+      turn + 1,
+      LUNA,
+      contextKey,
+    );
+    const ready = continuationStore.consume(reference);
+    assert.equal(ready.status, "ready");
+    if (ready.status !== "ready") return;
+    assert.equal(
+      ready.entry.predecessorExecutionId,
+      turn === 1 ? null : `exec_${turn - 1}`,
+    );
+
+    const output = makeFailure({
+      attempt: turn + 1,
+      attempts: [
+        {
+          ...COMPLETED_ATTEMPT,
+          executionId: `exec_${turn}`,
+          logicalAttempt: turn + 1,
+          predecessorExecutionId: turn === 1 ? null : `exec_${turn - 1}`,
+          threadId: "thread-long-chain",
+          threadOperation: "resume",
+        },
+      ],
+    });
+    contextStore.recordContinuationTurn(
+      { continuationReference: reference, instruction: `continue turn ${turn}` },
+      output,
+      { id: `continuation_turn_${turn}` },
+    );
+    continuationStore.release(reference);
+    consumed.push(reference);
+    assert.equal(continuationStore.consume(reference).status, "used");
+
+    if (turn % 8 === 0) {
+      contextStore.evaluateAndMaybeCompact("post-continuation", { force: true });
+    }
+  }
+
+  const expiringLease = makeLease("/repo/.sol-luna/worktrees/long-final");
+  const expiring = continuationStore.issue(
+    task,
+    "thread-long-chain",
+    expiringLease.worktreePath,
+    true,
+    expiringLease,
+    "exec_64",
+    66,
+    LUNA,
+    contextKey,
+  );
+  assert.equal(registry.size, 1);
+  registry.releaseIfUnreferenced(contextKey);
+  assert.equal(registry.size, 1, "a live capability keeps its context registered");
+
+  now += CONTINUATION_TTL_MS;
+  assert.equal(continuationStore.status(expiring), "unavailable");
+  await continuationStore.whenExpiredLeasesReleased();
+  assert.deepEqual(
+    released.map((lease) => lease.ownerToken),
+    [expiringLease.ownerToken],
+  );
+  assert.equal(continuationStore.consume(expiring).status, "expired");
+
+  const authoritative = contextStore.getAuthoritativeContext();
+  assert.equal(authoritative?.turns.length, 64);
+  assert.deepEqual(
+    authoritative?.lineage.map((entry) => entry.executionId),
+    Array.from({ length: 64 }, (_, index) => `exec_${index + 1}`),
+  );
+  const projection = contextStore.getCompactedProjection();
+  assert.ok(projection);
+  assert.equal(projection.stats.retainedDiagnosticTurns, 64);
+  assert.equal(
+    consumed.every((reference) => continuationStore.status(reference) !== "issued"),
+    true,
+  );
+
+  registry.releaseIfUnreferenced(contextKey);
+  assert.equal(registry.size, 0, "expired capability and idle context are reclaimed");
+  assert.equal(
+    released.length,
+    1,
+    "the final retained lease is surrendered exactly once",
+  );
+});
+
+test("shutdown invalidates capability stores and releases retained continuation leases once", async () => {
+  const released: WorktreeLease[] = [];
+  const continuationStore = new ContinuationStore({
+    releaseLease: (lease) => {
+      released.push(lease);
+    },
+  });
+  const handoffStore = new HandoffStore();
+  const lease = makeLease("/repo/.sol-luna/worktrees/shutdown-owned");
+  const continuation = continuationStore.issue(
+    makeTask(),
+    "thread-shutdown",
+    lease.worktreePath,
+    true,
+    lease,
+  );
+  const handoff = issueEscalation(handoffStore, makeTask());
+  const coordinator = new ShutdownCoordinator();
+  coordinator.registerCleanup(() => continuationStore.dispose());
+  coordinator.registerCleanup(() => handoffStore.dispose());
+
+  await coordinator.shutdown(1_000);
+  assert.equal(continuationStore.consume(continuation).status, "unknown");
+  assert.equal(handoffStore.consume(handoff).status, "unknown");
+  assert.throws(
+    () => continuationStore.issue(makeTask(), "thread-new", process.cwd()),
+    /shut down/,
+  );
+  assert.throws(() => issueEscalation(handoffStore, makeTask()), /shut down/);
+  assert.deepEqual(
+    released.map((item) => item.ownerToken),
+    [lease.ownerToken],
+  );
+  await coordinator.shutdown(1_000);
+  assert.equal(released.length, 1);
 });

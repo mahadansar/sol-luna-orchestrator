@@ -1049,6 +1049,129 @@ test("verification captures output and enforces its timeout", async () => {
   assert.match(slow.output, /timed out/);
 });
 
+test("verification cancellation kills and awaits the process tree", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-verify-cancel-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const childScript = path.join(root, "child.cjs");
+  const parentScript = path.join(root, "parent.cjs");
+  const pidPath = path.join(root, "child.pid");
+  const heartbeatPath = path.join(root, "heartbeat.txt");
+  fs.writeFileSync(
+    childScript,
+    `const fs = require("node:fs");\n` +
+      `setInterval(() => fs.appendFileSync(${JSON.stringify(heartbeatPath)}, "x"), 20);\n` +
+      `setTimeout(() => process.exit(0), 5000);\n`,
+    "utf8",
+  );
+  fs.writeFileSync(
+    parentScript,
+    `const fs = require("node:fs");\n` +
+      `const { spawn } = require("node:child_process");\n` +
+      `const child = spawn(process.execPath, [${JSON.stringify(childScript)}], { stdio: "ignore" });\n` +
+      `fs.writeFileSync(${JSON.stringify(pidPath)}, String(child.pid));\n` +
+      `setTimeout(() => process.exit(0), 5000);\n`,
+    "utf8",
+  );
+
+  const controller = new AbortController();
+  const running = runVerificationCommand(`node ${parentScript}`, root, {
+    timeoutSeconds: 1,
+    signal: controller.signal,
+  });
+  const deadline = Date.now() + 2_000;
+  while (!fs.existsSync(pidPath) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal(fs.existsSync(pidPath), true, "verification child never started");
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  controller.abort();
+  const result = await running;
+  assert.equal(result.passed, false);
+  assert.equal(result.exitCode, null);
+  assert.match(result.output, /verification cancelled/);
+  assert.doesNotMatch(result.output, /timed out/);
+
+  const heartbeatSize = fs.existsSync(heartbeatPath)
+    ? fs.statSync(heartbeatPath).size
+    : 0;
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.equal(
+    fs.existsSync(heartbeatPath) ? fs.statSync(heartbeatPath).size : 0,
+    heartbeatSize,
+    "descendant kept writing after cancellation returned",
+  );
+});
+
+test("task cancellation propagates into an already-running authoritative verification", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-task-verify-cancel-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const marker = path.join(root, "verification.pid");
+  const script = path.join(root, "verification.cjs");
+  fs.writeFileSync(
+    script,
+    `require("node:fs").writeFileSync(${JSON.stringify(marker)}, String(process.pid));\n` +
+      `setInterval(() => {}, 1000);\n`,
+  );
+  const command = `node ${script}`;
+  const report: WorkerReport = {
+    status: "PASS",
+    failureCauses: [],
+    summary: "Worker turn completed before authoritative verification.",
+    filesChanged: [],
+    verification: [{ command, exitCode: 0, passed: true, evidence: "worker claim" }],
+    notes: "",
+    followUps: [],
+  };
+  const codex: WorkerCodex = {
+    startThread: () => ({
+      id: "thread-verification-cancel",
+      runStreamed: async () => {
+        async function* events(): AsyncGenerator<ThreadEvent> {
+          yield {
+            type: "item.completed",
+            item: { id: "report", type: "agent_message", text: JSON.stringify(report) },
+          };
+        }
+        return { events: events() };
+      },
+    }),
+    resumeThread: () => {
+      throw new Error("not used");
+    },
+  };
+  const controller = new AbortController();
+  const running = executeTask(
+    delegateTaskInputSchema.parse({
+      objective: "Exercise cancellation during independent verification.",
+      effortReason: "The process tree must not outlive its parent task.",
+      acceptanceCriteria: ["Cancellation is authoritative."],
+      verificationCommands: [command],
+      changeIntent: "forbidden",
+      timeoutSeconds: 10,
+    }),
+    { workingDirectory: root, codex, signal: controller.signal },
+  );
+
+  const deadline = Date.now() + 2_000;
+  while (!fs.existsSync(marker) && Date.now() < deadline) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  assert.equal(fs.existsSync(marker), true, "authoritative verification never started");
+  const pid = Number(fs.readFileSync(marker, "utf8"));
+  controller.abort();
+  const result = await running;
+
+  assert.equal(result.attempts?.[0]?.termination.kind, "cancelled");
+  const verification = result.verification.find((run) => run.source === "orchestrator");
+  assert.ok(verification);
+  assert.equal(verification.passed, false);
+  assert.match(verification.output, /verification cancelled/);
+  assert.doesNotMatch(verification.output, /timed out/);
+  assert.throws(() => process.kill(pid, 0), /ESRCH|no such process|not found/i);
+});
+
 // --- Claim checking: stops the parent trusting a bogus PASS -----------------
 
 const REPO = path.resolve("/repo");

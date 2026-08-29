@@ -40,7 +40,7 @@ import {
 } from "./adaptive.js";
 import type { SeamCandidate } from "./seam-plan.js";
 import type { ExecutionShape, RoutingRoute } from "./routing.js";
-import { emitEvent, type EventEmitter } from "./events.js";
+import { emitEvent, isolateEventEmitter, type EventEmitter } from "./events.js";
 import { ContextLifecycleStore } from "./context.js";
 import { ContinuationStore } from "./continuation.js";
 import { HandoffStore } from "./handoff.js";
@@ -51,6 +51,7 @@ import {
 import {
   ContextLifecycleRegistry,
   handleContinueTask,
+  type DelegateTaskHandlerDependencies,
   handleDelegateTask,
   handleDelegateTasks,
   handleExplore,
@@ -190,6 +191,11 @@ export interface WorkflowDependencies {
   makeWorkflowId: () => string;
 }
 
+export type WorkflowOverrides = Partial<WorkflowDependencies> & {
+  /** Low-level seams for exercising the real single-task server handler. */
+  delegateTaskDependencies?: Partial<DelegateTaskHandlerDependencies>;
+};
+
 function makeDefaultWorkflowId(): string {
   return `wf_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -233,11 +239,11 @@ function boundedCount(
 export async function executeWorkflow(
   input: WorkflowInput,
   signal?: AbortSignal,
-  overrides: Partial<WorkflowDependencies> = {},
+  overrides: WorkflowOverrides = {},
 ): Promise<WorkflowOutput> {
   const defaultHandoffStore = overrides.handoffStore ?? new HandoffStore();
   const defaultContinuationStore = overrides.continuationStore ?? new ContinuationStore();
-  const defaultEmit = overrides.emit ?? emitEvent;
+  const defaultEmit = isolateEventEmitter(overrides.emit ?? emitEvent);
   const defaultRegistry =
     overrides.contextRegistry ??
     new ContextLifecycleRegistry({
@@ -246,17 +252,19 @@ export async function executeWorkflow(
       emit: defaultEmit,
     });
 
+  const productionSingleHandler: typeof handleDelegateTask = (task, handlerSignal) =>
+    handleDelegateTask(task, handlerSignal, overrides.delegateTaskDependencies);
   const deps: WorkflowDependencies = {
-    emit: defaultEmit,
     handoffStore: defaultHandoffStore,
     continuationStore: defaultContinuationStore,
     contextRegistry: defaultRegistry,
     handleExplore,
-    handleDelegateTask,
+    handleDelegateTask: productionSingleHandler,
     handleDelegateTasks,
     handleContinueTask,
     makeWorkflowId: makeDefaultWorkflowId,
     ...overrides,
+    emit: defaultEmit,
   };
 
   const workflowId = deps.makeWorkflowId();

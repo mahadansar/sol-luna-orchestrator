@@ -234,9 +234,14 @@ test("lifecycle - batch delegation compaction boundary triggers at post-batch", 
     runBatch: async () => fakeBatchResult,
     emit,
     makeBatchId: () => "b_batch_1",
+    render: () => {
+      throw new Error("batch renderer unavailable");
+    },
   });
 
   assert.equal(response.isError, undefined);
+  assert.match(response.content[0]?.text ?? "", /evidence is preserved/);
+  assert.equal(response.structuredContent?.completionState, "verified-complete");
   const authContext = contextStore.getAuthoritativeContext();
   assert.ok(authContext);
   assert.equal(authContext.turns.length, 1);
@@ -298,10 +303,15 @@ test("lifecycle - continuation compaction boundary records turn and compacts cor
       continueTask: async () => output,
       emit,
       makeBatchId: () => "b_cont_1",
+      render: () => {
+        throw new Error("continuation renderer unavailable");
+      },
     },
   );
 
   assert.equal(response.isError, undefined);
+  assert.match(response.content[0]?.text ?? "", /evidence is preserved/);
+  assert.equal(response.structuredContent?.verdict, "PASS");
   const authContext = contextStore.getAuthoritativeContext();
   assert.ok(authContext);
   assert.equal(authContext.turns.length, 1);
@@ -1054,4 +1064,33 @@ test("a context ingestion failure cannot turn a verified delegation into a tool 
     1,
     "exactly one terminal batch record",
   );
+});
+
+test("throwing telemetry and recording cannot replace authoritative PASS or leak its context lease", async () => {
+  const store = new ContextLifecycleStore();
+  const result = await handleDelegateTask(makeMinimalTask(), undefined, {
+    contextStore: store,
+    contextRegistry: new ContextLifecycleRegistry({
+      continuationStore: new ContinuationStore(),
+      handoffStore: new HandoffStore(),
+    }),
+    handoffStore: new HandoffStore(),
+    continuationStore: new ContinuationStore(),
+    emit: () => {
+      throw new Error("telemetry unavailable");
+    },
+    record: () => {
+      throw new Error("recording unavailable");
+    },
+    delegateToLuna: async (input, _signal, hooks) => {
+      hooks?.onStarted?.(process.cwd());
+      return makeMinimalOutput({ effort: input.effort });
+    },
+    makeBatchId: () => "b_observability_failure",
+  });
+
+  assert.notEqual(result.isError, true);
+  assert.match(result.content[0]!.text, /VERDICT: PASS/);
+  assert.equal(store.getInFlightCount(), 0);
+  assert.equal(store.getAuthoritativeContext()?.turns.length, 1);
 });

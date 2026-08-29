@@ -46,6 +46,7 @@ import { ContinuationStore } from "./continuation.js";
 import { ContextLifecycleRegistry } from "./server.js";
 import { ContextLifecycleStore, createOrchestrationContext } from "./context.js";
 import type { OrchestratorEvent } from "./events.js";
+import { executeTask, type WorkerCodex } from "./worker.js";
 import {
   exportSessionHandoff,
   SESSION_HANDOFF_SCHEMA_VERSION,
@@ -1127,6 +1128,26 @@ test("workflow: emits compact telemetry without prompt text, secrets, tokens, or
   }
 });
 
+test("workflow completion is independent of a throwing telemetry sink", async () => {
+  const deps = setupTestDeps();
+  const output = await executeWorkflow(
+    {
+      objective: "Complete one deterministic delegated workflow despite telemetry outage",
+      executionMode: "single",
+    },
+    undefined,
+    {
+      ...deps,
+      emit: () => {
+        throw new Error("workflow telemetry unavailable");
+      },
+    },
+  );
+
+  assert.equal(output.status, "COMPLETED");
+  assert.equal(output.verified, true);
+});
+
 // --- 18. Context Compaction during Long Workflows ----------------------------
 
 test("workflow: evaluates context pressure and triggers safe compaction during multi-step runs", async () => {
@@ -1488,6 +1509,138 @@ test("an injected context store receives the restored session handoff", async ()
   assert.ok(restored);
   assert.equal(restored!.importedHistory?.handoffId, "sho_test_injected_store");
   assert.equal(restored!.importedHistory?.schemaVersion, SESSION_HANDOFF_SCHEMA_VERSION);
+});
+
+test("workflow composes the real single-delegation handler through authoritative verification", async () => {
+  const emitted: OrchestratorEvent[] = [];
+  const handoffStore = new HandoffStore();
+  const continuationStore = new ContinuationStore();
+  const contextRegistry = new ContextLifecycleRegistry({
+    handoffStore,
+    continuationStore,
+    emit: (event) => emitted.push(event),
+  });
+  const codex: WorkerCodex = {
+    startThread() {
+      return {
+        id: "thread-composed-workflow",
+        async runStreamed() {
+          async function* events(): AsyncGenerator<any> {
+            yield { type: "thread.started", thread_id: "thread-composed-workflow" };
+            yield {
+              type: "item.completed",
+              item: {
+                type: "agent_message",
+                text: JSON.stringify({
+                  status: "PASS",
+                  summary: "Inspected the composed workflow without edits.",
+                  filesChanged: [],
+                  verification: [{ command: 'node -e "process.exit(0)"', passed: true }],
+                  notes: "",
+                  followUps: [],
+                  failureCauses: [],
+                }),
+              },
+            };
+            yield {
+              type: "turn.completed",
+              usage: {
+                input_tokens: 20,
+                cached_input_tokens: 5,
+                output_tokens: 10,
+                reasoning_output_tokens: 2,
+              },
+            };
+          }
+          return { events: events() };
+        },
+      };
+    },
+    resumeThread() {
+      throw new Error("not used");
+    },
+  };
+
+  const fakeSdkDelegate: typeof import("./worker.js").delegateToLuna = async (
+    task,
+    signal,
+    hooks,
+    model,
+    predecessorExecutionId,
+    logicalAttempt,
+  ) => {
+    hooks?.onStarted?.(task.workingDirectory ?? process.cwd());
+    return executeTask(task, {
+      workingDirectory: task.workingDirectory ?? process.cwd(),
+      signal,
+      codex,
+      model,
+      predecessorExecutionId: predecessorExecutionId ?? null,
+      logicalAttempt,
+      onVerificationStart: hooks?.onVerificationStart,
+      onRepairStart: hooks?.onRepairStart,
+      onRepairComplete: hooks?.onRepairComplete,
+      onAttemptStart: hooks?.onAttemptStart,
+      onAttemptComplete: hooks?.onAttemptComplete,
+    });
+  };
+
+  const output = await executeWorkflow(
+    {
+      objective: "Exercise the production-composed single delegation lifecycle",
+      executionMode: "single",
+      tasks: [
+        {
+          objective: "Inspect the production workflow composition without editing files",
+          effort: "medium",
+          effortReason: "A deterministic composed handler path is sufficient",
+          acceptanceCriteria: ["Authoritative verification passes"],
+          allowedFiles: [],
+          forbiddenFiles: [],
+          verificationCommands: ['node -e "process.exit(0)"'],
+          changeIntent: "forbidden",
+          automaticRepair: false,
+          resultDetail: "compact",
+          previousAttempts: [],
+          routingPreflight: {
+            seams: ["composed-single-handler"],
+            seamSize: "substantial",
+            sharedState: "none",
+            coreOverlap: "disjoint",
+            integration: "mechanical",
+            verification: "per-seam",
+          },
+        },
+      ],
+    },
+    undefined,
+    {
+      emit: (event) => emitted.push(event),
+      handoffStore,
+      continuationStore,
+      contextRegistry,
+      makeWorkflowId: () => "wf_composed_real_handler",
+      delegateTaskDependencies: {
+        handoffStore,
+        continuationStore,
+        contextRegistry,
+        delegateToLuna: fakeSdkDelegate,
+        emit: (event) => emitted.push(event),
+        record: () => {},
+        makeBatchId: () => "b_composed_real_handler",
+      },
+    },
+  );
+
+  assert.equal(output.status, "COMPLETED");
+  assert.equal(output.verified, true);
+  assert.equal(
+    output.result && "verdict" in output.result && output.result.verdict,
+    "PASS",
+  );
+  assert.ok(emitted.some((event) => event.type === "worker.started"));
+  assert.ok(emitted.some((event) => event.type === "verification.completed"));
+  assert.equal(emitted.filter((event) => event.type === "batch.completed").length, 1);
 });
 
 test("an installation that renames the worker model still routes its workflows", async () => {

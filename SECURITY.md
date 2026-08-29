@@ -87,6 +87,13 @@ can modify anything the operating-system account permits. An empty, refused,
 skipped, failed, or incomplete final set cannot produce the terminal verified
 batch state.
 
+Timeout and caller cancellation both terminate the active verification process
+tree and wait for that termination before returning. They remain distinct in
+the authoritative evidence. POSIX launches verification in a detached process
+group and signals the group; Windows awaits `taskkill /T /F` and then awaits the
+verification child itself. A cancelled parent therefore does not report
+completion while a known verification command is still running.
+
 ### Workspace boundaries
 
 - `workingDirectory` must be an absolute path to an existing directory.
@@ -109,6 +116,29 @@ batch state.
   turns this off. Nested repositories are covered too — a hook in
   `vendor/x/.git/hooks/` still runs whenever anyone uses git there. `.gitignore`,
   `.gitattributes` and `.github/` are ordinary files and are not matched.
+- Protection checks both the lexical path supplied by the runtime and its
+  canonical target. Nested repositories, worktree `.git` files, and links into
+  control metadata therefore cannot hide a protected component during symlink
+  resolution. The runtime's own continuation path has a narrow internal-only
+  admission for its already-owned `.sol-luna/worktrees/<id>` root; ordinary
+  delegation cannot request that exception.
+
+### Completion, observability, and shutdown
+
+Event and recording sinks are observability only. A sink failure is isolated
+from execution authority and cannot skip lease or workspace cleanup, replace a
+verified result, or publish a second terminal state. If presentation fails after
+completion, the tool returns a minimal message and preserves the authoritative
+result in structured content. Cleanup failure is different: the evidence is
+retained, but the result is marked for supervisor attention because filesystem
+state may remain.
+
+On `SIGINT` or `SIGTERM` the server stops accepting new operations, aborts active
+ones (including queued worker-slot waits and verification subprocesses), waits
+for bounded cleanup, then closes the transport. Capability stores and context
+registries are disposed only after active calls settle. The shutdown bound is 30
+seconds; exceeding it fails closed and leaves admission closed rather than
+allowing a late success.
 
 ### Worker isolation
 

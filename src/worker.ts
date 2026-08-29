@@ -1187,7 +1187,14 @@ async function executeTaskTurn(
       orchestratorRuns = await runVerifications(
         input.verificationCommands,
         workingDirectory,
+        { signal },
       );
+      if (signal?.aborted) {
+        observed.cancelled = true;
+        observed.termination = "cancelled";
+        observed.terminationMessage =
+          "Independent verification was cancelled and its process tree terminated.";
+      }
     } catch (error) {
       const message = `Independent verification failed unexpectedly: ${(error as Error).message}`;
       observed.errors.push(message);
@@ -2010,7 +2017,12 @@ export async function continueToLuna(
     model?: string;
   },
 ): Promise<DelegateTaskOutput> {
-  const workingDirectory = resolveWorkspace(options.workingDirectory);
+  const workingDirectory = resolveWorkspace(
+    options.workingDirectory,
+    undefined,
+    undefined,
+    { allowInternalWorktree: true },
+  );
   const release = await workerSlots.acquire(options.signal);
   try {
     options.hooks?.onStarted?.(workingDirectory);
@@ -2441,6 +2453,8 @@ export async function exploreWithLuna(
   requestedModel: string = LUNA_MODEL,
   options: {
     codex?: WorkerCodex;
+    /** Deterministic exceptional-cleanup seam. */
+    removeSurface?: typeof removeExplorationSurface;
   } = {},
 ): Promise<ExploreOutput> {
   const timeoutSeconds = input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS;
@@ -2458,6 +2472,8 @@ export async function exploreWithLuna(
   }
 
   let surface: ExplorationSurface | null = null;
+  let completedResult: ExploreOutput | null = null;
+  let primaryError: unknown = null;
   try {
     surface = await createExplorationSurface(
       sourceWorkspace,
@@ -2548,7 +2564,7 @@ export async function exploreWithLuna(
 
     hooks.onAttemptComplete?.(attemptEvidence);
 
-    return buildExploreResult({
+    completedResult = buildExploreResult({
       input,
       workingDirectory: surface.path,
       observed,
@@ -2560,9 +2576,27 @@ export async function exploreWithLuna(
       mutations,
       evidenceError,
     });
+    return completedResult;
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
     try {
-      if (surface) await removeExplorationSurface(surface);
+      if (surface) {
+        try {
+          await (options.removeSurface ?? removeExplorationSurface)(surface);
+        } catch (error) {
+          if (completedResult) {
+            completedResult.verdict = "FAILED";
+            completedResult.trustworthy = false;
+            completedResult.errors.push(
+              `Exploration surface cleanup failed after execution: ${(error as Error).message}`,
+            );
+          } else if (!primaryError) {
+            throw error;
+          }
+        }
+      }
     } finally {
       release();
     }

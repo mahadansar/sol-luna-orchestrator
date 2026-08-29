@@ -921,6 +921,122 @@ test("a single delegation that writes a git hook fails on protected control meta
   );
 });
 
+test("nested repository, submodule-like, and nested orchestrator metadata stay protected on disk", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-nested-control-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const workspace = path.join(root, "workspace");
+  fs.mkdirSync(path.join(workspace, "vendor", "submodule", ".git"), { recursive: true });
+  fs.mkdirSync(path.join(workspace, "fixtures", "nested", ".sol-luna"), {
+    recursive: true,
+  });
+  fs.writeFileSync(
+    path.join(workspace, "vendor", "submodule", ".git", "config"),
+    "[core]\n",
+  );
+  fs.writeFileSync(
+    path.join(workspace, "fixtures", "nested", ".sol-luna", "state.json"),
+    "{}\n",
+  );
+
+  const violations = findScopeViolations(
+    [
+      "vendor/submodule/.git/config",
+      "fixtures/nested/.sol-luna/state.json",
+      "ordinary.ts",
+    ],
+    ["**"],
+    [],
+    workspace,
+  );
+
+  assert.equal(violations.length, 2);
+  assert.ok(violations.some((entry) => entry.startsWith("vendor/submodule/.git/")));
+  assert.ok(violations.some((entry) => entry.startsWith("fixtures/nested/.sol-luna/")));
+});
+
+test("a worktree .git file is still metadata while its internal worktree root remains usable", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-worktree-control-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const worktree = path.join(root, ".sol-luna", "worktrees", "task-1");
+  fs.mkdirSync(worktree, { recursive: true });
+  fs.writeFileSync(
+    path.join(worktree, ".git"),
+    "gitdir: /repository/.git/worktrees/task-1\n",
+  );
+
+  assert.throws(() => resolveWorkspace(worktree, [root]), /control metadata/);
+  assert.equal(
+    resolveWorkspace(worktree, [root], undefined, { allowInternalWorktree: true }),
+    fs.realpathSync.native(worktree),
+  );
+  const violations = findScopeViolations([".git", ".git/index"], ["**"], [], worktree);
+  assert.equal(violations.length, 2);
+  assert.ok(
+    violations.every((entry) =>
+      /protected repository or orchestrator control metadata/.test(entry),
+    ),
+  );
+});
+
+test("a workspace rooted at repository or orchestrator metadata is rejected", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-root-control-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, ".git"));
+  fs.mkdirSync(path.join(root, "nested", ".sol-luna"), { recursive: true });
+
+  // Before this guard, changing the workspace to `.git` or nested `.sol-luna`
+  // made their contents appear as ordinary relative files and bypassed the
+  // protected-path matcher entirely.
+  assert.throws(
+    () => resolveWorkspace(path.join(root, ".git"), [root]),
+    /control metadata/,
+  );
+  assert.throws(
+    () => resolveWorkspace(path.join(root, "nested", ".sol-luna"), [root]),
+    /control metadata/,
+  );
+});
+
+test("parent repository metadata cannot be reached after workspace canonicalization", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-parent-repo-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const repository = path.join(root, "repository");
+  const workspace = path.join(repository, "packages", "child");
+  fs.mkdirSync(path.join(repository, ".git"), { recursive: true });
+  fs.mkdirSync(workspace, { recursive: true });
+
+  const resolved = resolveWorkspace(`${workspace}${path.sep}..${path.sep}child`, [root]);
+  assert.equal(resolved, fs.realpathSync.native(workspace));
+  const violations = findScopeViolations(["../../.git/config"], ["**"], [], resolved);
+  assert.equal(violations.length, 1);
+  assert.match(violations[0] ?? "", /outside the workspace/);
+});
+
+test("a metadata symlink cannot be renamed into an ordinary in-workspace path", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-control-link-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const workspace = path.join(root, "workspace");
+  fs.mkdirSync(path.join(workspace, "ordinary"), { recursive: true });
+
+  try {
+    fs.symlinkSync(
+      path.join(workspace, "ordinary"),
+      path.join(workspace, ".git"),
+      "junction",
+    );
+  } catch {
+    t.skip("directory junction creation not permitted on this machine");
+    return;
+  }
+
+  const violations = findScopeViolations([".git/config"], ["**"], [], workspace);
+  assert.equal(violations.length, 1);
+  assert.match(
+    violations[0] ?? "",
+    /protected repository or orchestrator control metadata/,
+  );
+});
+
 test("absolute paths outside the workspace are caught", () => {
   const outside = process.platform === "win32" ? "C:\\Windows\\x.ts" : "/etc/hosts";
   const violations = findScopeViolations([outside], ["**"], [], WORKSPACE);

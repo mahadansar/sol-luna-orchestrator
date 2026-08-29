@@ -95,6 +95,7 @@ export class ContinuationStore {
   private readonly releaseLease?: (lease: WorktreeLease) => void | Promise<void>;
   /** Settles when every lease surrendered by expiry so far has been released. */
   private leaseReleases: Promise<void> = Promise.resolve();
+  private disposed = false;
 
   constructor(options: ContinuationStoreOptions = {}) {
     this.now = options.now ?? Date.now;
@@ -117,6 +118,7 @@ export class ContinuationStore {
     contextKey: string | null = null,
     authoritativeWorkspace: string = workingDirectory,
   ): string {
+    if (this.disposed) throw new Error("Continuation store is shut down.");
     const now = this.now();
     this.prune(now);
 
@@ -147,6 +149,7 @@ export class ContinuationStore {
 
   /** Consume a reference atomically, enforcing expiry and the one-turn bound. */
   consume(reference: string): ContinuationConsumeResult {
+    if (this.disposed) return { status: "unknown" };
     if (!isContinuationReference(reference)) return { status: "invalid" };
 
     const now = this.now();
@@ -239,6 +242,28 @@ export class ContinuationStore {
    */
   whenExpiredLeasesReleased(): Promise<void> {
     return this.leaseReleases;
+  }
+
+  /** Expire every process-local capability and surrender retained leases once. */
+  async dispose(): Promise<void> {
+    if (this.disposed) return this.leaseReleases;
+    this.disposed = true;
+    const records = [...this.active.values(), ...this.leased.values()];
+    this.active.clear();
+    this.leased.clear();
+    this.retired.clear();
+    if (this.releaseLease) {
+      const release = this.releaseLease;
+      for (const record of records) {
+        const lease = record.worktreeLease;
+        if (!lease) continue;
+        record.worktreeLease = null;
+        this.leaseReleases = this.leaseReleases.then(async () => {
+          await Promise.resolve(release(lease));
+        });
+      }
+    }
+    await this.leaseReleases;
   }
 
   /**

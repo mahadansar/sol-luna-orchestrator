@@ -42,6 +42,7 @@ import {
   emitAttemptCompleted,
   emitAttemptStarted,
   emitEvent,
+  isolateEventEmitter,
   type EventEmitter,
 } from "./events.js";
 import {
@@ -151,6 +152,7 @@ export type TaskExecutor = typeof executeTask;
 export type IntegrationVerifier = (
   commands: string[],
   workingDirectory: string,
+  options?: { signal?: AbortSignal },
 ) => Promise<FinalVerificationRun[]>;
 
 export async function runBatch(
@@ -213,6 +215,8 @@ export async function runBatch(
     leaseMaintainer?: typeof maintainWorktreeLease;
     /** Deterministic retention seam; production uses configured policy. */
     keepWorktrees?: WorktreeRetentionPolicy;
+    /** Deterministic exceptional-cleanup seam. */
+    worktreeCleaner?: typeof cleanupWorktree;
     /**
      * Optional call-level routing declaration. Absent means no routing is
      * evaluated and behavior is exactly what it was before preflight existed.
@@ -231,7 +235,7 @@ export async function runBatch(
   const batchId = options.batchId ?? makeBatchId();
   const startedAt = Date.now();
   const mode = options.mode;
-  const emit = options.eventEmitter ?? emitEvent;
+  const emit = isolateEventEmitter(options.eventEmitter ?? emitEvent);
   const computePolicy = options.computePolicy ?? DEFAULT_COMPUTE_POLICY;
   // Parallel mode is the only mode with concurrency to bound; sequential runs
   // one task at a time whatever the policy says.
@@ -833,6 +837,7 @@ export async function runBatch(
       const runs = await (options.integrationVerifier ?? runVerifications)(
         finalCommands,
         workspace,
+        { signal: options.signal },
       );
       integrationVerification.push(
         ...runs.map((run) => ({ ...run, source: "orchestrator" as const })),
@@ -926,7 +931,11 @@ export async function runBatch(
     }
 
     try {
-      const cleanup = await cleanupWorktree(task.worktree, reason, options.keepWorktrees);
+      const cleanup = await (options.worktreeCleaner ?? cleanupWorktree)(
+        task.worktree,
+        reason,
+        options.keepWorktrees,
+      );
       emit({
         type: "worktree.removed",
         batchId,
@@ -1037,6 +1046,14 @@ export async function runBatch(
       const detail = `Worktree lifecycle cleanup failed after execution: ${(error as Error).message}`;
       task.result.error ??= detail;
       task.result.warnings.push(detail);
+      task.result.worktreePath = task.worktree.path;
+      if (task.worktree.lease && !renewalError) {
+        await releaseWorktreeLease(task.worktree.lease).catch((leaseError) => {
+          task.result.warnings.push(
+            `Persistent worktree lease release also failed: ${(leaseError as Error).message}`,
+          );
+        });
+      }
     } finally {
       releaseWorktreeOwnership(task.worktree);
     }
