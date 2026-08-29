@@ -1,10 +1,18 @@
 {
   "schema": "sol-luna/bench/v3-prelaunch-checkpoint@3",
   "title": "Benchmark V3 / freeze 3 pre-launch checkpoint",
-  "generatedAt": "2026-08-29T20:14:38.704Z",
+  "generatedAt": "2026-08-29T19:59:20.619Z",
   "generatedBy": "npm run bench:v3:checkpoint (dist/bench/prelaunch.js)",
   "launchReadiness": "blocked",
   "blockers": [
+    {
+      "id": "freeze-content-commit-not-pinned",
+      "severity": "blocking-procedural",
+      "summary": "Freeze 3 is authored in a working tree, so BENCHMARK_V3_FREEZE_SHA still names the freeze-2 content commit c9b6bbe657a91808c9b91d3f46105f61b3243866.",
+      "why": "A pin cannot name the commit that contains it. Recording the previous review's commit would attribute the campaign to text it did not run under, so assertV3FreezePinned refuses the launch instead.",
+      "ownedBy": "launch operator",
+      "clears": "Commit the frozen bench/V3_METHODOLOGY.md, repin BENCHMARK_V3_FREEZE_SHA to that commit, and set BENCHMARK_V3_FREEZE_SHA_IS_CURRENT to true."
+    },
     {
       "id": "pricing-profile-unverified",
       "severity": "blocking",
@@ -16,19 +24,13 @@
     {
       "id": "working-tree-not-clean",
       "severity": "blocking-procedural",
-      "summary": "2 path(s) differ from the recorded commit, including this checkpoint itself.",
+      "summary": "4 path(s) differ from the recorded commit, including this checkpoint itself.",
       "why": "A V3 launch refuses a dirty tree because the recorded commit would not describe the code that ran.",
       "ownedBy": "launch operator",
       "clears": "Commit the freeze revision and this checkpoint — the methodology requires the checkpoint be retained before live execution — then confirm `git status --porcelain` is empty immediately before launching."
     }
   ],
   "advisories": [
-    {
-      "id": "canonical-verify-not-recorded",
-      "severity": "non-blocking",
-      "summary": "`npm run verify` was not observed by this checkpoint; it must pass immediately before launch.",
-      "impact": "Evidence completeness only. Re-run with --verify-exit <code> to record it."
-    },
     {
       "id": "no-pricing-profile-selection-flag",
       "severity": "non-blocking",
@@ -38,7 +40,7 @@
     {
       "id": "head-is-not-the-production-baseline",
       "severity": "non-blocking",
-      "summary": "HEAD (9092257aad1ec890c45054081b3792de1f44b97b) is not the pinned production baseline df215a170e6a88a6097c56f7ca404358d9d4b050.",
+      "summary": "HEAD (f177b377dfb680b23bc960f75dc37bf9d7beda3c) is not the pinned production baseline df215a170e6a88a6097c56f7ca404358d9d4b050.",
       "impact": "The commit that actually executes is recorded separately in environment.git.commit; a report must not present HEAD as the baseline."
     }
   ],
@@ -288,11 +290,11 @@
     "workingTreeDigest": "0994a7090ffacaa4f59641f36501430047a8215626e87de4f810e254fd8aea4c",
     "digestGate": "pass",
     "digestRecomputedBy": "methodologyDigest() over the committed document",
-    "supersededFreeze2Digest": "0994a7090ffacaa4f59641f36501430047a8215626e87de4f810e254fd8aea4c",
-    "freeze2DigestDiffersAsExpected": false,
-    "pinnedFreezeSha": "9092257aad1ec890c45054081b3792de1f44b97b",
-    "pinnedFreezeShaIsCurrentReview": true,
-    "pinnedFreezeShaSubject": "test",
+    "supersededFreeze2Digest": "af4860bed58f21c103c5f921c4ae3bd561cf2e0943cd1dd12b899a34a4bacc87",
+    "freeze2DigestDiffersAsExpected": true,
+    "pinnedFreezeSha": "c9b6bbe657a91808c9b91d3f46105f61b3243866",
+    "pinnedFreezeShaIsCurrentReview": false,
+    "pinnedFreezeShaSubject": "bench: freeze benchmark v3 methodology",
     "productionBaseline": {
       "version": "0.11.0",
       "sha": "df215a170e6a88a6097c56f7ca404358d9d4b050",
@@ -304,7 +306,7 @@
       "committedAt": "2026-08-29T20:21:53+05:00",
       "packageVersionAtBaseline": "0.11.0"
     },
-    "headCommit": "9092257aad1ec890c45054081b3792de1f44b97b",
+    "headCommit": "f177b377dfb680b23bc960f75dc37bf9d7beda3c",
     "headBranch": "benchmark-v3-wip",
     "headIsProductionBaseline": false,
     "distinction": "holdoutFreezeSha identifies the reviewed methodology; productionBaseline identifies the released product under evaluation. They are different concepts and are never set from one another."
@@ -732,13 +734,13 @@
     ]
   },
   "environment": {
-    "capturedAt": "2026-08-29T20:14:38.706Z",
+    "capturedAt": "2026-08-29T19:59:20.621Z",
     "git": {
-      "commit": "9092257aad1ec890c45054081b3792de1f44b97b",
+      "commit": "f177b377dfb680b23bc960f75dc37bf9d7beda3c",
       "branch": "benchmark-v3-wip",
-      "describe": "v0.11.0-4-g9092257-dirty",
+      "describe": "v0.11.0-2-gf177b37-dirty",
       "workingTreeClean": false,
-      "dirtyPathCount": 2
+      "dirtyPathCount": 4
     },
     "runtime": {
       "nodeVersion": "v26.7.0",
@@ -1815,9 +1817,9 @@
       },
       {
         "command": "npm run verify",
-        "exitCode": null,
-        "result": "not-recorded",
-        "detail": "Not observed by this checkpoint. Re-run with --verify-exit <code> to record the canonical gate's result."
+        "exitCode": 0,
+        "result": "pass",
+        "detail": "Externally observed canonical gate: typecheck, format:check, the full test suite, the protocol smoke, and bench:validate."
       }
     ],
     "deliberatelyNotExecuted": [

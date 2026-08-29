@@ -1282,13 +1282,10 @@ test("the execution-affecting variables the freeze-3 audit found are captured", 
 
 // --- Freeze pin --------------------------------------------------------------
 
-test("a live V3 launch refuses while the freeze pin names the previous review", () => {
+test("the live V3 freeze pin names the current review", () => {
   assert.equal(BENCHMARK_V3_FREEZE_REVISION, 3);
-  // Freeze 3 is authored in a working tree, so its content commit cannot exist
-  // yet and the pin still names freeze 2's.
-  assert.equal(BENCHMARK_V3_FREEZE_SHA_IS_CURRENT, false);
-  assert.throws(() => assertV3FreezePinned(), /freeze 3 has no content commit yet/);
-  assert.throws(() => assertV3FreezePinned(), new RegExp(BENCHMARK_V3_FREEZE_SHA));
+  assert.equal(BENCHMARK_V3_FREEZE_SHA_IS_CURRENT, true);
+  assert.doesNotThrow(() => assertV3FreezePinned());
   assert.doesNotThrow(() =>
     assertV3FreezePinned({ revision: 3, sha: "f".repeat(40), shaIsCurrent: true }),
   );
