@@ -590,7 +590,7 @@ export function exportSessionHandoff(
       : `${SESSION_HANDOFF_PREFIX}${randomBytes(16).toString("hex")}`);
 
   const exportedAt = options.timestamp ?? new Date().toISOString();
-  const sourceVersion = options.sourceVersion ?? "0.10.0";
+  const sourceVersion = options.sourceVersion ?? "0.11.0";
 
   // Aggregate exploration findings across all exploration turns
   const observedFactsMap = new Map<

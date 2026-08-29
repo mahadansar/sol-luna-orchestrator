@@ -6,6 +6,8 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-29
+
 ### Added
 
 - Added P1.1 reasoned failure decisions on top of canonical per-execution
@@ -67,13 +69,17 @@ All notable changes to this project are documented here. Format follows
   evidence, and routing/economic analysis. The P2.4A freeze-2 review and
   deterministic harness closure are complete. No model-backed V3 campaign was
   run; P2.4B remains not executed.
-- Completed the unreleased P1.2 compute-policy/selection, P1.3 context-lifecycle,
+- Completed P1.2 compute-policy/selection, P1.3 context-lifecycle,
   P2.1 read-only explorer, P2.2 informational cross-session handoff, and P2.3
   bounded workflow composition surfaces. Their current acceptance is
-  deterministic only; they are not part of the published v0.10.0 package.
+  deterministic only.
 
 ### Fixed
 
+- Prevented cancellation after a worker's final event from skipping declared
+  authoritative verification and producing a trustworthy PASS.
+- Classified cancellation during authoritative verification as terminal, so it
+  cannot issue a continuation.
 - Gave earned next-action authority an atomic `ready -> reserved -> consumed`
   lifecycle instead of consuming it at contract resolution. Both delegation
   surfaces read an `hdf_` reference before several gates that can still refuse --
@@ -804,7 +810,8 @@ Initial working version, verified end to end.
 development milestones and were never tagged or published, so they have no
 release links.
 
-[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.8.1...v0.9.0

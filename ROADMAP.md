@@ -24,21 +24,21 @@ Cost matters, but it is not the primary objective. The orchestrator should use p
 
 ## Priorities at a glance
 
-| Priority | Item                                                   | Status / dependency                                                           |
-| -------- | ------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| P0       | Context Capsule v2; Compact Evidence Packets           | Shipped in v0.7.0                                                             |
-| P0.2a    | Explicit Change Intent Contracts                       | Shipped in v0.9.0                                                             |
-| P0.3     | Worker Continuation                                    | Shipped in v0.9.0; depends on P0.2a                                           |
-| P0.4     | Bounded Repair Loop                                    | Shipped in v0.9.0; depends on P0.3 and P0.2a                                  |
-| P1.0     | Parent Identity, Billing, and Post-Hoc Cost Foundation | Shipped foundation in v0.9.0; attempt-evidence hardening complete, unreleased |
-| P1.1     | Reasoned Retry and Effort Escalation                   | Complete, unreleased; built on P0.4 and completed P1.0 hardening              |
-| P1.2     | Adaptive Worker Routing and Compute Policy             | Complete, unreleased                                                          |
-| P1.3     | Automatic Context Lifecycle Management                 | Complete, unreleased; depends on P0.1, P0.2, and P0.3                         |
-| P2.1     | Optional Explorer                                      | Complete, unreleased; depends on P1.2                                         |
-| P2.2     | Lightweight Cross-Session Handoff                      | Complete, unreleased; depends on P1.3                                         |
-| P2.3     | End-to-End Automated Workflow                          | Complete, unreleased; depends on P1.2, P1.3, P2.1, and P2.2                   |
-| P2.4A    | Acceptance Harness and Benchmark V3 Methodology        | Complete, unreleased; methodology and harness frozen, no V3 run               |
-| P2.4B    | Benchmark V3 Execution and Mature Acceptance Pass      | NOT EXECUTED; depends on P2.4A and an operator launch decision                |
+| Priority | Item                                                   | Status / dependency                                                         |
+| -------- | ------------------------------------------------------ | --------------------------------------------------------------------------- |
+| P0       | Context Capsule v2; Compact Evidence Packets           | Shipped in v0.7.0                                                           |
+| P0.2a    | Explicit Change Intent Contracts                       | Shipped in v0.9.0                                                           |
+| P0.3     | Worker Continuation                                    | Shipped in v0.9.0; depends on P0.2a                                         |
+| P0.4     | Bounded Repair Loop                                    | Shipped in v0.9.0; depends on P0.3 and P0.2a                                |
+| P1.0     | Parent Identity, Billing, and Post-Hoc Cost Foundation | Shipped foundation in v0.9.0; attempt-evidence hardening shipped in v0.11.0 |
+| P1.1     | Reasoned Retry and Effort Escalation                   | Shipped in v0.11.0; built on P0.4 and completed P1.0 hardening              |
+| P1.2     | Adaptive Worker Routing and Compute Policy             | Shipped in v0.11.0                                                          |
+| P1.3     | Automatic Context Lifecycle Management                 | Shipped in v0.11.0; depends on P0.1, P0.2, and P0.3                         |
+| P2.1     | Optional Explorer                                      | Shipped in v0.11.0; depends on P1.2                                         |
+| P2.2     | Lightweight Cross-Session Handoff                      | Shipped in v0.11.0; depends on P1.3                                         |
+| P2.3     | End-to-End Automated Workflow                          | Shipped in v0.11.0; depends on P1.2, P1.3, P2.1, and P2.2                   |
+| P2.4A    | Acceptance Harness and Benchmark V3 Methodology        | Shipped in v0.11.0; methodology and harness frozen, no V3 run               |
+| P2.4B    | Benchmark V3 Execution and Mature Acceptance Pass      | NOT EXECUTED; depends on P2.4A and an operator launch decision              |
 
 The order is intentional: continuation, repair, failure classification, and
 policy discovery should precede stronger-executor routing. Explorer, handoff,
@@ -59,8 +59,8 @@ is maintained in [`CHANGELOG.md`](CHANGELOG.md):
   may receive one automatic same-thread repair before returning to the parent.
 - **Parent Identity, Billing, and Post-Hoc Cost Foundation (P1.0).** The original
   foundation shipped in v0.9.0 and keeps identity and billing evidence explicit
-  without inventing estimates. The newer attempt-evidence hardening is complete
-  but not yet released; it adds immutable per-execution lineage, factual
+  without inventing estimates. The attempt-evidence hardening shipped in v0.11.0;
+  it adds immutable per-execution lineage, factual
   termination and timing, authoritative-or-unavailable usage, and retained
   post-start failure evidence as inputs for later P1.1 decisions.
 - **Thin Supervisor.** A supporting architectural milestone shipped in v0.10.0.
@@ -71,7 +71,7 @@ See the implementation, tests, [`SOL_RULES.md`](SOL_RULES.md),
 
 ## P1.1 Reasoned Retry and Effort Escalation
 
-**Complete, unreleased.**
+**Shipped in v0.11.0.**
 
 Classify concrete failure evidence before choosing repair, retry, higher effort,
 a stronger authorised executor, or parent takeover. The classifier must
@@ -102,7 +102,7 @@ failures should return to the supervisor rather than burn another worker turn.
 
 ## P1.2 Adaptive Worker Routing and Compute Policy
 
-**Complete, unreleased.**
+**Shipped in v0.11.0.**
 
 Separate user-owned compute policy from supervisor routing. Compute policy
 authorizes worker models, explicit executor ordering, effort ceilings, concurrency,
@@ -174,7 +174,7 @@ only when applicable billing evidence is known; otherwise it remains qualitative
 
 ## P1.3 Automatic Context Lifecycle Management
 
-**Complete, unreleased.**
+**Shipped in v0.11.0.**
 
 Compact repeated tool output, logs, worker turns, and stale context at safe
 handoff, continuation, repair, retry, and review boundaries while retaining
@@ -226,7 +226,7 @@ between claimed and verified results. Depends on P0.1, P0.2, and P0.3.
 
 ## P2.1 Optional Explorer
 
-**Complete, unreleased.**
+**Shipped in v0.11.0.**
 
 Provide an adaptive, bounded, read-only investigation companion (`explore` MCP tool)
 for unfamiliar repositories, dependencies, APIs, or documentation. It returns structured
@@ -277,6 +277,8 @@ Depends on P1.2.
 
 ## P2.2 Lightweight Cross-Session Handoff
 
+**Shipped in v0.11.0.**
+
 Provide an optional, compact, deterministic cross-session handoff artifact containing
 caller-supplied historical context for resuming work across server restarts or separate
 supervisor sessions without replaying raw conversation logs or weakening authority
@@ -325,7 +327,7 @@ evidence. Depends on P1.3.
 
 ## P2.3 End-to-End Automated Workflow
 
-**Complete, unreleased.**
+**Shipped in v0.11.0.**
 
 Provide one bounded supervisor-driven workflow (`executeWorkflow`) that coordinates
 task intake, optional exploration, semantic decomposition, adaptive routing, zero-worker parent
@@ -395,7 +397,7 @@ smoke tests, and security tests still happen as each feature lands.
 
 ### P2.4A Acceptance harness and Benchmark V3 methodology
 
-**Complete, unreleased. Methodology and harness are frozen; no V3 run exists.**
+**Shipped in v0.11.0. Methodology and harness are frozen; no V3 run exists.**
 
 P2.4A fixes what a V3 result will be allowed to mean, before any model-backed
 V3 task is executed:

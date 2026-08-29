@@ -635,7 +635,7 @@ test("parent model and effort guidance stays example-only across surfaces", asyn
     readDoc("examples/codex-config.toml"),
   ]);
   assert.match(readme, /any compatible parent model/i);
-  assert.match(readme, /creator\s+examples?/i);
+  assert.doesNotMatch(readme, /gpt-5\.6-(?:sol|luna)/i);
   const parentSection = configuration.slice(
     configuration.indexOf("## Parent model and effort"),
     configuration.indexOf("## Platform support"),
@@ -665,15 +665,21 @@ test("parent model and effort guidance stays example-only across surfaces", asyn
     /only when[\s\S]*(?:selected parent(?: model)?|parent you picked)[\s\S]*priced above[\s\S]*worker[\s\S]*(?:current|applicable)[\s\S]*(?:pricing )?schedule/i,
   );
   assert.match(rulesCost, /no (?:cost )?saving has been\s+measured/i);
-  assert.match(
-    readme,
-    /exact\s+final\s+Adaptive\s+credit\s+total\s+is\s+unknown[\s\S]*lower\s+bound[\s\S]*at\s+least\s+approximately\s+6\.5%\s+more\s+expensive\s+than\s+Solo/i,
+
+  const benchmarkSection = readme.slice(
+    readme.indexOf("## Benchmark status"),
+    readme.indexOf("## Documentation"),
   );
   assert.match(
-    readme,
-    /Raw\s+tokens\s+remain\s+diagnostics\s+rather\s+than\s+equivalent\s+cost/i,
+    benchmarkSection,
+    /V2[\s\S]{0,160}historical[\s\S]{0,160}bench\/RESULTS\.md/i,
   );
-  assert.match(readme, /docs\/CONFIGURATION\.md#cost/i);
+  assert.match(benchmarkSection, /V3[\s\S]{0,160}bench\/V3_METHODOLOGY\.md/i);
+  assert.match(benchmarkSection, /V3[\s\S]{0,240}\bNOT\s+EXECUTED\b/i);
+  assert.match(
+    benchmarkSection,
+    /v0\.11\.0[\s\S]{0,80}not[\s\S]{0,80}(?:claimed|proven)[\s\S]{0,80}faster[\s\S]{0,40}cheaper[\s\S]{0,40}better[\s\S]{0,40}V3/i,
+  );
 });
 
 test("SOL_RULES carries the runtime's operational distinctions without benchmark narration", async () => {
@@ -856,11 +862,11 @@ test("acceptance ledger owns the current release baseline", async () => {
   const acceptance = await readDoc("docs/FEATURE_ACCEPTANCE.md");
   assert.match(
     acceptance,
-    /published package baseline is\s+`0\.10\.0`|package version is `0\.10\.0`/i,
+    /current release baseline is\s+`0\.11\.0`|package version is `0\.11\.0`/i,
   );
   assert.match(
     acceptance,
-    /current (?:main )?runtime is its release baseline|current development tree is commit-relative work/i,
+    /current (?:main )?runtime is its release baseline|runtime baseline:\*\* v0\.11\.0 release candidate/i,
   );
   assert.match(acceptance, /`npm run verify` passed/i);
   assert.match(

@@ -1,20 +1,16 @@
 # Feature Acceptance Ledger
 
 This is the authoritative current capability, evidence, freshness, and
-confidence ledger for the repository. The published package baseline is
-`0.10.0`; the current development tree is commit-relative work after that
-release and still carries the same package version until the release workflow
-performs a deliberate bump. The development tree adds
-P1.0 attempt-usage and failure-evidence hardening plus P1.1 reasoned failure
-decisions to the Thin Supervisor, terminal batch verification, and bounded
-parallel recovery baseline described below. Shipped history belongs in
+confidence ledger for the repository. The current release baseline is
+`0.11.0`. It adds P1.0 attempt-usage and failure-evidence hardening plus P1.1
+reasoned failure decisions to the Thin Supervisor, terminal batch verification,
+and bounded parallel recovery baseline described below. Shipped history belongs in
 `CHANGELOG.md`; future work belongs in `ROADMAP.md`.
 
 ## Current baseline
 
-- **Runtime baseline:** commit-relative current development tree after the
-  published v0.10.0 Thin Supervisor baseline. Package and lockfile versions
-  remain `0.10.0`; that does not make unreleased features part of v0.10.0.
+- **Runtime baseline:** v0.11.0 release candidate, with package and lockfile
+  versions set to `0.11.0`.
 - **Latest full deterministic validation:** `npm run verify` passed on
   2026-08-29 with no failures and only expected platform-specific skips, plus
   typecheck and the deterministic MCP protocol smoke test. `npm run verify`
