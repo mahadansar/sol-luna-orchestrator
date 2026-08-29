@@ -369,6 +369,22 @@ test("attempt evidence records authoritative success and factual runtime failure
     reasoningOutputTokens: 1,
   });
 
+  const incompleteUsage = await run(async function* () {
+    yield {
+      type: "item.completed",
+      item: { id: "message", type: "agent_message", text: JSON.stringify(report) },
+    };
+    yield {
+      type: "turn.completed",
+      usage: { ...usage, output_tokens: undefined },
+    } as unknown as ThreadEvent;
+  });
+  assert.equal(incompleteUsage.usage, null);
+  assert.deepEqual(incompleteUsage.attempts?.[0]?.usage, {
+    status: "unavailable",
+    reason: "no-turn-completed",
+  });
+
   const turnFailed = await run(async function* () {
     yield { type: "turn.failed", error: { message: "controlled turn failure" } };
   });

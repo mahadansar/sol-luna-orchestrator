@@ -339,6 +339,8 @@ export async function executeWorkflow(
   let routingResult: AdaptiveRoutingResult | null = null;
   let finalTaskResult: DelegateTaskOutput | null = null;
   let finalBatchResult: BatchOutput | null = null;
+  const observedModels: string[] = [];
+  const observedEfforts: Effort[] = [];
   let lastFailureDecision: FailureDecision | null = null;
   let activeContinuationRef: string | null = null;
   let activeHandoffRef: string | null = null;
@@ -736,6 +738,8 @@ export async function executeWorkflow(
 
             if (singleRes.structuredContent) {
               finalTaskResult = singleRes.structuredContent;
+              observedModels.push(finalTaskResult.model);
+              observedEfforts.push(finalTaskResult.effort as Effort);
               activeContinuationRef = finalTaskResult.continuationReference ?? null;
               activeHandoffRef = finalTaskResult.handoffReference ?? null;
               lastFailureDecision = finalTaskResult.failureDecision ?? null;
@@ -817,6 +821,11 @@ export async function executeWorkflow(
 
             if (batchRes.structuredContent) {
               finalBatchResult = batchRes.structuredContent;
+              for (const task of finalBatchResult.tasks) {
+                if (!task.result) continue;
+                observedModels.push(task.result.model);
+                observedEfforts.push(task.result.effort as Effort);
+              }
               details.passed = finalBatchResult.passed;
               details.total = finalBatchResult.taskCount;
               details.completionState = finalBatchResult.completionState;
@@ -997,6 +1006,8 @@ export async function executeWorkflow(
 
           if (contRes.structuredContent) {
             finalTaskResult = contRes.structuredContent;
+            observedModels.push(finalTaskResult.model);
+            observedEfforts.push(finalTaskResult.effort as Effort);
             activeContinuationRef = finalTaskResult.continuationReference ?? null;
             activeHandoffRef = finalTaskResult.handoffReference ?? null;
             lastFailureDecision = finalTaskResult.failureDecision ?? null;
@@ -1069,6 +1080,8 @@ export async function executeWorkflow(
 
           if (escRes.structuredContent) {
             finalTaskResult = escRes.structuredContent;
+            observedModels.push(finalTaskResult.model);
+            observedEfforts.push(finalTaskResult.effort as Effort);
             activeContinuationRef = finalTaskResult.continuationReference ?? null;
             activeHandoffRef = finalTaskResult.handoffReference ?? null;
             lastFailureDecision = finalTaskResult.failureDecision ?? null;
@@ -1174,20 +1187,7 @@ export async function executeWorkflow(
             : `Workflow failed: ${transitions[transitions.length - 1]?.reason ?? "terminal failure"}`;
 
   // Emit workflow completed telemetry
-  const executedModels = Array.from(
-    new Set(
-      finalTaskResult
-        ? [finalTaskResult.model]
-        : (finalBatchResult?.tasks.flatMap((task) =>
-            task.result ? [task.result.model] : [],
-          ) ?? []),
-    ),
-  );
-  const observedEfforts = finalTaskResult
-    ? [finalTaskResult.effort as Effort]
-    : (finalBatchResult?.tasks.flatMap((task) =>
-        task.result ? [task.result.effort as Effort] : [],
-      ) ?? []);
+  const executedModels = Array.from(new Set(observedModels));
   const executedEfforts: Effort[] = Array.from(new Set<Effort>(observedEfforts));
 
   deps.emit({

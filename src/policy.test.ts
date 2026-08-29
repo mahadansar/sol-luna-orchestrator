@@ -581,6 +581,19 @@ test("a released permit hands off to the next waiter exactly once", async () => 
   a();
 });
 
+test("a cancelled semaphore waiter is removed without consuming the next permit", async () => {
+  const slots = new Semaphore(1);
+  const first = await slots.acquire();
+  const controller = new AbortController();
+  const cancelled = slots.acquire(controller.signal);
+  controller.abort();
+  await assert.rejects(cancelled, { name: "AbortError" });
+
+  first();
+  const next = await slots.acquire();
+  next();
+});
+
 // --- Audit regression: a discarded executor ladder must be reportable -------
 
 test("an executor ladder the envelope cannot use is dropped and reported", () => {

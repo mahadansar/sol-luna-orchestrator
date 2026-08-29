@@ -558,6 +558,7 @@ export function resolveBlocker(
 ): OrchestrationContext {
   return {
     ...context,
+    contextProvenance: "current-session",
     blockers: context.blockers.map((blocker) =>
       blocker.id === blockerId ? { ...blocker, resolved: true } : blocker,
     ),
@@ -832,6 +833,7 @@ export function ingestContinuationTurn(
   }
   return {
     ...context,
+    contextProvenance: "current-session",
     blockers,
     lineage: appendNewLineage(context.lineage, lineageFromOutput(turn.output)),
     turns: [
@@ -1022,7 +1024,9 @@ export function isCleanPassResult(result: DelegateTaskOutput): boolean {
     (result.filesChanged ?? []).every((file) => file.observed) &&
     !result.repair?.attempted &&
     !result.recovery?.attempted &&
-    !result.failureDecision &&
+    (!result.failureDecision ||
+      (result.failureDecision.classification === "success" &&
+        result.failureDecision.action === "stop")) &&
     (result.followUps?.length ?? 0) === 0 &&
     (result.reviewChecklist?.length ?? 0) === 0 &&
     authoritative.length > 0 &&
@@ -1040,7 +1044,6 @@ export function isCleanBatchResult(batch: BatchOutput): boolean {
     (batch.integrationConflicts?.length ?? 0) === 0 &&
     (batch.scopeConflicts?.length ?? 0) === 0 &&
     (batch.warnings?.length ?? 0) === 0 &&
-    (batch.reviewChecklist?.length ?? 0) === 0 &&
     batch.integrated &&
     (batch.integrationVerification?.length ?? 0) > 0 &&
     batch.integrationVerification.every(
@@ -1746,32 +1749,25 @@ export function compactContext(
       rulesApplied,
     },
   };
-  let result = preliminary;
-  for (let iteration = 0; iteration < 10; iteration++) {
-    const compactedSizeBytes = byteLength(result);
-    const reductionRatio =
-      originalSizeBytes === 0
-        ? 0
-        : Math.max(0, (originalSizeBytes - compactedSizeBytes) / originalSizeBytes);
-    const next: CompactedContext = {
-      ...result,
-      stats: {
-        ...result.stats,
-        compactedSizeBytes,
-        sizeDeltaBytes: compactedSizeBytes - originalSizeBytes,
-        reductionRatio: Number(reductionRatio.toFixed(4)),
-      },
-    };
-    if (
-      next.stats.compactedSizeBytes === result.stats.compactedSizeBytes &&
-      next.stats.sizeDeltaBytes === result.stats.sizeDeltaBytes &&
-      next.stats.reductionRatio === result.stats.reductionRatio
-    ) {
-      return next;
-    }
-    result = next;
-  }
-  return result;
+  // Measure a normalized projection whose three self-describing size fields are
+  // zero. Measuring the final JSON recursively can have no fixed point at a
+  // decimal-width boundary (for example, writing 4329 makes the JSON 4330 bytes,
+  // while writing 4330 makes it 4329). The normalized form is exact,
+  // deterministic, and directly comparable across projections.
+  const compactedSizeBytes = byteLength(preliminary);
+  const reductionRatio =
+    originalSizeBytes === 0
+      ? 0
+      : Math.max(0, (originalSizeBytes - compactedSizeBytes) / originalSizeBytes);
+  return {
+    ...preliminary,
+    stats: {
+      ...preliminary.stats,
+      compactedSizeBytes,
+      sizeDeltaBytes: compactedSizeBytes - originalSizeBytes,
+      reductionRatio: Number(reductionRatio.toFixed(4)),
+    },
+  };
 }
 
 // ============================================================================

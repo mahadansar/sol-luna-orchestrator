@@ -72,19 +72,23 @@ export function runGit(
   }
 
   return new Promise((resolve) => {
-    const child = spawn(executable, args, {
-      cwd,
-      shell: false,
-      windowsHide: true,
-      // Keep git from opening editors, pagers, or credential prompts: this runs
-      // unattended and a blocked prompt would hang the batch.
-      env: withoutCwdExecutableLookup({
-        ...process.env,
-        GIT_TERMINAL_PROMPT: "0",
-        GIT_OPTIONAL_LOCKS: "0",
-        GIT_PAGER: "cat",
-      }),
-    });
+    const child = spawn(
+      executable,
+      ["-c", "core.fsmonitor=false", "-c", "diff.external=", ...args],
+      {
+        cwd,
+        shell: false,
+        windowsHide: true,
+        // Keep git from opening editors, pagers, or credential prompts: this runs
+        // unattended and a blocked prompt would hang the batch.
+        env: withoutCwdExecutableLookup({
+          ...process.env,
+          GIT_TERMINAL_PROMPT: "0",
+          GIT_OPTIONAL_LOCKS: "0",
+          GIT_PAGER: "cat",
+        }),
+      },
+    );
 
     let stdout = "";
     let stderr = "";
@@ -310,7 +314,10 @@ export async function collectWorktreeChanges(
 
   // A failed diff is missing evidence, not an empty successful diff. Let the
   // caller retain the worktree and surface an explicit evidence-scan failure.
-  const diff = await run(["diff", "HEAD"], worktreePath);
+  const diff = await run(
+    ["diff", "--no-ext-diff", "--no-textconv", "HEAD"],
+    worktreePath,
+  );
   return { files, diff };
 }
 

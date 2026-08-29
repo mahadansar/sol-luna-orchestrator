@@ -69,7 +69,7 @@ import {
   worktreeMetadataQueue,
   WorktreeUnavailableError,
 } from "./worktree.js";
-import { executeTask, type WorkerCodex } from "./worker.js";
+import { executeTask, workerSlots, type WorkerCodex } from "./worker.js";
 import type { ThreadEvent } from "@openai/codex-sdk";
 
 /**
@@ -2422,6 +2422,35 @@ test("mid-flight cancellation stops the remaining sequential tasks", async () =>
   }
 });
 
+test("sequential cancellation removes a task queued for a worker slot", async () => {
+  const repo = await makeRepo();
+  const releases = await Promise.all(
+    Array.from({ length: MAX_PARALLEL }, () => workerSlots.acquire()),
+  );
+  const controller = new AbortController();
+  let calls = 0;
+  try {
+    const pending = runBatch([makeTask()], {
+      mode: "sequential",
+      workingDirectory: repo,
+      signal: controller.signal,
+      executor: async () => {
+        calls += 1;
+        return makeOutput();
+      },
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    controller.abort();
+    const result = await pending;
+
+    assert.equal(calls, 0, describeBatch(result));
+    assert.equal(result.tasks[0]?.state, "cancelled", describeBatch(result));
+  } finally {
+    for (const release of releases) release();
+    await cleanupRepo(repo);
+  }
+});
+
 test("a late abort does not rewrite a completed batch as cancelled", async () => {
   const repo = await makeRepo();
   try {
@@ -3405,6 +3434,69 @@ test("partial integration retains truthful evidence after an earlier file applie
       ).catch(() => undefined);
     }
     await cleanupRepo(repo);
+  }
+});
+
+test("parallel integration refuses a destination redirected outside the workspace", async (t) => {
+  const repo = await makeRepo();
+  const outside = await fs.mkdtemp(
+    path.join(os.tmpdir(), "sol-luna-integration-outside-"),
+  );
+  const redirectedDirectory = path.join(repo, "src", "redirected");
+  try {
+    try {
+      await fs.symlink(
+        outside,
+        redirectedDirectory,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+    } catch {
+      t.skip("directory link creation is unavailable on this machine");
+      return;
+    }
+    await fs.rm(redirectedDirectory, { force: true });
+
+    const result = await runBatch([makeTask({ allowedFiles: ["src/redirected/**"] })], {
+      mode: "parallel",
+      workingDirectory: repo,
+      executor: async (input, execOptions) => {
+        const target = path.join(
+          execOptions.workingDirectory,
+          "src",
+          "redirected",
+          "payload.ts",
+        );
+        await fs.mkdir(path.dirname(target), { recursive: true });
+        await fs.writeFile(target, "escaped\n", "utf8");
+        await fs.symlink(
+          outside,
+          redirectedDirectory,
+          process.platform === "win32" ? "junction" : "dir",
+        );
+        return makeOutput({
+          effort: input.effort,
+          filesChanged: [
+            {
+              path: "src/redirected/payload.ts",
+              kind: "add",
+              why: "test",
+              observed: true,
+            },
+          ],
+        });
+      },
+    });
+
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.ok(
+      result.warnings.some((warning) => /destination resolves outside/i.test(warning)),
+      describeBatch(result),
+    );
+    await assert.rejects(fs.stat(path.join(outside, "payload.ts")));
+  } finally {
+    await fs.rm(redirectedDirectory, { force: true }).catch(() => undefined);
+    await cleanupRepo(repo);
+    await fs.rm(outside, { recursive: true, force: true });
   }
 });
 
@@ -4924,6 +5016,35 @@ test("a sequential scope violation is reported as already-in-place, not withheld
     assert.equal(
       events.some((event) => event.type === "integration.blocked"),
       false,
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("sequential Git evidence catches an out-of-scope edit omitted by the executor result", async () => {
+  const repo = await makeRepo();
+  try {
+    const result = await runBatch([makeTask({ allowedFiles: ["src/owned/**"] })], {
+      mode: "sequential",
+      workingDirectory: repo,
+      executor: fakeExecutor({
+        writes: () => ({ "src/elsewhere/hidden.ts": "hidden\n" }),
+        output: () => ({ filesChanged: [] }),
+      }),
+    });
+
+    const task = result.tasks[0]!;
+    assert.equal(task.result?.verdict, "FAILED", describeBatch(result));
+    assert.ok(
+      task.result?.scopeViolations.some((violation) =>
+        /src\/elsewhere\/hidden\.ts.*outside allowedFiles/i.test(violation),
+      ),
+      describeBatch(result),
+    );
+    assert.ok(
+      task.changedFiles.includes("src/elsewhere/hidden.ts"),
+      describeBatch(result),
     );
   } finally {
     await cleanupRepo(repo);

@@ -34,8 +34,43 @@ import {
 import { WorkspaceError, resolveWorkspace } from "./workspace.js";
 import { buildDelegationResult, buildExploreResult } from "./worker.js";
 import { delegateTaskInputSchema } from "./contract.js";
+import { collectWorktreeChanges, runGit } from "./git.js";
 
 const POLICY: CommandPolicy = { allowed: DEFAULT_ALLOWED_EXECUTABLES };
+
+test("git evidence collection disables repository-controlled external diff execution", async () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-git-evidence-"));
+  const canary = path.join(repo, "canary.txt");
+  const helper = path.join(
+    repo,
+    process.platform === "win32" ? "external.cmd" : "external.sh",
+  );
+  try {
+    await runGit(["init"], repo);
+    await runGit(["config", "user.email", "test@example.invalid"], repo);
+    await runGit(["config", "user.name", "Security Test"], repo);
+    fs.writeFileSync(path.join(repo, "tracked.txt"), "before\n", "utf8");
+    await runGit(["add", "tracked.txt"], repo);
+    await runGit(["commit", "-m", "initial"], repo);
+
+    fs.writeFileSync(
+      helper,
+      process.platform === "win32"
+        ? `@echo canary> "${canary}"\r\n@exit /b 0\r\n`
+        : `#!/bin/sh\nprintf canary > "${canary}"\n`,
+      "utf8",
+    );
+    if (process.platform !== "win32") fs.chmodSync(helper, 0o755);
+    await runGit(["config", "diff.external", helper], repo);
+    fs.writeFileSync(path.join(repo, "tracked.txt"), "after\n", "utf8");
+
+    const evidence = await collectWorktreeChanges(repo);
+    assert.match(evidence.diff, /tracked\.txt/);
+    assert.equal(fs.existsSync(canary), false);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
 
 // --- Command parsing --------------------------------------------------------
 
@@ -333,6 +368,13 @@ function plantImposter(directory: string, name: string, marker: string): void {
   fs.chmodSync(file, 0o755);
 }
 
+function prependPath(env: NodeJS.ProcessEnv, entry: string): void {
+  const pathKeys = Object.keys(env).filter((key) => key.toUpperCase() === "PATH");
+  const inherited = pathKeys.map((key) => env[key]).find(Boolean) ?? "";
+  for (const key of pathKeys) delete env[key];
+  env.PATH = `${entry}${path.delimiter}${inherited}`;
+}
+
 test("a file planted in the workspace cannot stand in for an allowlisted tool", async (t) => {
   // SECURITY.md: "a repo-local `./npm` cannot hijack the real one". The lexical
   // check in `parseCommand` only refuses an executable that *spells* a path;
@@ -351,7 +393,7 @@ test("a file planted in the workspace cannot stand in for an allowlisted tool", 
   // test reproduces the default rather than the incidental configuration.
   delete env.NoDefaultCurrentDirectoryInExePath;
   // The POSIX equivalent of the same exposure.
-  env.PATH = `.${path.delimiter}${env.PATH ?? ""}`;
+  prependPath(env, ".");
 
   const result = await runVerificationCommand("npm --version", workspace, {
     mode: "allowlist",
@@ -364,6 +406,7 @@ test("a file planted in the workspace cannot stand in for an allowlisted tool", 
     /HIJACKED-BY-WORKSPACE/,
     "the workspace copy must never be the file that runs",
   );
+  assert.equal(result.exitCode, 0, result.output);
 });
 
 test("a workspace imposter cannot satisfy an operator-added allowlist entry either", async (t) => {
@@ -373,7 +416,7 @@ test("a workspace imposter cannot satisfy an operator-added allowlist entry eith
 
   const env = { ...process.env };
   delete env.NoDefaultCurrentDirectoryInExePath;
-  env.PATH = `.${path.delimiter}${env.PATH ?? ""}`;
+  prependPath(env, ".");
 
   const result = await runVerificationCommand("sol-luna-audit-probe", workspace, {
     mode: "allowlist",
@@ -420,7 +463,7 @@ test("Windows .cmd launchers receive arguments verbatim, not as cmd.exe syntax",
 
   const env = { ...process.env };
   delete env.NoDefaultCurrentDirectoryInExePath;
-  env.PATH = `${toolDirectory}${path.delimiter}${env.PATH ?? ""}`;
+  prependPath(env, toolDirectory);
   env.SOL_LUNA_AUDIT_CANARY = "LEAKED-ENV-VALUE";
 
   const hostile = [

@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import picomatch from "picomatch";
 import {
@@ -61,6 +62,7 @@ import {
   Semaphore,
 } from "./worker.js";
 import {
+  defaultRealPathResolver,
   findScopeViolations,
   PROTECTED_CONTROL_PATHS,
   PROTECTED_CONTROL_VIOLATION,
@@ -84,6 +86,7 @@ import {
 } from "./worktree.js";
 import { resolveWorkspace } from "./workspace.js";
 import { CONTINUATION_TTL_MS } from "./continuation.js";
+import { collectWorktreeChanges } from "./git.js";
 import {
   runVerifications,
   type VerificationRun as FinalVerificationRun,
@@ -1162,16 +1165,88 @@ async function runSequential(
       markCancelled(batchId, task, emit);
       continue;
     }
-    const release = await workerSlots.acquire();
+    const before = await snapshotSequentialEvidence(workspace);
+    let release: (() => void) | null = null;
     try {
+      release = await workerSlots.acquire(signal);
       await runOne(batchId, task, workspace, run, emit, signal, true, {
         attempt: task.result.attempt ?? 1,
         predecessorExecutionId: task.predecessorExecutionId ?? null,
       });
+      if (before && task.result.result) {
+        const after = await snapshotSequentialEvidence(workspace);
+        if (!after) {
+          const detail = "Sequential Git evidence scan failed after worker execution.";
+          task.result.result.verdict = "FAILED";
+          task.result.result.trustworthy = false;
+          task.result.result.errors.push(detail);
+          task.result.error = detail;
+          task.state = "failed";
+          task.result.state = "failed";
+        } else {
+          const changed = changedSequentialPaths(before, after).map((file) => ({
+            path: file,
+            kind: "sequential-git",
+          }));
+          task.result.result = reconcileParallelWorktreeEvidence(
+            task.input,
+            task.result.result,
+            workspace,
+            changed,
+          );
+          task.result.changedFiles = task.result.result.filesChanged
+            .filter((file) => file.observed)
+            .map((file) => file.path);
+        }
+      }
+    } catch (error) {
+      if (signal?.aborted) {
+        markCancelled(batchId, task, emit);
+        continue;
+      }
+      throw error;
     } finally {
-      release();
+      release?.();
     }
   }
+}
+
+async function snapshotSequentialEvidence(
+  workspace: string,
+): Promise<Map<string, string> | null> {
+  try {
+    const outcome = await collectWorktreeChanges(workspace);
+    const snapshot = new Map<string, string>();
+    for (const file of outcome.files) {
+      const target = path.join(workspace, ...file.path.split("/"));
+      const stat = await fs.lstat(target).catch(() => null);
+      if (!stat) {
+        snapshot.set(file.path, `${file.status}:missing`);
+      } else if (stat.isSymbolicLink()) {
+        snapshot.set(file.path, `${file.status}:link:${await fs.readlink(target)}`);
+      } else if (stat.isFile()) {
+        const digest = createHash("sha256")
+          .update(await fs.readFile(target))
+          .digest("hex");
+        snapshot.set(file.path, `${file.status}:file:${digest}`);
+      } else {
+        snapshot.set(file.path, `${file.status}:${stat.mode}:${stat.size}`);
+      }
+    }
+    return snapshot;
+  } catch {
+    // Sequential mode deliberately supports directories that are not Git
+    // repositories. Runtime observations remain the evidence source there.
+    return null;
+  }
+}
+
+function changedSequentialPaths(
+  before: ReadonlyMap<string, string>,
+  after: ReadonlyMap<string, string>,
+): string[] {
+  const paths = new Set([...before.keys(), ...after.keys()]);
+  return [...paths].filter((file) => before.get(file) !== after.get(file)).sort();
 }
 
 /** Tasks run concurrently, each in its own worktree. */
@@ -1268,9 +1343,11 @@ async function runParallel(
         markCancelled(batchId, task, emit);
         return;
       }
-      const policyRelease = await policySlots.acquire();
-      const release = await workerSlots.acquire();
+      let policyRelease: (() => void) | null = null;
+      let release: (() => void) | null = null;
       try {
+        policyRelease = await policySlots.acquire(signal);
+        release = await workerSlots.acquire(signal);
         if (signal?.aborted) {
           markCancelled(batchId, task, emit);
           return;
@@ -1324,6 +1401,10 @@ async function runParallel(
           });
         }
       } catch (error) {
+        if (signal?.aborted) {
+          markCancelled(batchId, task, emit);
+          return;
+        }
         const detail = `Post-execution evidence lifecycle failed: ${(error as Error).message}`;
         task.state = "failed";
         task.result.state = "failed";
@@ -1349,8 +1430,8 @@ async function runParallel(
           attempt: task.result.attempt ?? 1,
         });
       } finally {
-        release();
-        policyRelease();
+        release?.();
+        policyRelease?.();
       }
     }),
   );
@@ -1650,9 +1731,11 @@ async function recoverParallel(
       const predecessorExecutionId = task.result.attempts?.at(-1)?.executionId ?? null;
       const executionId = createExecutionId();
       const startedAt = Date.now();
-      const policyRelease = await policySlots.acquire();
-      const release = await workerSlots.acquire();
+      let policyRelease: (() => void) | null = null;
+      let release: (() => void) | null = null;
       try {
+        policyRelease = await policySlots.acquire(signal);
+        release = await workerSlots.acquire(signal);
         task.recovery = { ...decision, recoveryAttempt: attempt };
         setRecoveryMetadata(task, task.recovery);
         task.result.attempt = attempt;
@@ -1769,6 +1852,7 @@ async function recoverParallel(
           predecessorExecutionId,
         });
       } catch (error) {
+        if (signal?.aborted) return;
         const detail = `Post-recovery evidence lifecycle failed: ${(error as Error).message}`;
         const recoveryDurationSeconds = Math.round((Date.now() - startedAt) / 1000);
         const recoveryEvidence = task.result.attempts?.find(
@@ -1835,8 +1919,8 @@ async function recoverParallel(
           predecessorExecutionId,
         });
       } finally {
-        release();
-        policyRelease();
+        release?.();
+        policyRelease?.();
       }
     }),
   );
@@ -2264,17 +2348,37 @@ async function integrateWorktrees(
       const destination = path.join(workspace, ...file.split("/"));
 
       try {
+        const resolvedDestination = defaultRealPathResolver(destination);
+        const destinationScopeViolations = findScopeViolations(
+          [resolvedDestination],
+          task.input.allowedFiles,
+          task.input.forbiddenFiles,
+          workspace,
+        );
+        if (destinationScopeViolations.length > 0) {
+          warnings.push(
+            `Refused to integrate ${file} from ${task.taskId}: the destination resolves ` +
+              `outside its authorised workspace scope (${destinationScopeViolations.join("; ")}).`,
+          );
+          emit({
+            type: "integration.blocked",
+            batchId,
+            taskId: task.taskId,
+            reason: "scope-violation",
+          });
+          continue;
+        }
         const stat = await fs.lstat(source).catch(() => null);
         if (!stat) {
           // The worker deleted it; mirror that.
-          await fs.rm(destination, { force: true });
+          await fs.rm(resolvedDestination, { force: true });
           applied += 1;
           continue;
         }
         if (stat.isDirectory()) continue;
 
-        await fs.mkdir(path.dirname(destination), { recursive: true });
-        await fs.copyFile(source, destination);
+        await fs.mkdir(path.dirname(resolvedDestination), { recursive: true });
+        await fs.copyFile(source, resolvedDestination);
         applied += 1;
       } catch (error) {
         warnings.push(

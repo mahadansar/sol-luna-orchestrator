@@ -151,7 +151,9 @@ export function resolveExecutable(
   // Windows environment lookup is case-insensitive; Node preserves whatever
   // case the parent used, so find the key rather than assuming `PATH`.
   const pathKey = isWindows
-    ? (Object.keys(env).find((key) => key.toUpperCase() === "PATH") ?? "PATH")
+    ? Object.hasOwn(env, "PATH")
+      ? "PATH"
+      : (Object.keys(env).find((key) => key.toUpperCase() === "PATH") ?? "PATH")
     : "PATH";
   const directories = usablePathEntries(env[pathKey], delimiter, paths);
 
@@ -188,5 +190,18 @@ export function resolveExecutable(
 export function withoutCwdExecutableLookup<T extends NodeJS.ProcessEnv>(
   env: T,
 ): T & Record<string, string> {
-  return { ...env, [NO_CWD_IN_EXE_PATH_ENV]: "1" } as T & Record<string, string>;
+  const result = { ...env } as NodeJS.ProcessEnv;
+  if (process.platform === "win32") {
+    const pathKeys = Object.keys(result).filter((key) => key.toUpperCase() === "PATH");
+    const selectedPathKey = pathKeys.includes("PATH") ? "PATH" : pathKeys[0];
+    const pathValue = selectedPathKey ? result[selectedPathKey] : undefined;
+    for (const key of pathKeys) delete result[key];
+    if (pathValue !== undefined) result.PATH = pathValue;
+
+    for (const key of Object.keys(result)) {
+      if (key.toUpperCase() === NO_CWD_IN_EXE_PATH_ENV.toUpperCase()) delete result[key];
+    }
+  }
+  result[NO_CWD_IN_EXE_PATH_ENV] = "1";
+  return result as T & Record<string, string>;
 }

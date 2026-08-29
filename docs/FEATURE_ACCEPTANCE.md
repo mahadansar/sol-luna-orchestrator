@@ -13,7 +13,7 @@ parallel recovery baseline described below. Shipped history belongs in
 - **Runtime baseline:** commit-relative current main for v0.10.0 after the Thin
   Supervisor work above. Package and lockfile versions are `0.10.0`.
 - **Latest full deterministic validation:** `npm run verify` passed on
-  2026-08-29 with **886/889 tests passed**, no failures and three expected
+  2026-08-29 with **971/974 tests passed**, no failures and three expected
   platform-specific Windows skips, plus typecheck and the deterministic MCP
   protocol smoke test. The count includes the 31 P2.4A acceptance-harness tests
   in `src/bench/harness.test.ts`. `npm run bench:v3:validate` also passed: every
@@ -54,13 +54,13 @@ parallel recovery baseline described below. Shipped history belongs in
 | Bounded parallel automatic recovery                     | PASS     | PASS          | PASS          | Strong        |
 | P1.0 parent/pricing foundation                          | PASS     | PASS          | N/A           | Strong        |
 | P1.0 per-execution failure and usage evidence           | PASS     | DEEP PASS     | N/A           | Strong        |
-| P1.1 reasoned retry and effort escalation decisions     | PASS     | DEEP PASS     | N/A           | Strong        |
-| P1.2 user-owned compute policy and enforcement          | PASS     | PASS          | N/A           | Strong        |
-| P1.2 adaptive routing and compute selection             | PASS     | PASS          | N/A           | Strong        |
-| P1.3 Context lifecycle management (P1.3A/B/C)           | PASS     | PASS          | N/A           | Strong        |
-| P2.1 Optional Explorer                                  | PASS     | PASS          | N/A           | Strong        |
-| P2.2 Lightweight Cross-Session Handoff                  | PASS     | PASS          | N/A           | Strong        |
-| P2.3 End-to-End Automated Workflow                      | PASS     | DEEP PASS     | N/A           | Strong        |
+| P1.1 reasoned retry and effort escalation decisions     | PASS     | DEEP PASS     | NOT TESTED    | Strong        |
+| P1.2 user-owned compute policy and enforcement          | PASS     | PASS          | NOT TESTED    | Strong        |
+| P1.2 adaptive routing and compute selection             | PASS     | PASS          | NOT TESTED    | Strong        |
+| P1.3 Context lifecycle management (P1.3A/B/C)           | PASS     | PASS          | NOT TESTED    | Strong        |
+| P2.1 Optional Explorer                                  | PASS     | PASS          | NOT TESTED    | Strong        |
+| P2.2 Lightweight Cross-Session Handoff                  | PASS     | PASS          | NOT TESTED    | Strong        |
+| P2.3 End-to-End Automated Workflow                      | PASS     | PASS          | NOT TESTED    | Basic         |
 | `failureCauses` and verification contradiction handling | PASS     | PASS          | PASS          | Strong        |
 
 Dates, provenance, dependencies, and retest triggers are recorded below. A live
@@ -141,7 +141,7 @@ it. Clean verified PASS paths omit only successful command output while retainin
 provenance, counts, changed files, and risks. Compact projections report only the count and
 state of authority whose latest live registry status is issued and unconsumed; capability values
 are never exposed. P1.3B adds deterministic context pressure metrics (exact
-UTF-8 byte size, turn distribution, exactly removable narration/tool-prose bytes, exact compact-projection
+UTF-8 byte size, turn distribution, exactly removable narration/tool-prose bytes, normalized compact-projection
 reclaimable bytes, and complete provider-reported token usage) and a configurable trigger policy. Cached
 input remains a subset of provider input, reasoning output remains a subset of provider output, and any
 unavailable constituent keeps aggregate usage unknown. The evaluator accepts resolved configuration and
@@ -203,7 +203,7 @@ behavior, malformed payload rejection, stale handoff handling, bounded output, p
 preservation, and lifecycle overwrite refusal. No model-backed benchmark is claimed.
 
 P2.3 End-to-End Automated Workflow (`src/workflow.ts`, `src/workflow.test.ts`, `src/events.ts`)
-is recorded with **DEEP PASS** deterministic coverage and **Strong** confidence. The capstone workflow
+is recorded with **PASS** deterministic coverage and **Basic** confidence. The capstone workflow
 engine provides one bounded supervisor-driven coordinator (`executeWorkflow`) that composes the
 P1 and P2 primitives across task assessment, optional exploration, seam planning, adaptive routing,
 zero-worker parent takeover, single and batch execution, authoritative verification, P1.1 failure
@@ -221,13 +221,15 @@ safe post-delegation context compaction. Handler-owned repair and recovery remai
 the workflow neither re-verifies nor reimplements them. Unrecoverable verification failures, scope violations, untrusted
 results, or missing capabilities yield cleanly to `PARENT_TAKEOVER`. Telemetry events (`workflow.started`,
 `workflow.transition`, `workflow.completed`) contain only allowlisted structural fields and distinguish
-requested, recommended, and executed compute. The exact 26-test file contains 25 workflow scenarios
+requested, recommended, and executed compute. The 30-test file contains 29 workflow scenarios
 and one report renderer. It proves zero-worker parent takeover, advisory explorer-to-delegation,
 single delegation, parallel batches, sequential batches, repair, recovery, continuations, effort escalation,
 stronger-executor fallback via explicit `allowedModels` + `executorOrder`, compact authoritative evidence
 on the normal thin-handoff path, failed verification parent takeover,
 scope violation fail-closed takeover, external cancellation, concurrent isolation, fail-closed restart semantics,
-step bound limits, telemetry privacy, and multi-step context compaction. No model-backed benchmark is claimed.
+step bound limits, telemetry privacy, and multi-step context compaction. Most coordinator tests inject handler
+results; they do not prove real server capability consumption and lifecycle transitions as one composed path.
+No model-backed benchmark is claimed.
 
 The terminal handoff protocol defaults clean verified PASS responses to compact
 text without `structuredContent`. A batch reruns the deduplicated declared checks
@@ -286,18 +288,15 @@ Vocabulary is the ledger's own: **N/A**, **NOT TESTED**, **PARTIAL**, **PASS**,
 | P1.3C Live context lifecycle integration                  | PASS          | NOT TESTED        | NOT TESTED          | `src/context-lifecycle.test.ts`                                                                                |
 | P2.1 Optional Explorer                                    | PASS          | NOT TESTED        | NOT TESTED          | `src/explore.test.ts`, `src/security.test.ts`                                                                  |
 | P2.2 Lightweight Cross-Session Handoff                    | PASS          | NOT TESTED        | NOT TESTED          | `src/session-handoff.test.ts`                                                                                  |
-| P2.3 End-to-End Automated Workflow                        | DEEP PASS     | NOT TESTED        | NOT TESTED          | `src/workflow.test.ts` (26 tests)                                                                              |
+| P2.3 End-to-End Automated Workflow                        | PASS          | NOT TESTED        | NOT TESTED          | `src/workflow.test.ts` (30 tests; handler seams injected)                                                      |
 | Benchmark harness and acceptance methodology (P2.4A)      | PASS          | N/A               | N/A                 | `src/bench.test.ts`, `src/bench/harness.test.ts`, `src/bench/v3-analysis.test.ts`, `src/bench/credits.test.ts` |
 
 ### Reading this table against the matrix above
 
-The current capability matrix records **N/A** in its live column for the P1.1
-through P2.3 rows. The accurate reading is **NOT TESTED**: live evidence is
-applicable to those runtime behaviours, and no live campaign has exercised them.
-`N/A` is reserved here for capabilities where a live turn genuinely cannot
-produce the evidence, such as post-hoc credit arithmetic. The matrix rows are
-left as written to avoid rewriting historical entries; this section is
-authoritative on the distinction.
+The current matrix and this acceptance boundary both use **NOT TESTED** for
+applicable live behaviour that has no live campaign. **N/A** is reserved for
+capabilities where a live turn cannot produce the evidence, such as post-hoc
+credit arithmetic.
 
 `PARTIAL` in the benchmark column means a V1 or V2 campaign exercised the path
 incidentally while measuring something else. It is not a performance claim about
@@ -319,8 +318,9 @@ that capability.
 - **V2 evidence is not V3 evidence.** It measured an earlier architecture on a
   different suite under a different configuration, and the two are not two
   samples of one experiment.
-- **The deterministic suite is not a coverage claim.** No fresh whole-system
-  coverage report exists after the v0.9.1 runtime changes.
+- **The deterministic suite is not a correctness claim.** The 2026-08-29 native
+  coverage run is diagnostic only; exercised lines do not prove lifecycle or
+  adversarial transition correctness.
 
 ### Freeze status
 
@@ -338,10 +338,10 @@ incomplete; no model-backed V3 task has been executed.
 - Natural adaptive-effort evidence covers materially different `medium` and
   `high` selections. No natural `xhigh` or `max` selection is claimed, and those
   optional observations are not required for Strong confidence.
-- No fresh whole-system native coverage report was produced after the v0.9.1
-  runtime changes. The latest coverage percentages belong to the earlier v0.9.0
-  campaign; the current 738-test deterministic suite is green with three
-  expected platform-specific Windows skips.
+- A fresh whole-system native coverage report was produced on 2026-08-29 with
+  Node's built-in test coverage: **93.21% lines, 86.59% branches, and 90.73%
+  functions**. Its percentages are diagnostic, not acceptance evidence; branch
+  and cleanup gaps still require manual review.
 - Raw transcripts, diagnostic logs, event streams, and some structured live
   results are session-local and intentionally uncommitted. The ledger preserves
   their reviewed conclusions, not durable raw artifacts.
@@ -356,10 +356,20 @@ incomplete; no model-backed V3 task has been executed.
   failed-turn, stream/runtime, and abnormal-exit paths. The runtime now records
   that unknown explicitly; no test or local timing can recover the missing
   provider fact.
+- Running verification subprocesses do not yet receive external cancellation;
+  cancellation can therefore wait for the verification timeout.
+- Recovery/integration cleanup after a caller-supplied event sink throws, graceful
+  shutdown of active requests, Windows process-tree termination completion, and
+  nested repository/control-directory evidence remain incompletely tested.
+- Workflow tests still inject handler outcomes rather than composing real
+  continuation/handoff stores with the server handlers. Explorer surface
+  creation/copy/removal failures and long chains of separately issued
+  continuation references also lack complete lifecycle tests.
 
-**Confirmed current product defects:** none. **Product-validation blockers from
-the completed v0.9.1 hardening work:** none. Optional future work remains in
-`ROADMAP.md`; this ledger does not promote or implement it.
+**Confirmed defects exposed by the 2026-08-29 pre-release audit were fixed with
+regressions in the same change.** The remaining items above are release risks,
+not accepted behavioural evidence. Optional future work remains in `ROADMAP.md`;
+this ledger does not promote or implement it.
 
 ## How to read this ledger
 

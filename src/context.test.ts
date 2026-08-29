@@ -81,6 +81,16 @@ function mockCleanTaskOutput(
     },
     repair: null,
     recovery: null,
+    failureDecision: {
+      classification: "success",
+      action: "stop",
+      reason: "The task passed; successful work is never retried.",
+      evidenceExecutionIds: ["exec_clean_1"],
+      nextEffort: null,
+      automaticHandler: null,
+      automaticRetryCount: 0,
+      automaticRetryLimit: 1,
+    },
     model: "gpt-5.6-luna",
     effort: "high",
     effortReason: "Core feature",
@@ -379,7 +389,17 @@ test("context core - clean successful history compaction reduces size and strips
   );
   assert.equal(
     compacted.stats.compactedSizeBytes,
-    new TextEncoder().encode(JSON.stringify(compacted)).byteLength,
+    new TextEncoder().encode(
+      JSON.stringify({
+        ...compacted,
+        stats: {
+          ...compacted.stats,
+          compactedSizeBytes: 0,
+          sizeDeltaBytes: 0,
+          reductionRatio: 0,
+        },
+      }),
+    ).byteLength,
   );
 });
 
@@ -879,6 +899,30 @@ test("context core - blocker resolution lifecycle", () => {
   assert.equal(compacted.blockers.find((b) => b.id === "blk_scope_1")?.resolved, true);
 });
 
+test("context core - imported provenance becomes current when continuation evidence or blocker state changes", () => {
+  let imported = createOrchestrationContext({
+    objective: "Imported historical context",
+    acceptanceCriteria: [],
+    contextProvenance: "imported-informational",
+  });
+  imported = recordBlocker(imported, {
+    id: "blk_imported",
+    kind: "unmet-requirement",
+    description: "Resolve in the current session.",
+  });
+  imported = { ...imported, contextProvenance: "imported-informational" };
+
+  const resolved = resolveBlocker(imported, "blk_imported");
+  assert.equal(resolved.contextProvenance, "current-session");
+
+  const continued = ingestContinuationTurn(imported, {
+    continuationReference: "ctr_imported_fixture",
+    instruction: "Continue with current evidence.",
+    output: mockCleanTaskOutput(),
+  });
+  assert.equal(continued.contextProvenance, "current-session");
+});
+
 test("context core - compaction is strictly idempotent", () => {
   let ctx = createOrchestrationContext({
     objective: "Idempotent compaction proof.",
@@ -1232,7 +1276,10 @@ test("context core - clean batch retains review facts while omitting only passed
     ],
     completionState: "verified-complete",
     warnings: [],
-    reviewChecklist: [],
+    reviewChecklist: [
+      "Final workspace verification passed 1 declared check(s). Do not routinely reread worker-owned files or rerun those checks; reopen reasoning only for an architectural or listed risk.",
+      "Judge whether the changes are high-risk or architecturally significant, and read the diff if they are. Verified mechanical checks do not make them good.",
+    ],
   };
   let ctx = createOrchestrationContext({
     objective: "Compact a clean batch.",

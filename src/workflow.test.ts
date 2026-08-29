@@ -795,6 +795,8 @@ test("workflow: escalates effort via evidence-earned next-action handoff referen
   assert.equal(calls, 2);
   assert.ok(output.steps.some((s) => s.state === "escalating"));
   assert.equal((output.result as DelegateTaskOutput).effort, "high");
+  assert.deepEqual(output.executedModels, ["gpt-5.6-luna"]);
+  assert.deepEqual(output.executedEfforts, ["medium", "high"]);
 });
 
 // --- 10. Stronger-Executor Fallback using explicit allowedModels + executorOrder -
@@ -860,6 +862,8 @@ test("workflow: stronger-executor fallback selects next model in operator execut
   assert.equal(calls, 2);
   assert.equal(escalatedModel, "gpt-5.6-sol");
   assert.ok(output.steps.some((s) => s.state === "escalating"));
+  assert.deepEqual(output.executedModels, ["gpt-5.6-luna", "gpt-5.6-sol"]);
+  assert.deepEqual(output.executedEfforts, ["high"]);
 });
 
 // --- 11. Failed Verification -> Parent Takeover ------------------------------

@@ -75,19 +75,43 @@ import {
  */
 export class Semaphore {
   private available: number;
-  private readonly waiting: Array<() => void> = [];
+  private readonly waiting: Array<{
+    resolve: () => void;
+    reject: (error: Error) => void;
+    signal?: AbortSignal;
+    onAbort?: () => void;
+  }> = [];
 
   constructor(permits: number) {
     this.available = permits;
   }
 
-  async acquire(): Promise<() => void> {
+  async acquire(signal?: AbortSignal): Promise<() => void> {
+    if (signal?.aborted) throw this.abortError();
     if (this.available > 0) {
       this.available -= 1;
       return this.createRelease();
     }
-    await new Promise<void>((resolve) => this.waiting.push(resolve));
+    await new Promise<void>((resolve, reject) => {
+      const entry: (typeof this.waiting)[number] = { resolve, reject, signal };
+      if (signal) {
+        entry.onAbort = () => {
+          const index = this.waiting.indexOf(entry);
+          if (index < 0) return;
+          this.waiting.splice(index, 1);
+          reject(this.abortError());
+        };
+        signal.addEventListener("abort", entry.onAbort, { once: true });
+      }
+      this.waiting.push(entry);
+    });
     return this.createRelease();
+  }
+
+  private abortError(): Error {
+    const error = new Error("Semaphore acquisition was cancelled.");
+    error.name = "AbortError";
+    return error;
   }
 
   private createRelease(): () => void {
@@ -97,7 +121,10 @@ export class Semaphore {
       released = true;
       const next = this.waiting.shift();
       if (next) {
-        next();
+        if (next.signal && next.onAbort) {
+          next.signal.removeEventListener("abort", next.onAbort);
+        }
+        next.resolve();
       } else {
         this.available += 1;
       }
@@ -275,17 +302,31 @@ async function runWorkerThread(
           break;
         }
 
-        case "turn.completed":
-          observed.usage = {
-            inputTokens: event.usage.input_tokens,
-            cachedInputTokens: event.usage.cached_input_tokens,
-            ...(event.usage.cache_write_input_tokens === undefined
-              ? {}
-              : { cacheWriteInputTokens: event.usage.cache_write_input_tokens }),
-            outputTokens: event.usage.output_tokens,
-            reasoningOutputTokens: event.usage.reasoning_output_tokens,
-          };
+        case "turn.completed": {
+          const values = [
+            event.usage.input_tokens,
+            event.usage.cached_input_tokens,
+            event.usage.output_tokens,
+            event.usage.reasoning_output_tokens,
+          ];
+          const cacheWrite = event.usage.cache_write_input_tokens;
+          if (
+            values.every((value) => Number.isSafeInteger(value) && value >= 0) &&
+            (cacheWrite === undefined ||
+              (Number.isSafeInteger(cacheWrite) && cacheWrite >= 0))
+          ) {
+            observed.usage = {
+              inputTokens: event.usage.input_tokens,
+              cachedInputTokens: event.usage.cached_input_tokens,
+              ...(cacheWrite === undefined ? {} : { cacheWriteInputTokens: cacheWrite }),
+              outputTokens: event.usage.output_tokens,
+              reasoningOutputTokens: event.usage.reasoning_output_tokens,
+            };
+          } else {
+            observed.usage = null;
+          }
           break;
+        }
 
         case "turn.failed":
           observed.termination = "turn-failed";
@@ -1934,7 +1975,7 @@ export async function delegateToLuna(
 ): Promise<DelegateTaskOutput> {
   // Validate and canonicalise before the worker gets write access to it.
   const workingDirectory = resolveWorkspace(input.workingDirectory);
-  const release = await workerSlots.acquire();
+  const release = await workerSlots.acquire(signal);
   try {
     hooks?.onStarted?.(workingDirectory);
     return await executeTask(input, {
@@ -1970,7 +2011,7 @@ export async function continueToLuna(
   },
 ): Promise<DelegateTaskOutput> {
   const workingDirectory = resolveWorkspace(options.workingDirectory);
-  const release = await workerSlots.acquire();
+  const release = await workerSlots.acquire(options.signal);
   try {
     options.hooks?.onStarted?.(workingDirectory);
     return await executeTask(input, {
@@ -2407,7 +2448,7 @@ export async function exploreWithLuna(
   const startedAt = new Date().toISOString();
   const startTime = performance.now();
 
-  const release = await workerSlots.acquire();
+  const release = await workerSlots.acquire(signal);
   let sourceWorkspace: string;
   try {
     sourceWorkspace = resolveWorkspace(input.workingDirectory);
