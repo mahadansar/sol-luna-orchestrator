@@ -1255,3 +1255,121 @@ test("usage preserves unknown attempts and aggregate verdict is not projected pe
   assert.equal(artifact.lineage[0]?.verdict, undefined);
   assert.equal(artifact.lineage[1]?.verdict, undefined);
 });
+
+// --- Untrusted-artifact structural limits -----------------------------------
+
+/** A minimal valid artifact, used as the base for tampering. */
+function baselineArtifact(): SessionHandoffArtifact {
+  return exportSessionHandoff(
+    createOrchestrationContext({
+      objective: "Structural limit probe for imported handoff artifacts",
+      acceptanceCriteria: ["the artifact validates"],
+    }),
+  );
+}
+
+/** One schema-valid lineage entry, with an arbitrary `usage` payload attached. */
+function lineageEntryWith(field: "usage" | "failureDecision", value: unknown): unknown {
+  return {
+    executionId: "exec_probe_1",
+    logicalAttempt: 1,
+    role: "initial",
+    predecessorExecutionId: null,
+    model: "gpt-5.6-luna",
+    effort: "high",
+    startedAt: new Date().toISOString(),
+    provenance: "caller-supplied-historical-context",
+    [field]: value,
+  };
+}
+
+test("a __proto__ key cannot hide payload from the artifact size limit", () => {
+  // `lineage[].usage` is `z.unknown()`, so an untrusted caller controls that
+  // subtree entirely. The size gate measured `JSON.stringify(canonicalize(...))`,
+  // and canonicalization assigned each key with `result[key] = …` — which for
+  // `__proto__` invoked the prototype setter instead of storing the value. The
+  // subtree vanished from the measurement while surviving into the imported
+  // history the server then held in memory.
+  const artifact = JSON.parse(JSON.stringify(baselineArtifact()));
+  const payload = "A".repeat(SESSION_HANDOFF_MAX_BYTES + 50_000);
+  artifact.lineage.push(
+    lineageEntryWith(
+      "usage",
+      JSON.parse(`{"__proto__":{"payload":${JSON.stringify(payload)}}}`),
+    ),
+  );
+
+  const actualBytes = Buffer.byteLength(JSON.stringify(artifact), "utf8");
+  assert.ok(actualBytes > SESSION_HANDOFF_MAX_BYTES, "probe must exceed the limit");
+
+  const result = validateSessionHandoff(artifact);
+  assert.equal(result.valid, false);
+  assert.ok(
+    result.valid === false && result.errors.some((e) => /exceeds the .* limit/.test(e)),
+    `expected a size refusal, got ${JSON.stringify(result)}`,
+  );
+});
+
+test("a __proto__ key in imported history does not pollute Object.prototype", () => {
+  const artifact = JSON.parse(JSON.stringify(baselineArtifact()));
+  artifact.lineage.push(
+    lineageEntryWith("failureDecision", JSON.parse('{"__proto__":{"polluted":"yes"}}')),
+  );
+  const restored = restoreSessionHandoff(artifact);
+  assert.equal(({} as Record<string, unknown>).polluted, undefined);
+  assert.equal(restored.context.contextProvenance, "imported-informational");
+});
+
+test("deeply nested imported history is refused rather than crashing the walk", () => {
+  // Every downstream step — canonicalization, sanitization, JSON.stringify,
+  // structuredClone — walks this tree recursively, so an unbounded depth turned
+  // a malformed artifact into a RangeError escaping as a crash.
+  let deep: Record<string, unknown> = {};
+  const root = deep;
+  for (let i = 0; i < 200_000; i += 1) {
+    const next: Record<string, unknown> = {};
+    deep.n = next;
+    deep = next;
+  }
+
+  const artifact = JSON.parse(JSON.stringify(baselineArtifact()));
+  artifact.lineage.push(lineageEntryWith("usage", root));
+
+  const result = validateSessionHandoff(artifact);
+  assert.equal(result.valid, false);
+  assert.ok(
+    result.valid === false && result.errors.some((e) => /nesting exceeds/.test(e)),
+    `expected a depth refusal, got ${JSON.stringify(result).slice(0, 200)}`,
+  );
+  // And the caller-facing entry points refuse rather than throw a RangeError.
+  assert.throws(() => restoreSessionHandoff(artifact), /nesting exceeds/);
+});
+
+test("a cyclic imported artifact is refused rather than walked forever", () => {
+  // Only reachable through the object-input entry point; JSON cannot express it.
+  const cyclic: Record<string, unknown> = {};
+  cyclic.self = cyclic;
+  const artifact = JSON.parse(JSON.stringify(baselineArtifact()));
+  artifact.lineage.push(lineageEntryWith("usage", cyclic));
+
+  const result = validateSessionHandoff(artifact);
+  assert.equal(result.valid, false);
+});
+
+test("an artifact within the structural limits still imports normally", () => {
+  const artifact = JSON.parse(JSON.stringify(baselineArtifact()));
+  artifact.lineage.push(
+    lineageEntryWith("usage", {
+      status: "reported",
+      value: {
+        inputTokens: 1,
+        cachedInputTokens: 0,
+        outputTokens: 1,
+        reasoningOutputTokens: 0,
+      },
+    }),
+  );
+  const result = validateSessionHandoff(artifact);
+  assert.equal(result.valid, true);
+  assert.ok(isSessionHandoffArtifact(artifact));
+});

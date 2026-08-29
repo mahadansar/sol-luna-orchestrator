@@ -50,6 +50,7 @@ import { verificationCommandsEquivalent } from "./command.js";
 import { buildExplorerPrompt, buildWorkerPrompt } from "./prompt.js";
 import { findScopeViolations, toRelativePosix } from "./scope.js";
 import {
+  ALWAYS_FORBIDDEN as EXPLORATION_ALWAYS_FORBIDDEN,
   collectExplorationMutations,
   createExplorationSurface,
   removeExplorationSurface,
@@ -2268,23 +2269,34 @@ export function buildExploreResult({
   };
 }
 
-async function validateExploreFindings(
+/**
+ * Reconcile a worker's exploration report against what the runtime can prove.
+ *
+ * Exported as a deterministic seam: the admission rules here are the ones that
+ * decide whether a model claim becomes a runtime-verified fact, and they are
+ * worth testing without driving a whole exploration.
+ */
+export async function validateExploreFindings(
   input: ExploreInput,
   surface: ExplorationSurface,
   report: ExploreReport | null,
   mutations: readonly ExplorationMutation[],
+  evidenceError?: string,
 ): Promise<{ findings?: ExploreFindings; discrepancies: string[] }> {
   if (!report) return { discrepancies: [] };
 
   const discrepancies: string[] = [];
   const runtimeObservedFacts: ExploreFindings["runtimeObservedFacts"] = [];
+  const surfaceIntegrityUnknown = evidenceError !== undefined;
   const mutationOccurred = mutations.length > 0;
   const observedFacts: ExploreFindings["observedFacts"] = [];
 
   for (const [index, fact] of report.observedFacts.entries()) {
-    const groundingError = mutationOccurred
-      ? "the disposable surface was mutated during exploration"
-      : await verifyGrounding(surface, fact.sourceFile, fact.sourceLine, fact.evidence);
+    const groundingError = surfaceIntegrityUnknown
+      ? "the disposable surface could not be proven unmodified during exploration"
+      : mutationOccurred
+        ? "the disposable surface was mutated during exploration"
+        : await verifyGrounding(surface, fact.sourceFile, fact.sourceLine, fact.evidence);
     if (groundingError) {
       discrepancies.push(
         `Worker-grounded claim ${index + 1} was discarded because its source grounding could not be verified: ${groundingError}.`,
@@ -2311,33 +2323,44 @@ async function validateExploreFindings(
     });
   }
 
+  // The same effective admission the surface itself was built with. Checking
+  // only `input.scope` let a broad pattern such as `**` readmit `.git/config`
+  // or `.env` as a reported path, even though `createExplorationSurface` had
+  // refused to copy them - two different answers to "is this file in scope".
   const pathViolation = (candidate: string): string | null => {
     const violations = findScopeViolations(
       [candidate],
       input.scope,
-      input.forbiddenFiles,
+      [...EXPLORATION_ALWAYS_FORBIDDEN, ...input.forbiddenFiles],
       surface.sourceWorkspace,
     );
     return violations[0] ?? null;
   };
 
+  /** A claimed path is only real if the surface actually admitted that file. */
+  const notAdmitted = (candidate: string): string | null => {
+    const violation = pathViolation(candidate);
+    if (violation) return violation;
+    return surface.baseline.has(candidate.replaceAll("\\", "/"))
+      ? null
+      : "not present in the admitted surface";
+  };
+
   const relevantFiles = report.relevantFiles.filter((file) => {
-    const violation = pathViolation(file.path);
-    const normalized = file.path.replaceAll("\\", "/");
-    const missing = !surface.baseline.has(normalized);
-    if (!violation && !missing) return true;
+    const reason = notAdmitted(file.path);
+    if (!reason) return true;
     discrepancies.push(
-      `Worker-reported relevant file '${file.path}' was discarded: ${violation ?? "not present in the admitted surface"}.`,
+      `Worker-reported relevant file '${file.path}' was discarded: ${reason}.`,
     );
     return false;
   });
 
   const recommendedSeams = report.recommendedSeams.map((seam) => {
     const candidateFiles = seam.candidateFiles.filter((candidate) => {
-      const violation = pathViolation(candidate);
-      if (!violation) return true;
+      const reason = notAdmitted(candidate);
+      if (!reason) return true;
       discrepancies.push(
-        `Advisory seam file '${candidate}' was discarded because it was outside admitted scope: ${violation}.`,
+        `Advisory seam file '${candidate}' was discarded because it was outside admitted scope: ${reason}.`,
       );
       return false;
     });
@@ -2431,7 +2454,17 @@ export async function exploreWithLuna(
     } catch (error) {
       evidenceError = (error as Error).message;
     }
-    const validated = await validateExploreFindings(input, surface, report, mutations);
+    // A failed mutation scan is *unknown* mutation, not absence of it. Passing
+    // the failure through keeps grounding fail-closed: without it, a worker that
+    // could make `collectExplorationMutations` throw got its edited copy of the
+    // surface treated as pristine and its claims stamped `runtime-verified`.
+    const validated = await validateExploreFindings(
+      input,
+      surface,
+      report,
+      mutations,
+      evidenceError,
+    );
 
     const attemptEvidence: AttemptEvidence = {
       executionId,

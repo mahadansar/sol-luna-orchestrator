@@ -273,6 +273,69 @@ export function parseCommand(command: string, policy: CommandPolicy): ParsedComm
 }
 
 /**
+ * Whether launching `resolvedFile` puts a `cmd.exe` layer under our argv.
+ *
+ * Windows can only launch `.com` and `.exe` directly. Everything else — the
+ * `.cmd` and `.bat` shims that `npm`, `yarn`, `mvn`, `gradle` and `tsc` all are
+ * on Windows, and every `PATHEXT` script type — is run by handing a command
+ * *line* to `cmd.exe`. That is the same condition cross-spawn uses to decide it
+ * must escape, and it is the only situation in which our argv is re-parsed as
+ * text by an interpreter.
+ */
+export function launchesThroughCmd(
+  resolvedFile: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return platform === "win32" && !/\.(?:com|exe)$/i.test(resolvedFile);
+}
+
+/**
+ * Characters an argument may not contain when a `cmd.exe` layer is involved.
+ *
+ * SECURITY.md promises that "shell metacharacters inside quotes are allowed and
+ * passed through literally… they are inert without a shell". On Windows that
+ * held for `&`, `|`, `<`, `>`, `^`, `(`, `)` and `%` — all of which were
+ * verified to arrive verbatim — but not for these two, because a `.cmd` shim
+ * forwards its arguments with `%*` and cmd then parses the result a *second*
+ * time, after the escaping that protected the first parse has been consumed:
+ *
+ *   `"` closes the quoted span in that second parse, so the rest of the
+ *       argument becomes live cmd syntax. Verified against a real `npm.cmd`:
+ *       `npm run "a\" & echo X & \"b"` executes `echo X`. That is arbitrary
+ *       command execution from a model-supplied argument, in the *default*
+ *       allowlist mode, which is precisely what the mode exists to prevent.
+ *
+ *   `!` expands as a delayed-expansion variable reference in any shim that ran
+ *       `setlocal enabledelayedexpansion`, substituting an environment value
+ *       into an argument whose output is fed back into a model transcript.
+ *
+ * Neither can be represented safely through that second parse, so they are
+ * refused rather than escaped more cleverly. The refusal is narrow: it applies
+ * only on Windows, and only when the resolved executable really is launched
+ * through `cmd.exe`, so `node -e "…"` and every other `.exe` is untouched.
+ */
+const CMD_UNREPRESENTABLE: Array<{ character: string; label: string }> = [
+  { character: '"', label: "a double quote" },
+  { character: "!", label: "an exclamation mark" },
+];
+
+/**
+ * The first argument that cannot survive a `cmd.exe` launcher, or null.
+ *
+ * Pure, so the policy is testable for Windows from any platform.
+ */
+export function unrepresentableCmdArgument(
+  args: readonly string[],
+): { argument: string; label: string } | null {
+  for (const argument of args) {
+    for (const { character, label } of CMD_UNREPRESENTABLE) {
+      if (argument.includes(character)) return { argument, label };
+    }
+  }
+  return null;
+}
+
+/**
  * Compare two verification commands as safe argv, never as shell text.
  *
  * Windows launcher suffixes are equivalent only for bare executable names;

@@ -258,7 +258,12 @@ delegations and batches do not share state; only server-issued continuation or h
 lineage can restore an existing context.
 
 `LUNA_SANDBOX` accepts `read-only`, `workspace-write` and
-`danger-full-access`. Keep the default `workspace-write` for normal use.
+`danger-full-access`. Keep the default `workspace-write` for normal use. Any
+other value falls back to `read-only` — not to the default — with a warning at
+startup naming the value. The asymmetry is deliberate: falling back to the
+default would silently _widen_ confinement for an operator who meant `read-only`
+and mistyped it, whereas falling back to `read-only` fails every task
+immediately next to the warning that explains why.
 `danger-full-access` disables Codex filesystem sandboxing for Luna and is only
 appropriate as an explicit trusted-machine workaround, such as for a diagnosed
 [Ubuntu AppArmor/bwrap compatibility failure](TROUBLESHOOTING.md#luna-commands-fail-with-bwrap--rtm_newaddr-on-ubuntu).
@@ -402,6 +407,12 @@ isolated worktree useful:
 | `onFailure` | Retains a worktree when the final verdict is `FAILED` or `BLOCKED`, the task is cancelled or times out, final evidence cannot be read, or integration is conflicted, partial, failed, disabled, or not attempted. A clean completed `PASS` whose state is integrated or needs no integration is removed. |
 | `always`    | Retains every parallel task worktree at finalization.                                                                                                                                                                                                                                                    |
 | `never`     | Performs no intentional retention. It attempts to remove every parallel task worktree after capturing all obtainable structured result, conflict, integration, and cleanup evidence. This overrides diagnostic, failure, conflict, `integrate:false`, evidence-failure, and continuation retention.      |
+
+Comparison is case-insensitive and whitespace is trimmed, so `Never` is the
+`never` mode. Any value that is not one of the three falls back to `onFailure`
+with a warning at startup naming it — worth reading, because a value that reads
+as "off" to a human (`no`, `false`, `0`) is not `never`, and worktrees holding
+worker output are then retained on every failure.
 
 `always` and `onFailure` describe finalization, not permanent archival. A
 retained worktree needed by an unused or executing continuation has a bounded

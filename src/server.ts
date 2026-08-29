@@ -16,6 +16,10 @@ import {
   MAX_PARALLEL,
   VERIFY_MODE,
   VERIFY_MODE_INVALID,
+  KEEP_WORKTREES,
+  KEEP_WORKTREES_INVALID,
+  WORKER_SANDBOX,
+  WORKER_SANDBOX_INVALID,
   VERIFY_TIMEOUT_SECONDS,
   VERIFY_TIMEOUT_SECONDS_INVALID,
   WORKTREE_DIR,
@@ -2670,6 +2674,21 @@ async function main(): Promise<void> {
     log(
       `WARNING: SOL_LUNA_VERIFY_MODE="${process.env.SOL_LUNA_VERIFY_MODE}" is not ` +
         `recognised. Falling back to "allowlist".`,
+    );
+  }
+  if (WORKER_SANDBOX_INVALID) {
+    log(
+      `WARNING: LUNA_SANDBOX="${process.env.LUNA_SANDBOX}" is not a recognised Codex ` +
+        `sandbox mode. Falling back to "${WORKER_SANDBOX}" rather than to the ` +
+        `permissive default, so an unreadable value cannot widen worker confinement. ` +
+        `Valid modes: read-only, workspace-write, danger-full-access.`,
+    );
+  }
+  if (KEEP_WORKTREES_INVALID) {
+    log(
+      `WARNING: SOL_LUNA_KEEP_WORKTREES="${process.env.SOL_LUNA_KEEP_WORKTREES}" is ` +
+        `not recognised. Falling back to "${KEEP_WORKTREES}"; retained worktrees ` +
+        `still hold worker output on disk. Valid modes: always, never, onFailure.`,
     );
   }
   if (VERIFY_MODE === "shell") {

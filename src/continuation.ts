@@ -277,7 +277,9 @@ export class ContinuationStore {
 }
 
 export function isContinuationReference(value: string): boolean {
-  return /^ctr_[A-Za-z0-9_-]{32,}$/.test(value);
+  // Upper bound matches `isHandoffReference`: a reference this store could
+  // have issued is 36 characters, and only collision suffixes make it longer.
+  return /^ctr_[A-Za-z0-9_-]{32,124}$/.test(value);
 }
 
 function cloneTaskInput(input: DelegateTaskInput): DelegateTaskInput {

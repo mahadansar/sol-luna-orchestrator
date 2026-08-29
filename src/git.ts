@@ -1,5 +1,10 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
+import {
+  ExecutableResolutionError,
+  resolveExecutable,
+  withoutCwdExecutableLookup,
+} from "./executable.js";
 
 /**
  * Thin, cross-platform wrapper around the git CLI.
@@ -28,24 +33,57 @@ export class GitError extends Error {
 
 export const GIT_TIMEOUT_MS = 120_000;
 
+/**
+ * Absolute path to git, resolved once from PATH.
+ *
+ * `runGit` always sets `cwd` to a repository or worktree a worker can write
+ * into, and Windows resolves a bare `git` from the current directory before
+ * PATH. Launching a planted `git.cmd` would hand the orchestrator's own
+ * evidence collection to the code it is supposed to be auditing. Resolved
+ * lazily so an import in a git-less environment still succeeds, and memoised
+ * because every batch runs dozens of git commands.
+ */
+let resolvedGit: string | null = null;
+
+function gitExecutable(): string {
+  if (resolvedGit === null) resolvedGit = resolveExecutable("git");
+  return resolvedGit;
+}
+
+/** Test seam: forget the memoised path so a fresh PATH is honoured. */
+export function resetGitExecutableCache(): void {
+  resolvedGit = null;
+}
+
 export function runGit(
   args: string[],
   cwd: string,
   timeoutMs = GIT_TIMEOUT_MS,
 ): Promise<GitResult> {
+  let executable: string;
+  try {
+    executable = gitExecutable();
+  } catch (error) {
+    const detail =
+      error instanceof ExecutableResolutionError
+        ? error.message
+        : `failed to resolve git: ${(error as Error).message}`;
+    return Promise.resolve({ code: null, stdout: "", stderr: detail });
+  }
+
   return new Promise((resolve) => {
-    const child = spawn("git", args, {
+    const child = spawn(executable, args, {
       cwd,
       shell: false,
       windowsHide: true,
       // Keep git from opening editors, pagers, or credential prompts: this runs
       // unattended and a blocked prompt would hang the batch.
-      env: {
+      env: withoutCwdExecutableLookup({
         ...process.env,
         GIT_TERMINAL_PROMPT: "0",
         GIT_OPTIONAL_LOCKS: "0",
         GIT_PAGER: "cat",
-      },
+      }),
     });
 
     let stdout = "";

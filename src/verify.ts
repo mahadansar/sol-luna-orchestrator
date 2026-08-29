@@ -1,11 +1,19 @@
 import { spawn } from "cross-spawn";
 import { spawn as nodeSpawn } from "node:child_process";
+import path from "node:path";
 import {
   DEFAULT_ALLOWED_EXECUTABLES,
   CommandPolicyError,
+  launchesThroughCmd,
   parseCommand,
+  unrepresentableCmdArgument,
   type CommandPolicy,
 } from "./command.js";
+import {
+  ExecutableResolutionError,
+  resolveExecutable,
+  withoutCwdExecutableLookup,
+} from "./executable.js";
 import {
   EXTRA_ALLOWED_EXECUTABLES,
   MAX_OUTPUT_CHARS,
@@ -69,7 +77,7 @@ export function buildVerificationEnv(
     env[key] = value;
   }
 
-  return { env, scrubbed: scrubbed.sort() };
+  return { env: withoutCwdExecutableLookup(env), scrubbed: scrubbed.sort() };
 }
 
 /**
@@ -81,9 +89,13 @@ export function buildVerificationEnv(
 function killProcessTree(pid: number): void {
   if (process.platform === "win32") {
     try {
-      nodeSpawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
+      // Absolute path only: this runs with the orchestrator's own cwd, which is
+      // routinely the workspace a worker just wrote to, and Windows would
+      // otherwise prefer a `taskkill.cmd` sitting there.
+      nodeSpawn(resolveExecutable("taskkill"), ["/pid", String(pid), "/T", "/F"], {
         stdio: "ignore",
         windowsHide: true,
+        env: withoutCwdExecutableLookup(process.env),
       });
     } catch {
       // Best effort.
@@ -161,6 +173,59 @@ export function runVerificationCommand(
 
   const { env, scrubbed } = buildVerificationEnv(options.env);
 
+  // Resolve the executable ourselves before launching. `cwd` here is the
+  // workspace a worker just wrote to, and both Windows and a `PATH` containing
+  // `.` search it ahead of the real tool — which would let a planted `npm.cmd`
+  // satisfy an allowlisted `npm`. The allowlist decides *which name* may run;
+  // this decides *which file* that name means, and the launcher then gets an
+  // absolute path it cannot reinterpret.
+  let launchFile = file;
+  if (!useShell) {
+    try {
+      launchFile = resolveExecutable(file, { env });
+    } catch (error) {
+      // An unresolvable name is a missing tool, not a policy refusal, and is
+      // reported exactly as an ENOENT launch failure always was: nothing ran,
+      // and the check counts as failed rather than merely refused.
+      const reason =
+        error instanceof ExecutableResolutionError
+          ? error.message
+          : `Could not resolve executable: ${(error as Error).message}`;
+      return Promise.resolve({
+        command,
+        exitCode: null,
+        passed: false,
+        execution: "argv" as const,
+        output:
+          `[orchestrator] failed to launch: ${reason} ` +
+          `(is "${file}" installed and on PATH?)`,
+      });
+    }
+
+    // A `.cmd`/`.bat` launcher means cmd.exe re-parses our argv as text, after
+    // the escaping that protected the first parse has already been consumed.
+    // Two characters cannot survive that intact, and one of them is a command
+    // separator, so the form is refused rather than escaped more cleverly.
+    if (launchesThroughCmd(launchFile)) {
+      const unsafe = unrepresentableCmdArgument(args);
+      if (unsafe) {
+        return Promise.resolve({
+          command,
+          exitCode: null,
+          passed: false,
+          execution: "rejected" as const,
+          output:
+            `[orchestrator] Command refused by verification policy. Argument ` +
+            `${JSON.stringify(unsafe.argument)} contains ${unsafe.label}, which ` +
+            `cannot be passed safely through the Windows "${path.basename(launchFile)}" ` +
+            `launcher: cmd.exe parses the forwarded argument a second time, where ` +
+            `it would end the quoted span or expand a variable. Rewrite the ` +
+            `argument without it, or add a script to the project and call that.`,
+        });
+      }
+    }
+  }
+
   return new Promise((resolve) => {
     const child = useShell
       ? nodeSpawn(command, {
@@ -170,7 +235,7 @@ export function runVerificationCommand(
           env,
           detached: process.platform !== "win32",
         })
-      : spawn(file, args, {
+      : spawn(launchFile, args, {
           cwd: workingDirectory,
           shell: false,
           windowsHide: true,

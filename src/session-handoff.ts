@@ -308,10 +308,58 @@ export function isSessionHandoffArtifact(
   return validateSessionHandoff(value).valid;
 }
 
+/**
+ * Deepest nesting an imported artifact may contain.
+ *
+ * The schema pins every field's shape except `lineage[].usage` and
+ * `lineage[].failureDecision`, which are `z.unknown()` and therefore accept an
+ * arbitrarily deep tree from an untrusted caller. Everything downstream of
+ * validation - canonicalisation, sanitisation, `JSON.stringify`,
+ * `structuredClone` - walks that tree recursively, so a few hundred thousand
+ * nested arrays turned a malformed artifact into a `RangeError` escaping as a
+ * crash instead of an ordinary refusal. The real schema is about ten levels
+ * deep; this leaves generous room above it.
+ */
+export const SESSION_HANDOFF_MAX_DEPTH = 64;
+
+/**
+ * Measure nesting depth without recursing.
+ *
+ * Iterative on purpose: a guard that blew the stack while measuring how deep a
+ * value is would be no guard at all. Stops as soon as the limit is exceeded, so
+ * a hostile artifact costs bounded work.
+ */
+function exceedsDepth(value: unknown, limit: number): boolean {
+  const stack: Array<{ node: unknown; depth: number }> = [{ node: value, depth: 0 }];
+  const seen = new Set<object>();
+  while (stack.length > 0) {
+    const { node, depth } = stack.pop()!;
+    if (node === null || typeof node !== "object") continue;
+    if (depth > limit) return true;
+    // A caller-supplied object graph may contain cycles; JSON input cannot, but
+    // `validateSessionHandoff` also accepts already-parsed objects.
+    if (seen.has(node)) return true;
+    seen.add(node);
+    for (const child of Array.isArray(node) ? node : Object.values(node)) {
+      stack.push({ node: child, depth: depth + 1 });
+    }
+  }
+  return false;
+}
+
 export function validateSessionHandoff(
   value: unknown,
 ):
   { valid: true; artifact: SessionHandoffArtifact } | { valid: false; errors: string[] } {
+  if (exceedsDepth(value, SESSION_HANDOFF_MAX_DEPTH)) {
+    return {
+      valid: false,
+      errors: [
+        `artifact: nesting exceeds the ${SESSION_HANDOFF_MAX_DEPTH}-level limit, ` +
+          `or contains a cycle; imported history is refused rather than walked`,
+      ],
+    };
+  }
   const result = sessionHandoffArtifactSchema.safeParse(value);
   if (result.success) {
     const bytes = Buffer.byteLength(
@@ -902,9 +950,20 @@ function canonicalizeObject(value: unknown): unknown {
   const result: Record<string, unknown> = {};
   for (const key of keys) {
     const v = obj[key];
-    if (v !== undefined) {
-      result[key] = canonicalizeObject(v);
-    }
+    if (v === undefined) continue;
+    // `result[key] = ...` invoked the `Object.prototype.__proto__` setter for a
+    // `__proto__` key, which `JSON.parse` does create as an own property. The
+    // assignment silently retargeted the result's prototype instead of storing
+    // the value, so the subtree vanished from `JSON.stringify` - and with it
+    // from the byte count that enforces SESSION_HANDOFF_MAX_BYTES. An artifact
+    // hiding megabytes under `lineage[].usage.__proto__` measured as nothing
+    // and was admitted. Define the property instead of setting it.
+    Object.defineProperty(result, key, {
+      value: canonicalizeObject(v),
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
   }
   return result;
 }

@@ -47,9 +47,29 @@ config that launches the server.
 - Only executables on an allowlist may launch (`npm`, `pytest`, `cargo`, …). The
   executable may not contain a path, so a repo-local `./npm` cannot hijack the
   real one.
+- The surviving bare name is then resolved to an absolute path **by this
+  project, from `PATH` only**. The working directory is never searched, and
+  `PATH` entries that mean it — an empty entry, `.`, or anything relative — are
+  skipped. This matters because the working directory is the workspace a worker
+  just wrote to, and the operating system would otherwise prefer a file there:
+  Windows searches the current directory ahead of `PATH` unless
+  `NoDefaultCurrentDirectoryInExePath` is set, which by default it is not. A
+  name that resolves to nothing on `PATH` is reported as a launch failure rather
+  than falling back to the bare name.
 - Shell metacharacters _inside quotes_ are allowed and passed through literally.
   They are inert without a shell, and rejecting them would break legitimate test
-  filters like `pytest -k "not slow"`.
+  filters like `pytest -k "not slow"`. **Two exceptions on Windows**: when the
+  allowlisted executable resolves to a `.cmd` or `.bat` — which is what `npm`,
+  `yarn`, `mvn`, `gradle` and `tsc` all are there — Windows can only launch it by
+  handing a command _line_ to `cmd.exe`, and the shim then forwards its
+  arguments with `%*`, so cmd parses them a second time. An argument containing
+  `"` would end the quoted span in that second parse and turn the remainder into
+  live cmd syntax; an argument containing `!` expands as a variable in any shim
+  that enabled delayed expansion. Neither form can be represented safely, so an
+  argument containing either is refused rather than escaped more cleverly.
+  `&`, `|`, `<`, `>`, `^`, `(`, `)` and `%VAR%` are verified to survive that
+  second parse intact and remain permitted. Nothing here applies off Windows, or
+  to an executable that resolves to a `.exe`.
 - Credential-shaped environment variables (matching `KEY`, `TOKEN`, `SECRET`,
   `PASSWORD`, `PASSWD`, `CREDENTIAL`, `SESSION`, `COOKIE`, `AUTH`) are withheld
   from the child process, because its output is fed back into a model transcript.

@@ -160,9 +160,48 @@ export const VERIFY_TIMEOUT_SECONDS_INVALID = timeoutSecondsInvalid(
   process.env.LUNA_VERIFY_TIMEOUT_SECONDS,
 );
 
-/** Sandbox the worker runs under. `workspace-write` lets it actually edit code. */
-export const WORKER_SANDBOX = (process.env.LUNA_SANDBOX ?? "workspace-write") as
-  "read-only" | "workspace-write" | "danger-full-access";
+/**
+ * Sandbox the worker runs under. `workspace-write` lets it actually edit code.
+ *
+ * Validated rather than cast. The value is forwarded verbatim to the Codex SDK
+ * as the worker's filesystem confinement, and an unchecked `as` meant a typo
+ * reached the runtime as an unknown mode with no local signal at all.
+ *
+ * An unrecognised value falls back to `read-only`, not to the documented
+ * default. The two typos are not symmetric: an operator who meant `read-only`
+ * and got `workspace-write` would be silently *widened*, while one who meant
+ * `workspace-write` and gets `read-only` sees every task fail immediately
+ * beside a startup warning naming the bad value. Only the second is recoverable
+ * by reading the error. An unset variable still resolves to `workspace-write`,
+ * so nothing changes for an installation that configures nothing.
+ */
+export const WORKER_SANDBOX_MODES = [
+  "read-only",
+  "workspace-write",
+  "danger-full-access",
+] as const;
+export type WorkerSandboxMode = (typeof WORKER_SANDBOX_MODES)[number];
+export const DEFAULT_WORKER_SANDBOX: WorkerSandboxMode = "workspace-write";
+
+export function parseWorkerSandbox(raw: string | undefined): WorkerSandboxMode {
+  if (raw === undefined) return DEFAULT_WORKER_SANDBOX;
+  const normalized = raw.trim().toLowerCase();
+  return (WORKER_SANDBOX_MODES as readonly string[]).includes(normalized)
+    ? (normalized as WorkerSandboxMode)
+    : "read-only";
+}
+
+export function workerSandboxInvalid(raw: string | undefined): boolean {
+  if (raw === undefined) return false;
+  return !(WORKER_SANDBOX_MODES as readonly string[]).includes(raw.trim().toLowerCase());
+}
+
+export const WORKER_SANDBOX: WorkerSandboxMode = parseWorkerSandbox(
+  process.env.LUNA_SANDBOX,
+);
+
+/** Whether LUNA_SANDBOX named a mode this runtime does not recognise. */
+export const WORKER_SANDBOX_INVALID = workerSandboxInvalid(process.env.LUNA_SANDBOX);
 
 /** Whether the worker may reach the network from inside the sandbox. */
 export const WORKER_NETWORK_ACCESS = process.env.LUNA_NETWORK_ACCESS === "1";
@@ -369,9 +408,36 @@ export const WORKTREE_LINK_DIRS = (process.env.SOL_LUNA_WORKTREE_LINK ?? "node_m
  *
  * `never` has final precedence over every intentional retention reason.
  */
-export const KEEP_WORKTREES = (
-  process.env.SOL_LUNA_KEEP_WORKTREES ?? "onFailure"
-).toLowerCase() as "onfailure" | "always" | "never";
+export const KEEP_WORKTREE_MODES = ["onfailure", "always", "never"] as const;
+export type KeepWorktreesMode = (typeof KEEP_WORKTREE_MODES)[number];
+
+export function parseKeepWorktrees(raw: string | undefined): KeepWorktreesMode {
+  const normalized = (raw ?? "onFailure").trim().toLowerCase();
+  return (KEEP_WORKTREE_MODES as readonly string[]).includes(normalized)
+    ? (normalized as KeepWorktreesMode)
+    : "onfailure";
+}
+
+export function keepWorktreesInvalid(raw: string | undefined): boolean {
+  if (raw === undefined) return false;
+  return !(KEEP_WORKTREE_MODES as readonly string[]).includes(raw.trim().toLowerCase());
+}
+
+export const KEEP_WORKTREES: KeepWorktreesMode = parseKeepWorktrees(
+  process.env.SOL_LUNA_KEEP_WORKTREES,
+);
+
+/**
+ * Whether SOL_LUNA_KEEP_WORKTREES named a mode this runtime does not recognise.
+ *
+ * Previously an unrecognised value was cast and then compared against the two
+ * named modes, so `never`-by-typo silently retained worktrees full of worker
+ * output on every failure. The retention decision is unchanged - the fallback
+ * is still the documented `onFailure` - but the operator now hears about it.
+ */
+export const KEEP_WORKTREES_INVALID = keepWorktreesInvalid(
+  process.env.SOL_LUNA_KEEP_WORKTREES,
+);
 
 /**
  * Allow parallel delegation even when the repository has uncommitted changes

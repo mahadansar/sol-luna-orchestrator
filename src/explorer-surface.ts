@@ -13,7 +13,7 @@ import picomatch from "picomatch";
 // remote URL - matched nothing and was copied into the surface the worker
 // reads. The same anchoring hid nested `.sol-luna` runtime state. `.env`
 // already carried its any-depth variant; these two did not.
-const ALWAYS_FORBIDDEN = [
+export const ALWAYS_FORBIDDEN = [
   ".git",
   ".git/**",
   "**/.git",

@@ -1,6 +1,11 @@
 import { spawn } from "cross-spawn";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  ExecutableResolutionError,
+  resolveExecutable,
+  withoutCwdExecutableLookup,
+} from "../executable.js";
 import { codexConfigPath } from "./paths.js";
 
 /**
@@ -22,8 +27,29 @@ export function run(
   args: string[],
   timeoutMs = 60_000,
 ): Promise<CommandResult> {
+  // The CLI runs in whatever directory the operator happens to be in, which is
+  // routinely a repository they are evaluating rather than one they wrote.
+  // Windows resolves a bare `codex` or `git` from that directory before PATH,
+  // so resolve it here instead and hand `spawn` an absolute path.
+  let executable: string;
+  try {
+    executable = resolveExecutable(file);
+  } catch (error) {
+    // Same wording an ENOENT launch produced before resolution moved earlier,
+    // so the CLI diagnostic surface is unchanged.
+    const detail =
+      error instanceof ExecutableResolutionError
+        ? `${file} not found on PATH`
+        : `failed to resolve ${file}: ${(error as Error).message}`;
+    return Promise.resolve({ code: null, stdout: "", stderr: detail });
+  }
+
   return new Promise((resolve) => {
-    const child = spawn(file, args, { shell: false, windowsHide: true });
+    const child = spawn(executable, args, {
+      shell: false,
+      windowsHide: true,
+      env: withoutCwdExecutableLookup(process.env),
+    });
 
     let stdout = "";
     let stderr = "";

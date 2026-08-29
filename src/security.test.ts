@@ -13,16 +13,24 @@ import test from "node:test";
 import {
   CommandPolicyError,
   DEFAULT_ALLOWED_EXECUTABLES,
+  launchesThroughCmd,
   MAX_ARGUMENT_COUNT,
   MAX_COMMAND_LENGTH,
   parseCommand,
   tokenizeCommand,
+  unrepresentableCmdArgument,
   verificationCommandsEquivalent,
   type CommandPolicy,
 } from "./command.js";
 import { findScopeViolations, resolvePath, type RealPathResolver } from "./scope.js";
 import { buildVerificationEnv, runVerificationCommand } from "./verify.js";
 import { sanitizeForLog } from "./log.js";
+import {
+  keepWorktreesInvalid,
+  parseKeepWorktrees,
+  parseWorkerSandbox,
+  workerSandboxInvalid,
+} from "./config.js";
 import { WorkspaceError, resolveWorkspace } from "./workspace.js";
 import { buildExploreResult } from "./worker.js";
 
@@ -302,6 +310,223 @@ test("a missing executable fails cleanly with a usable hint", async () => {
   assert.match(result.output, /failed to launch|not in the verification allowlist/);
 });
 
+// --- Executable substitution from the workspace -----------------------------
+
+/**
+ * Write a script named like an allowlisted tool that announces itself loudly.
+ *
+ * On Windows the launcher goes through `cmd.exe` for anything that is not a
+ * `.exe`, so a `.cmd` is what a worker would actually plant. On POSIX a
+ * shebanged, executable file is the equivalent.
+ */
+function plantImposter(directory: string, name: string, marker: string): void {
+  if (process.platform === "win32") {
+    fs.writeFileSync(
+      path.join(directory, `${name}.cmd`),
+      `@echo off\r\necho ${marker}\r\nexit /b 0\r\n`,
+    );
+    return;
+  }
+  const file = path.join(directory, name);
+  fs.writeFileSync(file, `#!/bin/sh\necho ${marker}\nexit 0\n`);
+  fs.chmodSync(file, 0o755);
+}
+
+test("a file planted in the workspace cannot stand in for an allowlisted tool", async (t) => {
+  // SECURITY.md: "a repo-local `./npm` cannot hijack the real one". The lexical
+  // check in `parseCommand` only refuses an executable that *spells* a path;
+  // the surviving bare name is still resolved by the OS, which searches the
+  // working directory first on Windows, and on POSIX whenever PATH contains an
+  // entry meaning "here". The working directory is the workspace the worker
+  // just wrote to, so without PATH-only resolution this is a live sandbox
+  // escape: the planted script runs unsandboxed, as the operator.
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-hijack-"));
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
+  plantImposter(workspace, "npm", "HIJACKED-BY-WORKSPACE");
+
+  const env = { ...process.env };
+  // Windows only searches the working directory when this is unset, which is
+  // the default state on a real machine; some shells set it. Remove it so the
+  // test reproduces the default rather than the incidental configuration.
+  delete env.NoDefaultCurrentDirectoryInExePath;
+  // The POSIX equivalent of the same exposure.
+  env.PATH = `.${path.delimiter}${env.PATH ?? ""}`;
+
+  const result = await runVerificationCommand("npm --version", workspace, {
+    mode: "allowlist",
+    timeoutSeconds: 60,
+    env,
+  });
+
+  assert.doesNotMatch(
+    result.output,
+    /HIJACKED-BY-WORKSPACE/,
+    "the workspace copy must never be the file that runs",
+  );
+});
+
+test("a workspace imposter cannot satisfy an operator-added allowlist entry either", async (t) => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-hijack2-"));
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
+  plantImposter(workspace, "sol-luna-audit-probe", "HIJACKED-EXTRA-ALLOW");
+
+  const env = { ...process.env };
+  delete env.NoDefaultCurrentDirectoryInExePath;
+  env.PATH = `.${path.delimiter}${env.PATH ?? ""}`;
+
+  const result = await runVerificationCommand("sol-luna-audit-probe", workspace, {
+    mode: "allowlist",
+    timeoutSeconds: 60,
+    policy: { allowed: ["sol-luna-audit-probe"] },
+    env,
+  });
+
+  assert.doesNotMatch(result.output, /HIJACKED-EXTRA-ALLOW/);
+  // Nothing on PATH provides it, so this is an honest launch failure rather
+  // than a silent fall-through to the workspace copy.
+  assert.equal(result.passed, false);
+  assert.match(result.output, /failed to launch/);
+});
+
+test("Windows .cmd launchers receive arguments verbatim, not as cmd.exe syntax", async (t) => {
+  // A `.cmd` on the allowlist is not launched directly: cross-spawn routes it
+  // through `cmd.exe /d /s /c`. That is the one place a model-supplied
+  // argument meets a real command interpreter, so the Windows expansion and
+  // control constructs POSIX metacharacter filtering does not cover — `%VAR%`,
+  // `^`, `&`, `|`, `<`, `>`, `(`, `)`, `!` — have to arrive as literal text.
+  if (process.platform !== "win32") {
+    t.skip("cmd.exe launcher escaping is Windows-only");
+    return;
+  }
+  const toolDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-cmdarg-"));
+  t.after(() => fs.rmSync(toolDirectory, { recursive: true, force: true }));
+  const tool = "sol-luna-echo-probe";
+  // Shaped like the launchers this actually has to survive: every Windows
+  // `npm`, `yarn`, `gradle` and `mvn` on the allowlist is a `.cmd` that
+  // forwards `%*` to a real program, so the argument is re-parsed by cmd a
+  // second time inside the shim. The reporter is a Node script rather than
+  // `echo`, because `echo` would show cmd's re-parse of the line rather than
+  // the argv the child process was actually handed.
+  const reporter = path.join(toolDirectory, "report-argv.cjs");
+  fs.writeFileSync(
+    reporter,
+    `console.log("ARGV=" + JSON.stringify(process.argv.slice(2)));\n`,
+  );
+  fs.writeFileSync(
+    path.join(toolDirectory, `${tool}.cmd`),
+    `@echo off\r\nsetlocal\r\nnode "${reporter}" %*\r\nexit /b %errorlevel%\r\n`,
+  );
+
+  const env = { ...process.env };
+  delete env.NoDefaultCurrentDirectoryInExePath;
+  env.PATH = `${toolDirectory}${path.delimiter}${env.PATH ?? ""}`;
+  env.SOL_LUNA_AUDIT_CANARY = "LEAKED-ENV-VALUE";
+
+  const hostile = [
+    "%SOL_LUNA_AUDIT_CANARY%",
+    "%PATH%",
+    "a&echo INJECTED",
+    "a|echo INJECTED",
+    "a^&echo INJECTED",
+    "a>out.txt",
+    "a<in.txt",
+    "(a)",
+  ];
+
+  for (const argument of hostile) {
+    // Quoted, so `parseCommand` admits it as one literal argv entry.
+    const result = await runVerificationCommand(
+      `${tool} "${argument.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`,
+      toolDirectory,
+      { mode: "allowlist", timeoutSeconds: 60, policy: { allowed: [tool] }, env },
+    );
+    assert.equal(result.exitCode, 0, `${argument}: ${result.output}`);
+    assert.doesNotMatch(
+      result.output,
+      /LEAKED-ENV-VALUE/,
+      `${argument} was environment-expanded`,
+    );
+    // The child's whole output must be the single argv line. Anything extra is
+    // a second command having run, or a redirect having swallowed part of it —
+    // and asserting on the exact line also proves the argument was neither
+    // split, re-quoted, nor stripped of its metacharacters on the way through.
+    const emitted = result.output
+      .split(/\r?\n/)
+      .filter((line) => line.trim() && !line.startsWith("[orchestrator]"));
+    assert.deepEqual(
+      emitted,
+      [`ARGV=${JSON.stringify([argument])}`],
+      `${argument} did not arrive as exactly one verbatim argv entry`,
+    );
+  }
+
+  // Redirection must not have created anything either.
+  assert.deepEqual(fs.readdirSync(toolDirectory).sort(), [
+    "report-argv.cjs",
+    `${tool}.cmd`,
+  ]);
+});
+
+test("argument forms a cmd.exe launcher cannot carry are refused, not escaped", () => {
+  // Pure policy, so both characters are covered from either platform.
+  assert.equal(launchesThroughCmd(String.raw`C:\node\npm.cmd`, "win32"), true);
+  assert.equal(launchesThroughCmd(String.raw`C:\tools\thing.bat`, "win32"), true);
+  assert.equal(launchesThroughCmd(String.raw`C:\node\node.exe`, "win32"), false);
+  assert.equal(launchesThroughCmd(String.raw`C:\w\x.COM`, "win32"), false);
+  // No cmd layer exists off Windows, so nothing is refused there.
+  assert.equal(launchesThroughCmd("/usr/bin/npm", "linux"), false);
+
+  assert.deepEqual(unrepresentableCmdArgument(["--grep", "not slow"]), null);
+  assert.deepEqual(unrepresentableCmdArgument(["a&b", "c|d", "%X%", "(e)", "f^g"]), null);
+  assert.deepEqual(unrepresentableCmdArgument([String.raw`a" & echo x & "b`]), {
+    argument: String.raw`a" & echo x & "b`,
+    label: "a double quote",
+  });
+  assert.deepEqual(unrepresentableCmdArgument(["ok", "!VAR!"]), {
+    argument: "!VAR!",
+    label: "an exclamation mark",
+  });
+});
+
+test("a quoted argument cannot break out of a Windows .cmd launcher", async (t) => {
+  // The `.cmd` shims that `npm`, `yarn`, `mvn` and `gradle` are on Windows
+  // forward their arguments with `%*`, so cmd parses them a second time with
+  // the first parse's escaping already consumed. A double quote ends the
+  // quoted span there, turning the rest of a model-supplied argument into live
+  // cmd syntax. Verified against the real `npm.cmd`: before this was refused,
+  // the command below created a file outside the workspace.
+  if (process.platform !== "win32") {
+    t.skip("cmd.exe launcher re-parsing is Windows-only");
+    return;
+  }
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-breakout-"));
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
+  const witness = path.join(workspace, "witness.txt");
+
+  const env = { ...process.env };
+  delete env.NoDefaultCurrentDirectoryInExePath;
+
+  const result = await runVerificationCommand(
+    `npm run "a\\" & echo x > ${witness} & \\"b"`,
+    workspace,
+    { mode: "allowlist", timeoutSeconds: 120, env },
+  );
+
+  assert.equal(result.execution, "rejected");
+  assert.equal(result.passed, false);
+  assert.match(result.output, /contains a double quote/);
+  // A side effect on disk, so no returned text can fake this passing.
+  assert.equal(fs.existsSync(witness), false, "an arbitrary command executed");
+});
+
+test("verification children are told not to resolve executables from the cwd", () => {
+  const { env } = buildVerificationEnv({ PATH: "/usr/bin" }, true);
+  // Defence in depth for resolution we do not perform: a `.cmd` shim launched
+  // by absolute path still runs under cmd.exe, which would otherwise resolve
+  // its own commands from the workspace.
+  assert.equal(env.NoDefaultCurrentDirectoryInExePath, "1");
+});
+
 test("credential-shaped environment variables are withheld", () => {
   const { env, scrubbed } = buildVerificationEnv(
     {
@@ -336,6 +561,50 @@ test("environment scrubbing can be disabled deliberately", () => {
   const { env, scrubbed } = buildVerificationEnv({ OPENAI_API_KEY: "sk-x" }, false);
   assert.equal(env.OPENAI_API_KEY, "sk-x");
   assert.deepEqual(scrubbed, []);
+});
+
+// --- Operator configuration -------------------------------------------------
+
+test("an unrecognised LUNA_SANDBOX narrows confinement rather than widening it", () => {
+  for (const valid of ["read-only", "workspace-write", "danger-full-access"]) {
+    assert.equal(parseWorkerSandbox(valid), valid);
+    assert.equal(workerSandboxInvalid(valid), false);
+  }
+  // Case and surrounding whitespace are operator typos, not different modes.
+  assert.equal(parseWorkerSandbox(" Workspace-Write "), "workspace-write");
+  assert.equal(workerSandboxInvalid(" Workspace-Write "), false);
+
+  // Unset keeps the documented default, so configuring nothing changes nothing.
+  assert.equal(parseWorkerSandbox(undefined), "workspace-write");
+  assert.equal(workerSandboxInvalid(undefined), false);
+
+  // An unreadable value must never resolve to something more permissive than
+  // the operator may have meant: `readonly` is a plausible typo for
+  // `read-only`, and silently granting write access to a worker instead is the
+  // one outcome that cannot be noticed by reading the failure.
+  for (const invalid of ["readonly", "workspace_write", "full-access", "", "1", "off"]) {
+    assert.equal(workerSandboxInvalid(invalid), true, invalid);
+    assert.equal(parseWorkerSandbox(invalid), "read-only", invalid);
+  }
+});
+
+test("an unrecognised SOL_LUNA_KEEP_WORKTREES is reported instead of silently retaining", () => {
+  assert.equal(parseKeepWorktrees(undefined), "onfailure");
+  assert.equal(keepWorktreesInvalid(undefined), false);
+  for (const [raw, expected] of [
+    ["always", "always"],
+    ["Never", "never"],
+    [" onFailure ", "onfailure"],
+  ] as const) {
+    assert.equal(parseKeepWorktrees(raw), expected);
+    assert.equal(keepWorktreesInvalid(raw), false);
+  }
+  // `no` and `false` read as "never" to a human but matched neither branch, so
+  // worktrees full of worker output were retained on every failure in silence.
+  for (const invalid of ["no", "false", "0", "on-failure", "yes"]) {
+    assert.equal(keepWorktreesInvalid(invalid), true, invalid);
+    assert.equal(parseKeepWorktrees(invalid), "onfailure", invalid);
+  }
 });
 
 // --- Log integrity ----------------------------------------------------------

@@ -25,6 +25,7 @@ import { buildExplorerPrompt } from "./prompt.js";
 import {
   buildExploreResult,
   exploreWithLuna,
+  validateExploreFindings,
   parseExploreReport,
   type ObservedRun,
   type WorkerCodex,
@@ -51,6 +52,7 @@ import {
   createExplorationSurface,
   removeExplorationSurface,
   verifyGrounding,
+  type ExplorationSurface,
 } from "./explorer-surface.js";
 import { parseEventLine } from "./cli/activity-reducer.js";
 
@@ -1135,6 +1137,136 @@ test("grounding accepts a truthful citation of a line whose text repeats earlier
     );
   } finally {
     if (surface) await removeExplorationSurface(surface);
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+// --- Admission consistency between the surface and reported claims ----------
+
+/** A workspace holding one admitted file plus repository metadata and secrets. */
+async function surfaceFixture(): Promise<{ root: string; surface: ExplorationSurface }> {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-admit-"));
+  await fs.mkdir(path.join(root, "src"), { recursive: true });
+  await fs.writeFile(path.join(root, "src", "log.ts"), "export const logger = 1;\n");
+  await fs.mkdir(path.join(root, ".git"), { recursive: true });
+  await fs.writeFile(path.join(root, ".git", "config"), "[remote]\n url = https://x\n");
+  await fs.writeFile(path.join(root, ".env"), "API_KEY=secret\n");
+  // `scope: ["**"]` is the broadest admission a caller can declare, and the one
+  // that makes the two answers to "is this in scope" disagree.
+  const surface = await createExplorationSurface(root, ["**"], []);
+  return { root, surface };
+}
+
+const reportWith = (overrides: Partial<ExploreReport>): ExploreReport => ({
+  status: "PASS",
+  summary: "",
+  observedFacts: [],
+  inferences: [],
+  unknowns: [],
+  relevantFiles: [],
+  recommendedSeams: [],
+  notes: "",
+  ...overrides,
+});
+
+const admissionInput = (): ExploreInput =>
+  exploreInputSchema.parse({
+    target: "Report which files matter for the logging seam",
+    effortReason: "Deterministic admission-consistency probe",
+    scope: ["**"],
+  });
+
+test("repository metadata and secrets never reappear as reported paths", async () => {
+  // `createExplorationSurface` refuses to copy `.git` and `.env` at any depth.
+  // Claim validation checked only the caller's `scope`, so under `**` a worker
+  // could name them back and have them echoed as in-scope findings — two
+  // different answers from the same admission decision.
+  const { root, surface } = await surfaceFixture();
+  try {
+    assert.equal(surface.baseline.has(".git/config"), false, "fixture assumption");
+    assert.equal(surface.baseline.has(".env"), false, "fixture assumption");
+
+    const validated = await validateExploreFindings(
+      admissionInput(),
+      surface,
+      reportWith({
+        relevantFiles: [
+          { path: "src/log.ts", why: "the admitted file" },
+          { path: ".git/config", why: "claimed remote URL" },
+          { path: ".env", why: "claimed credentials" },
+        ],
+        recommendedSeams: [
+          {
+            label: "logging",
+            description: "advisory seam",
+            candidateFiles: ["src/log.ts", ".git/config", ".env", "../outside.ts"],
+          },
+        ],
+      }),
+      [],
+    );
+
+    assert.deepEqual(
+      validated.findings?.relevantFiles.map((file) => file.path),
+      ["src/log.ts"],
+    );
+    // Advisory seam candidates were previously checked for scope but never for
+    // surface membership, so they were the looser of the two lists.
+    assert.deepEqual(validated.findings?.recommendedSeams[0]?.candidateFiles, [
+      "src/log.ts",
+    ]);
+    for (const discarded of [".git/config", ".env", "../outside.ts"]) {
+      assert.ok(
+        validated.discrepancies.some((entry) => entry.includes(discarded)),
+        `${discarded} must be reported as discarded`,
+      );
+    }
+  } finally {
+    await removeExplorationSurface(surface);
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("grounding fails closed when the surface could not be proven unmodified", async () => {
+  // A mutation scan that throws leaves surface integrity *unknown*, not proven.
+  // Treating an empty mutation list as "pristine" meant a worker able to break
+  // the scan got its edited copy read as the original, and its claims stamped
+  // `runtime-verified`.
+  const { root, surface } = await surfaceFixture();
+  try {
+    const report = reportWith({
+      observedFacts: [
+        {
+          statement: "The logger is exported.",
+          sourceFile: "src/log.ts",
+          sourceLine: 1,
+          evidence: "export const logger = 1;",
+        },
+      ],
+    });
+
+    // Control: a clean scan grounds the truthful claim.
+    const clean = await validateExploreFindings(admissionInput(), surface, report, []);
+    assert.equal(clean.findings?.observedFacts[0]?.grounding, "runtime-verified");
+    assert.deepEqual(clean.discrepancies, []);
+
+    // A failed scan discards it, even though the evidence text is genuinely
+    // present in the surface as it stands now.
+    const unknown = await validateExploreFindings(
+      admissionInput(),
+      surface,
+      report,
+      [],
+      "EPERM: evidence scan failed",
+    );
+    assert.equal(unknown.findings?.observedFacts.length, 0);
+    assert.ok(
+      unknown.discrepancies.some((entry) => /could not be proven unmodified/.test(entry)),
+      `expected an integrity-unknown discrepancy, got ${JSON.stringify(unknown.discrepancies)}`,
+    );
+    assert.equal(unknown.findings?.runtimeObservedFacts.length, 0);
+  } finally {
+    await removeExplorationSurface(surface);
     await fs.rm(root, { recursive: true, force: true });
   }
 });

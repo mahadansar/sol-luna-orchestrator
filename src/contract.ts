@@ -402,6 +402,10 @@ export const continueTaskInputShape = {
   continuationReference: z
     .string()
     .min(1)
+    // Bounded like `handoffReference`. Both are opaque server-issued
+    // capabilities of the same fixed shape, so accepting an unbounded string
+    // for one of them only ever admitted work the runtime cannot use.
+    .max(128)
     .describe("Opaque single-use continuation reference; never send a raw thread id."),
   instruction: z
     .string()
@@ -497,7 +501,10 @@ export type ExploreInput = z.infer<typeof exploreInputSchema>;
  */
 export const INPUT_METADATA_SIZE_BUDGETS = {
   delegateTask: 3_550,
-  continueTask: 390,
+  // Raised by 10 bytes for the `maxLength` bound on `continuationReference`:
+  // the field is an opaque bearer-like capability, and advertising its real
+  // length limit is worth the metadata it costs.
+  continueTask: 400,
   delegateTasks: 3_990,
   routingPreflightTool: 810,
   exploreTool: 1_680,
