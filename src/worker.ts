@@ -1174,8 +1174,32 @@ async function executeTaskTurn(
   // Re-run the checks ourselves, after the worker has exited, so a PASS is
   // falsifiable rather than self-certified. Skipped when the run was cancelled:
   // there is nothing meaningful to verify and the caller is shutting down.
+  //
+  // Skipping *silently*, though, left the worker's own PASS unfalsified while
+  // the result still read as a trustworthy, fully verified pass. A cancellation
+  // that arrives after the provider's last event does not make the stream
+  // throw, so nothing in `runWorkerThread` records it either: the turn was
+  // published with `verdict: PASS`, `trustworthy: true`, no errors, no
+  // discrepancies, and a live continuation reference, for declared checks the
+  // orchestrator never re-ran. The skip stays - running checks into a shutting
+  // down process is not useful - but it is now recorded as the evidence gap it
+  // is. A cancelled run that declared no checks is unaffected, so a parallel
+  // sibling that genuinely finished before the batch was cancelled keeps its
+  // result.
   let orchestratorRuns: VerificationRun[] = [];
   let verificationElapsedMs = 0;
+  if (input.verificationCommands.length > 0 && observed.cancelled) {
+    // Phrased with the canonical cancellation wording on purpose: the verdict,
+    // `resultWasCancelled`, continuation and handoff eligibility, recovery
+    // classification, and the terminal event pair all key on it, and a run
+    // whose declared checks never executed must be terminal on every one of
+    // those surfaces rather than on some of them.
+    observed.errors.push(
+      `Independent verification did not run because the task was cancelled before ` +
+        `it finished: ${input.verificationCommands.length} declared check(s) were ` +
+        `never re-run, so the worker's claims about them are unverified.`,
+    );
+  }
   if (input.verificationCommands.length > 0 && !observed.cancelled) {
     const verificationStartedTick = performance.now();
     options.onVerificationStart?.(input.verificationCommands.length, {
@@ -1194,6 +1218,22 @@ async function executeTaskTurn(
         observed.termination = "cancelled";
         observed.terminationMessage =
           "Independent verification was cancelled and its process tree terminated.";
+        // Marking the run cancelled is not enough on its own. The interrupted
+        // command does contribute a failing authoritative row, so the verdict
+        // was already FAILED - but nothing downstream reads
+        // `observed.cancelled`, and every cancellation consumer keys on the
+        // recorded error instead. Without one the run read as an ordinary
+        // completed failure: `emitSingleCompletion` published `batch.completed`
+        // rather than the `worker.cancelled`/`batch.cancelled` pair, and
+        // `registerContinuation` issued a continuation reference even though
+        // cancellation is documented as terminal for it. Recorded here in the
+        // same phrasing the worker-side cancellation uses, and naming how much
+        // of the declared set actually ran.
+        observed.errors.push(
+          "Independent verification was cancelled before it finished, so the " +
+            `declared checks did not complete (${orchestratorRuns.length}/` +
+            `${input.verificationCommands.length} ran). This result is not authoritative.`,
+        );
       }
     } catch (error) {
       const message = `Independent verification failed unexpectedly: ${(error as Error).message}`;

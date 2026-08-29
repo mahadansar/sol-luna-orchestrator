@@ -34,6 +34,7 @@ import {
   executeTask,
   parseWorkerReport,
   reconcileParallelWorktreeEvidence,
+  resultWasCancelled,
   type ObservedRun,
   type WorkerCodex,
 } from "./worker.js";
@@ -1104,6 +1105,73 @@ test("verification cancellation kills and awaits the process tree", async (t) =>
   );
 });
 
+test("a cancellation after the worker's last event cannot certify unrun verification", async () => {
+  // The provider's stream ends normally, so nothing throws and no cancellation
+  // is recorded. `executeTaskTurn` still skips independent verification because
+  // the run is marked cancelled - which is correct - but skipping it silently
+  // left the worker's own PASS unfalsified and the result reading as a
+  // trustworthy pass for a check that deliberately exits non-zero.
+  const command = 'node -e "process.exit(1)"';
+  const report: WorkerReport = {
+    status: "PASS",
+    failureCauses: [],
+    summary: "Worker claims the declared check passed.",
+    filesChanged: [],
+    verification: [{ command, exitCode: 0, passed: true, evidence: "worker claim" }],
+    notes: "",
+    followUps: [],
+  };
+  const controller = new AbortController();
+  const codex: WorkerCodex = {
+    startThread: () => ({
+      id: "thread-late-cancellation",
+      runStreamed: async () => {
+        async function* events(): AsyncGenerator<ThreadEvent> {
+          yield {
+            type: "item.completed",
+            item: { id: "report", type: "agent_message", text: JSON.stringify(report) },
+          };
+          // Cancellation lands after the last event and before the stream ends,
+          // so the iteration completes rather than rejecting.
+          controller.abort();
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        return { events: events() };
+      },
+    }),
+    resumeThread: () => {
+      throw new Error("fixture must start a fresh thread");
+    },
+  };
+
+  const result = await executeTask(
+    delegateTaskInputSchema.parse({
+      objective: "Prove a late cancellation cannot certify checks that never ran.",
+      effortReason: "The evidence gap is the whole point of this fixture.",
+      acceptanceCriteria: ["Unrun verification is never reported as verified."],
+      verificationCommands: [command],
+      changeIntent: "forbidden",
+    }),
+    { workingDirectory: process.cwd(), codex, signal: controller.signal },
+  );
+
+  assert.equal(
+    result.verification.filter((run) => run.source === "orchestrator").length,
+    0,
+    "the fixture must exercise the skipped-verification path",
+  );
+  assert.equal(result.verdict, "FAILED");
+  assert.equal(result.trustworthy, false);
+  assert.ok(
+    result.errors.some((error) =>
+      /Independent verification did not run because the task was cancelled/.test(error),
+    ),
+    `the skipped checks must be recorded: ${JSON.stringify(result.errors)}`,
+  );
+  // Terminal on every surface that reads cancellation, not just in the verdict.
+  assert.equal(resultWasCancelled(result), true);
+});
+
 test("task cancellation propagates into an already-running authoritative verification", async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-task-verify-cancel-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -1164,6 +1232,16 @@ test("task cancellation propagates into an already-running authoritative verific
   const result = await running;
 
   assert.equal(result.attempts?.[0]?.termination.kind, "cancelled");
+  // Cancellation is terminal: it must reach the shared predicate that gates the
+  // terminal event pair and continuation eligibility. Recording the cancelled
+  // command alone left `errors` empty, so the run published `batch.completed`
+  // and was still issued a continuation reference.
+  assert.equal(result.verdict, "FAILED");
+  assert.equal(
+    resultWasCancelled(result),
+    true,
+    `a run cancelled during verification must be terminal: ${JSON.stringify(result.errors)}`,
+  );
   const verification = result.verification.find((run) => run.source === "orchestrator");
   assert.ok(verification);
   assert.equal(verification.passed, false);
