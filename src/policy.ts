@@ -231,6 +231,57 @@ export const EXECUTOR_ORDER_UNUSABLE = executorOrderDeclaredButUnusable(
   DEFAULT_COMPUTE_POLICY_ENVIRONMENT,
 );
 
+/**
+ * The one executor an envelope resolves to when no execution is being continued.
+ *
+ * Every delegation surface needs a concrete executor before it can start a
+ * worker, and each of them used to answer this differently: single delegation
+ * preferred `LUNA_MODEL` and otherwise took index 0, batch took index 0
+ * outright, and `selectCompute` refused to resolve the choice at all. Index 0 is
+ * not a declaration - `allowedModels` is a membership set whose order comes from
+ * how `parseAllowedModels` happened to concatenate the environment - so reading
+ * it as preference invented an operator decision nobody made, and the two
+ * surfaces could name different executors for the same envelope.
+ *
+ * One rule, in precedence order, none of which reads list position as strength:
+ *
+ * 1. An operator-declared `executorOrder` names its own baseline rung. It is
+ *    only ever populated when `executorOrderIsUsable` accepted it, so its first
+ *    entry is a declaration rather than an accident.
+ * 2. An envelope authorising exactly one executor selects it by itself.
+ * 3. Otherwise the installation baseline worker, when the envelope still
+ *    permits it. `LUNA_MODEL` is an operator surface in its own right, not an
+ *    inference from ordering.
+ * 4. Otherwise the choice is genuinely undeclared and this returns `null`.
+ *    Callers refuse; they do not pick one.
+ */
+export function resolveBaselineExecutor(
+  policy: ComputePolicy,
+  baselineModel: string = LUNA_MODEL,
+): string | null {
+  const order = policy.executorOrder ?? [];
+  if (
+    order.length === policy.allowedModels.length &&
+    new Set(order).size === order.length &&
+    order.every((model) => policy.allowedModels.includes(model))
+  ) {
+    return order[0] ?? null;
+  }
+  if (policy.allowedModels.length === 1) return policy.allowedModels[0] ?? null;
+  if (policy.allowedModels.includes(baselineModel)) return baselineModel;
+  return null;
+}
+
+/** The refusal a surface returns when no executor choice is declared. */
+export function unresolvedExecutorRefusal(policy: ComputePolicy): string {
+  return (
+    `Compute policy refusal: the envelope authorises ${policy.allowedModels.length} ` +
+    `executors (${policy.allowedModels.join(", ")}), declares no executor ordering, ` +
+    `and permits none of them as the configured baseline worker. Declare ` +
+    `SOL_LUNA_EXECUTOR_ORDER, or narrow the envelope to one executor.`
+  );
+}
+
 /** Deep copy, so a resolved envelope attached to a task cannot be aliased. */
 export function cloneComputePolicy(policy: ComputePolicy): ComputePolicy {
   return {

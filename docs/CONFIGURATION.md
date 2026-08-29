@@ -324,6 +324,16 @@ Two consequences worth knowing before you narrow anything:
   server-issued next-action handoff is required before a later call can use prior
   execution evidence to advance along this ordering. Caller history alone never
   authorizes a stronger model.
+- Which executor a _first_ turn runs under is one rule, shared by single
+  delegation, batches, continuations, handoffs, and workflows, and it reads only
+  declarations. In precedence order: a usable `SOL_LUNA_EXECUTOR_ORDER` names its
+  own baseline rung; otherwise an envelope authorizing exactly one model selects
+  it; otherwise `LUNA_MODEL`, which is an operator setting in its own right. If
+  none of those applies -- several authorized models, no usable order, and
+  `LUNA_MODEL` not among them -- the call is refused rather than resolved by list
+  position. `SOL_LUNA_ALLOWED_MODELS` is a membership set; its order is never read
+  as preference or strength. A continuation is the one exception, and not a
+  choice at all: it must resume under the executor that owns its thread.
 
 An eligible first bounded retry, effort-escalation, or stronger-executor decision returns an opaque
 `hdf_...` handoff reference. It is single-use, expires after 15 minutes, and is

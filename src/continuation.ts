@@ -12,6 +12,16 @@ interface ContinuationRecord {
   input: DelegateTaskInput;
   threadId: string;
   workingDirectory: string;
+  /**
+   * Where a *fresh* attempt of this contract belongs.
+   *
+   * Identical to `workingDirectory` for work that already runs in the shared
+   * workspace. For a retained parallel worktree the two differ: the resumed
+   * thread must continue inside the worktree, but a next-action handoff issued
+   * after that turn restarts the contract and must not be bound to a directory
+   * whose lease this turn releases on the way out.
+   */
+  authoritativeWorkspace: string;
   reconcileFinalGit: boolean;
   worktreeLease: WorktreeLease | null;
   predecessorExecutionId: string | null;
@@ -31,6 +41,8 @@ export interface ContinuationEntry {
   input: DelegateTaskInput;
   threadId: string;
   workingDirectory: string;
+  /** Where a fresh attempt belongs; never a lease-protected retained worktree. */
+  authoritativeWorkspace: string;
   /** Retained parallel worktrees need a fresh final Git snapshot after continuation. */
   reconcileFinalGit: boolean;
   /** Exact persistent owner for a retained parallel worktree, when applicable. */
@@ -53,6 +65,17 @@ export interface ContinuationStoreOptions {
   now?: () => number;
   /** Injected only for deterministic tests; production references remain opaque. */
   tokenFactory?: () => string;
+  /**
+   * Surrender a persistent worktree lease an expiring continuation still owns.
+   *
+   * An expiring reference is the last in-process owner of the retained worktree
+   * it protected. Without this the reservation outlived the capability that
+   * justified it and kept `pruneStaleWorktrees` from reclaiming the identity
+   * until the lease-s own, unrelated filesystem TTL ran out. Called at most
+   * once per record, on the single transition out of the issued set, and never
+   * for a record that was consumed: the consuming turn owns the lease then.
+   */
+  releaseLease?: (lease: WorktreeLease) => void | Promise<void>;
 }
 
 /**
@@ -69,12 +92,16 @@ export class ContinuationStore {
   private readonly retired = new Map<string, RetiredReference>();
   private readonly now: () => number;
   private readonly tokenFactory: () => string;
+  private readonly releaseLease?: (lease: WorktreeLease) => void | Promise<void>;
+  /** Settles when every lease surrendered by expiry so far has been released. */
+  private leaseReleases: Promise<void> = Promise.resolve();
 
   constructor(options: ContinuationStoreOptions = {}) {
     this.now = options.now ?? Date.now;
     this.tokenFactory =
       options.tokenFactory ??
       (() => `${CONTINUATION_PREFIX}${randomBytes(24).toString("base64url")}`);
+    this.releaseLease = options.releaseLease;
   }
 
   /** Issue one opaque reference for an observed worker thread. */
@@ -88,12 +115,17 @@ export class ContinuationStore {
     logicalAttempt = input.previousAttempts.length + 2,
     model = LUNA_MODEL,
     contextKey: string | null = null,
+    authoritativeWorkspace: string = workingDirectory,
   ): string {
     const now = this.now();
     this.prune(now);
 
     let reference = this.tokenFactory();
-    while (this.active.has(reference) || this.retired.has(reference)) {
+    while (
+      this.active.has(reference) ||
+      this.leased.has(reference) ||
+      this.retired.has(reference)
+    ) {
       reference = `${reference}_`;
     }
 
@@ -101,6 +133,7 @@ export class ContinuationStore {
       input: cloneTaskInput(input),
       threadId,
       workingDirectory,
+      authoritativeWorkspace,
       reconcileFinalGit,
       worktreeLease: worktreeLease ? { ...worktreeLease } : null,
       predecessorExecutionId,
@@ -120,11 +153,7 @@ export class ContinuationStore {
     const record = this.active.get(reference);
     if (record) {
       if (now >= record.expiresAt) {
-        this.active.delete(reference);
-        this.retired.set(reference, {
-          status: "expired",
-          until: now + CONTINUATION_TTL_MS,
-        });
+        this.expire(reference, record, now);
         return { status: "expired" };
       }
 
@@ -137,6 +166,7 @@ export class ContinuationStore {
           input: cloneTaskInput(record.input),
           threadId: record.threadId,
           workingDirectory: record.workingDirectory,
+          authoritativeWorkspace: record.authoritativeWorkspace,
           reconcileFinalGit: record.reconcileFinalGit,
           worktreeLease: record.worktreeLease ? { ...record.worktreeLease } : null,
           predecessorExecutionId: record.predecessorExecutionId,
@@ -201,17 +231,46 @@ export class ContinuationStore {
     ];
   }
 
+  /**
+   * Resolves once every lease surrendered by expiry so far has been released.
+   *
+   * Expiry is reached from synchronous call sites, so the release itself cannot
+   * be awaited there. Tests await this instead of racing the filesystem.
+   */
+  whenExpiredLeasesReleased(): Promise<void> {
+    return this.leaseReleases;
+  }
+
+  /**
+   * The one transition out of the issued set that nobody is left to settle.
+   *
+   * Whatever the record still owns is surrendered here, exactly once: the
+   * record is removed from `active` first, so a concurrent expiry, consume, or
+   * prune of the same reference cannot reach it a second time.
+   */
+  private expire(reference: string, record: ContinuationRecord, now: number): void {
+    this.active.delete(reference);
+    this.retired.set(reference, {
+      status: "expired",
+      until: now + CONTINUATION_TTL_MS,
+    });
+    const lease = record.worktreeLease;
+    if (!lease || !this.releaseLease) return;
+    record.worktreeLease = null;
+    const release = this.releaseLease;
+    this.leaseReleases = this.leaseReleases.then(async () => {
+      // Best effort by construction: the reference is already gone, and a
+      // failed release leaves only the lease own bounded filesystem TTL.
+      await Promise.resolve(release(lease)).catch(() => undefined);
+    });
+  }
+
   private prune(now: number): void {
     for (const [reference, record] of this.active) {
-      if (now >= record.expiresAt) {
-        this.active.delete(reference);
-        this.retired.set(reference, {
-          status: "expired",
-          until: now + CONTINUATION_TTL_MS,
-        });
-      }
+      if (now >= record.expiresAt) this.expire(reference, record, now);
     }
     for (const [reference, retired] of this.retired) {
+      if (this.leased.has(reference)) continue;
       if (now >= retired.until) this.retired.delete(reference);
     }
   }

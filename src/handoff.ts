@@ -44,6 +44,33 @@ export type HandoffConsumeResult =
   | { status: "ready"; entry: HandoffEntry }
   | { status: "invalid" | "unknown" | "expired" | "used" };
 
+/**
+ * A handoff taken out of circulation but not yet spent.
+ *
+ * Reserving removes the reference from the issued set and retires it as `used`
+ * for every concurrent consumer, so the single-use bound holds for the whole
+ * reservation window and two consumers can never both execute. Exactly one of
+ * `commit` and `release` settles it; later calls are no-ops.
+ *
+ * `commit` is called at the moment authoritative execution begins and makes
+ * consumption permanent. `release` is called when a pre-execution gate refuses,
+ * and returns the still-unspent authority to the issued set with its original
+ * expiry. Authority that expired while reserved is retired as `expired` rather
+ * than restored, so a reservation can never extend a TTL.
+ */
+export interface HandoffReservation {
+  readonly reference: string;
+  readonly entry: HandoffEntry;
+  /** Make consumption permanent. Called once authoritative execution begins. */
+  commit(): void;
+  /** Return unspent authority after a refusal that ran nothing. */
+  release(): void;
+}
+
+export type HandoffReserveResult =
+  | { status: "ready"; reservation: HandoffReservation }
+  | { status: "invalid" | "unknown" | "expired" | "used" };
+
 export interface HandoffStoreOptions {
   now?: () => number;
   tokenFactory?: () => string;
@@ -59,6 +86,8 @@ export interface HandoffStoreOptions {
  */
 export class HandoffStore {
   private readonly active = new Map<string, HandoffRecord>();
+  /** Reserved but not yet spent: out of circulation, still restorable. */
+  private readonly reserved = new Map<string, HandoffRecord>();
   private readonly retired = new Map<
     string,
     { status: "expired" | "used"; until: number }
@@ -84,7 +113,11 @@ export class HandoffStore {
     this.prune(now);
 
     let reference = this.tokenFactory();
-    while (this.active.has(reference) || this.retired.has(reference)) {
+    while (
+      this.active.has(reference) ||
+      this.reserved.has(reference) ||
+      this.retired.has(reference)
+    ) {
       reference = `${reference}_`;
     }
 
@@ -131,8 +164,71 @@ export class HandoffStore {
     return reference;
   }
 
-  /** Consume a reference atomically, enforcing expiry and single-use bound. */
+  /**
+   * Take a reference out of circulation without spending it yet.
+   *
+   * Synchronous and indivisible: the reference leaves the issued set and is
+   * retired as `used` in the same step, so any concurrent consumer is refused
+   * for the whole reservation window. The caller settles the reservation with
+   * exactly one of `commit` (authoritative execution began) or `release` (a
+   * pre-execution gate refused and nothing ran).
+   */
+  reserve(reference: string): HandoffReserveResult {
+    const taken = this.take(reference);
+    if (taken.status !== "ready") return taken;
+    const { record, entry } = taken;
+
+    let settled = false;
+    const reservation: HandoffReservation = {
+      reference,
+      entry,
+      commit: () => {
+        if (settled) return;
+        settled = true;
+        // The record is already retired as `used`; dropping the reserved copy
+        // is what makes consumption permanent.
+        this.reserved.delete(reference);
+      },
+      release: () => {
+        if (settled) return;
+        settled = true;
+        this.reserved.delete(reference);
+        const now = this.now();
+        if (now >= record.expiresAt) {
+          // A reservation never extends a TTL. Authority that expired while it
+          // was held is retired, not handed back.
+          this.retired.set(reference, {
+            status: "expired",
+            until: now + HANDOFF_TTL_MS,
+          });
+          return;
+        }
+        this.retired.delete(reference);
+        this.active.set(reference, record);
+      },
+    };
+    this.reserved.set(reference, record);
+    return { status: "ready", reservation };
+  }
+
+  /**
+   * Consume a reference atomically, enforcing expiry and single-use bound.
+   *
+   * Equivalent to reserving and immediately committing. Retained for callers
+   * that have no pre-execution gate left to run between the two.
+   */
   consume(reference: string): HandoffConsumeResult {
+    const taken = this.take(reference);
+    if (taken.status !== "ready") return taken;
+    return { status: "ready", entry: taken.entry };
+  }
+
+  /** The one place a reference leaves the issued set. */
+  private take(
+    reference: string,
+  ):
+    | { status: "ready"; record: HandoffRecord; entry: HandoffEntry }
+    | { status: "invalid" | "unknown" | "expired" | "used" } {
     if (!isHandoffReference(reference)) return { status: "invalid" };
 
     const now = this.now();
@@ -151,6 +247,7 @@ export class HandoffStore {
       this.retired.set(reference, { status: "used", until: now + HANDOFF_TTL_MS });
       return {
         status: "ready",
+        record,
         entry: {
           input: cloneTaskInput(record.input),
           predecessorExecutionId: record.predecessorExecutionId,
@@ -164,13 +261,22 @@ export class HandoffStore {
       };
     }
 
+    if (this.reserved.has(reference)) return { status: "used" };
+
     const retired = this.retired.get(reference);
     if (retired && now < retired.until) return { status: retired.status };
     if (retired) this.retired.delete(reference);
     return { status: "unknown" };
   }
 
-  /** Check live status of a handoff reference without consuming it. */
+  /**
+   * Check live status of a handoff reference without consuming it.
+   *
+   * A reserved reference reads as `consumed`: it is out of circulation and no
+   * other consumer may act on it. If the reservation is later released the
+   * reference returns to `issued`, which is the conservative direction - a
+   * reader is never told authority is available while someone holds it.
+   */
   status(reference: string): HandoffState {
     if (!isHandoffReference(reference)) return "unavailable";
     const now = this.now();
@@ -182,6 +288,7 @@ export class HandoffStore {
       }
       return "issued";
     }
+    if (this.reserved.has(reference)) return "consumed";
     const retired = this.retired.get(reference);
     if (retired && now < retired.until) {
       return retired.status === "used" ? "consumed" : "unavailable";
@@ -189,12 +296,21 @@ export class HandoffStore {
     return "unavailable";
   }
 
-  /** Whether an unused reference still owns a lifecycle context. */
+  /**
+   * Whether an unspent reference still owns a lifecycle context.
+   *
+   * Reserved records count: a reservation still holds live authority bound to
+   * that context, so reclaiming it while the reservation is open would strand a
+   * capability that may yet be released back into circulation.
+   */
   hasContextKey(contextKey: string): boolean {
     this.prune(this.now());
-    return [...this.active.values()].some((record) => record.contextKey === contextKey);
+    return [...this.active.values(), ...this.reserved.values()].some(
+      (record) => record.contextKey === contextKey,
+    );
   }
 
+  /** Reserved records are deliberately not pruned; their holder settles them. */
   private prune(now: number): void {
     for (const [reference, record] of this.active) {
       if (now >= record.expiresAt) {
@@ -206,6 +322,7 @@ export class HandoffStore {
       }
     }
     for (const [reference, retired] of this.retired) {
+      if (this.reserved.has(reference)) continue;
       if (now >= retired.until) this.retired.delete(reference);
     }
   }

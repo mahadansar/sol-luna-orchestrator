@@ -65,10 +65,17 @@ import {
   cloneComputePolicy,
   DEFAULT_COMPUTE_POLICY,
   EXECUTOR_ORDER_UNUSABLE,
+  resolveBaselineExecutor,
+  unresolvedExecutorRefusal,
   type ComputePolicy,
 } from "./policy.js";
 import { evaluateAdaptiveCard, routeLiveTask } from "./adaptive.js";
-import { HandoffStore, handoffError, registerHandoff } from "./handoff.js";
+import {
+  HandoffStore,
+  handoffError,
+  registerHandoff,
+  type HandoffReservation,
+} from "./handoff.js";
 import { type PriorExecution } from "./selection.js";
 import {
   declaredRoutingFields,
@@ -112,7 +119,14 @@ export const SERVER_VERSION =
 const log = createLogger(LOG_FILE);
 
 /** Deliberately in-memory: references die with this server process. */
-const continuationStore = new ContinuationStore();
+const continuationStore = new ContinuationStore({
+  // An expiring continuation is the last in-process owner of the retained
+  // worktree it protected. Surrendering the persistent lease here is what stops
+  // an unusable reference from reserving a worktree identity - and blocking
+  // `pruneStaleWorktrees` - until the lease own unrelated filesystem TTL runs
+  // out. Consumed references are not touched: their turn owns the lease.
+  releaseLease: (lease) => releaseWorktreeLease(lease),
+});
 const handoffStore = new HandoffStore();
 
 /** Process-local lifecycle contexts, isolated by server-owned execution lineage. */
@@ -188,6 +202,7 @@ function registerContinuation(
   worktreeLease: WorktreeLease | null = null,
   store: ContinuationStore = continuationStore,
   contextKey: string | null = null,
+  authoritativeWorkspace: string = workingDirectory,
 ): string | null {
   if (!result.workerThreadId) {
     result.continuationState = {
@@ -216,6 +231,7 @@ function registerContinuation(
     result.attempt + 1,
     result.model,
     contextKey,
+    authoritativeWorkspace,
   );
   result.continuationState = {
     status: "issued",
@@ -1025,10 +1041,33 @@ export async function handleDelegateTask(
   let resolvedTask = rawTask;
   let contextKey = batchId;
 
+  // Earned authority is *reserved*, not spent, until this call is committed to
+  // running a worker. Every gate below - selection, routing structure, compute
+  // admission, cancellation - can still refuse, and a refusal that runs nothing
+  // must hand the escalation back rather than destroy it. The reservation keeps
+  // the single-use bound for the whole window: a concurrent consumer of the same
+  // reference is refused as already used and can never execute alongside this one.
+  let handoffReservation: HandoffReservation | null = null;
+  /** Refuse before execution: nothing ran, so unspent authority goes back. */
+  const refuseBeforeExecution = (
+    message: string,
+  ): {
+    content: Array<{ type: "text"; text: string }>;
+    isError: true;
+  } => {
+    handoffReservation?.release();
+    handoffReservation = null;
+    dependencies.emit({ type: "batch.rejected", batchId, reason: message });
+    return {
+      content: [{ type: "text" as const, text: message }],
+      isError: true,
+    };
+  };
+
   if (rawTask.handoffReference) {
-    const consumed = dependencies.handoffStore.consume(rawTask.handoffReference);
-    if (consumed.status !== "ready") {
-      const message = handoffError(consumed);
+    const reserved = dependencies.handoffStore.reserve(rawTask.handoffReference);
+    if (reserved.status !== "ready") {
+      const message = handoffError(reserved);
       dependencies.emit({ type: "batch.rejected", batchId, reason: message });
       log(`delegate_task handoff rejected: ${message}`);
       return {
@@ -1036,6 +1075,8 @@ export async function handleDelegateTask(
         isError: true,
       };
     }
+    handoffReservation = reserved.reservation;
+    const consumed = { entry: reserved.reservation.entry };
     resolvedTask = {
       ...consumed.entry.input,
       previousAttempts: [
@@ -1073,27 +1114,20 @@ export async function handleDelegateTask(
     liveRouting.selection.reason === "no-authorised-next-execution" ||
     (priorEvidence && liveRouting.selectedModel === null)
   ) {
-    dependencies.emit({
-      type: "batch.rejected",
-      batchId,
-      reason: liveRouting.selection.detail,
-    });
     log(`delegate_task selection refused: ${liveRouting.selection.detail}`);
-    return {
-      content: [{ type: "text" as const, text: liveRouting.selection.detail }],
-      isError: true,
-    };
+    return refuseBeforeExecution(liveRouting.selection.detail);
   }
 
-  let targetModel = liveRouting.selectedModel;
+  // One shared rule across every surface. `selectCompute` reports an open
+  // choice rather than resolving it by index; `resolveBaselineExecutor` is the
+  // single place that turns an open choice into a concrete executor, and it
+  // refuses instead of guessing when the operator declared nothing.
+  const targetModel =
+    liveRouting.selectedModel ?? resolveBaselineExecutor(initialAdmission.policy);
   if (!targetModel) {
-    if (initialAdmission.policy.allowedModels.length === 1) {
-      targetModel = initialAdmission.policy.allowedModels[0]!;
-    } else if (initialAdmission.policy.allowedModels.includes(LUNA_MODEL)) {
-      targetModel = LUNA_MODEL;
-    } else {
-      targetModel = initialAdmission.policy.allowedModels[0]!;
-    }
+    const detail = unresolvedExecutorRefusal(initialAdmission.policy);
+    log(`delegate_task refused: ${detail}`);
+    return refuseBeforeExecution(detail);
   }
 
   // Routing's starting effort is a recommendation for work whose effort nobody
@@ -1124,6 +1158,11 @@ export async function handleDelegateTask(
   const startedAt = Date.now();
   let workerStarted = false;
   let workerDirectory: string | null = null;
+  // One batch identity publishes exactly one terminal outcome. Everything after
+  // `emitSingleCompletion` is rendering and bookkeeping over an outcome that is
+  // already final, so a throw there is reported to the caller but must not
+  // publish a second, contradicting terminal event for the same batch.
+  let terminalOutcomeEmitted = false;
   log(
     `delegate_task: model=${targetModel} effort=${task.effort} cwd=${task.workingDirectory ?? process.cwd()} ` +
       `objective="${task.objective.slice(0, 80)}..."`,
@@ -1148,21 +1187,13 @@ export async function handleDelegateTask(
     admission.policy,
   );
   if (routingRefusal) {
-    dependencies.emit({ type: "batch.rejected", batchId, reason: routingRefusal });
     log(`delegate_task refused: ${routingRefusal}`);
-    return {
-      content: [{ type: "text" as const, text: routingRefusal }],
-      isError: true,
-    };
+    return refuseBeforeExecution(routingRefusal);
   }
 
   if (admission.refusal) {
-    dependencies.emit({ type: "batch.rejected", batchId, reason: admission.refusal });
     log(`delegate_task refused: ${admission.refusal}`);
-    return {
-      content: [{ type: "text" as const, text: admission.refusal }],
-      isError: true,
-    };
+    return refuseBeforeExecution(admission.refusal);
   }
 
   const routingAdvisory = routingAdvisoryLine(
@@ -1195,6 +1226,22 @@ export async function handleDelegateTask(
     executionLeaseActive = false;
     releaseExecutionLease();
   };
+
+  // Every pre-execution gate has passed and the executor is about to be handed
+  // the contract. From here the authority is spent whatever the outcome:
+  // a worker that starts and then times out, aborts, or throws has still used
+  // the escalation this handoff granted.
+  //
+  // Cancellation that already arrived is the one exception: no authoritative
+  // execution will begin, so the escalation goes back rather than being spent.
+  // The call still enters the executor, so its cancellation telemetry and its
+  // returned message are exactly what they were.
+  if (signal?.aborted) {
+    handoffReservation?.release();
+    handoffReservation = null;
+  } else {
+    handoffReservation?.commit();
+  }
 
   try {
     const result = await dependencies.delegateToLuna(
@@ -1285,6 +1332,7 @@ export async function handleDelegateTask(
       result,
       dependencies.emit,
     );
+    terminalOutcomeEmitted = true;
     log(
       `done: verdict=${result.verdict} claimed=${result.workerClaimedStatus} ` +
         `thread=${result.workerThreadId ?? "?"} in ${result.durationSeconds}s`,
@@ -1328,7 +1376,11 @@ export async function handleDelegateTask(
         ? error.message
         : `Delegation failed: ${(error as Error).message}`;
 
-    if (workerStarted) {
+    if (terminalOutcomeEmitted) {
+      // The run already published its outcome; this is a late bookkeeping or
+      // rendering failure over a settled result.
+      log(`delegate_task post-completion failure: ${message}`);
+    } else if (workerStarted) {
       const durationSeconds = Math.round((Date.now() - startedAt) / 1000);
       if (signal?.aborted) {
         dependencies.emit({
@@ -1392,6 +1444,10 @@ export async function handleDelegateTask(
       isError: true,
     };
   } finally {
+    // Settle exactly once. `commit` above already ran on every path that
+    // reached the executor; this only catches a throw between the last gate
+    // and that commit, where nothing authoritative started.
+    handoffReservation?.release();
     releaseExecution();
     if (persistedContextKey) {
       dependencies.contextRegistry.releaseIfUnreferenced(persistedContextKey);
@@ -1521,6 +1577,8 @@ export async function handleContinueTask(
   const startedAt = Date.now();
   let workerStarted = false;
   let worktreeLeaseFinalized = false;
+  /** One continuation turn publishes exactly one terminal outcome. */
+  let terminalOutcomeEmitted = false;
   log(
     `continue_task: thread=${entry.threadId} instruction="${request.instruction.slice(0, 80)}..."`,
   );
@@ -1614,16 +1672,24 @@ export async function handleContinueTask(
       reason: "The single-use continuation bound was consumed by this execution.",
     };
     applyFailureDecision(entry.input, result);
+    // A next-action handoff restarts the contract; it does not resume the
+    // thread. Binding it to `entry.workingDirectory` bound a retained parallel
+    // worktree whose persistent lease this very turn has just released a few
+    // lines above, so the escalation named a directory the next
+    // `pruneStaleWorktrees` was already free to reclaim. The authoritative
+    // workspace is the directory a fresh attempt belongs in, and for shared
+    // workspaces the two are the same value.
     result.handoffReference = registerHandoff(
       entry.input,
       result,
       dependencies.handoffStore,
       {
-        workingDirectory: entry.workingDirectory,
+        workingDirectory: entry.authoritativeWorkspace,
         contextKey: persistedContextKey,
       },
     );
     emitSingleCompletion(batchId, taskId, timeoutSeconds, result, dependencies.emit);
+    terminalOutcomeEmitted = true;
     dependencies.record(result);
 
     recordLifecycleTurn("continuation turn", () =>
@@ -1667,7 +1733,9 @@ export async function handleContinueTask(
       error instanceof WorkspaceError
         ? error.message
         : `Continuation failed: ${(error as Error).message}`;
-    if (workerStarted) {
+    if (terminalOutcomeEmitted) {
+      log(`continue_task post-completion failure: ${message}`);
+    } else if (workerStarted) {
       const durationSeconds = Math.round((Date.now() - startedAt) / 1000);
       if (signal?.aborted) {
         dependencies.emit({
@@ -1871,7 +1939,7 @@ export async function handleDelegateTasks(
       automaticRecovery: batch.automaticRecovery,
       signal,
       batchId: contextKey,
-      continuationRegistrar: (input, res, cwd, reconcile, lease) =>
+      continuationRegistrar: (input, res, cwd, reconcile, lease, authoritativeCwd) =>
         registerContinuation(
           input,
           res,
@@ -1880,6 +1948,7 @@ export async function handleDelegateTasks(
           lease,
           dependencies.continuationStore,
           persistedContextKey,
+          authoritativeCwd ?? cwd,
         ),
       handoffStore: dependencies.handoffStore,
       handoffContextKey: persistedContextKey,

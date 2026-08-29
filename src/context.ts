@@ -2576,10 +2576,20 @@ export class ContextLifecycleStore {
     };
   }
 
+  /**
+   * Replace this context history.
+   *
+   * Execution leases are deliberately *not* cleared. A lease is a live
+   * execution, not history: dropping the set would report an in-flight store as
+   * idle, which is exactly the state that lets compaction run under a running
+   * worker and lets the registry reclaim a context another call still holds.
+   * Restoring history under a live execution is refused by the caller
+   * (`restoreSessionHandoffIntoStore`); if one somehow reaches here, the run
+   * that owns the lease still owns it.
+   */
   reset(initialContext?: OrchestrationContext): void {
     this.authoritativeContext = initialContext ? structuredClone(initialContext) : null;
     this.compactedProjection = null;
-    this.executionLeases.clear();
   }
 
   recordDecision(

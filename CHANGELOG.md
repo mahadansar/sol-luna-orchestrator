@@ -65,6 +65,49 @@ All notable changes to this project are documented here. Format follows
 
 ### Fixed
 
+- Gave earned next-action authority an atomic `ready -> reserved -> consumed`
+  lifecycle instead of consuming it at contract resolution. Both delegation
+  surfaces read an `hdf_` reference before several gates that can still refuse --
+  executor selection, structural routing, compute admission, workspace
+  resolution, the authoritative-workspace match, scope conflicts, a refused
+  routing gate, a malformed sibling reference -- and every one of those refusals
+  destroyed an escalation without running a worker. A batch made this collective:
+  one invalid or overlapping sibling burned every valid sibling handoff already
+  read. Reserving takes the reference out of circulation and retires it as `used`
+  for concurrent consumers, so the single-use bound is unchanged and two
+  consumers can never both execute; a refusal that ran nothing releases it back
+  with its original expiry, and entering the executor commits it permanently.
+  Authority that expires while reserved is retired rather than handed back, a
+  reservation settles exactly once whichever order `commit` and `release` arrive
+  in, and a reserved reference still owns its lifecycle context so a concurrent
+  sweep cannot reclaim a context a live capability still names.
+- Made an expiring continuation surrender the persistent worktree lease it owns.
+  An unused `ctr_` reference that reached its TTL dropped its lease silently, so
+  the retained worktree identity stayed reserved -- and `pruneStaleWorktrees`
+  refused to reclaim it -- until the lease's own unrelated filesystem TTL ran
+  out. The release now happens exactly once, on the single transition out of the
+  issued set, and never for a consumed reference whose turn owns the lease.
+- Stopped a next-action handoff issued after a retained-worktree continuation
+  from naming a directory that same turn had just released. A handoff restarts
+  the contract rather than resuming the thread, so it is now bound to the
+  authoritative workspace a fresh attempt belongs in, exactly as batch-issued
+  handoffs already were.
+- Unified which executor a first turn runs under. Single delegation preferred
+  `LUNA_MODEL` and otherwise took `allowedModels[0]`, batch took
+  `allowedModels[0]` outright, and selection declined to resolve the choice at
+  all, so one envelope could name different executors on different surfaces and a
+  membership set's incidental order was read as preference. One rule now answers
+  it everywhere -- a usable `executorOrder`, else a single authorized model, else
+  the configured `LUNA_MODEL` baseline -- and an envelope that declares none of
+  those is refused rather than resolved by list position.
+- Stopped a failure raised after a result was already published from emitting a
+  second, contradicting terminal event for the same batch identity. A throw in
+  post-completion bookkeeping or rendering is now reported to the caller without
+  re-reporting a settled worker outcome as a failure.
+- Stopped `ContextLifecycleStore.reset` from clearing live execution leases.
+  Replacing history reported an in-flight store as idle, which is exactly the
+  state that lets compaction run under a running worker and lets the registry
+  reclaim a context another call still holds.
 - Corrected aggregate usage truthfulness across repair and recovery executions.
   A top-level total is now present only when every constituent execution has
   authoritative Codex `turn.completed` usage; known constituent usage remains
