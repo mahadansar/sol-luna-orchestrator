@@ -675,11 +675,21 @@ test("parent model and effort guidance stays example-only across surfaces", asyn
     /V2[\s\S]{0,160}historical[\s\S]{0,160}bench\/RESULTS\.md/i,
   );
   assert.match(benchmarkSection, /V3[\s\S]{0,160}bench\/V3_METHODOLOGY\.md/i);
-  assert.match(benchmarkSection, /V3[\s\S]{0,240}\bNOT\s+EXECUTED\b/i);
+  assert.match(benchmarkSection, /V3[\s\S]{0,240}36\/36 valid runs/i);
   assert.match(
     benchmarkSection,
-    /v0\.11\.0[\s\S]{0,80}not[\s\S]{0,80}(?:claimed|proven)[\s\S]{0,80}faster[\s\S]{0,40}cheaper[\s\S]{0,40}better[\s\S]{0,40}V3/i,
+    /v0\.11\.0[\s\S]{0,240}Adaptive delegated zero workers[\s\S]{0,160}slower and more expensive overall/i,
   );
+  assert.match(
+    benchmarkSection,
+    /two-repetition[\s\S]{0,80}directional[\s\S]{0,80}not statistically significant/i,
+  );
+  assert.match(benchmarkSection, /post-V3 routing corrections/i);
+  assert.match(
+    benchmarkSection,
+    /those corrections have not been evaluated by another full\s+campaign/i,
+  );
+  assert.match(benchmarkSection, /no v0\.12\.0 performance improvement is claimed/i);
 });
 
 test("SOL_RULES carries the runtime's operational distinctions without benchmark narration", async () => {

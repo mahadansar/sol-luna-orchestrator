@@ -106,10 +106,14 @@ permissions. Read [Security](SECURITY.md) for the threat model and limitations.
 ## Benchmark status
 
 V2 is historical architecture evidence, documented in
-[bench/RESULTS.md](bench/RESULTS.md). The V3 methodology and harness are frozen
-in [bench/V3_METHODOLOGY.md](bench/V3_METHODOLOGY.md), but V3 has **NOT
-EXECUTED**. Therefore v0.11.0 is not claimed or proven faster, cheaper, or
-better by V3.
+[bench/RESULTS.md](bench/RESULTS.md). Benchmark V3 used the frozen
+[methodology](bench/V3_METHODOLOGY.md) and completed 36/36 valid runs against the
+v0.11.0 production baseline: both Solo Medium and Adaptive Medium passed all
+nine tasks across two repetitions, but Adaptive delegated zero workers and was
+slower and more expensive overall. The two-repetition result is directional,
+not statistically significant. It motivated the post-V3 routing corrections
+intended for v0.12.0; those corrections have not been evaluated by another full
+campaign, so no v0.12.0 performance improvement is claimed.
 
 ## Documentation
 

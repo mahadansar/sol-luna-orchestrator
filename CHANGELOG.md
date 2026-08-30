@@ -68,8 +68,16 @@ All notable changes to this project are documented here. Format follows
   `npm run bench:v3:checkpoint`, which generates the pre-launch checkpoint from
   the harness rather than by hand, derives live-execution history and campaign
   identity from the committed evidence directory rather than asserting them, and
-  leaves pricing explicitly unresolved until an authoritative source is read. No
-  model-backed V3 run has been executed under any freeze.
+  leaves pricing explicitly unresolved until an authoritative source is read.
+- Completed Benchmark V3 campaign `2026-08-30T04-26-16-817Z` against the
+  released v0.11.0 production baseline at standard Codex speed. All 36 runs were
+  valid: nine tasks, Solo Medium versus Adaptive Medium, two repetitions, with
+  `gpt-5.6-sol` at Medium supervising. Both strategies passed every task, but
+  v0.11.0 Adaptive delegated zero workers and was slower and more expensive
+  overall. This two-repetition result is directional and not statistically
+  significant. It led to the post-V3 routing corrections intended for v0.12.0;
+  those corrections have not received another full campaign, so no post-v0.11
+  performance improvement is claimed.
 
 ## [0.11.0] - 2026-08-29
 

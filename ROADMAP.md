@@ -37,8 +37,8 @@ Cost matters, but it is not the primary objective. The orchestrator should use p
 | P2.1     | Optional Explorer                                      | Shipped in v0.11.0; depends on P1.2                                         |
 | P2.2     | Lightweight Cross-Session Handoff                      | Shipped in v0.11.0; depends on P1.3                                         |
 | P2.3     | End-to-End Automated Workflow                          | Shipped in v0.11.0; depends on P1.2, P1.3, P2.1, and P2.2                   |
-| P2.4A    | Acceptance Harness and Benchmark V3 Methodology        | Shipped in v0.11.0; methodology and harness frozen, no V3 run               |
-| P2.4B    | Benchmark V3 Execution and Mature Acceptance Pass      | NOT EXECUTED; depends on P2.4A and an operator launch decision              |
+| P2.4A    | Acceptance Harness and Benchmark V3 Methodology        | Shipped in v0.11.0; methodology and harness frozen                          |
+| P2.4B    | Benchmark V3 Execution and Mature Acceptance Pass      | Completed 2026-08-30 against the v0.11.0 production baseline                |
 
 The order is intentional: continuation, repair, failure classification, and
 policy discovery should precede stronger-executor routing. Explorer, handoff,
@@ -389,18 +389,19 @@ when the applicable billing schedule is known. Preserve evidence, treat zero
 workers as valid, and report unknown or incomparable cost rather than estimating.
 Depends on P2.3 and the completed routing, context, and handoff primitives.
 
-Benchmark V3 is frozen as a future holdout/evaluation asset. Do not run or tune
-against V3 during active feature development. Major model-backed benchmark
-campaigns should wait until P2.4 / mature acceptance after the planned feature
-chain is substantially complete. Targeted deterministic tests, runtime tests,
-smoke tests, and security tests still happen as each feature lands.
+Benchmark V3 was frozen as a holdout and executed once after the planned feature
+chain was substantially complete. Its findings informed post-V3 routing
+corrections, but those corrections have not been evaluated by another full
+campaign. Do not tune against the completed evidence or present it as a
+performance result for the corrected runtime. Targeted deterministic tests,
+runtime tests, smoke tests, and security tests still happen as each change lands.
 
 ### P2.4A Acceptance harness and Benchmark V3 methodology
 
-**Shipped in v0.11.0. Methodology and harness are frozen; no V3 run exists.**
+**Shipped in v0.11.0. Methodology and harness remain frozen.**
 
-P2.4A fixes what a V3 result will be allowed to mean, before any model-backed
-V3 task is executed:
+P2.4A fixed what a V3 result would be allowed to mean before any model-backed
+V3 task was executed:
 
 1. **Final acceptance boundary.** Every capability from P1.0 through P2.3 is
    enumerated in [`docs/FEATURE_ACCEPTANCE.md`](docs/FEATURE_ACCEPTANCE.md)
@@ -436,8 +437,14 @@ against V3. Quarantine covers missing evidence only, never an unwelcome result.
 
 ### P2.4B Benchmark V3 execution and mature acceptance pass
 
-**NOT EXECUTED.** Runs the frozen campaign and reports it. Blocked on an operator
-launch decision, pricing revalidation, and a clean recorded baseline commit.
+**Completed 2026-08-30.** Campaign `2026-08-30T04-26-16-817Z` produced 36/36
+valid runs across nine tasks, Solo Medium and Adaptive Medium, and two
+repetitions at standard Codex speed with `gpt-5.6-sol` Medium supervising the
+v0.11.0 production baseline. Both strategies passed every task. Adaptive
+delegated zero workers and was slower and more expensive overall. Two
+repetitions are directional evidence, not statistical significance. The result
+led to the post-V3 routing corrections intended for v0.12.0; no full campaign
+has measured those corrections, so it supports no post-v0.11 performance claim.
 
 ## Research and platform work
 
