@@ -8,6 +8,7 @@ import {
   collectCompletedCampaignCells,
   type LoadedCampaignShard,
 } from "./campaign.js";
+import { V3_LAUNCH_MARKER_SUFFIX } from "./launch.js";
 import { renderReport, type ResultsFile } from "./report.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -20,15 +21,24 @@ export function loadCampaign(
 ): ResultsFile {
   const files = fs
     .readdirSync(directory)
-    .filter((name) => name.endsWith(".json"))
+    .filter((name) => name.endsWith(".json") && !name.endsWith(V3_LAUNCH_MARKER_SUFFIX))
     .sort();
-  const matching = files
-    .map((name) => ({
-      file: name,
-      data: JSON.parse(
-        fs.readFileSync(path.join(directory, name), "utf8"),
-      ) as ResultsFile,
-    }))
+  const candidates = files.map((name) => ({
+    file: name,
+    data: JSON.parse(fs.readFileSync(path.join(directory, name), "utf8")) as ResultsFile,
+  }));
+  const resultSuffix = `.v${benchmarkVersion}.json`;
+  for (const candidate of candidates.filter(({ file }) => file.endsWith(resultSuffix))) {
+    const shard = candidate as LoadedCampaignShard;
+    const compatibility = campaignCompatibilityFromShard(shard);
+    if (compatibility.benchmarkVersion !== benchmarkVersion) {
+      throw new Error(
+        `Campaign shard ${path.basename(candidate.file)} has incompatible benchmarkVersion`,
+      );
+    }
+    assertCampaignCompatibility([shard], compatibility);
+  }
+  const matching = candidates
     .filter(({ data }) =>
       campaignId === undefined
         ? data.benchmarkVersion === benchmarkVersion

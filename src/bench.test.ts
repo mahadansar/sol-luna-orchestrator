@@ -47,6 +47,8 @@ import type { BenchTask } from "./bench/tasks.js";
 import { V2_SOLUTIONS } from "./bench/v2-solutions.js";
 import { V2_TASKS } from "./bench/v2-tasks.js";
 import { V3_SOLUTIONS } from "./bench/v3-solutions.js";
+import { V3_LAUNCH_MARKER_SCHEMA, readV3LaunchMarker } from "./bench/launch.js";
+import { deriveV3ExecutionHistory } from "./bench/prelaunch.js";
 import {
   BENCHMARK_V3_FREEZE_SHA,
   BENCHMARK_V3_PRODUCTION_BASELINE_SHA,
@@ -1369,14 +1371,67 @@ test("V3 campaign analysis and report generation work with synthetic evidence", 
       ...V3_LAUNCH_EVIDENCE,
     });
     fs.writeFileSync(path.join(directory, "synthetic.v3.json"), JSON.stringify(snapshot));
+    const launchMarkerFile = path.join(directory, "campaign-synthetic.v3-launch.json");
+    const launchMarker = {
+      schema: V3_LAUNCH_MARKER_SCHEMA,
+      benchmarkVersion: 3,
+      suite: "v3",
+      campaignId: "v3-synthetic",
+      methodologyDigest: "c".repeat(64),
+      holdoutFreezeSha: BENCHMARK_V3_FREEZE_SHA,
+      productionBaseline: {
+        version: BENCHMARK_V3_PRODUCTION_BASELINE_VERSION,
+        sha: BENCHMARK_V3_PRODUCTION_BASELINE_SHA,
+        runtimeManifestSha256: BENCHMARK_V3_EXPECTED_RUNTIME_MANIFEST_SHA256,
+      },
+      startedAt: "2026-08-29T00:00:00.000Z",
+      state: "started",
+      completedCells: [],
+    };
+    fs.writeFileSync(launchMarkerFile, JSON.stringify(launchMarker));
+    const launchMarkerBeforeAnalysis = fs.readFileSync(launchMarkerFile, "utf8");
     const loaded = loadV3Campaign(directory, "v3-synthetic");
     const report = renderReport(loaded);
     assert.equal(loaded.records.length, 2);
+    assert.equal(readV3LaunchMarker(launchMarkerFile)?.campaignId, "v3-synthetic");
+    const history = deriveV3ExecutionHistory("v3-synthetic", {
+      resultsDir: directory,
+      checkpointsDir: path.join(directory, "checkpoints"),
+    });
+    assert.equal(history.launchMarkerExistsForThisCampaign, true);
+    assert.deepEqual(history.launchMarkerCampaignIds, ["v3-synthetic"]);
+    assert.equal(fs.readFileSync(launchMarkerFile, "utf8"), launchMarkerBeforeAnalysis);
     assert.match(report, /V3 routing analysis/);
     assert.match(report, /strong-delegation-candidate/);
     assert.match(report, /Delegation rate by workload shape/);
     assert.match(report, /beneficial delegation/);
     assert.match(report, /Operational incidence/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("V3 campaign analysis rejects an incompatible genuine result shard", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bench-v3-invalid-shard-"));
+  try {
+    const snapshot = buildResultsSnapshot({
+      startedAt: "synthetic",
+      campaignId: "v3-synthetic",
+      reps: 1,
+      records: [],
+      suite: "v3",
+      standardSpeedConfirmed: true,
+      pricingProfileConfirmed: true,
+      ...V3_LAUNCH_EVIDENCE,
+    });
+    fs.writeFileSync(
+      path.join(directory, "incompatible.v3.json"),
+      JSON.stringify({ ...snapshot, schema: "sol-luna/bench/v3-launch@1" }),
+    );
+    assert.throws(
+      () => loadV3Campaign(directory, "v3-synthetic"),
+      /incomplete schema-4 compatibility metadata/,
+    );
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
