@@ -8,6 +8,7 @@
  * no model calls, no benchmark execution.
  */
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -2314,42 +2315,95 @@ test("V3 event telemetry counts, and unrelated benchmark files do not", () => {
 });
 
 test("reviewed historical orphan streams use content identity, not filenames", () => {
-  const repositoryHistory = deriveV3ExecutionHistory("v3-freeze3-20260829");
-  const reviewed = repositoryHistory.eventStreams.filter(
-    (stream) => stream.attribution === "historical-non-v3",
+  const reviewedProductionIdentities = [
+    "f7ada115134d32ed21ddb019727acfd16bbb66a0fe2985906665aa2f276a1f68",
+    "113408454bc3f4e06c9009b6ed50960a399a3a479b1ec833c5b6b4e5e77b549b",
+    "dead19ae3827268f12b5d118e50b963f39ca42879d32a3859f2682815c5d14fb",
+    "2b99857fc256d6a8c96fb62aeb61ed2ca90eee5854bfa308e1836d019f8623ea",
+    "bbdb15197348b58618bccd90550d158a541e596e1f828d4eca24402668b57c78",
+    "ed126130e113e8dad6b2cfaa0f38b949dadf20b1cb37a76a182ac0a2623d7799",
+    "5a1ef71fa41c75ce2aca06b181b6141937489691102535b454d484ee63d57261",
+    "e13a8d9e1310fd845bf4a57bc10066c70dd1390227b4861b1dc725b6358b1f81",
+    "4824af3c246bc7a34f834b72cc406744f6c4457902cdb7d73dcbe7390bd6d8ea",
+  ];
+  assert.deepEqual(
+    [...REVIEWED_PRE_V3_EVENT_STREAM_SHA256],
+    reviewedProductionIdentities,
   );
-  assert.equal(reviewed.length, 9);
-  assert.ok(
-    reviewed.every(
-      (stream) =>
-        stream.contentSha256 !== null &&
-        REVIEWED_PRE_V3_EVENT_STREAM_SHA256.has(stream.contentSha256) &&
-        stream.attributionEvidence === "reviewed-pre-v3-content-sha256",
-    ),
-  );
-  assert.deepEqual(repositoryHistory.ambiguousEventStreams, []);
 
-  const source = path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    "..",
-    "..",
-    "bench",
-    "results",
-    reviewed[0]!.file,
+  const contents = Array.from(
+    { length: reviewedProductionIdentities.length },
+    (_, index) => `reviewed historical stream ${index + 1}\n`,
   );
-  const content = fs.readFileSync(source, "utf8");
-  const renamed = deriveV3ExecutionHistory(
-    "v3-freeze3-20260829",
-    historyFixture({ "renamed.events.jsonl": content }),
+  const fixtureIdentities = contents.map((content) =>
+    crypto.createHash("sha256").update(content).digest("hex"),
   );
-  assert.equal(renamed.eventStreams[0]?.attribution, "historical-non-v3");
+  const originalIdentities = [...REVIEWED_PRE_V3_EVENT_STREAM_SHA256];
+  REVIEWED_PRE_V3_EVENT_STREAM_SHA256.clear();
+  fixtureIdentities.forEach((identity) =>
+    REVIEWED_PRE_V3_EVENT_STREAM_SHA256.add(identity),
+  );
 
-  const mutated = deriveV3ExecutionHistory(
-    "v3-freeze3-20260829",
-    historyFixture({ "renamed.events.jsonl": `${content} ` }),
-  );
-  assert.equal(mutated.eventStreams[0]?.attribution, "ambiguous");
-  assert.equal(mutated.freshLaunch, false);
+  try {
+    const originalNames = Object.fromEntries(
+      contents.map((content, index) => [`historical-${index + 1}.events.jsonl`, content]),
+    );
+    const history = deriveV3ExecutionHistory(
+      "v3-freeze3-20260829",
+      historyFixture(originalNames),
+    );
+    assert.equal(history.eventStreams.length, 9);
+    assert.ok(
+      history.eventStreams.every(
+        (stream, index) =>
+          stream.attribution === "historical-non-v3" &&
+          stream.contentSha256 === fixtureIdentities[index] &&
+          stream.attributionEvidence === "reviewed-pre-v3-content-sha256",
+      ),
+    );
+    assert.deepEqual(history.ambiguousEventStreams, []);
+
+    const renamed = deriveV3ExecutionHistory(
+      "v3-freeze3-20260829",
+      historyFixture(
+        Object.fromEntries(
+          contents.map((content, index) => [
+            `renamed-${index + 1}.events.jsonl`,
+            content,
+          ]),
+        ),
+      ),
+    );
+    assert.equal(
+      renamed.eventStreams.filter((stream) => stream.attribution === "historical-non-v3")
+        .length,
+      9,
+    );
+
+    const mutated = deriveV3ExecutionHistory(
+      "v3-freeze3-20260829",
+      historyFixture({ "renamed.events.jsonl": `${contents[0]} ` }),
+    );
+    assert.equal(mutated.eventStreams[0]?.attribution, "ambiguous");
+    assert.equal(mutated.freshLaunch, false);
+
+    const current = deriveV3ExecutionHistory(
+      "v3-freeze3-20260829",
+      historyFixture({
+        "current.v3.json": v3Shard("v3-freeze3-20260829", 1),
+        "current.events.jsonl": contents[0],
+        "unknown.events.jsonl": "malformed or unknown\n",
+      }),
+    );
+    assert.equal(current.eventStreams[0]?.attribution, "v3");
+    assert.equal(current.eventStreams[1]?.attribution, "ambiguous");
+    assert.deepEqual(current.ambiguousEventStreams, ["unknown.events.jsonl"]);
+  } finally {
+    REVIEWED_PRE_V3_EVENT_STREAM_SHA256.clear();
+    originalIdentities.forEach((identity) =>
+      REVIEWED_PRE_V3_EVENT_STREAM_SHA256.add(identity),
+    );
+  }
 });
 
 test("misleading historical sibling filenames fail closed", () => {
