@@ -675,11 +675,21 @@ test("parent model and effort guidance stays example-only across surfaces", asyn
     /V2[\s\S]{0,160}historical[\s\S]{0,160}bench\/RESULTS\.md/i,
   );
   assert.match(benchmarkSection, /V3[\s\S]{0,160}bench\/V3_METHODOLOGY\.md/i);
-  assert.match(benchmarkSection, /V3[\s\S]{0,240}\bNOT\s+EXECUTED\b/i);
+  assert.match(benchmarkSection, /V3[\s\S]{0,240}36\/36 valid runs/i);
   assert.match(
     benchmarkSection,
-    /v0\.11\.0[\s\S]{0,80}not[\s\S]{0,80}(?:claimed|proven)[\s\S]{0,80}faster[\s\S]{0,40}cheaper[\s\S]{0,40}better[\s\S]{0,40}V3/i,
+    /v0\.11\.0[\s\S]{0,240}Adaptive delegated zero workers[\s\S]{0,160}slower and more expensive overall/i,
   );
+  assert.match(
+    benchmarkSection,
+    /two-repetition[\s\S]{0,80}directional[\s\S]{0,80}not statistically significant/i,
+  );
+  assert.match(benchmarkSection, /post-V3 routing corrections/i);
+  assert.match(
+    benchmarkSection,
+    /those corrections have not been evaluated by another full\s+campaign/i,
+  );
+  assert.match(benchmarkSection, /no v0\.12\.0 performance improvement is claimed/i);
 });
 
 test("SOL_RULES carries the runtime's operational distinctions without benchmark narration", async () => {
@@ -1086,9 +1096,15 @@ test("the routing_preflight tool description stays discoverable", () => {
   // this surface exists and when to reach for it. Pin the discoverability claims
   // so they cannot be trimmed away for budget headroom without a test failing.
   assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /cheap/i);
-  assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /before any repository exploration/i);
+  assert.match(
+    ROUTING_PREFLIGHT_TOOL_DESCRIPTION,
+    /cheap, bounded repository\/test inspection/i,
+  );
+  assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /candidate delegated leaves/i);
+  assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /not the whole objective/i);
+  assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /defer broad exploration/i);
   assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /whether delegating/i);
-  assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /declare the ownership seams/i);
+  assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /describe those leaves/i);
   // It must remain reachable as a named tool in the guidance a parent reads.
   assert.ok(ROUTING_PREFLIGHT_TOOL_DESCRIPTION.length > 0);
 });
@@ -1195,7 +1211,12 @@ test("SOL_RULES and the runtime agree on refuse, recommend, and parent judgement
   }
   assert.match(rules, /either.{0,80}does\s+not\s+mean\s+"delegate by default"/is);
   assert.match(rules, /read-only.{0,60}not a coupling\s+signal/is);
-  assert.match(rules, /no score, no threshold/i);
+  assert.match(rules, /no score/i);
+  for (const rule of ["R0", "R1", "R2", "R3", "R4", "R5"]) {
+    assert.match(rules, new RegExp(`\\|\\s*${rule}\\s*\\|`));
+  }
+  assert.match(rules, /substantial[\s\S]*single `delegate_task`[\s\S]*sequential/i);
+  assert.match(rules, /classify those leaves, not the whole objective/i);
 
   // Parent judgement, and the guarantees that make the card safe to attach.
   assert.match(rules, /parent keeps every judgement/i);

@@ -64,6 +64,7 @@ import {
   emitAttemptStarted,
   emitEvent,
   isolateEventEmitter,
+  sanitizeEventValue,
   type EventEmitter,
 } from "./events.js";
 import {
@@ -327,45 +328,43 @@ export const recordEvent = (
 ): void => {
   if (!eventsFile) return;
   try {
-    appendFileSync(
-      eventsFile,
-      `${JSON.stringify({
-        timestamp: new Date().toISOString(),
-        model: result.model,
-        effort: result.effort,
-        attempt: result.attempt,
-        verdict: result.verdict,
-        workerClaimedStatus: result.workerClaimedStatus,
-        trustworthy: result.trustworthy,
-        workerThreadId: result.workerThreadId,
-        durationSeconds: result.durationSeconds,
-        filesChanged: result.filesChanged.length,
-        scopeViolations: result.scopeViolations.length,
-        discrepancies: result.discrepancies.length,
-        ...(result.repair
-          ? {
-              repair: {
-                attempted: result.repair.attempted,
-                classification: result.repair.classification,
-              },
-            }
-          : {}),
-        ...(result.recovery
-          ? {
-              recovery: {
-                attempted: result.recovery.attempted,
-                classification: result.recovery.classification,
-                evidence: result.recovery.evidence,
-                initialAttempt: result.recovery.initialAttempt,
-                recoveryAttempt: result.recovery.recoveryAttempt,
-                initialDurationSeconds: result.recovery.initialDurationSeconds,
-                recoveryDurationSeconds: result.recovery.recoveryDurationSeconds,
-              },
-            }
-          : {}),
-        usage: result.usage,
-      })}\n`,
-    );
+    const record = sanitizeEventValue({
+      timestamp: new Date().toISOString(),
+      model: result.model,
+      effort: result.effort,
+      attempt: result.attempt,
+      verdict: result.verdict,
+      workerClaimedStatus: result.workerClaimedStatus,
+      trustworthy: result.trustworthy,
+      workerThreadId: result.workerThreadId,
+      durationSeconds: result.durationSeconds,
+      filesChanged: result.filesChanged.length,
+      scopeViolations: result.scopeViolations.length,
+      discrepancies: result.discrepancies.length,
+      ...(result.repair
+        ? {
+            repair: {
+              attempted: result.repair.attempted,
+              classification: result.repair.classification,
+            },
+          }
+        : {}),
+      ...(result.recovery
+        ? {
+            recovery: {
+              attempted: result.recovery.attempted,
+              classification: result.recovery.classification,
+              evidence: result.recovery.evidence,
+              initialAttempt: result.recovery.initialAttempt,
+              recoveryAttempt: result.recovery.recoveryAttempt,
+              initialDurationSeconds: result.recovery.initialDurationSeconds,
+              recoveryDurationSeconds: result.recovery.recoveryDurationSeconds,
+            },
+          }
+        : {}),
+      usage: result.usage,
+    });
+    appendFileSync(eventsFile, `${JSON.stringify(record)}\n`);
   } catch {
     // Telemetry must never break a delegation.
   }
@@ -433,6 +432,8 @@ export function refuseSingleDelegation(
     seamCount: routing.seamCount,
     unknownCount: routing.unknownCount,
     route: routing.route,
+    ruleId: routing.ruleId,
+    cardProvenance: routing.cardProvenance,
     gates: routing.gates,
     signals: routing.signals,
     refusedGate: routing.refusedGate,
@@ -904,9 +905,9 @@ export function renderResult(
 }
 
 /** The short general policy sent to the parent during MCP initialization. */
-export const SERVER_INSTRUCTIONS = `Sol-Luna Orchestrator routes bounded ownership from any compatible parent Codex model to ${LUNA_MODEL}; adaptive zero-worker use is valid. The parent owns architecture, decomposition, interfaces, scope, acceptance, and final judgement. Luna owns scoped exploration, implementation, verification, and repair. Use delegate_task for one substantial seam; delegate_tasks sequentially for dependent/shared state or parallel for independent disjoint scopes. More workers are not automatically better or cheaper; raw tokens are not credit cost and savings are parent-conditional. Runtime evidence outranks worker claims. VERIFIED_COMPLETE already passed scoped and final workspace checks: finish without rereading worker files or rerunning checks unless a listed risk changes architecture. Failures, conflicts, scope/trust discrepancies, and refused checks expand for targeted diagnosis. While a call has no meaningful new state, remain silent; do not narrate waiting or polling. Report only a result, error, cancellation, timeout, or actionable state change.`;
+export const SERVER_INSTRUCTIONS = `Sol-Luna Orchestrator routes bounded ownership from any compatible parent Codex model to ${LUNA_MODEL}; adaptive zero-worker use is valid. Parent owns architecture, decomposition, interfaces, scope, acceptance, and final judgement; Luna owns scoped exploration, implementation, and verification. Before routing_preflight, use cheap bounded repository/test inspection to find delegated leaves; classify leaves, not the whole objective, and defer broad exploration. Use delegate_task for one substantial seam; use delegate_tasks sequentially for shared state or parallel for independent disjoint scopes. More workers are not automatically better or cheaper; raw tokens are not credit cost and savings are parent-conditional. Runtime evidence outranks worker claims. VERIFIED_COMPLETE passed checks: finish without rereading files or rerunning checks unless a listed risk changes architecture. Failures expand for diagnosis. While a call has no meaningful new state, remain silent; do not narrate waiting or polling. Report only a result, error, cancellation, timeout, or actionable state change.`;
 
-export const ROUTING_PREFLIGHT_TOOL_DESCRIPTION = `Cheap deterministic check of whether delegating is structurally sound and economically sensible, before any repository exploration. Declare the ownership seams you are considering and what they share; leave a field "unknown" when you do not know, which biases the advice toward solo without ever refusing. Creates no worker, batch, worktree, or thread, refuses nothing, and returns route (solo | either | delegation-plausible), the deciding signals, and structural parallel eligibility. Advisory only and never required: the parent owns sequential vs parallel, worker count, effort, and the final decision, and choosing zero workers afterwards is a normal successful outcome. either means fixed delegation overhead needs explicit justification, otherwise stay solo.`;
+export const ROUTING_PREFLIGHT_TOOL_DESCRIPTION = `Cheap deterministic check of whether delegating is worthwhile. First use cheap, bounded repository/test inspection to identify candidate delegated leaves; describe those leaves, not the whole objective, and defer broad exploration. The parent may retain shared contracts and final integration. "unknown" biases advice solo but never refuses. Creates no worker, batch, worktree, or thread, refuses nothing, and returns route (solo | either | delegation-plausible), matched rule, explicit/defaulted provenance, signals, and structural parallel eligibility. Advisory only and never required: the parent owns sequential vs parallel, worker count, effort, and final decision; choosing zero workers is normal. either means fixed delegation overhead needs explicit justification, otherwise stay solo.`;
 
 export const EXPLORE_TOOL_DESCRIPTION = `Explicitly explore an admitted repository, API, or documentation scope with ${LUNA_MODEL}; fixed read-only disposable execution returns provenance-marked worker claims, runtime facts, inferences, and unknowns. Implements nothing, cannot delegate, and is never automatic.`;
 
@@ -2155,6 +2156,8 @@ export function handleRoutingPreflight(
     type: "routing.preflight",
     preflightId,
     route: evaluation.route,
+    ruleId: evaluation.ruleId,
+    cardProvenance: evaluation.cardProvenance,
     seamCount: evaluation.seamCount,
     unknownCount: evaluation.unknownCount,
     gates: evaluation.gates,
@@ -2170,7 +2173,8 @@ export function handleRoutingPreflight(
     ...declaredRoutingFields(card),
   });
   log(
-    `routing_preflight: route=${evaluation.route} seams=${evaluation.seamCount} ` +
+    `routing_preflight: rule=${evaluation.ruleId} route=${evaluation.route} ` +
+      `provenance=${evaluation.cardProvenance} seams=${evaluation.seamCount} ` +
       `unknown=${evaluation.unknownCount} parallelEligible=${evaluation.parallelEligible} ` +
       `shape=${evaluation.shape?.mechanism ?? "none"}`,
   );

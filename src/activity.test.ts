@@ -7,7 +7,13 @@ import {
 } from "./cli/activity-reducer.js";
 import { renderHumanLines } from "./cli/activity.js";
 import { symbols } from "./cli/ui.js";
-import { activityFailureReason, emitAttemptCompleted, renderEvent } from "./events.js";
+import {
+  activityFailureReason,
+  emitAttemptCompleted,
+  isolateEventEmitter,
+  renderEvent,
+  type OrchestratorEvent,
+} from "./events.js";
 import type { AttemptEvidence } from "./contract.js";
 import { mergeUsage } from "./worker.js";
 
@@ -102,6 +108,34 @@ test("event rendering omits prompt objectives while sanitizing other strings", (
   assert.doesNotMatch(rendered, /\n/);
   assert.match(rendered, /b1 forged/);
   assert.match(rendered, /Update auth retries/);
+});
+
+test("event sanitization deeply redacts capability-shaped direct, array, and message values", () => {
+  const continuation = `ctr_${"c".repeat(32)}`;
+  const handoff = `hdf_${"h".repeat(32)}`;
+  const event = {
+    type: "worker.failed",
+    batchId: `batch-${continuation}`,
+    taskId: "t1",
+    reason: `worker reported ${handoff}`,
+    details: {
+      message: `nested ${continuation}`,
+      values: ["ordinary", { error: `deep ${handoff}` }],
+    },
+  } as unknown as OrchestratorEvent;
+
+  const rendered = renderEvent(event);
+  assert.doesNotMatch(rendered, /(?:ctr_|hdf_)[A-Za-z0-9_-]{20,}/);
+  assert.match(rendered, /\[REDACTED_CAPABILITY\]/);
+  assert.match(rendered, /ordinary/);
+
+  let observed: OrchestratorEvent | undefined;
+  isolateEventEmitter((sanitized) => {
+    observed = sanitized;
+  })(event);
+  const serializedSinkValue = JSON.stringify(observed);
+  assert.doesNotMatch(serializedSinkValue, /(?:ctr_|hdf_)[A-Za-z0-9_-]{20,}/);
+  assert.match(serializedSinkValue, /\[REDACTED_CAPABILITY\]/);
 });
 
 test("attempt telemetry keeps attribution and counts without sensitive evidence text", () => {
@@ -740,6 +774,116 @@ test("parallel recovery activity preserves attempts and separate usage", () => {
       }),
     ),
   );
+});
+
+test("cancelled recovery keeps cancellation terminal while retaining failed diagnostics", () => {
+  const events: TimestampedEvent[] = [
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "b-cancelled-recovery",
+      mode: "parallel",
+      taskCount: 1,
+      maxParallel: 1,
+      automaticRecovery: true,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "worker.timedOut",
+      batchId: "b-cancelled-recovery",
+      taskId: "t1",
+      timeoutSeconds: 10,
+      attempt: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:02Z",
+      type: "recovery.started",
+      batchId: "b-cancelled-recovery",
+      taskId: "t1",
+      attempt: 2,
+      classification: "timeout-continuation",
+      evidence: "Confined timeout evidence.",
+    },
+    {
+      timestamp: "2024-01-01T10:00:03Z",
+      type: "worker.cancelled",
+      batchId: "b-cancelled-recovery",
+      taskId: "t1",
+      attempt: 2,
+    },
+    {
+      timestamp: "2024-01-01T10:00:04Z",
+      type: "recovery.completed",
+      batchId: "b-cancelled-recovery",
+      taskId: "t1",
+      attempt: 2,
+      classification: "timeout-continuation",
+      evidence: "Recovery unwound after cancellation.",
+      verdict: "FAILED",
+      durationSeconds: 1,
+      threadId: null,
+      usage: null,
+    },
+    {
+      timestamp: "2024-01-01T10:00:05Z",
+      type: "batch.cancelled",
+      batchId: "b-cancelled-recovery",
+      reason: "Cancelled during recovery.",
+    },
+  ];
+
+  const snapshot = reduceEvents(events);
+  assert.equal(snapshot.workers[0]?.state, "cancelled");
+  assert.equal(snapshot.workers[0]?.recovery?.verdict, "FAILED");
+  assert.equal(snapshot.workers[0]?.recovery?.evidence, "Confined timeout evidence.");
+  assert.equal(snapshot.state, "cancelled");
+});
+
+test("failed recovery remains failed without authoritative cancellation", () => {
+  const snapshot = reduceEvents([
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "b-failed-recovery",
+      mode: "parallel",
+      taskCount: 1,
+      maxParallel: 1,
+      automaticRecovery: true,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "worker.timedOut",
+      batchId: "b-failed-recovery",
+      taskId: "t1",
+      timeoutSeconds: 10,
+      attempt: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:02Z",
+      type: "recovery.started",
+      batchId: "b-failed-recovery",
+      taskId: "t1",
+      attempt: 2,
+      classification: "timeout-continuation",
+      evidence: "Confined timeout evidence.",
+    },
+    {
+      timestamp: "2024-01-01T10:00:03Z",
+      type: "recovery.completed",
+      batchId: "b-failed-recovery",
+      taskId: "t1",
+      attempt: 2,
+      classification: "timeout-continuation",
+      evidence: "Recovery failed without cancellation.",
+      verdict: "FAILED",
+      durationSeconds: 1,
+      threadId: null,
+      usage: null,
+    },
+  ]);
+
+  assert.equal(snapshot.workers[0]?.state, "failed");
+  assert.equal(snapshot.workers[0]?.recovery?.verdict, "FAILED");
 });
 
 // ========================================================================
@@ -2621,6 +2765,8 @@ test("routing events render their declaration without the parent's seam labels",
     seamCount: 2,
     unknownCount: 1,
     route: "solo",
+    ruleId: "R1",
+    cardProvenance: "pessimistic-defaults",
     gates: ["parallel-shared-core"],
     signals: ["shared-core", "small-seam"],
     refusedGate: null,
@@ -2639,6 +2785,8 @@ test("routing events render their declaration without the parent's seam labels",
   assert.equal(parsed.declaredCoreOverlap, "shared-core");
   assert.equal(parsed.unknownCount, 1);
   assert.equal(parsed.seamCount, 2);
+  assert.equal(parsed.ruleId, "R1");
+  assert.equal(parsed.cardProvenance, "pessimistic-defaults");
   assert.equal(parsed.seams, undefined);
   assert.equal(parsed.objective, undefined);
   assert.equal(parsed.score, undefined);
@@ -2652,6 +2800,8 @@ test("an advisory preflight record carries no batch and no seam labels", () => {
     type: "routing.preflight",
     preflightId: "p1",
     route: "either",
+    ruleId: "R3",
+    cardProvenance: "explicit",
     seamCount: 3,
     unknownCount: 0,
     gates: [],
@@ -2669,6 +2819,8 @@ test("an advisory preflight record carries no batch and no seam labels", () => {
   assert.equal(parsed.batchId, undefined, "no batch exists yet");
   assert.equal(parsed.seams, undefined);
   assert.equal(parsed.route, "either");
+  assert.equal(parsed.ruleId, "R3");
+  assert.equal(parsed.cardProvenance, "explicit");
   assert.equal(parsed.parallelEligible, true);
 });
 

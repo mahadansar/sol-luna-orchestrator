@@ -1,0 +1,269 @@
+{
+  "schema": "sol-luna/bench/v3-launch@1",
+  "benchmarkVersion": 3,
+  "suite": "v3",
+  "campaignId": "2026-08-30T04-26-16-817Z",
+  "methodologyDigest": "0994a7090ffacaa4f59641f36501430047a8215626e87de4f810e254fd8aea4c",
+  "holdoutFreezeSha": "9092257aad1ec890c45054081b3792de1f44b97b",
+  "productionBaseline": {
+    "version": "0.11.0",
+    "sha": "df215a170e6a88a6097c56f7ca404358d9d4b050",
+    "runtimeManifestSha256": "d63af9ef92ac99c9a0f8425012fce2777a6dee020c76161bc504aee96dafad17"
+  },
+  "startedAt": "2026-08-30T04:26:19.350Z",
+  "state": "started",
+  "completedCells": [
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-csv-dialect",
+      "arm": "solo-medium",
+      "repetition": 1,
+      "completedAt": "2026-08-30T04:27:53.685Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-csv-dialect",
+      "arm": "adaptive-medium",
+      "repetition": 1,
+      "completedAt": "2026-08-30T04:30:20.970Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-lru-cache-tests",
+      "arm": "solo-medium",
+      "repetition": 1,
+      "completedAt": "2026-08-30T04:31:24.483Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-lru-cache-tests",
+      "arm": "adaptive-medium",
+      "repetition": 1,
+      "completedAt": "2026-08-30T04:32:31.295Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-reservation-ledger",
+      "arm": "solo-medium",
+      "repetition": 1,
+      "completedAt": "2026-08-30T04:34:28.944Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-reservation-ledger",
+      "arm": "adaptive-medium",
+      "repetition": 1,
+      "completedAt": "2026-08-30T04:36:44.838Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-workflow-journal",
+      "arm": "solo-medium",
+      "repetition": 1,
+      "completedAt": "2026-08-30T04:39:05.836Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-workflow-journal",
+      "arm": "adaptive-medium",
+      "repetition": 1,
+      "completedAt": "2026-08-30T04:41:32.774Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-static-site-pipeline",
+      "arm": "solo-medium",
+      "repetition": 1,
+      "completedAt": "2026-08-30T04:43:45.366Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-static-site-pipeline",
+      "arm": "adaptive-medium",
+      "repetition": 1,
+      "completedAt": "2026-08-30T04:46:12.504Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-observability-ingestors",
+      "arm": "solo-medium",
+      "repetition": 1,
+      "completedAt": "2026-08-30T04:48:48.506Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-observability-ingestors",
+      "arm": "adaptive-medium",
+      "repetition": 1,
+      "completedAt": "2026-08-30T04:51:05.933Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-markup-renderers",
+      "arm": "solo-medium",
+      "repetition": 1,
+      "completedAt": "2026-08-30T04:53:51.812Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-markup-renderers",
+      "arm": "adaptive-medium",
+      "repetition": 1,
+      "completedAt": "2026-08-30T04:57:11.151Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-policy-engine",
+      "arm": "solo-medium",
+      "repetition": 1,
+      "completedAt": "2026-08-30T04:59:46.245Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-policy-engine",
+      "arm": "adaptive-medium",
+      "repetition": 1,
+      "completedAt": "2026-08-30T05:03:00.886Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-sync-reconciler",
+      "arm": "solo-medium",
+      "repetition": 1,
+      "completedAt": "2026-08-30T05:05:54.215Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-sync-reconciler",
+      "arm": "adaptive-medium",
+      "repetition": 1,
+      "completedAt": "2026-08-30T05:09:05.430Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-csv-dialect",
+      "arm": "solo-medium",
+      "repetition": 2,
+      "completedAt": "2026-08-30T05:11:10.050Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-csv-dialect",
+      "arm": "adaptive-medium",
+      "repetition": 2,
+      "completedAt": "2026-08-30T05:13:29.603Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-lru-cache-tests",
+      "arm": "solo-medium",
+      "repetition": 2,
+      "completedAt": "2026-08-30T05:14:35.342Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-lru-cache-tests",
+      "arm": "adaptive-medium",
+      "repetition": 2,
+      "completedAt": "2026-08-30T05:15:51.814Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-reservation-ledger",
+      "arm": "solo-medium",
+      "repetition": 2,
+      "completedAt": "2026-08-30T05:18:00.833Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-reservation-ledger",
+      "arm": "adaptive-medium",
+      "repetition": 2,
+      "completedAt": "2026-08-30T05:20:13.991Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-workflow-journal",
+      "arm": "solo-medium",
+      "repetition": 2,
+      "completedAt": "2026-08-30T05:21:59.913Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-workflow-journal",
+      "arm": "adaptive-medium",
+      "repetition": 2,
+      "completedAt": "2026-08-30T05:24:18.469Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-static-site-pipeline",
+      "arm": "solo-medium",
+      "repetition": 2,
+      "completedAt": "2026-08-30T05:26:44.310Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-static-site-pipeline",
+      "arm": "adaptive-medium",
+      "repetition": 2,
+      "completedAt": "2026-08-30T05:29:16.347Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-observability-ingestors",
+      "arm": "solo-medium",
+      "repetition": 2,
+      "completedAt": "2026-08-30T05:31:07.044Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-observability-ingestors",
+      "arm": "adaptive-medium",
+      "repetition": 2,
+      "completedAt": "2026-08-30T05:33:42.576Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-markup-renderers",
+      "arm": "solo-medium",
+      "repetition": 2,
+      "completedAt": "2026-08-30T05:36:15.213Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-markup-renderers",
+      "arm": "adaptive-medium",
+      "repetition": 2,
+      "completedAt": "2026-08-30T05:39:01.652Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-policy-engine",
+      "arm": "solo-medium",
+      "repetition": 2,
+      "completedAt": "2026-08-30T05:41:48.959Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-policy-engine",
+      "arm": "adaptive-medium",
+      "repetition": 2,
+      "completedAt": "2026-08-30T05:44:41.960Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-sync-reconciler",
+      "arm": "solo-medium",
+      "repetition": 2,
+      "completedAt": "2026-08-30T05:47:42.081Z"
+    },
+    {
+      "campaignId": "2026-08-30T04-26-16-817Z",
+      "taskId": "v3-sync-reconciler",
+      "arm": "adaptive-medium",
+      "repetition": 2,
+      "completedAt": "2026-08-30T05:51:38.407Z"
+    }
+  ]
+}

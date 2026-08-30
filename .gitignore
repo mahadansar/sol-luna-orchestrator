@@ -21,6 +21,11 @@ orchestrator.log
 # generated *.md summaries; raw per-run event streams are not.
 bench/results/*.events.jsonl
 
+# Built baseline artifacts. A V3 campaign launches the orchestrator from a git
+# worktree of the tagged production baseline; the worktree and its build output
+# are reproducible from the tag and are never committed.
+bench/baseline/
+
 # Environment and credentials. The example config is committed deliberately
 # (examples/codex-config.toml) and contains no secrets.
 .env

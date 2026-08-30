@@ -17,14 +17,17 @@ import crypto from "node:crypto";
 export const V3_METHODOLOGY_PATH = "bench/V3_METHODOLOGY.md" as const;
 
 /**
- * Digest of the frozen methodology text.
+ * Digest of the frozen methodology text, currently freeze 3.
  *
  * A git SHA identifies a commit; this identifies the reviewed content, so the
  * gate works in a working tree, a tarball, or a checkout whose history was
- * rewritten. Update it only through the document's own correction policy.
+ * rewritten. It is the authoritative freeze identity;
+ * `BENCHMARK_V3_FREEZE_SHA` is its commit-addressed companion. Update it only
+ * through the document's own correction and freeze-review policy, and never by
+ * transcribing a value — recompute it with `methodologyDigest`.
  */
 export const V3_METHODOLOGY_DIGEST =
-  "af4860bed58f21c103c5f921c4ae3bd561cf2e0943cd1dd12b899a34a4bacc87" as const;
+  "0994a7090ffacaa4f59641f36501430047a8215626e87de4f810e254fd8aea4c" as const;
 
 /**
  * Normalize before hashing.

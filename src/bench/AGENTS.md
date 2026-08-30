@@ -27,6 +27,50 @@ not production orchestration behavior.
   no V3 task can produce a per-task value.
 - No harness control flow may key on a task identity: no per-task prompt, guidance,
   timeout, grading tolerance, routing hint, or special case.
+- A delegation call counts as an opened worker batch only when its batch identity
+  published `batch.started` and did not publish `batch.rejected`. The runtime opens a
+  batch identity before its pre-execution gates run, so a refused call emits
+  `batch.started` with zero worker attempts; it belongs in `delegationCallsRefused`,
+  contributes no mode, no queued worker effort, and no phase boundary.
+- Benchmark subprocesses resolve executables through the production resolver in
+  `src/executable.ts` — `PATH` only, current directory never searched. Do not relax the
+  production resolver to suit the benchmark, and do not hand a launcher a bare name.
+- `RECORDED_ENVIRONMENT_KEYS` is the maintained inventory of repository-owned
+  execution settings; anything deliberately left out goes in
+  `EXCLUDED_ENVIRONMENT_KEYS` with the argument that it cannot affect a measured run.
+  A deterministic syntactic test scans the explicit direct `process.env` forms it
+  supports. Treat it as defense in depth, never as proof of every possible repository,
+  SDK, CLI, Node, or OS environment read. Record names, never credentials: a listed
+  key's value is committed verbatim.
+- The ambient layer inventories every inherited variable _name_ and records a value only
+  under an explicit classification: safe scalars verbatim, URLs as scheme/host/port with
+  an embedded-credential flag, and explicitly safe trust-material variables as
+  presence/readability/type plus a content digest where safe. Persist no trust path,
+  basename, or path hash. Everything else, credential-shaped names included, is
+  present-and-opaque. Never add a
+  raw-value classification for a name whose value could be credential material, and never
+  serialize a secret, a digest of a secret, or proxy userinfo.
+- Codex configuration is structurally parsed and recursively sanitized before
+  canonicalization or hashing. Redact any credential-, secret-, auth-, token-, password-,
+  cookie-, bearer-, key-, or header-sensitive path, including nested/inline/array/multiline
+  values; never record raw config length. `auth.json` contributes a presence marker and a
+  mode; nothing else from it may reach a record.
+- `REPRODUCIBILITY_BOUNDARY` is the single place the capture claim is stated. Keep it
+  accurate: if a layer stops establishing something, the boundary changes with it.
+- `BENCHMARK_V3_FREEZE_SHA` and `BENCHMARK_V3_PRODUCTION_BASELINE_SHA` answer different
+  questions — which methodology was reviewed, and which released product is under
+  evaluation. Never point one at the other.
+- A V3 campaign launches the orchestrator from the verified baseline artifact in
+  `bench/baseline/v0.11.0`, passing its absolute entry point as the Codex `mcp_servers`
+  command. Its commit/tree and frozen byte-manifest digest are distinct identities. Every
+  Adaptive cell must match the frozen manifest immediately before launch and after
+  completion before a result is accepted. Do not make a V3 arm depend on the operator's
+  MCP registration, and do not relax the fail-closed checks.
+- The pre-launch checkpoint derives execution history from `bench/results/`. Never
+  hard-code a run count, a campaign-collision flag, or a fresh-launch claim, and never
+  count V2 or older-suite files as V3 history. Only the live runner may create a V3 launch
+  marker, immediately before its first SDK call; malformed shards, invalid markers, and
+  ambiguous non-empty streams block freshness.
 - Missing measurements are `null`/unknown, never zero. V2 may calculate credits only
   from its embedded official rate-card snapshot and complete usage; calculated
   `rateCardCredits` must never be labelled actual billing.

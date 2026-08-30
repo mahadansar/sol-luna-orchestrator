@@ -113,10 +113,13 @@ prints the command that repairs a missing or incorrect setup.
 
 The runtime advertises an optional advisory tool, `routing_preflight`, and an
 optional `routingPreflight` card on `delegate_task` and `delegate_tasks`. The
-parent declares the seams it is considering and what they share; the runtime
+parent first may inspect repository structure and relevant tests cheaply and
+within a bounded scope, then declares the concrete candidate delegated leaves and
+what they share. It should classify those leaves rather than the whole objective;
+shared contracts and final integration may remain parent-owned. The runtime then
 evaluates that declaration with a pure synchronous function — no filesystem,
-process, network, model call, or repository analysis — and answers before any
-exploration has been paid for.
+process, network, model call, or repository analysis of its own. Broad exploration
+still belongs after the routing decision.
 
 Nothing about this is required. With no card attached, behavior is exactly what
 it was before the feature existed, and the telemetry simply records the
@@ -144,6 +147,9 @@ failure stays with the failure ladder. A `solo` route always yields the `solo`
 mechanism and zero workers, so the shape never argues with the route.
 `parallelEligible` remains a structural boolean only, and `seams.length` describes
 separability rather than a worker target.
+The response and telemetry also name the matched route-table rule and whether the
+card was fully explicit or used pessimistic defaults. These are additive,
+non-sensitive diagnostics; raw seam labels are not recorded.
 
 ### Metadata and thin result fast path
 

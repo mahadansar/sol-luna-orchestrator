@@ -18,6 +18,12 @@ and bounded parallel recovery baseline described below. Shipped history belongs 
   state fails, every hidden reference passes, and every mutation and
   immutable-specification check discriminates. Exact test totals belong in the
   validation output, not this ledger, so adding a test cannot stale this status.
+- **Benchmark V3 baseline evidence:** campaign `2026-08-30T04-26-16-817Z`
+  completed 36/36 valid runs against the v0.11.0 production baseline at standard
+  Codex speed: nine tasks, Solo Medium versus Adaptive Medium, two repetitions,
+  and `gpt-5.6-sol` at Medium supervising. Both strategies passed every task;
+  Adaptive delegated zero workers and was slower and more expensive overall.
+  Two repetitions are directional evidence, not statistical significance.
 - **Current native platform evidence:** deterministic CI covers Windows, Linux,
   and macOS. Focused Linux/POSIX symlink, dependency-link, and process-group
   paths passed natively. Live Codex delegation has representative Windows and
@@ -116,6 +122,18 @@ without treating `allowedModels` list position as an inferred strength order. Te
 in single delegation, preflight, and batch execution records recommended mechanism,
 worker count, concurrency, effort, selected model, selected effort, and selection reason;
 existing worker lifecycle and attempt records remain the authority on actual execution.
+The first post-V3 routing-policy correction permits cheap bounded structural
+inspection before preflight, classifies candidate delegated leaves instead of
+whole objectives, separates parallel hazards from delegation economics, and
+narrowly routes three-or-more explicit small read-only/disjoint/mechanical seams
+with shared-only final proof to `either`. Mutable shared state still blocks
+parallel execution; shared core does too unless the caller deliberately accepts
+that declared overlap with `allowOverlappingScopes: true`. A substantial leaf may
+be considered for single or sequential delegation. Routing telemetry
+adds the matched R0-R5 rule and explicit-versus-defaulted card provenance without
+persisting seam text. Deterministic coverage includes the recorded V3-equivalent
+static-site, observability-parser, and parent-owned-AST renderer shapes. The
+completed V3 evidence and benchmark fixtures were not changed or rerun.
 The production single and batch surfaces now pass selected model and effort into
 the Codex SDK turn, and continuation retains the model/effort lineage it actually
 resumes. An eligible P1.1 bounded retry can bootstrap authenticated lineage,
@@ -282,7 +300,7 @@ Vocabulary is the ledger's own: **N/A**, **NOT TESTED**, **PARTIAL**, **PASS**,
 | P1.0 Per-execution attempt, failure, and usage evidence   | DEEP PASS     | PARTIAL           | PARTIAL (V2)        | `src/evidence.test.ts`, `src/parallel.test.ts`                                                                              |
 | P1.1 Reasoned retry and effort escalation                 | DEEP PASS     | NOT TESTED        | NOT TESTED          | `src/evidence.test.ts`, `src/policy.test.ts`                                                                                |
 | P1.2 User-owned compute policy and enforcement            | PASS          | NOT TESTED        | NOT TESTED          | `src/policy.test.ts`, `src/selection.test.ts`                                                                               |
-| P1.2 Adaptive routing, seam planning, selection           | PASS          | NOT TESTED        | NOT TESTED          | `src/adaptive-routing.test.ts`, `src/routing.test.ts`, `src/seam-plan.test.ts`, `src/selection.test.ts`                     |
+| P1.2 Adaptive routing, seam planning, selection           | PASS          | NOT TESTED        | STALE (V3)          | `src/adaptive-routing.test.ts`, `src/routing.test.ts`, `src/seam-plan.test.ts`, `src/selection.test.ts`                     |
 | P1.3A Retention and compaction core                       | PASS          | NOT TESTED        | NOT TESTED          | `src/context.test.ts`                                                                                                       |
 | P1.3B Context pressure metrics and trigger policy         | PASS          | NOT TESTED        | NOT TESTED          | `src/context.test.ts`                                                                                                       |
 | P1.3C Live context lifecycle integration                  | PASS          | NOT TESTED        | NOT TESTED          | `src/context-lifecycle.test.ts`                                                                                             |
@@ -290,6 +308,7 @@ Vocabulary is the ledger's own: **N/A**, **NOT TESTED**, **PARTIAL**, **PASS**,
 | P2.2 Lightweight Cross-Session Handoff                    | PASS          | NOT TESTED        | NOT TESTED          | `src/session-handoff.test.ts`                                                                                               |
 | P2.3 End-to-End Automated Workflow                        | DEEP PASS     | NOT TESTED        | NOT TESTED          | `src/workflow.test.ts` (state-machine seams plus real single-handler composition and authoritative subprocess verification) |
 | Benchmark harness and acceptance methodology (P2.4A)      | PASS          | N/A               | N/A                 | `src/bench.test.ts`, `src/bench/harness.test.ts`, `src/bench/v3-analysis.test.ts`, `src/bench/credits.test.ts`              |
+| Benchmark V3 execution and mature acceptance (P2.4B)      | PASS          | N/A               | PASS (v0.11.0)      | `bench/results/2026-08-30T04-26-16-817Z.v3.json`, `src/bench/v3-analysis.test.ts`                                           |
 
 ### Reading this table against the matrix above
 
@@ -304,17 +323,18 @@ that capability.
 
 ### What is explicitly not claimed
 
-- **No live model-backed evidence exists for P1.1, P1.2, P1.3, P2.1, P2.2, or
-  P2.3.** Their acceptance is deterministic. A green test file is not a live
-  behavioural result, and this ledger does not present it as one.
-- **No performance, latency, or economic claim is made for any P1 or P2
-  capability.** No campaign has measured them. Benchmark V3 is designed to
-  produce that evidence and has not been run.
-- **No Benchmark V3 result exists**, under freeze 1 or freeze 2. Every V3
-  statement in this repository describes method, never outcome.
-- **Adaptive orchestration is not claimed to be cheaper, faster, or better than
-  solo execution.** V2's seven fully priced task medians were about 2% more
-  expensive than Solo, and the full Adaptive total is unknown.
+- **No separate live acceptance evidence exists for P1.1, P1.2, P1.3, P2.1,
+  P2.2, or P2.3.** P1.2 has model-backed Benchmark V3 evidence for the v0.11.0
+  baseline; the other listed capabilities remain deterministic only. A green
+  test file is not a live behavioural result, and this ledger does not present
+  it as one.
+- **Benchmark V3 measured v0.11.0, not the post-V3 routing corrections.** Its
+  36/36 valid runs found both strategies correct, while Adaptive delegated zero
+  workers and was slower and more expensive overall. Two repetitions are
+  directional evidence and establish no statistical significance.
+- **The current corrected routing is not claimed to be cheaper, faster, or
+  better than v0.11.0.** The V3 result motivated the correction, but no full
+  post-correction campaign has measured it.
 - **V2 evidence is not V3 evidence.** It measured an earlier architecture on a
   different suite under a different configuration, and the two are not two
   samples of one experiment.
@@ -324,11 +344,13 @@ that capability.
 
 ### Freeze status
 
-P2.4A is complete: the acceptance boundary above and the Benchmark V3
-methodology in [`bench/V3_METHODOLOGY.md`](../bench/V3_METHODOLOGY.md) are
-frozen under freeze 2, and the harness enforcing them is covered by
-`src/bench/harness.test.ts` in the canonical gate. P2.4 and Benchmark V3 remain
-incomplete; no model-backed V3 task has been executed.
+P2.4A and P2.4B are complete. The acceptance boundary and Benchmark V3
+methodology in [`bench/V3_METHODOLOGY.md`](../bench/V3_METHODOLOGY.md) were
+frozen before launch. Campaign `2026-08-30T04-26-16-817Z` then completed 36/36
+valid runs under methodology digest
+`0994a7090ffacaa4f59641f36501430047a8215626e87de4f810e254fd8aea4c`
+against the released v0.11.0 production baseline. The post-V3 routing correction
+has deterministic coverage but no subsequent full-campaign result.
 
 ## Current known evidence gaps and non-claims
 
@@ -1276,10 +1298,9 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
 
 ## Closure campaign boundary
 
-P2.4 Mature Benchmark and Acceptance Pass is a future system-wide closure
-campaign, dependent on the roadmap capstone. It is not the first time these
-features were tested and it does not retroactively erase the deterministic,
-historical benchmark, or documented session-local live evidence above. Until a
-deliberate rerun at the relevant runtime baseline exists, historical live results
-remain **STALE** where implementation changed, and unknown execution dates remain
-unknown.
+P2.4 Mature Benchmark and Acceptance completed against the v0.11.0 production
+baseline. It does not retroactively erase the deterministic, historical
+benchmark, or documented session-local live evidence above. Because routing
+changed after that campaign, its routing and performance evidence is **STALE**
+for the corrected runtime until a deliberate full rerun at that runtime baseline
+exists; unknown execution dates remain unknown.

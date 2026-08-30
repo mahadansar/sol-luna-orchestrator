@@ -1,4 +1,26 @@
-# Benchmark V2
+# Benchmark results
+
+## Benchmark V3
+
+Campaign `2026-08-30T04-26-16-817Z` completed 36/36 valid runs under methodology
+digest `0994a7090ffacaa4f59641f36501430047a8215626e87de4f810e254fd8aea4c`:
+nine tasks, Solo Medium versus Adaptive Medium, two repetitions, standard Codex
+speed, and `gpt-5.6-sol` at Medium supervising the v0.11.0 production baseline.
+
+Both strategies passed every task. v0.11.0 Adaptive delegated zero workers in
+all of its runs and was slower and more expensive overall than Solo in this
+campaign. The result led to the post-V3 routing corrections intended for
+v0.12.0. Those corrections have not been evaluated by another full campaign,
+so this evidence supports no claim that v0.12.0 is faster, cheaper, or better
+than v0.11.0.
+
+Two repetitions are bounded directional evidence. No statistical significance
+or universal model-performance claim is made. The committed raw campaign record
+remains authoritative for measured values and reproducibility metadata. The
+content-addressed V3 methodology remains the immutable pre-results specification;
+its pre-launch status language is preserved as part of the recorded digest.
+
+## Benchmark V2
 
 Benchmark V2 now has a frozen initial campaign and a post-redesign acceptance
 campaign. This document preserves the question, method, workload, reporting
@@ -6,9 +28,9 @@ rules, measured evidence, and the limits on interpreting those results.
 
 V2 is frozen historical architecture evidence. Its BEFORE/AFTER campaigns
 directly informed the Thin Supervisor design, so it is no longer the primary
-unbiased optimization target for routing work. The fresh routing holdout is
-[Benchmark V3](V3_METHODOLOGY.md), frozen under its freeze 2 (P2.4A) review. No
-model-backed V3 campaign has been run under any freeze.
+unbiased optimization target for routing work. The fresh routing holdout was
+[Benchmark V3](V3_METHODOLOGY.md), which later executed against the released
+v0.11.0 production baseline as summarized above.
 
 V2 and V3 are not two samples of one experiment. They measure different
 architectures on different suites, under different prompt histories, different
@@ -21,7 +43,7 @@ Historical V1 JSON and generated reports remain in `bench/results/` as evidence.
 They are not the primary product story for V2; Git history preserves the old
 curated interpretation.
 
-## Product question
+### Product question
 
 > When should a user run Sol alone, and when should they allow Sol-Luna
 > orchestration, based on correctness, credits consumed, and wall-clock latency?
@@ -37,7 +59,7 @@ Raw tokens remain essential for diagnosing input, cache, output, and reasoning
 behaviour. They are not the headline cost measure because Sol and Luna consume
 credits at different rates.
 
-## Arms
+### Arms
 
 Every arm fixes the supervisor at `gpt-5.6-sol`, Medium effort. There is no Solo
 High or Solo XHigh: changing supervisor effort would confound the effect of
@@ -52,7 +74,7 @@ orchestration.
 There is no intentionally sequential counterfactual. Forced splitting is not
 run on the small fixtures or coupled control.
 
-## Workload suite
+### Workload suite
 
 Each fixture is materialised into a fresh temporary workspace, starts failing or
 incomplete, is graded after the model stops, protects specification files, and
@@ -73,7 +95,7 @@ The suite is not a synthetic module-count ladder and was not designed to make
 delegation win. The coupled control and small tasks are expected to provide real
 opportunities for Adaptive to stay at zero workers.
 
-## Credit accounting
+### Credit accounting
 
 The result file embeds the complete pricing profile used for its estimate:
 
@@ -102,7 +124,7 @@ live records exist, any rate change requires a new profile so those records keep
 their original snapshot. This pre-launch correction replaced the unused
 Business/Enterprise promotional profile; no V2 live result used that profile.
 
-## Result schema and diagnostics
+### Result schema and diagnostics
 
 Schema 4 records the V2 arm and task identity, external grade outcome, full Sol
 and Luna usage, nullable actual and rate-card credits, duration, whether
@@ -156,7 +178,7 @@ remain unknown. By file:
 These are estimates under the V2 profile, not evidence of the credit rate that
 applied on 2026-08-14.
 
-## Campaign and repetition policy
+### Campaign and repetition policy
 
 The initial campaign is 40 model-backed runs:
 
@@ -171,7 +193,7 @@ credit range, Adaptive routing changes, a worker-count change of at least two,
 or a non-Solo arm's credit delta within 10% of Solo. A recommendation is review
 input, not an automatic model call.
 
-## Reporting
+### Reporting
 
 The primary table is `PASS/FAIL -> Credits -> Time` and compares each strategy
 with Solo Medium for the same task. It reports absolute credits/time, percentage
@@ -188,7 +210,7 @@ remain separate; only the run-total row shows end-to-end wall-clock.
 
 No V2 conclusions should be added until committed schema-4 records support them.
 
-## Commands
+### Commands
 
 Deterministic preparation and reporting make no model calls:
 
@@ -248,7 +270,7 @@ artifact with:
 npm run bench:analyze -- bench/results --campaign benchmark-v2-initial --output bench/RESULTS.md
 ```
 
-## Methodology risks to resolve before launch
+### Methodology risks to resolve before launch
 
 - Re-check that the Plus rate-card snapshot still applies immediately before
   launch; do not substitute a Business/Enterprise purchased-credit schedule.
@@ -267,9 +289,9 @@ npm run bench:analyze -- bench/results --campaign benchmark-v2-initial --output 
 - Historical backfills use the V2 snapshot and are not comparable to actual
   historical billing unless the same rate card is independently established.
 
-## Thin-supervisor architecture experiment
+### Thin-supervisor architecture experiment
 
-### Decision and evidence boundary
+#### Decision and evidence boundary
 
 The 2026-08-25 experiment selected **Candidate 3: terminal verification state
 machine** as the best of three materially different runtime candidates. It is a
@@ -301,7 +323,7 @@ All 50 BEFORE records and all 48 AFTER records passed deterministic grading.
 A PASS does not erase failed worker attempts, missing usage, or latency; those
 remain part of the raw evidence.
 
-### BEFORE findings and causal diagnosis
+#### BEFORE findings and causal diagnosis
 
 The frozen initial campaign showed that Adaptive usually cost more and took
 longer than Solo. Values below are medians after the frozen stopping rule;
@@ -345,7 +367,7 @@ cheap, and worktree/scope/verification enforcement was already strong. The
 dominant controllable problem was therefore Sol-facing protocol and lifecycle
 overhead, plus untargeted failure recovery, not Luna's price.
 
-### Architecture before and after
+#### Architecture before and after
 
 The old effective lifecycle was conversational:
 
@@ -375,14 +397,14 @@ Sol understands and architects
 The runtime cannot force a parent model to stop reasoning, but it now makes the
 successful path unambiguous and makes failure the only path that expands.
 
-### Candidate-to-evidence map
+#### Candidate-to-evidence map
 
 Every live candidate was committed first, rebuilt, locally re-registered,
 checked with `status`, `doctor`, and `codex mcp get`, and measured from fresh
 Codex sessions. Evidence commits were created only after the associated live
 runs.
 
-#### Candidate 1: `thin-supervisor-recovery-v1`
+##### Candidate 1: `thin-supervisor-recovery-v1`
 
 - exact measured architecture SHA:
   `87ea54096d8f3ffeff8796f2b6d6250347e24146`;
@@ -398,7 +420,7 @@ runs.
   `bench/results/2026-08-24T22-40-55-465Z.v2.json`, and
   `bench/results/2026-08-24T22-40-55-465Z.v2.md`.
 
-#### Candidate 2: `minimal-protocol-handoff-c2`
+##### Candidate 2: `minimal-protocol-handoff-c2`
 
 - exact measured architecture SHA:
   `76a7b935cb53bcd4077a36400b6f8ce92cce6e42`;
@@ -416,7 +438,7 @@ runs.
   `bench/results/2026-08-24T23-22-14-757Z.v2.md`, and
   `bench/results/benchmark-v2-minimal-protocol-handoff-c2-76a7b93-20260825.analysis.md`.
 
-#### Candidate 3: `terminal-verification-state-machine-c3`
+##### Candidate 3: `terminal-verification-state-machine-c3`
 
 - exact targeted-probe architecture SHA:
   `187f962be18998a6a4e0b5d9e717d62001ffbe41`;
@@ -451,7 +473,7 @@ runs.
   `bench/results/2026-08-25T05-24-19-654Z.v2.md`, and
   `bench/results/benchmark-v2-final-terminal-verification-62d9e00-20260825.analysis.md`.
 
-### What changed and how the eight priorities were addressed
+#### What changed and how the eight priorities were addressed
 
 | Priority                                     | Implemented behavior                                                                                                                                                                           | Evidence and limit                                                                                                                                                                                                              |
 | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -475,7 +497,7 @@ deduplication, no-command refusal, final failure expansion, completed-only
 command union, partial-stream preservation, attempt identity, compact results,
 metadata, and truthful activity.
 
-### Deterministic validation
+#### Deterministic validation
 
 At Candidate 3 architecture commit `187f962` and again immediately before the
 final campaign at `62d9e00`, the broad gate passed:
@@ -492,7 +514,7 @@ final campaign at `62d9e00`, the broad gate passed:
 
 No runtime architecture changed after that gate.
 
-### Targeted live probes
+#### Targeted live probes
 
 These are one-repetition directional probes, not final estimates. Every listed
 run passed deterministic grading. Deltas compare Adaptive or Forced with the
@@ -511,7 +533,7 @@ holding latency near Solo and because its terminal state addressed the measured
 cause rather than tuning a fixture. The unfavorable C3 Forced result was
 preserved and was not rerun.
 
-### Final BEFORE versus AFTER benchmark
+#### Final BEFORE versus AFTER benchmark
 
 The table uses each campaign's stopping-rule median. `unknown` is deliberate:
 AFTER data Adaptive rep 2 contains a real 300-second failed `t2` attempt whose
@@ -538,7 +560,7 @@ Forced AFTER medians were:
 | data-contracts      |           9.21 / 238s |               -1% / +50% |       3 |
 | repository-tools    |         9.10 / 195.5s |              +14% / +50% |       3 |
 
-### Economics, latency, and threshold decisions
+#### Economics, latency, and threshold decisions
 
 - **Zero-worker overhead:** BEFORE the four comparable zero-worker Adaptive
   medians summed to 28.08 credits versus 23.33 Solo (+20%). AFTER they summed
@@ -579,7 +601,7 @@ Forced AFTER medians were:
 These repetitions are directional. No statistical significance or universal
 superiority is claimed.
 
-### Failure recovery and the 921-second mode
+#### Failure recovery and the 921-second mode
 
 The specific catastrophic Forced integration pattern was not reproduced in the
 final campaign. Its BEFORE attempts were 213s, 921s, and 609s; the latter two
@@ -597,7 +619,7 @@ overall run passed in 475s. This proves targeted recovery and successful-stream
 preservation, while also proving that one retry can still be slow and
 economically unmeasurable when the failed attempt exposes no usage.
 
-### Remaining bottlenecks and ideas not worth pursuing
+#### Remaining bottlenecks and ideas not worth pursuing
 
 The largest remaining cost is Sol's initial request/repository understanding
 and its probabilistic choice of decomposition and effort. The MCP runtime can
@@ -620,9 +642,9 @@ The following did not justify further architecture iterations:
 - unbounded replacement workers or complete batch restarts;
 - more tiny schema/prompt variations after three coherent candidates.
 
-### Engineering recommendations
+#### Engineering recommendations
 
-#### KEEP
+##### KEEP
 
 Keep the terminal integration-verification state machine, default text-only
 handoff, immutable ownership contracts, worker-owned scoped verification,
@@ -630,7 +652,7 @@ isolated worktrees, progressive failure disclosure, typed activity evidence,
 and one bounded task-local recovery. They materially reduced Sol duplication
 without weakening correctness or security.
 
-#### FIX
+##### FIX
 
 Capture usage for timed-out/failed worker attempts; fix the analyzer's
 Solo-vs-Solo third-repetition self-recommendation; investigate config-overlay's
@@ -638,7 +660,7 @@ remaining +13% zero-worker variance; and make terminal completion easier for
 parents to honor consistently. Any change to the frozen analyzer should apply
 only to future methodology, never historical shards.
 
-#### REDESIGN
+##### REDESIGN
 
 For another generation, separate deterministic eligibility from expensive
 architecture: a tiny preflight should decide obvious zero-worker cases before
@@ -647,14 +669,14 @@ close a verified batch without another open-ended supervisor reasoning phase.
 The design must retain Sol for genuine interfaces, ambiguity, conflicts,
 security review, and final architectural judgment.
 
-#### DEFER
+##### DEFER
 
 Defer predictive cost routing, deeper effort optimization, more retry classes,
 and context-cache schemes until timeout usage and parent before/after telemetry
 are complete enough to evaluate them. Do not infer savings from raw tokens or
 cache hit rates.
 
-#### STOP
+##### STOP
 
 Stop treating forced delegation, maximum parallelism, or protocol compression
 alone as the product strategy. Stop after this third candidate rather than
@@ -662,7 +684,7 @@ live-benchmarking tiny variations. Do not claim overall Adaptive savings from
 this campaign: the priced subset is slightly more expensive and the full total
 is unknown.
 
-### Exact independent rerun sequence
+#### Exact independent rerun sequence
 
 The following reproduces the winning runtime, local registration checks, and
 benchmark method on Windows PowerShell. Use new campaign IDs; never reuse the

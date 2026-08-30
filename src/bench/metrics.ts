@@ -32,9 +32,35 @@ export interface VerificationMetrics {
 }
 
 export interface OrchestrationMetrics {
-  /** `delegate_task` and `delegate_tasks` calls that actually opened a batch. */
+  /**
+   * Delegation calls that actually opened a worker batch.
+   *
+   * `batch.started` alone does not establish this. The runtime opens a batch
+   * identity before its pre-execution gates run, so a call refused by
+   * admission, routing structure, scope overlap, or worktree availability
+   * publishes `batch.started` and then `batch.rejected` with zero worker
+   * attempts. Such a call is counted in `delegationCallsRefused`, never here.
+   */
   readonly delegationCalls: number;
+  /** Modes of the calls counted in `delegationCalls`. Refusals are excluded. */
   readonly batchesByMode: Readonly<Record<string, number>>;
+  /**
+   * Delegation calls the runtime refused before any worker attempt started,
+   * counted from `batch.rejected`. One refused call publishes exactly one.
+   */
+  readonly delegationCallsRefused: number;
+  /**
+   * Modes of refused calls, for the refusals whose call got far enough to
+   * publish `batch.started`. A refusal raised before that carries no mode and
+   * appears only in `delegationCallsRefused`.
+   */
+  readonly refusedBatchesByMode: Readonly<Record<string, number>>;
+  /**
+   * Opened batches that were cancelled, from `batch.cancelled`. A subset of
+   * `delegationCalls`: cancellation is an execution-time outcome, not an
+   * admission refusal, so the call did open a batch.
+   */
+  readonly delegationCallsCancelled: number;
   readonly explorations: number;
   readonly explorationsRejected: number;
   readonly attemptsStarted: number;
@@ -88,6 +114,9 @@ export interface ContextMetrics {
 export const EMPTY_ORCHESTRATION_METRICS: OrchestrationMetrics = Object.freeze({
   delegationCalls: 0,
   batchesByMode: Object.freeze({}),
+  delegationCallsRefused: 0,
+  refusedBatchesByMode: Object.freeze({}),
+  delegationCallsCancelled: 0,
   explorations: 0,
   explorationsRejected: 0,
   attemptsStarted: 0,
@@ -154,12 +183,15 @@ const bump = (counts: Record<string, number>, key: unknown): void => {
 /** Fold one run's events into orchestration counts. */
 export function foldOrchestrationMetrics(events: readonly Event[]): OrchestrationMetrics {
   const batchesByMode: Record<string, number> = {};
+  const refusedBatchesByMode: Record<string, number> = {};
   const attemptsByRole: Record<string, number> = {};
   const attemptsByTermination: Record<string, number> = {};
   /** executionId -> the model and effort that execution requested. */
   const attemptCompute = new Map<string, { model: unknown; effort: unknown }>();
 
   let delegationCalls = 0;
+  let delegationCallsRefused = 0;
+  let delegationCallsCancelled = 0;
   let explorations = 0;
   let explorationsRejected = 0;
   let attemptsStarted = 0;
@@ -196,7 +228,21 @@ export function foldOrchestrationMetrics(events: readonly Event[]): Orchestratio
   let verificationFailed = 0;
   let verificationRefused = 0;
 
-  // Lineage first: an escalation is only visible once its predecessor is known,
+  // Terminal batch outcomes first. A batch identity is opened before the
+  // pre-execution gates run, so whether `batch.started` represents a delegation
+  // call that opened a worker batch is only knowable from the terminal event
+  // the same identity later published. One identity publishes exactly one.
+  const refusedBatchIds = new Set<string>();
+  for (const event of events) {
+    if (event.type === "batch.rejected") {
+      delegationCallsRefused += 1;
+      if (typeof event.batchId === "string") refusedBatchIds.add(event.batchId);
+    } else if (event.type === "batch.cancelled") {
+      delegationCallsCancelled += 1;
+    }
+  }
+
+  // Lineage next: an escalation is only visible once its predecessor is known,
   // and events are appended in start order, so one forward pass records every
   // predecessor before any successor needs it.
   for (const event of events) {
@@ -212,8 +258,14 @@ export function foldOrchestrationMetrics(events: readonly Event[]): Orchestratio
   for (const event of events) {
     switch (event.type) {
       case "batch.started":
-        delegationCalls += 1;
-        bump(batchesByMode, event.mode);
+        if (typeof event.batchId === "string" && refusedBatchIds.has(event.batchId)) {
+          // Admission, routing structure, scope overlap, or worktree
+          // availability refused this call. No worker batch was opened.
+          bump(refusedBatchesByMode, event.mode);
+        } else {
+          delegationCalls += 1;
+          bump(batchesByMode, event.mode);
+        }
         break;
       case "explore.started":
         explorations += 1;
@@ -328,6 +380,9 @@ export function foldOrchestrationMetrics(events: readonly Event[]): Orchestratio
   return {
     delegationCalls,
     batchesByMode,
+    delegationCallsRefused,
+    refusedBatchesByMode,
+    delegationCallsCancelled,
     explorations,
     explorationsRejected,
     attemptsStarted,

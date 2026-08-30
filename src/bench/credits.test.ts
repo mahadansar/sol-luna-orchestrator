@@ -5,6 +5,9 @@ import {
   BENCHMARK_V2_PRICING_PROFILE_ID,
   BENCHMARK_V2_PRICING_SNAPSHOT_DATE,
   BENCHMARK_V2_PRICING_SOURCE_URL,
+  BENCHMARK_V3_PRICING_EVIDENCE,
+  BENCHMARK_V3_PRICING_PROFILE,
+  BENCHMARK_V3_PRICING_PROFILE_ID,
   calculateBenchmarkCredits,
   calculateModelCredits,
   copyPricingProfile,
@@ -42,6 +45,35 @@ test("the V2 profile is an immutable dated official rate-card snapshot", () => {
   assert.ok(Object.isFrozen(BENCHMARK_V2_PRICING_PROFILE.rates));
 });
 
+test("the V3 profile is a separate current ChatGPT Work / Codex credit snapshot", () => {
+  assert.notEqual(BENCHMARK_V3_PRICING_PROFILE, BENCHMARK_V2_PRICING_PROFILE);
+  assert.equal(BENCHMARK_V3_PRICING_PROFILE.profileId, BENCHMARK_V3_PRICING_PROFILE_ID);
+  assert.equal(BENCHMARK_V3_PRICING_PROFILE.snapshotDate, "2026-08-30");
+  assert.match(BENCHMARK_V3_PRICING_PROFILE.applicability, /ChatGPT Work \/ Codex/);
+  assert.match(BENCHMARK_V3_PRICING_PROFILE.applicability, /excludes.*API-key/i);
+  assert.match(BENCHMARK_V3_PRICING_PROFILE.promotionalTerms ?? "", /2026-11-21/);
+  assert.deepEqual(BENCHMARK_V3_PRICING_PROFILE.rates["gpt-5.6-sol"], {
+    input: 100,
+    cachedInput: 10,
+    output: 500,
+    cacheWrite: 0,
+  });
+  assert.deepEqual(BENCHMARK_V3_PRICING_PROFILE.rates["gpt-5.6-luna"], {
+    input: 5,
+    cachedInput: 0.5,
+    output: 30,
+    cacheWrite: 0,
+  });
+  assert.deepEqual(BENCHMARK_V3_PRICING_EVIDENCE.equivalentUsdPer1mTokens, {
+    "gpt-5.6-sol": { input: 4, cachedInput: 0.4, output: 20 },
+    "gpt-5.6-luna": { input: 0.2, cachedInput: 0.02, output: 1.2 },
+  });
+  assert.match(BENCHMARK_V3_PRICING_EVIDENCE.accountingBasis, /credits.*primary/i);
+  assert.match(BENCHMARK_V3_PRICING_EVIDENCE.cacheWriteSemantics, /1\.25x/);
+  assert.ok(Object.isFrozen(BENCHMARK_V3_PRICING_PROFILE));
+  assert.ok(Object.isFrozen(BENCHMARK_V3_PRICING_EVIDENCE));
+});
+
 test("normal Sol calculation uses input, cached input, and output rates", () => {
   assert.equal(
     calculateModelCredits("gpt-5.6-sol", {
@@ -63,6 +95,10 @@ test("cached input is charged separately and cache writes are free", () => {
   };
   assert.equal(calculateModelCredits("gpt-5.6-luna", oneMillion), 30.5);
   assert.equal(calculateModelCredits("gpt-5.6-sol", oneMillion), 762.5);
+  assert.equal(
+    calculateModelCredits("gpt-5.6-sol", oneMillion, BENCHMARK_V3_PRICING_PROFILE),
+    510,
+  );
 });
 
 test("reasoning output is diagnostic and is not double-counted", () => {

@@ -974,8 +974,11 @@ test("context core - authoritative contract semantics are never length truncated
 });
 
 test("context core - privacy and sensitive output exclusion", () => {
+  const continuation = `ctr_${"c".repeat(32)}`;
+  const handoff = `hdf_${"h".repeat(32)}`;
   const rawTextWithSecrets =
-    "Error occurred when connecting to https://api.openai.com with Authorization: Bearer sk-proj1234567890abcdef1234567890 and token=ghp_1234567890abcdef1234567890abcdef12 and password='SuperSecretPassword123!'";
+    "Error occurred when connecting to https://api.openai.com with Authorization: Bearer sk-proj1234567890abcdef1234567890 and token=ghp_1234567890abcdef1234567890abcdef12 and password='SuperSecretPassword123!' " +
+    `while handling ${continuation} and ${handoff}.`;
 
   const { scrubbed, count } = scrubSensitiveText(rawTextWithSecrets);
 
@@ -983,6 +986,7 @@ test("context core - privacy and sensitive output exclusion", () => {
   assert.doesNotMatch(scrubbed, /sk-proj1234567890abcdef1234567890/);
   assert.doesNotMatch(scrubbed, /ghp_1234567890abcdef1234567890abcdef12/);
   assert.doesNotMatch(scrubbed, /SuperSecretPassword123!/);
+  assert.doesNotMatch(scrubbed, /(?:ctr_|hdf_)[A-Za-z0-9_-]{20,}/);
   assert.ok(
     scrubbed.includes("[REDACTED_SECRET]") || scrubbed.includes("[REDACTED_TOKEN]"),
   );
@@ -1002,6 +1006,10 @@ test("context core - privacy and sensitive output exclusion", () => {
   assert.equal(
     scrubSensitiveText("token budget, auth failure, key decision, secret sauce").scrubbed,
     "token budget, auth failure, key decision, secret sauce",
+  );
+  assert.equal(
+    scrubSensitiveText("short ctr_example and hdf_label prose").scrubbed,
+    "short ctr_example and hdf_label prose",
   );
   assert.equal(
     scrubSensitiveText('password="line one\nline two"').scrubbed,

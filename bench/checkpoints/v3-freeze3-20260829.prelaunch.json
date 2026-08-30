@@ -1,0 +1,1858 @@
+{
+  "schema": "sol-luna/bench/v3-prelaunch-checkpoint@3",
+  "title": "Benchmark V3 / freeze 3 pre-launch checkpoint",
+  "generatedAt": "2026-08-30T04:15:31.456Z",
+  "generatedBy": "npm run bench:v3:checkpoint (dist/bench/prelaunch.js)",
+  "launchReadiness": "blocked",
+  "blockers": [
+    {
+      "id": "working-tree-not-clean",
+      "severity": "blocking-procedural",
+      "summary": "5 path(s) differ from the recorded commit, including this checkpoint itself.",
+      "why": "A V3 launch refuses a dirty tree because the recorded commit would not describe the code that ran.",
+      "ownedBy": "launch operator",
+      "clears": "Commit the freeze revision and this checkpoint — the methodology requires the checkpoint be retained before live execution — then confirm `git status --porcelain` is empty immediately before launching."
+    }
+  ],
+  "advisories": [
+    {
+      "id": "head-is-not-the-production-baseline",
+      "severity": "non-blocking",
+      "summary": "HEAD (62a27b7704b526ca58166ad3431c33c31e327dc1) is not the pinned production baseline df215a170e6a88a6097c56f7ca404358d9d4b050.",
+      "impact": "The commit that actually executes is recorded separately in environment.git.commit; a report must not present HEAD as the baseline."
+    }
+  ],
+  "campaign": {
+    "campaignId": "v3-freeze3-20260829",
+    "benchmarkVersion": 3,
+    "suite": "v3",
+    "freezeReview": "freeze 3 (P2.4B pre-launch)",
+    "reason": "Freeze 3 changed a telemetry definition, the reproducibility record, and the production baseline pin, so under the post-freeze correction policy it is a new freeze review requiring a new campaign ID.",
+    "campaignIdsWithV3Results": [],
+    "otherCampaignIdsWithV3Results": [],
+    "retainedCheckpointCampaignIds": [
+      "v3-freeze2-20260829",
+      "v3-freeze3-20260829"
+    ],
+    "launchMarkerCampaignIds": [],
+    "launchMarkerExistsForThisCampaign": false,
+    "collidesWithPriorResultCampaignId": false,
+    "retainedCheckpointExistsForThisCampaign": true,
+    "reusesEarlierFreezeCampaignIdentity": false,
+    "liveV3RunsExecutedToDate": 0,
+    "liveV3RunsForThisCampaign": 0,
+    "freshLaunch": true
+  },
+  "executionHistory": {
+    "resultsDirectory": "bench/results",
+    "resultsDirectoryExists": true,
+    "shards": [],
+    "eventStreams": [
+      {
+        "file": "2026-08-14T17-34-04-390Z.events.jsonl",
+        "byteLength": 7108,
+        "contentSha256": "92eb277851bd154f749d93d7bdc0204a6cef1236c880dc0ffc9acb6103ece5ea",
+        "attribution": "other-suite",
+        "attributionEvidence": "same-stamp-other-suite-shard"
+      },
+      {
+        "file": "2026-08-14T17-38-51-964Z.events.jsonl",
+        "byteLength": 14240,
+        "contentSha256": "7645ad493fb47acb5681c127ff2e140d72d6f6e4f9d0bcd0c01458f3e61a4e06",
+        "attribution": "other-suite",
+        "attributionEvidence": "same-stamp-other-suite-shard"
+      },
+      {
+        "file": "2026-08-14T17-57-16-992Z.events.jsonl",
+        "byteLength": 21169,
+        "contentSha256": "aa6652d07585a1a20121e002dcf27df05a005ad1e7bee62203ba4d7587230b5d",
+        "attribution": "other-suite",
+        "attributionEvidence": "same-stamp-other-suite-shard"
+      },
+      {
+        "file": "2026-08-14T18-23-37-381Z.events.jsonl",
+        "byteLength": 1995,
+        "contentSha256": "f3c60b78af34524d392f7ccf766a58db05cc801594b3a40cd43f3dfdf0f54b03",
+        "attribution": "other-suite",
+        "attributionEvidence": "same-stamp-other-suite-shard"
+      },
+      {
+        "file": "2026-08-20T18-12-03-761Z.events.jsonl",
+        "byteLength": 15040,
+        "contentSha256": "f7ada115134d32ed21ddb019727acfd16bbb66a0fe2985906665aa2f276a1f68",
+        "attribution": "historical-non-v3",
+        "attributionEvidence": "reviewed-pre-v3-content-sha256"
+      },
+      {
+        "file": "2026-08-20T18-15-24-879Z.events.jsonl",
+        "byteLength": 10645,
+        "contentSha256": "113408454bc3f4e06c9009b6ed50960a399a3a479b1ec833c5b6b4e5e77b549b",
+        "attribution": "historical-non-v3",
+        "attributionEvidence": "reviewed-pre-v3-content-sha256"
+      },
+      {
+        "file": "2026-08-20T18-57-45-324Z.events.jsonl",
+        "byteLength": 10585,
+        "contentSha256": "dead19ae3827268f12b5d118e50b963f39ca42879d32a3859f2682815c5d14fb",
+        "attribution": "historical-non-v3",
+        "attributionEvidence": "reviewed-pre-v3-content-sha256"
+      },
+      {
+        "file": "2026-08-20T19-06-41-710Z.events.jsonl",
+        "byteLength": 21056,
+        "contentSha256": "2b99857fc256d6a8c96fb62aeb61ed2ca90eee5854bfa308e1836d019f8623ea",
+        "attribution": "historical-non-v3",
+        "attributionEvidence": "reviewed-pre-v3-content-sha256"
+      },
+      {
+        "file": "2026-08-21T15-39-16-196Z.events.jsonl",
+        "byteLength": 10644,
+        "contentSha256": "bbdb15197348b58618bccd90550d158a541e596e1f828d4eca24402668b57c78",
+        "attribution": "historical-non-v3",
+        "attributionEvidence": "reviewed-pre-v3-content-sha256"
+      },
+      {
+        "file": "2026-08-21T15-47-28-275Z.events.jsonl",
+        "byteLength": 21067,
+        "contentSha256": "ed126130e113e8dad6b2cfaa0f38b949dadf20b1cb37a76a182ac0a2623d7799",
+        "attribution": "historical-non-v3",
+        "attributionEvidence": "reviewed-pre-v3-content-sha256"
+      },
+      {
+        "file": "2026-08-21T16-33-10-271Z.events.jsonl",
+        "byteLength": 10651,
+        "contentSha256": "5a1ef71fa41c75ce2aca06b181b6141937489691102535b454d484ee63d57261",
+        "attribution": "historical-non-v3",
+        "attributionEvidence": "reviewed-pre-v3-content-sha256"
+      },
+      {
+        "file": "2026-08-21T16-46-14-787Z.events.jsonl",
+        "byteLength": 21072,
+        "contentSha256": "e13a8d9e1310fd845bf4a57bc10066c70dd1390227b4861b1dc725b6358b1f81",
+        "attribution": "historical-non-v3",
+        "attributionEvidence": "reviewed-pre-v3-content-sha256"
+      },
+      {
+        "file": "2026-08-21T18-33-29-191Z.events.jsonl",
+        "byteLength": 8495,
+        "contentSha256": "4824af3c246bc7a34f834b72cc406744f6c4457902cdb7d73dcbe7390bd6d8ea",
+        "attribution": "historical-non-v3",
+        "attributionEvidence": "reviewed-pre-v3-content-sha256"
+      },
+      {
+        "file": "2026-08-24T17-57-14-853Z.events.jsonl",
+        "byteLength": 31691,
+        "contentSha256": "32be2d860b9561a59c5da502ad94ac5196490eb302650a76c891b93f763189f7",
+        "attribution": "v2",
+        "attributionEvidence": "same-stamp-v2-shard"
+      },
+      {
+        "file": "2026-08-24T19-13-58-251Z.events.jsonl",
+        "byteLength": 42566,
+        "contentSha256": "5e9a413dca02e8cab27429e3cd966623a49c6751f8ce9da46047ffb6732f1ce0",
+        "attribution": "v2",
+        "attributionEvidence": "same-stamp-v2-shard"
+      },
+      {
+        "file": "2026-08-24T20-22-56-716Z.events.jsonl",
+        "byteLength": 17542,
+        "contentSha256": "bc2b9a34f1875c2f54ce6d42c19a1a807cea0f067ad3c3a47d99a6b015b16398",
+        "attribution": "v2",
+        "attributionEvidence": "same-stamp-v2-shard"
+      },
+      {
+        "file": "2026-08-24T20-45-06-971Z.events.jsonl",
+        "byteLength": 16088,
+        "contentSha256": "c8ce24375fadb361aac09e798ddb2efd40235d63f2be3a6f1ae19d58923391c1",
+        "attribution": "v2",
+        "attributionEvidence": "same-stamp-v2-shard"
+      },
+      {
+        "file": "2026-08-24T22-19-09-889Z.events.jsonl",
+        "byteLength": 14144,
+        "contentSha256": "0927f90524ce9f878c0ae7fd98d2913add9b1578481bfc9804aebc9815a73a76",
+        "attribution": "v2",
+        "attributionEvidence": "same-stamp-v2-shard"
+      },
+      {
+        "file": "2026-08-24T22-40-55-465Z.events.jsonl",
+        "byteLength": 8041,
+        "contentSha256": "eed33ce85b0334745956d5a62502cfb5753107bd8a709d7de916b8c7a6a85432",
+        "attribution": "v2",
+        "attributionEvidence": "same-stamp-v2-shard"
+      },
+      {
+        "file": "2026-08-24T23-03-32-785Z.events.jsonl",
+        "byteLength": 14141,
+        "contentSha256": "648f2d3e16a6349d556612cc97e3ceb5ce99a5e2fee4a2ed81612326ac1f03d7",
+        "attribution": "v2",
+        "attributionEvidence": "same-stamp-v2-shard"
+      },
+      {
+        "file": "2026-08-24T23-22-14-757Z.events.jsonl",
+        "byteLength": 8045,
+        "contentSha256": "307a3999f54ac4f985ae25944be80559a0e7b857799389b570147a5a7b17cc0b",
+        "attribution": "v2",
+        "attributionEvidence": "same-stamp-v2-shard"
+      },
+      {
+        "file": "2026-08-25T03-03-00-164Z.events.jsonl",
+        "byteLength": 14664,
+        "contentSha256": "89fbc30e148a7b51b74a8ec23160c28a902381634925bc2ad6708fb50a233b53",
+        "attribution": "v2",
+        "attributionEvidence": "same-stamp-v2-shard"
+      },
+      {
+        "file": "2026-08-25T03-18-30-270Z.events.jsonl",
+        "byteLength": 8320,
+        "contentSha256": "eedc379e4ef2d0c84b17e65a60b1ce4aecb19f8fc875e59485c0482081f2cb55",
+        "attribution": "v2",
+        "attributionEvidence": "same-stamp-v2-shard"
+      },
+      {
+        "file": "2026-08-25T03-26-06-648Z.events.jsonl",
+        "byteLength": 47786,
+        "contentSha256": "8e65ab982c70da66cddbef9b5a4fdb6a3a6ff666687c0619d90d64a5f883fbda",
+        "attribution": "v2",
+        "attributionEvidence": "same-stamp-v2-shard"
+      },
+      {
+        "file": "2026-08-25T04-40-36-356Z.events.jsonl",
+        "byteLength": 45981,
+        "contentSha256": "cd22ce65eff292f32b84da459f2cd4950ef7f60f55252d2196ef66706dbe4ad8",
+        "attribution": "v2",
+        "attributionEvidence": "same-stamp-v2-shard"
+      },
+      {
+        "file": "2026-08-25T05-11-18-503Z.events.jsonl",
+        "byteLength": 14695,
+        "contentSha256": "0ac9618b5a6d26c6b0b8beb0ad4e9ace69e34711b5aa69ebd9ec6432767b0d3f",
+        "attribution": "v2",
+        "attributionEvidence": "same-stamp-v2-shard"
+      },
+      {
+        "file": "2026-08-25T05-24-19-654Z.events.jsonl",
+        "byteLength": 6368,
+        "contentSha256": "47b2cbb4e790ce9e5e8904944f7923af3b5e68677bc173694afe8bf3309e1e58",
+        "attribution": "v2",
+        "attributionEvidence": "same-stamp-v2-shard"
+      }
+    ],
+    "launchMarkers": [],
+    "liveV3RunsExecutedToDate": 0,
+    "liveV3RunsForThisCampaign": 0,
+    "campaignIdsWithV3Results": [],
+    "otherCampaignIdsWithV3Results": [],
+    "retainedCheckpointCampaignIds": [
+      "v3-freeze2-20260829",
+      "v3-freeze3-20260829"
+    ],
+    "incompleteV3Shards": [],
+    "invalidV3Shards": [],
+    "unreadableV3Shards": [],
+    "v3EventStreamsWithTelemetry": [],
+    "ambiguousEventStreams": [],
+    "invalidOrUnreadableLaunchMarkers": [],
+    "launchMarkerCampaignIds": [],
+    "launchMarkerExistsForThisCampaign": false,
+    "collidesWithPriorResultCampaignId": false,
+    "retainedCheckpointExistsForThisCampaign": true,
+    "freshLaunch": true,
+    "derivation": "Derived from valid, invalid, and unreadable bench/results/*.v3.json shards; the durable *.v3-launch.json record written immediately before the first SDK call; and non-empty event streams attributed by validated same-stamp suite contents or reviewed pre-V3 content identity. Campaign identity comes from valid live evidence, never from a checkpoint.",
+    "limitation": "A non-empty stream without validated same-stamp suite contents or an exact reviewed pre-V3 content identity is ambiguous. A sibling that is unreadable, malformed, or internally inconsistent does not suppress that ambiguity. It blocks freshness rather than being treated as proof that V3 never ran. Inherited SDK, CLI, and OS state remains outside repository control."
+  },
+  "freezeIntegrity": {
+    "methodologyPath": "bench/V3_METHODOLOGY.md",
+    "freezeReview": "freeze 3 (P2.4B pre-launch)",
+    "expectedDigest": "0994a7090ffacaa4f59641f36501430047a8215626e87de4f810e254fd8aea4c",
+    "workingTreeDigest": "0994a7090ffacaa4f59641f36501430047a8215626e87de4f810e254fd8aea4c",
+    "digestGate": "pass",
+    "digestRecomputedBy": "methodologyDigest() over the committed document",
+    "supersededFreeze2Digest": "0994a7090ffacaa4f59641f36501430047a8215626e87de4f810e254fd8aea4c",
+    "freeze2DigestDiffersAsExpected": false,
+    "pinnedFreezeSha": "9092257aad1ec890c45054081b3792de1f44b97b",
+    "pinnedFreezeShaIsCurrentReview": true,
+    "pinnedFreezeShaSubject": "test",
+    "productionBaseline": {
+      "version": "0.11.0",
+      "sha": "df215a170e6a88a6097c56f7ca404358d9d4b050",
+      "resolvedFrom": "git rev-list -n 1 v0.11.0",
+      "tagResolvesToPinnedSha": true,
+      "tagResolvesTo": "df215a170e6a88a6097c56f7ca404358d9d4b050",
+      "commitExists": true,
+      "subject": "chore: prepare v0.11.0 release",
+      "committedAt": "2026-08-29T20:21:53+05:00",
+      "packageVersionAtBaseline": "0.11.0"
+    },
+    "headCommit": "62a27b7704b526ca58166ad3431c33c31e327dc1",
+    "headBranch": "benchmark-v3-wip",
+    "headIsProductionBaseline": false,
+    "distinction": "holdoutFreezeSha identifies the reviewed methodology; productionBaseline identifies the released product under evaluation. They are different concepts and are never set from one another."
+  },
+  "productionBaselineRuntime": {
+    "artifactDirectory": "bench/baseline/v0.11.0",
+    "verified": true,
+    "failedChecks": [],
+    "checks": {
+      "artifact-present": true,
+      "artifact-isolated-from-development-tree": true,
+      "artifact-head-is-baseline-commit": true,
+      "artifact-tree-matches-baseline-commit": true,
+      "artifact-working-tree-clean": true,
+      "artifact-package-name-matches": true,
+      "artifact-package-version-matches": true,
+      "artifact-version-matches-baseline-commit": true,
+      "artifact-declares-server-bin": true,
+      "artifact-entry-point-present": true,
+      "artifact-entry-point-regular-file": true,
+      "artifact-entry-point-contained": true,
+      "artifact-dependencies-installed": true,
+      "artifact-launcher-resolved": true,
+      "artifact-runtime-manifest-readable": true,
+      "artifact-runtime-manifest-has-no-symlinks": true,
+      "artifact-runtime-manifest-matches-freeze": true
+    },
+    "expected": {
+      "version": "0.11.0",
+      "sha": "df215a170e6a88a6097c56f7ca404358d9d4b050",
+      "packageName": "sol-luna-orchestrator",
+      "artifactDirectory": "bench/baseline/v0.11.0",
+      "runtimeManifestSha256": "d63af9ef92ac99c9a0f8425012fce2777a6dee020c76161bc504aee96dafad17"
+    },
+    "observed": {
+      "artifactDirectory": "D:\\code\\gpt-test\\sol-luna-orchestrator\\bench\\baseline\\v0.11.0",
+      "headCommit": "df215a170e6a88a6097c56f7ca404358d9d4b050",
+      "headTree": "915e9b59db03bf0570e964d062534cbe24c0b717",
+      "baselineTree": "915e9b59db03bf0570e964d062534cbe24c0b717",
+      "workingTreeClean": true,
+      "dirtyPathCount": 0,
+      "packageName": "sol-luna-orchestrator",
+      "packageVersion": "0.11.0",
+      "packageVersionAtBaselineCommit": "0.11.0",
+      "declaredBinPath": "dist/server.js",
+      "entryPoint": "D:\\code\\gpt-test\\sol-luna-orchestrator\\bench\\baseline\\v0.11.0\\dist\\server.js",
+      "entryPointRealPath": "D:\\code\\gpt-test\\sol-luna-orchestrator\\bench\\baseline\\v0.11.0\\dist\\server.js",
+      "entryPointFileType": "file",
+      "entryPointSha256": "de0226c46acb9749a4579488c1409e2bd472612ff7f871744de0b5d17ed8de4b",
+      "launcher": "C:\\nvm4w\\nodejs\\node.exe",
+      "installedDependencyVersions": {
+        "@modelcontextprotocol/sdk": "1.30.0",
+        "@openai/codex-sdk": "0.147.0",
+        "cross-spawn": "7.0.6",
+        "picomatch": "4.0.5",
+        "zod": "4.4.3"
+      },
+      "runtimeManifest": {
+        "aggregateSha256": "d63af9ef92ac99c9a0f8425012fce2777a6dee020c76161bc504aee96dafad17",
+        "fileCount": 3720,
+        "totalBytes": 390461547,
+        "symlinkCount": 0,
+        "manifestFile": "node_modules/.sol-luna-runtime-manifest.json"
+      }
+    },
+    "bindingMechanism": "The v0.11.0 commit/tree identifies source. A separately frozen aggregate manifest hashes package.json, package-lock.json, every dist file, and every installed runtime-dependency file. Each Adaptive cell re-observes that manifest immediately before launch and after completion; both must equal the frozen expected digest before its result may be retained. The absolute entry point is passed directly, so this does not depend on the operator's external MCP registration.",
+    "provisionCommands": [
+      "npm run build",
+      "node dist/bench/baseline.js --provision"
+    ],
+    "dependsOnExternalMcpRegistration": false
+  },
+  "pricing": {
+    "status": "verified-current",
+    "revalidatedDuringThisCheckpoint": true,
+    "harnessConfiguredProfile": {
+      "profileId": "benchmark-v3-chatgpt-work-codex-credits-2026-08-30",
+      "sourceUrl": "https://learn.chatgpt.com/docs/pricing",
+      "snapshotDate": "2026-08-30",
+      "units": "credits-per-1m-tokens",
+      "applicability": "Token-based ChatGPT Work / Codex credit rate card used by Benchmark V3; excludes the legacy rate card and API-key billing",
+      "promotionalTerms": "GPT-5.6 Sol promotional pricing is available at least through 2026-11-21",
+      "rates": {
+        "gpt-5.6-sol": {
+          "input": 100,
+          "cachedInput": 10,
+          "output": 500,
+          "cacheWrite": 0
+        },
+        "gpt-5.6-luna": {
+          "input": 5,
+          "cachedInput": 0.5,
+          "output": 30,
+          "cacheWrite": 0
+        }
+      }
+    },
+    "structuralChecks": {
+      "coversEveryModelV3Uses": true,
+      "modelsV3Uses": [
+        "gpt-5.6-sol",
+        "gpt-5.6-luna"
+      ],
+      "unitsMatchFrozenAccounting": true,
+      "chargesUncachedAndCachedInputSeparately": true,
+      "cacheWritesUncharged": true,
+      "reasoningTokensNotDoubleCharged": true,
+      "estimateNaming": "rateCardCredits / estimatedCredits",
+      "actualCreditsField": "separate, nullable, never derived by summing estimates",
+      "incompleteUsageYieldsNullNotZero": true,
+      "applicabilityMatchesV3CreditBasis": true
+    },
+    "externalValidation": {
+      "performed": true,
+      "checkedOn": "2026-08-30",
+      "officialSources": {
+        "creditRateCard": "https://learn.chatgpt.com/docs/pricing",
+        "solUsdTokenRates": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+        "lunaUsdTokenRates": "https://developers.openai.com/api/docs/models/gpt-5.6-luna"
+      },
+      "equivalentUsdPer1mTokens": {
+        "gpt-5.6-sol": {
+          "input": 4,
+          "cachedInput": 0.4,
+          "output": 20
+        },
+        "gpt-5.6-luna": {
+          "input": 0.2,
+          "cachedInput": 0.02,
+          "output": 1.2
+        }
+      },
+      "accountingBasis": "ChatGPT Work / Codex credits per 1M tokens are primary; API USD rates are recorded only as equivalent token-rate evidence",
+      "cacheWriteSemantics": "The ChatGPT Work / Codex credit rate card has no separate cache-write rate, so the Codex cacheWriteInputTokens diagnostic remains uncharged; the API model pages separately state that API cache writes are billed at 1.25x uncached input and are not used for this credit-first benchmark"
+    },
+    "newProfileCreated": true,
+    "operatorAction": "Launch with --confirm-pricing-profile to attest that the dated V3 profile still matches the executing account's token-based ChatGPT Work / Codex credit schedule."
+  },
+  "executionProfile": {
+    "status": "frozen",
+    "speed": {
+      "speedMode": "standard",
+      "fastModeDisabled": true,
+      "serviceTier": null,
+      "serviceTierStatus": "not-exposed-by-codex-sdk",
+      "sdkSpeedPinningSupported": false,
+      "enforcement": "operator-confirmed-pre-run"
+    },
+    "supervisorModel": "gpt-5.6-sol",
+    "workerModelWhenAdaptiveDelegates": "gpt-5.6-luna",
+    "arms": {
+      "solo-medium": {
+        "label": "Solo Medium",
+        "supervisorModel": "gpt-5.6-sol",
+        "supervisorEffort": "medium",
+        "orchestratorAvailable": false,
+        "orchestratorDisabledAt": "Codex mcp_servers config (enabled:false) — genuinely unreachable, not merely discouraged",
+        "guidanceSha256": "366476245ce571b269b779f1956f85234ae6f9c56de503c18438733eb723ca30"
+      },
+      "adaptive-medium": {
+        "label": "Adaptive Medium",
+        "supervisorModel": "gpt-5.6-sol",
+        "supervisorEffort": "medium",
+        "orchestratorAvailable": true,
+        "orchestratorDisabledAt": null,
+        "guidanceSha256": "0127a6fd96e4501b9d65e273754d9f6ad378c943490d801a8d7d5f791b36dc6f"
+      }
+    },
+    "forcedDelegationExcluded": true,
+    "repetitions": {
+      "initialRepetitionsPerCell": 2,
+      "normalArmRuns": 36,
+      "thirdRepetition": "predeclared-review-conditions-only",
+      "thirdRunHarnessGate": "assertV3CampaignPolicy refuses --reps 3 without --resume; the review record must exist before the third run starts."
+    },
+    "retryPolicy": {
+      "automaticRunRetries": 0,
+      "automaticGradingRetries": 0,
+      "completedCellsAreImmutable": true,
+      "failedRunsRetained": true,
+      "quarantinedRunsRetained": true,
+      "quarantinedRunsExcludedFromAggregates": true,
+      "quarantinedCellReexecution": "review-approved-new-run-identity",
+      "thirdRepetition": "predeclared-review-conditions-only",
+      "harnessLevelWorkerRetries": "none-harness-side"
+    },
+    "quarantineReasons": [
+      "grader-did-not-execute",
+      "agent-transport-error",
+      "delegation-telemetry-unavailable",
+      "fixture-identity-missing",
+      "fixture-revision-drift"
+    ],
+    "terminationReasons": [
+      "completed",
+      "harness-timeout",
+      "agent-error"
+    ],
+    "harnessConfigurationBoundary": {
+      "orchestratorEnvironmentSetByHarness": [
+        "SOL_LUNA_EVENTS"
+      ],
+      "solLunaMaxParallelPassed": false,
+      "concurrencyPolicy": "production-default",
+      "maxParallelConfigured": null,
+      "everyV3TaskResolvesToProductionDefault": true,
+      "noTaskIdentityInHarnessControlFlow": true
+    },
+    "telemetrySemantics": {
+      "delegationCall": "A batch identity that published batch.started and did not publish batch.rejected. A refused call is counted in delegationCallsRefused, contributes no mode, no queued worker effort, and no phase boundary.",
+      "cancelledBatch": "An opened call whose outcome was cancellation; counted in delegationCallsCancelled, which is a subset of delegationCalls."
+    }
+  },
+  "ordering": {
+    "mode": "seeded",
+    "seed": "v3-freeze3-20260829",
+    "seedRationale": "The seed is the campaign ID itself — freeze review plus date, nothing else. It holds no free parameter that could have been tuned, and no V3 result exists to tune against.",
+    "generator": "splitmix32 seeded from sha256(seed + space + label); platform-independent",
+    "plannedCellCount": 36,
+    "sequenceSha256": "532990884ccdbba99f352ddc2ba17789be01037a0d083bf24c58f1145688b885",
+    "repetitionBlocksInterleaved": false,
+    "sequence": [
+      {
+        "position": 1,
+        "repetition": 1,
+        "taskId": "v3-lru-cache-tests",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 2,
+        "repetition": 1,
+        "taskId": "v3-lru-cache-tests",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 3,
+        "repetition": 1,
+        "taskId": "v3-reservation-ledger",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 4,
+        "repetition": 1,
+        "taskId": "v3-reservation-ledger",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 5,
+        "repetition": 1,
+        "taskId": "v3-workflow-journal",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 6,
+        "repetition": 1,
+        "taskId": "v3-workflow-journal",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 7,
+        "repetition": 1,
+        "taskId": "v3-static-site-pipeline",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 8,
+        "repetition": 1,
+        "taskId": "v3-static-site-pipeline",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 9,
+        "repetition": 1,
+        "taskId": "v3-observability-ingestors",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 10,
+        "repetition": 1,
+        "taskId": "v3-observability-ingestors",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 11,
+        "repetition": 1,
+        "taskId": "v3-policy-engine",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 12,
+        "repetition": 1,
+        "taskId": "v3-policy-engine",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 13,
+        "repetition": 1,
+        "taskId": "v3-markup-renderers",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 14,
+        "repetition": 1,
+        "taskId": "v3-markup-renderers",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 15,
+        "repetition": 1,
+        "taskId": "v3-csv-dialect",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 16,
+        "repetition": 1,
+        "taskId": "v3-csv-dialect",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 17,
+        "repetition": 1,
+        "taskId": "v3-sync-reconciler",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 18,
+        "repetition": 1,
+        "taskId": "v3-sync-reconciler",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 19,
+        "repetition": 2,
+        "taskId": "v3-markup-renderers",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 20,
+        "repetition": 2,
+        "taskId": "v3-markup-renderers",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 21,
+        "repetition": 2,
+        "taskId": "v3-static-site-pipeline",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 22,
+        "repetition": 2,
+        "taskId": "v3-static-site-pipeline",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 23,
+        "repetition": 2,
+        "taskId": "v3-sync-reconciler",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 24,
+        "repetition": 2,
+        "taskId": "v3-sync-reconciler",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 25,
+        "repetition": 2,
+        "taskId": "v3-lru-cache-tests",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 26,
+        "repetition": 2,
+        "taskId": "v3-lru-cache-tests",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 27,
+        "repetition": 2,
+        "taskId": "v3-csv-dialect",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 28,
+        "repetition": 2,
+        "taskId": "v3-csv-dialect",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 29,
+        "repetition": 2,
+        "taskId": "v3-observability-ingestors",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 30,
+        "repetition": 2,
+        "taskId": "v3-observability-ingestors",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 31,
+        "repetition": 2,
+        "taskId": "v3-policy-engine",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 32,
+        "repetition": 2,
+        "taskId": "v3-policy-engine",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 33,
+        "repetition": 2,
+        "taskId": "v3-workflow-journal",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 34,
+        "repetition": 2,
+        "taskId": "v3-workflow-journal",
+        "arm": "adaptive-medium"
+      },
+      {
+        "position": 35,
+        "repetition": 2,
+        "taskId": "v3-reservation-ledger",
+        "arm": "solo-medium"
+      },
+      {
+        "position": 36,
+        "repetition": 2,
+        "taskId": "v3-reservation-ledger",
+        "arm": "adaptive-medium"
+      }
+    ]
+  },
+  "environment": {
+    "capturedAt": "2026-08-30T04:15:31.458Z",
+    "git": {
+      "commit": "62a27b7704b526ca58166ad3431c33c31e327dc1",
+      "branch": "benchmark-v3-wip",
+      "describe": "v0.11.0-5-g62a27b7-dirty",
+      "workingTreeClean": false,
+      "dirtyPathCount": 5
+    },
+    "runtime": {
+      "nodeVersion": "v26.7.0",
+      "platform": "win32",
+      "arch": "x64",
+      "osRelease": "10.0.26200",
+      "cpuCount": 12,
+      "totalMemoryBytes": 34151780352,
+      "timezone": "Asia/Karachi"
+    },
+    "toolchain": {
+      "packageVersion": "0.11.0",
+      "npmVersion": "11.19.0",
+      "codexCliVersion": "codex-cli 0.147.0",
+      "codexSdkVersion": "0.147.0"
+    },
+    "invocation": {
+      "argv": [],
+      "cwd": "D:\\code\\gpt-test\\sol-luna-orchestrator"
+    },
+    "environment": {},
+    "ambient": {
+      "names": [
+        "ACLOCAL_PATH",
+        "ALLUSERSPROFILE",
+        "ANDROID_HOME",
+        "APPDATA",
+        "BROWSER_USE_AVAILABLE_BACKENDS",
+        "CHROME_CRASHPAD_PIPE_NAME",
+        "CLAUDE_CODE_SSE_PORT",
+        "CODEX_CI",
+        "CODEX_MANAGED_BY_NPM",
+        "CODEX_MANAGED_PACKAGE_ROOT",
+        "CODEX_SESSION_ID",
+        "CODEX_THREAD_ID",
+        "COLOR",
+        "COLORTERM",
+        "COMMONPROGRAMFILES",
+        "COMPUTERNAME",
+        "COMSPEC",
+        "CONFIG_SITE",
+        "COPILOT_DEBUG_NONCE",
+        "CURL_CA_BUNDLE",
+        "ChocolateyInstall",
+        "ChocolateyLastPathUpdate",
+        "CommonProgramFiles(x86)",
+        "CommonProgramW6432",
+        "DISPLAY",
+        "DriverData",
+        "EDITOR",
+        "EFC_10812_1262719628",
+        "EFC_10812_1592913036",
+        "EFC_10812_2283032206",
+        "EFC_10812_2775293581",
+        "EFC_10812_3789132940",
+        "EFC_10812_4126798990",
+        "EXEPATH",
+        "GDAL_DATA",
+        "GH_PAGER",
+        "GIT_ASKPASS",
+        "GIT_PAGER",
+        "HOME",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "HOSTNAME",
+        "INFOPATH",
+        "INIT_CWD",
+        "JAVA_HOME",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "LOCALAPPDATA",
+        "LOGONSERVER",
+        "MANPATH",
+        "MINGW_CHOST",
+        "MINGW_PACKAGE_PREFIX",
+        "MINGW_PREFIX",
+        "MSYS",
+        "MSYSTEM",
+        "MSYSTEM_CARCH",
+        "MSYSTEM_CHOST",
+        "MSYSTEM_PREFIX",
+        "NODE",
+        "NODE_REPL_TRUSTED_BROWSER_CLIENT_SHA256S",
+        "NODE_REPL_TRUSTED_CODE_PATHS",
+        "NO_COLOR",
+        "NUMBER_OF_PROCESSORS",
+        "NVM_HOME",
+        "NVM_SYMLINK",
+        "OPENSSL_CONF",
+        "ORIGINAL_PATH",
+        "ORIGINAL_TEMP",
+        "ORIGINAL_TMP",
+        "OS",
+        "OneDrive",
+        "OneDriveConsumer",
+        "PAGER",
+        "PATH",
+        "PATHEXT",
+        "PKG_CONFIG_PATH",
+        "PKG_CONFIG_SYSTEM_INCLUDE_PATH",
+        "PKG_CONFIG_SYSTEM_LIBRARY_PATH",
+        "PLINK_PROTOCOL",
+        "POSTGIS_ENABLE_OUTDB_RASTERS",
+        "POSTGIS_GDAL_ENABLED_DRIVERS",
+        "PROCESSOR_ARCHITECTURE",
+        "PROCESSOR_IDENTIFIER",
+        "PROCESSOR_LEVEL",
+        "PROCESSOR_REVISION",
+        "PROGRAMFILES",
+        "PROJ_LIB",
+        "PROMPT",
+        "PSModulePath",
+        "PUBLIC",
+        "PWD",
+        "PYTHONSTARTUP",
+        "PYTHON_BASIC_REPL",
+        "ProgramData",
+        "ProgramFiles(x86)",
+        "ProgramW6432",
+        "SESSIONNAME",
+        "SHELL",
+        "SHLVL",
+        "SSH_ASKPASS",
+        "SYSTEMDRIVE",
+        "SYSTEMROOT",
+        "TEMP",
+        "TERM",
+        "TERM_PROGRAM",
+        "TERM_PROGRAM_VERSION",
+        "TMP",
+        "TMPDIR",
+        "USERDOMAIN",
+        "USERDOMAIN_ROAMINGPROFILE",
+        "USERNAME",
+        "USERPROFILE",
+        "VSCODE_GIT_ASKPASS_EXTRA_ARGS",
+        "VSCODE_GIT_ASKPASS_MAIN",
+        "VSCODE_GIT_ASKPASS_NODE",
+        "VSCODE_GIT_IPC_HANDLE",
+        "VSCODE_PYTHON_AUTOACTIVATE_GUARD",
+        "WINDIR",
+        "npm_command",
+        "npm_config_allow_scripts",
+        "npm_config_cache",
+        "npm_config_global_prefix",
+        "npm_config_globalconfig",
+        "npm_config_init_module",
+        "npm_config_local_prefix",
+        "npm_config_node_gyp",
+        "npm_config_noproxy",
+        "npm_config_npm_version",
+        "npm_config_prefix",
+        "npm_config_user_agent",
+        "npm_config_userconfig",
+        "npm_execpath",
+        "npm_lifecycle_event",
+        "npm_lifecycle_script",
+        "npm_node_execpath",
+        "npm_package_bin_sol-luna-orchestrator",
+        "npm_package_bin_sol-luna-orchestrator-mcp",
+        "npm_package_engines_node",
+        "npm_package_json",
+        "npm_package_name",
+        "npm_package_version"
+      ],
+      "nameCount": 142,
+      "namesSha256": "8a2a27106e67ea81f28e84106eb6a5c2d86ea8cec5a1074b9c770f3a1df57dca",
+      "entries": [
+        {
+          "name": "ACLOCAL_PATH",
+          "representation": "presence-only"
+        },
+        {
+          "name": "ALLUSERSPROFILE",
+          "representation": "presence-only"
+        },
+        {
+          "name": "ANDROID_HOME",
+          "representation": "presence-only"
+        },
+        {
+          "name": "APPDATA",
+          "representation": "presence-only"
+        },
+        {
+          "name": "BROWSER_USE_AVAILABLE_BACKENDS",
+          "representation": "presence-only"
+        },
+        {
+          "name": "CHROME_CRASHPAD_PIPE_NAME",
+          "representation": "presence-only"
+        },
+        {
+          "name": "CLAUDE_CODE_SSE_PORT",
+          "representation": "presence-only"
+        },
+        {
+          "name": "CODEX_CI",
+          "representation": "presence-only"
+        },
+        {
+          "name": "CODEX_MANAGED_BY_NPM",
+          "representation": "presence-only"
+        },
+        {
+          "name": "CODEX_MANAGED_PACKAGE_ROOT",
+          "representation": "presence-only"
+        },
+        {
+          "name": "CODEX_SESSION_ID",
+          "representation": "credential-opaque"
+        },
+        {
+          "name": "CODEX_THREAD_ID",
+          "representation": "presence-only"
+        },
+        {
+          "name": "COLOR",
+          "representation": "presence-only"
+        },
+        {
+          "name": "COLORTERM",
+          "representation": "presence-only"
+        },
+        {
+          "name": "COMMONPROGRAMFILES",
+          "representation": "presence-only"
+        },
+        {
+          "name": "COMPUTERNAME",
+          "representation": "presence-only"
+        },
+        {
+          "name": "COMSPEC",
+          "representation": "presence-only"
+        },
+        {
+          "name": "CONFIG_SITE",
+          "representation": "presence-only"
+        },
+        {
+          "name": "COPILOT_DEBUG_NONCE",
+          "representation": "presence-only"
+        },
+        {
+          "name": "CURL_CA_BUNDLE",
+          "representation": "trust-material-fingerprint",
+          "trustMaterial": {
+            "configured": true,
+            "file": {
+              "inspected": true,
+              "exists": true,
+              "readable": true,
+              "fileType": "file",
+              "byteLength": 234847,
+              "sha256": "189d3cf6d103185fba06d76c1af915263c6d42225481a1759e853b33ac857540"
+            }
+          }
+        },
+        {
+          "name": "ChocolateyInstall",
+          "representation": "presence-only"
+        },
+        {
+          "name": "ChocolateyLastPathUpdate",
+          "representation": "presence-only"
+        },
+        {
+          "name": "CommonProgramFiles(x86)",
+          "representation": "presence-only"
+        },
+        {
+          "name": "CommonProgramW6432",
+          "representation": "presence-only"
+        },
+        {
+          "name": "DISPLAY",
+          "representation": "presence-only"
+        },
+        {
+          "name": "DriverData",
+          "representation": "presence-only"
+        },
+        {
+          "name": "EDITOR",
+          "representation": "presence-only"
+        },
+        {
+          "name": "EFC_10812_1262719628",
+          "representation": "presence-only"
+        },
+        {
+          "name": "EFC_10812_1592913036",
+          "representation": "presence-only"
+        },
+        {
+          "name": "EFC_10812_2283032206",
+          "representation": "presence-only"
+        },
+        {
+          "name": "EFC_10812_2775293581",
+          "representation": "presence-only"
+        },
+        {
+          "name": "EFC_10812_3789132940",
+          "representation": "presence-only"
+        },
+        {
+          "name": "EFC_10812_4126798990",
+          "representation": "presence-only"
+        },
+        {
+          "name": "EXEPATH",
+          "representation": "presence-only"
+        },
+        {
+          "name": "GDAL_DATA",
+          "representation": "presence-only"
+        },
+        {
+          "name": "GH_PAGER",
+          "representation": "presence-only"
+        },
+        {
+          "name": "GIT_ASKPASS",
+          "representation": "presence-only"
+        },
+        {
+          "name": "GIT_PAGER",
+          "representation": "presence-only"
+        },
+        {
+          "name": "HOME",
+          "representation": "presence-only"
+        },
+        {
+          "name": "HOMEDRIVE",
+          "representation": "presence-only"
+        },
+        {
+          "name": "HOMEPATH",
+          "representation": "presence-only"
+        },
+        {
+          "name": "HOSTNAME",
+          "representation": "presence-only"
+        },
+        {
+          "name": "INFOPATH",
+          "representation": "presence-only"
+        },
+        {
+          "name": "INIT_CWD",
+          "representation": "presence-only"
+        },
+        {
+          "name": "JAVA_HOME",
+          "representation": "presence-only"
+        },
+        {
+          "name": "LANG",
+          "representation": "verbatim",
+          "value": "C.UTF-8"
+        },
+        {
+          "name": "LC_ALL",
+          "representation": "verbatim",
+          "value": "C.UTF-8"
+        },
+        {
+          "name": "LC_CTYPE",
+          "representation": "presence-only"
+        },
+        {
+          "name": "LOCALAPPDATA",
+          "representation": "presence-only"
+        },
+        {
+          "name": "LOGONSERVER",
+          "representation": "presence-only"
+        },
+        {
+          "name": "MANPATH",
+          "representation": "presence-only"
+        },
+        {
+          "name": "MINGW_CHOST",
+          "representation": "presence-only"
+        },
+        {
+          "name": "MINGW_PACKAGE_PREFIX",
+          "representation": "presence-only"
+        },
+        {
+          "name": "MINGW_PREFIX",
+          "representation": "presence-only"
+        },
+        {
+          "name": "MSYS",
+          "representation": "presence-only"
+        },
+        {
+          "name": "MSYSTEM",
+          "representation": "presence-only"
+        },
+        {
+          "name": "MSYSTEM_CARCH",
+          "representation": "presence-only"
+        },
+        {
+          "name": "MSYSTEM_CHOST",
+          "representation": "presence-only"
+        },
+        {
+          "name": "MSYSTEM_PREFIX",
+          "representation": "presence-only"
+        },
+        {
+          "name": "NODE",
+          "representation": "presence-only"
+        },
+        {
+          "name": "NODE_REPL_TRUSTED_BROWSER_CLIENT_SHA256S",
+          "representation": "presence-only"
+        },
+        {
+          "name": "NODE_REPL_TRUSTED_CODE_PATHS",
+          "representation": "presence-only"
+        },
+        {
+          "name": "NO_COLOR",
+          "representation": "presence-only"
+        },
+        {
+          "name": "NUMBER_OF_PROCESSORS",
+          "representation": "presence-only"
+        },
+        {
+          "name": "NVM_HOME",
+          "representation": "presence-only"
+        },
+        {
+          "name": "NVM_SYMLINK",
+          "representation": "presence-only"
+        },
+        {
+          "name": "OPENSSL_CONF",
+          "representation": "presence-only"
+        },
+        {
+          "name": "ORIGINAL_PATH",
+          "representation": "presence-only"
+        },
+        {
+          "name": "ORIGINAL_TEMP",
+          "representation": "presence-only"
+        },
+        {
+          "name": "ORIGINAL_TMP",
+          "representation": "presence-only"
+        },
+        {
+          "name": "OS",
+          "representation": "presence-only"
+        },
+        {
+          "name": "OneDrive",
+          "representation": "presence-only"
+        },
+        {
+          "name": "OneDriveConsumer",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PAGER",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PATH",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PATHEXT",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PKG_CONFIG_PATH",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PKG_CONFIG_SYSTEM_INCLUDE_PATH",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PKG_CONFIG_SYSTEM_LIBRARY_PATH",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PLINK_PROTOCOL",
+          "representation": "presence-only"
+        },
+        {
+          "name": "POSTGIS_ENABLE_OUTDB_RASTERS",
+          "representation": "presence-only"
+        },
+        {
+          "name": "POSTGIS_GDAL_ENABLED_DRIVERS",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PROCESSOR_ARCHITECTURE",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PROCESSOR_IDENTIFIER",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PROCESSOR_LEVEL",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PROCESSOR_REVISION",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PROGRAMFILES",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PROJ_LIB",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PROMPT",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PSModulePath",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PUBLIC",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PWD",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PYTHONSTARTUP",
+          "representation": "presence-only"
+        },
+        {
+          "name": "PYTHON_BASIC_REPL",
+          "representation": "presence-only"
+        },
+        {
+          "name": "ProgramData",
+          "representation": "presence-only"
+        },
+        {
+          "name": "ProgramFiles(x86)",
+          "representation": "presence-only"
+        },
+        {
+          "name": "ProgramW6432",
+          "representation": "presence-only"
+        },
+        {
+          "name": "SESSIONNAME",
+          "representation": "presence-only"
+        },
+        {
+          "name": "SHELL",
+          "representation": "presence-only"
+        },
+        {
+          "name": "SHLVL",
+          "representation": "presence-only"
+        },
+        {
+          "name": "SSH_ASKPASS",
+          "representation": "presence-only"
+        },
+        {
+          "name": "SYSTEMDRIVE",
+          "representation": "presence-only"
+        },
+        {
+          "name": "SYSTEMROOT",
+          "representation": "presence-only"
+        },
+        {
+          "name": "TEMP",
+          "representation": "presence-only"
+        },
+        {
+          "name": "TERM",
+          "representation": "presence-only"
+        },
+        {
+          "name": "TERM_PROGRAM",
+          "representation": "presence-only"
+        },
+        {
+          "name": "TERM_PROGRAM_VERSION",
+          "representation": "presence-only"
+        },
+        {
+          "name": "TMP",
+          "representation": "presence-only"
+        },
+        {
+          "name": "TMPDIR",
+          "representation": "presence-only"
+        },
+        {
+          "name": "USERDOMAIN",
+          "representation": "presence-only"
+        },
+        {
+          "name": "USERDOMAIN_ROAMINGPROFILE",
+          "representation": "presence-only"
+        },
+        {
+          "name": "USERNAME",
+          "representation": "presence-only"
+        },
+        {
+          "name": "USERPROFILE",
+          "representation": "presence-only"
+        },
+        {
+          "name": "VSCODE_GIT_ASKPASS_EXTRA_ARGS",
+          "representation": "presence-only"
+        },
+        {
+          "name": "VSCODE_GIT_ASKPASS_MAIN",
+          "representation": "presence-only"
+        },
+        {
+          "name": "VSCODE_GIT_ASKPASS_NODE",
+          "representation": "presence-only"
+        },
+        {
+          "name": "VSCODE_GIT_IPC_HANDLE",
+          "representation": "presence-only"
+        },
+        {
+          "name": "VSCODE_PYTHON_AUTOACTIVATE_GUARD",
+          "representation": "presence-only"
+        },
+        {
+          "name": "WINDIR",
+          "representation": "presence-only"
+        },
+        {
+          "name": "npm_command",
+          "representation": "presence-only"
+        },
+        {
+          "name": "npm_config_allow_scripts",
+          "representation": "presence-only"
+        },
+        {
+          "name": "npm_config_cache",
+          "representation": "presence-only"
+        },
+        {
+          "name": "npm_config_global_prefix",
+          "representation": "presence-only"
+        },
+        {
+          "name": "npm_config_globalconfig",
+          "representation": "presence-only"
+        },
+        {
+          "name": "npm_config_init_module",
+          "representation": "presence-only"
+        },
+        {
+          "name": "npm_config_local_prefix",
+          "representation": "presence-only"
+        },
+        {
+          "name": "npm_config_node_gyp",
+          "representation": "presence-only"
+        },
+        {
+          "name": "npm_config_noproxy",
+          "representation": "presence-only"
+        },
+        {
+          "name": "npm_config_npm_version",
+          "representation": "presence-only"
+        },
+        {
+          "name": "npm_config_prefix",
+          "representation": "presence-only"
+        },
+        {
+          "name": "npm_config_user_agent",
+          "representation": "presence-only"
+        },
+        {
+          "name": "npm_config_userconfig",
+          "representation": "presence-only"
+        },
+        {
+          "name": "npm_execpath",
+          "representation": "presence-only"
+        },
+        {
+          "name": "npm_lifecycle_event",
+          "representation": "presence-only"
+        },
+        {
+          "name": "npm_lifecycle_script",
+          "representation": "presence-only"
+        },
+        {
+          "name": "npm_node_execpath",
+          "representation": "presence-only"
+        },
+        {
+          "name": "npm_package_bin_sol-luna-orchestrator",
+          "representation": "presence-only"
+        },
+        {
+          "name": "npm_package_bin_sol-luna-orchestrator-mcp",
+          "representation": "presence-only"
+        },
+        {
+          "name": "npm_package_engines_node",
+          "representation": "presence-only"
+        },
+        {
+          "name": "npm_package_json",
+          "representation": "presence-only"
+        },
+        {
+          "name": "npm_package_name",
+          "representation": "presence-only"
+        },
+        {
+          "name": "npm_package_version",
+          "representation": "presence-only"
+        }
+      ],
+      "counts": {
+        "production-owned": 0,
+        "verbatim": 2,
+        "url-redacted": 0,
+        "trust-material-fingerprint": 1,
+        "presence-only": 138,
+        "credential-opaque": 1
+      },
+      "credentialShapedNames": [
+        "CODEX_SESSION_ID"
+      ],
+      "opaqueValueCount": 139
+    },
+    "codex": {
+      "homeSource": "default",
+      "homeIsDefaultLocation": true,
+      "config": {
+        "present": true,
+        "parsed": true,
+        "redactedCanonicalSha256": "7e389ead8692c373fdba2df7534b6f9a57154b6cf1966db50c77cd97ce8cd9a3",
+        "redactedAssignments": 0,
+        "mcpServerNames": [
+          "node_repl",
+          "sol-luna-orchestrator"
+        ],
+        "representation": "parsed-recursive-redacted-canonical-digest"
+      },
+      "auth": {
+        "present": true,
+        "mode": "chatgpt",
+        "containsSecretMaterial": true,
+        "representation": "presence-and-mode-only"
+      }
+    },
+    "boundary": {
+      "captured": [
+        "Every named Sol-Luna and harness execution setting in the maintained inventory, recorded verbatim, with a defense-in-depth source scan that detects the explicitly supported direct process.env access patterns.",
+        "The complete sorted name inventory of the inherited environment, so ambient state is never silently invisible, plus a digest of that inventory for run-to-run comparison.",
+        "Values for ambient names explicitly classified as safe and reproducibility-relevant; proxy and endpoint URLs as scheme/host/port with an embedded-credential flag; explicitly safe certificate and trust variables as presence, readability, file category, and content digest where readable, without any path metadata.",
+        "The non-secret identity of the effective Codex configuration: a digest of the canonical config.toml with secret-shaped assignments redacted, its registered MCP server names, and the authentication mode.",
+        "Git commit, branch, describe, and working-tree cleanliness; Node, platform, architecture, OS release, CPU, memory, and timezone; package, npm, Codex CLI, and Codex SDK versions; and the exact invocation."
+      ],
+      "notCaptured": [
+        "Raw values of ambient variables that are not explicitly classified as safe. They are recorded as present-and-opaque, not omitted.",
+        "Any credential: API keys, tokens, passwords, cookies, authorization headers, proxy userinfo, and the contents of auth.json. Presence is recorded, value never is, so a run authenticated by a rotated or different credential is not distinguishable from this record alone.",
+        "Environment reads outside the source scan's explicitly supported syntactic forms, including computed or indirect future repository reads, plus reads performed by the Codex SDK, the Codex CLI, Node, or the operating system.",
+        "Machine and account state outside the environment: installed system certificates, network policy, DNS, clock skew, and provider-side model or account configuration."
+      ],
+      "statement": "The maintained allowlist plus a syntactic defense-in-depth scan records the repository-owned settings in the explicitly supported access forms; it is not a proof of every possible environment read. It does not prove the inherited runtime environment is fully captured. Ambient and credential state is surfaced as present-and-opaque so an unreproducible difference between two runs is visible rather than hidden."
+    },
+    "reproducibilityInventory": {
+      "productionOwned": {
+        "recordedKeys": [
+          "BENCH_TASK_TIMEOUT",
+          "CODEX_HOME",
+          "LUNA_MODEL",
+          "LUNA_NETWORK_ACCESS",
+          "LUNA_SANDBOX",
+          "LUNA_TIMEOUT_SECONDS",
+          "LUNA_VERIFY_TIMEOUT_SECONDS",
+          "SOL_LUNA_ALLOWED_EFFORTS",
+          "SOL_LUNA_ALLOWED_MODELS",
+          "SOL_LUNA_ALLOWED_ROOTS",
+          "SOL_LUNA_ALLOW_DIRTY",
+          "SOL_LUNA_ALLOW_EFFORT_ESCALATION",
+          "SOL_LUNA_ALLOW_STRONGER_FALLBACK",
+          "SOL_LUNA_EXECUTOR_ORDER",
+          "SOL_LUNA_MAX_PARALLEL",
+          "SOL_LUNA_MAX_WORKERS_PER_BATCH",
+          "SOL_LUNA_CONTEXT_COOLDOWN_TURNS",
+          "SOL_LUNA_CONTEXT_MAX_BYTES",
+          "SOL_LUNA_CONTEXT_MAX_CLEAN_TURNS",
+          "SOL_LUNA_CONTEXT_MAX_TURNS",
+          "SOL_LUNA_KEEP_WORKTREES",
+          "SOL_LUNA_WORKTREE_LINK",
+          "SOL_LUNA_SERVER_NAME",
+          "SOL_LUNA_WORKER",
+          "SOL_LUNA_VERIFY_ALLOW",
+          "SOL_LUNA_VERIFY_ENV_PASSTHROUGH",
+          "SOL_LUNA_VERIFY_MODE"
+        ],
+        "recordedKeyCount": 27,
+        "excludedKeys": {
+          "SOL_LUNA_EVENTS": "Telemetry destination. The harness sets it explicitly in the orchestrator configuration of every delegation-enabled arm, so an ambient value never reaches the process under measurement, and a solo arm has no orchestrator to read it. The effective path is recorded as campaign evidence instead.",
+          "SOL_LUNA_LOG": "Diagnostic log destination. It decides only where already-emitted stderr text is teed, a failed append is swallowed, and it feeds no model, admission, routing, verification, or grading decision.",
+          "NO_COLOR": "Terminal rendering in the CLI surface. A benchmark cell drives the MCP server and the Codex SDK; no CLI renderer participates in a measured run.",
+          "TERM": "Terminal rendering in the CLI surface. A benchmark cell drives the MCP server and the Codex SDK; no CLI renderer participates in a measured run.",
+          "TERM_PROGRAM": "Terminal capability detection in the CLI surface only; no measured run renders CLI output.",
+          "WT_SESSION": "Terminal capability detection in the CLI surface only; no measured run renders CLI output."
+        },
+        "capturePolicy": "An allowlist of names, never an environment dump. A listed key's value is recorded verbatim, so no credential-shaped name may be listed; only keys actually set appear in a record.",
+        "driftPrevention": "src/bench/harness.test.ts performs a defense-in-depth syntactic scan for the explicitly supported direct process.env access forms and fails when one is in neither list. It is not a semantic proof of computed, indirect, or future access patterns, and detects nothing read by the Codex SDK, the Codex CLI, Node, or the operating system."
+      },
+      "ambient": {
+        "nameCount": 142,
+        "namesSha256": "8a2a27106e67ea81f28e84106eb6a5c2d86ea8cec5a1074b9c770f3a1df57dca",
+        "counts": {
+          "production-owned": 0,
+          "verbatim": 2,
+          "url-redacted": 0,
+          "trust-material-fingerprint": 1,
+          "presence-only": 138,
+          "credential-opaque": 1
+        },
+        "credentialShapedNameCount": 1,
+        "opaqueValueCount": 139,
+        "safeValueKeys": [
+          "LANG",
+          "LC_ALL",
+          "NODE_ENV",
+          "NODE_NO_WARNINGS",
+          "NODE_OPTIONS",
+          "NODE_PATH",
+          "NODE_TLS_REJECT_UNAUTHORIZED",
+          "NODE_USE_ENV_PROXY",
+          "NO_PROXY",
+          "OPENAI_ORG_ID",
+          "OPENAI_PROJECT_ID",
+          "TZ",
+          "UV_THREADPOOL_SIZE",
+          "UV_USE_IO_URING"
+        ],
+        "urlRedactedKeys": [
+          "ALL_PROXY",
+          "FTP_PROXY",
+          "HTTPS_PROXY",
+          "HTTP_PROXY",
+          "NPM_CONFIG_REGISTRY",
+          "OPENAI_API_BASE",
+          "OPENAI_BASE_URL",
+          "PROXY"
+        ],
+        "trustMaterialKeys": [
+          "CURL_CA_BUNDLE",
+          "NODE_EXTRA_CA_CERTS",
+          "REQUESTS_CA_BUNDLE",
+          "SSL_CERT_DIR",
+          "SSL_CERT_FILE"
+        ],
+        "capturePolicy": "Every inherited name is recorded. A value is recorded only where the name is explicitly classified safe; proxy and endpoint URLs keep scheme, host, port, and an embedded-credential flag; explicitly safe certificate and trust variables keep presence, readability, file category, and a content digest where readable, but no path metadata. Everything else, including every credential-shaped name, is present-and-opaque."
+      },
+      "codex": {
+        "homeSource": "default",
+        "configPresent": true,
+        "configRedactedCanonicalSha256": "7e389ead8692c373fdba2df7534b6f9a57154b6cf1966db50c77cd97ce8cd9a3",
+        "configRedactedAssignments": 0,
+        "registeredMcpServerNames": [
+          "node_repl",
+          "sol-luna-orchestrator"
+        ],
+        "authMode": "chatgpt",
+        "authRepresentation": "presence-and-mode-only",
+        "capturePolicy": "The effective Codex configuration is identified by a digest of its parser-backed canonical structure after recursively redacting every secret-, auth-, credential-, cookie-, and header-sensitive path. auth.json never enters the record: only its presence and mode do."
+      },
+      "boundary": {
+        "captured": [
+          "Every named Sol-Luna and harness execution setting in the maintained inventory, recorded verbatim, with a defense-in-depth source scan that detects the explicitly supported direct process.env access patterns.",
+          "The complete sorted name inventory of the inherited environment, so ambient state is never silently invisible, plus a digest of that inventory for run-to-run comparison.",
+          "Values for ambient names explicitly classified as safe and reproducibility-relevant; proxy and endpoint URLs as scheme/host/port with an embedded-credential flag; explicitly safe certificate and trust variables as presence, readability, file category, and content digest where readable, without any path metadata.",
+          "The non-secret identity of the effective Codex configuration: a digest of the canonical config.toml with secret-shaped assignments redacted, its registered MCP server names, and the authentication mode.",
+          "Git commit, branch, describe, and working-tree cleanliness; Node, platform, architecture, OS release, CPU, memory, and timezone; package, npm, Codex CLI, and Codex SDK versions; and the exact invocation."
+        ],
+        "notCaptured": [
+          "Raw values of ambient variables that are not explicitly classified as safe. They are recorded as present-and-opaque, not omitted.",
+          "Any credential: API keys, tokens, passwords, cookies, authorization headers, proxy userinfo, and the contents of auth.json. Presence is recorded, value never is, so a run authenticated by a rotated or different credential is not distinguishable from this record alone.",
+          "Environment reads outside the source scan's explicitly supported syntactic forms, including computed or indirect future repository reads, plus reads performed by the Codex SDK, the Codex CLI, Node, or the operating system.",
+          "Machine and account state outside the environment: installed system certificates, network policy, DNS, clock skew, and provider-side model or account configuration."
+        ],
+        "statement": "The maintained allowlist plus a syntactic defense-in-depth scan records the repository-owned settings in the explicitly supported access forms; it is not a proof of every possible environment read. It does not prove the inherited runtime environment is fully captured. Ambient and credential state is surfaced as present-and-opaque so an unreproducible difference between two runs is visible rather than hidden."
+      }
+    },
+    "missingRequiredEvidence": [],
+    "toolResolution": "git, npm, and codex are resolved with src/executable.ts: PATH only, current directory never searched, absolute path handed to the launcher."
+  },
+  "fixtures": {
+    "suite": "v3",
+    "taskCount": 9,
+    "frozenTaskIds": [
+      "v3-csv-dialect",
+      "v3-lru-cache-tests",
+      "v3-reservation-ledger",
+      "v3-workflow-journal",
+      "v3-static-site-pipeline",
+      "v3-observability-ingestors",
+      "v3-markup-renderers",
+      "v3-policy-engine",
+      "v3-sync-reconciler"
+    ],
+    "tasks": [
+      {
+        "taskId": "v3-csv-dialect",
+        "evaluatorOnlyCategory": "expected-solo",
+        "workloadClass": "obvious-solo",
+        "tier": "A",
+        "declaredStreams": 1,
+        "immutableSpecificationFiles": [
+          "test/csv-dialect.test.mjs"
+        ],
+        "gradeCommands": [
+          "CSV dialect tests pass"
+        ],
+        "hasMutationCheck": true,
+        "fixtureRevision": "ce7d8b0150870fc0fe31e27cb4d794da61f8ca46854d5a1f1d27fcc595d3422d"
+      },
+      {
+        "taskId": "v3-lru-cache-tests",
+        "evaluatorOnlyCategory": "expected-solo",
+        "workloadClass": "obvious-solo",
+        "tier": "A",
+        "declaredStreams": 1,
+        "immutableSpecificationFiles": [
+          "src/lru.mjs"
+        ],
+        "gradeCommands": [
+          "authored LRU cache tests pass"
+        ],
+        "hasMutationCheck": true,
+        "fixtureRevision": "556ab72b4e61f478636a94c08b06cdf55bdcd072c0a6bbb8239a0339c9d6ae9b"
+      },
+      {
+        "taskId": "v3-reservation-ledger",
+        "evaluatorOnlyCategory": "likely-solo",
+        "workloadClass": "coupled-control",
+        "tier": "coupled",
+        "declaredStreams": 1,
+        "immutableSpecificationFiles": [
+          "test/reservation-ledger.test.mjs"
+        ],
+        "gradeCommands": [
+          "reservation ledger tests pass"
+        ],
+        "hasMutationCheck": true,
+        "fixtureRevision": "d9f60af2d4598a51d3ac16811068acdbd0edcee4fb7f78bef2c81637f14d65da"
+      },
+      {
+        "taskId": "v3-workflow-journal",
+        "evaluatorOnlyCategory": "likely-solo",
+        "workloadClass": "coupled-control",
+        "tier": "coupled",
+        "declaredStreams": 1,
+        "immutableSpecificationFiles": [
+          "test/workflow-journal.test.mjs"
+        ],
+        "gradeCommands": [
+          "workflow journal tests pass"
+        ],
+        "hasMutationCheck": true,
+        "fixtureRevision": "82e6f1e787afa3b75f37a849309a6a630d290d08a6be3fd781dd0c96df4be60a"
+      },
+      {
+        "taskId": "v3-static-site-pipeline",
+        "evaluatorOnlyCategory": "strong-delegation-candidate",
+        "workloadClass": "delegation-candidate",
+        "tier": "D",
+        "declaredStreams": 4,
+        "immutableSpecificationFiles": [
+          "test/static-site.test.mjs"
+        ],
+        "gradeCommands": [
+          "static-site pipeline tests pass"
+        ],
+        "hasMutationCheck": true,
+        "fixtureRevision": "628762cf1c4e5a72501a40313ee0be3c33f2f079993c3dfcdb594c3184068914"
+      },
+      {
+        "taskId": "v3-observability-ingestors",
+        "evaluatorOnlyCategory": "delegation-candidate",
+        "workloadClass": "delegation-candidate",
+        "tier": "C",
+        "declaredStreams": 3,
+        "immutableSpecificationFiles": [
+          "test/observability-ingestors.test.mjs"
+        ],
+        "gradeCommands": [
+          "observability ingestor tests pass"
+        ],
+        "hasMutationCheck": true,
+        "fixtureRevision": "0a4a51001b98135b0f8af2a329db22c196500d2270b6ebbeea0c4a18362ccf5b"
+      },
+      {
+        "taskId": "v3-markup-renderers",
+        "evaluatorOnlyCategory": "strong-delegation-candidate",
+        "workloadClass": "delegation-candidate",
+        "tier": "D",
+        "declaredStreams": 4,
+        "immutableSpecificationFiles": [
+          "test/markup-renderers.test.mjs"
+        ],
+        "gradeCommands": [
+          "markup renderer tests pass"
+        ],
+        "hasMutationCheck": true,
+        "fixtureRevision": "62761819cd60a733704147e6366b5470d8236c71cce8190bfe5f493ee2bdabe7"
+      },
+      {
+        "taskId": "v3-policy-engine",
+        "evaluatorOnlyCategory": "ambiguous",
+        "workloadClass": "ambiguous",
+        "tier": "B",
+        "declaredStreams": 1,
+        "immutableSpecificationFiles": [
+          "test/policy-engine.test.mjs"
+        ],
+        "gradeCommands": [
+          "policy engine tests pass"
+        ],
+        "hasMutationCheck": true,
+        "fixtureRevision": "0f2cdb166cb51b38cc198ce7ba30f83103d23ee21531f9e0b8333ed3565f0f8f"
+      },
+      {
+        "taskId": "v3-sync-reconciler",
+        "evaluatorOnlyCategory": "ambiguous",
+        "workloadClass": "ambiguous",
+        "tier": "B",
+        "declaredStreams": 2,
+        "immutableSpecificationFiles": [
+          "test/sync-reconciler.test.mjs"
+        ],
+        "gradeCommands": [
+          "sync reconciler tests pass"
+        ],
+        "hasMutationCheck": true,
+        "fixtureRevision": "56cc8a0267050010f74888e6b9ca91ba2b684b0977ffbacb69768917848b21f0"
+      }
+    ],
+    "fixtureRevisionSource": "fixtureRevisionOf() in src/bench/run.ts — the same function the runner records and fixture-revision-drift compares against.",
+    "evaluatorOnlyCategoriesAreNeverModelFacing": true
+  },
+  "deterministicChecks": {
+    "modelBackedRunsExecuted": 0,
+    "checks": [
+      {
+        "command": "assertMethodologyFrozen(bench/V3_METHODOLOGY.md)",
+        "exitCode": 0,
+        "result": "pass",
+        "detail": "The committed methodology matches V3_METHODOLOGY_DIGEST."
+      },
+      {
+        "command": "git diff --check",
+        "exitCode": 0,
+        "result": "pass",
+        "detail": "No whitespace errors."
+      },
+      {
+        "command": "npm run verify",
+        "exitCode": 0,
+        "result": "pass",
+        "detail": "Externally observed canonical gate: typecheck, format:check, the full test suite, the protocol smoke, and bench:validate."
+      }
+    ],
+    "deliberatelyNotExecuted": [
+      "npm run bench:v3 (model-backed)",
+      "any model-backed benchmark task",
+      "any inspection or generation of V3 results"
+    ]
+  },
+  "expectedOutputs": {
+    "resultsDirectory": "bench/results/",
+    "rawResultShard": "bench/results/<stamp>.v3.json",
+    "liveLaunchMarker": "bench/results/campaign-<campaign-id-digest>.v3-launch.json",
+    "eventStream": "bench/results/<stamp>.events.jsonl (gitignored raw telemetry)",
+    "generatedSummary": "bench/results/<stamp>.v3.md via npm run bench:report",
+    "crossRunAnalysis": "npm run bench:v3:analyze (deterministic, no model calls)",
+    "checkpoint": [
+      "bench/checkpoints/v3-freeze3-20260829.prelaunch.json",
+      "bench/checkpoints/v3-freeze3-20260829.prelaunch.md"
+    ],
+    "refusesOverwrite": "The runner refuses to overwrite an existing shard, and planCampaignCells refuses to re-run a completed cell without --resume."
+  },
+  "launchCommand": "npm run bench:v3 -- --campaign v3-freeze3-20260829 --order seeded --order-seed v3-freeze3-20260829 --confirm-standard-speed --confirm-pricing-profile",
+  "scope": "This checkpoint executed no model-backed run and created no live-launch marker. It deterministically inspected existing V3-named history without changing any result, methodology, fixture, grader, routing rule, prompt, threshold, or production behaviour."
+}

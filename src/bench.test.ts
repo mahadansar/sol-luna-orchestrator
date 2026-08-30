@@ -47,12 +47,22 @@ import type { BenchTask } from "./bench/tasks.js";
 import { V2_SOLUTIONS } from "./bench/v2-solutions.js";
 import { V2_TASKS } from "./bench/v2-tasks.js";
 import { V3_SOLUTIONS } from "./bench/v3-solutions.js";
+import { V3_LAUNCH_MARKER_SCHEMA, readV3LaunchMarker } from "./bench/launch.js";
+import { deriveV3ExecutionHistory } from "./bench/prelaunch.js";
 import {
   BENCHMARK_V3_FREEZE_SHA,
   BENCHMARK_V3_PRODUCTION_BASELINE_SHA,
+  BENCHMARK_V3_PRODUCTION_BASELINE_VERSION,
   V3_TASKS,
 } from "./bench/v3-tasks.js";
 import { buildEnvironmentRecord } from "./bench/environment.js";
+import {
+  BASELINE_RUNTIME_MANIFEST_SCHEMA,
+  BENCHMARK_V3_EXPECTED_RUNTIME_MANIFEST_SHA256,
+  buildBaselineCellRuntimeIdentity,
+  buildProductionBaselineRuntime,
+  type BaselineRuntimeProbe,
+} from "./bench/baseline.js";
 import { repriceHistoricalRecord, renderReport } from "./bench/report.js";
 
 // --- Concurrency measurement ------------------------------------------------
@@ -932,6 +942,47 @@ test("Benchmark V2 refuses to start or snapshot without standard-speed confirmat
 });
 
 /**
+ * A baseline artifact that passes every binding check.
+ *
+ * Written as raw readings rather than by touching a real worktree, so the
+ * verification rules are exercised without provisioning one. The mismatch cases
+ * live in `src/bench/harness.test.ts`.
+ */
+const verifiedBaselineProbe = (
+  overrides: Partial<BaselineRuntimeProbe> = {},
+): BaselineRuntimeProbe => ({
+  directory: "D:\\repo\\bench\\baseline\\v0.11.0",
+  directoryExists: true,
+  isolatedFromDevelopmentTree: true,
+  headCommit: BENCHMARK_V3_PRODUCTION_BASELINE_SHA,
+  headTree: "d".repeat(40),
+  statusPorcelain: "",
+  expectedTree: "d".repeat(40),
+  packageName: "sol-luna-orchestrator",
+  packageVersion: BENCHMARK_V3_PRODUCTION_BASELINE_VERSION,
+  packageVersionAtBaselineCommit: BENCHMARK_V3_PRODUCTION_BASELINE_VERSION,
+  declaredBinPath: "dist/server.js",
+  entryPoint: "D:\\repo\\bench\\baseline\\v0.11.0\\dist\\server.js",
+  entryPointExists: true,
+  entryPointFileType: "file",
+  entryPointRealPath: "D:\\repo\\bench\\baseline\\v0.11.0\\dist\\server.js",
+  entryPointContained: true,
+  entryPointSha256: "e".repeat(64),
+  launcher: "C:\\Program Files\\nodejs\\node.exe",
+  declaredDependencies: ["@openai/codex-sdk"],
+  installedDependencyVersions: { "@openai/codex-sdk": "0.147.0" },
+  runtimeManifest: {
+    schema: BASELINE_RUNTIME_MANIFEST_SCHEMA,
+    entries: [],
+    aggregateSha256: BENCHMARK_V3_EXPECTED_RUNTIME_MANIFEST_SHA256,
+    fileCount: 1,
+    totalBytes: 4096,
+    symlinkCount: 0,
+  },
+  ...overrides,
+});
+
+/**
  * The launch evidence every V3 snapshot now carries. The rules that produce and
  * enforce it are covered in `src/bench/harness.test.ts`; tests below supply it
  * so they can keep asserting what they were written to assert.
@@ -960,7 +1011,13 @@ const V3_LAUNCH_EVIDENCE = {
   }),
   ordering: { mode: "declared" as const, seed: null, sequence: [] },
   methodologyDigest: "c".repeat(64),
+  baselineRuntime: buildProductionBaselineRuntime(verifiedBaselineProbe()),
 };
+
+const V3_SEALED_CELL_IDENTITY = buildBaselineCellRuntimeIdentity(
+  buildProductionBaselineRuntime(verifiedBaselineProbe()),
+  buildProductionBaselineRuntime(verifiedBaselineProbe()),
+);
 
 test("Benchmark V3 requires an explicit pre-campaign pricing revalidation", () => {
   assert.throws(() => assertV3PricingProfileConfirmed(false), /credit-rate profile/);
@@ -989,9 +1046,18 @@ test("Benchmark V3 requires an explicit pre-campaign pricing revalidation", () =
   assert.equal(snapshot.suite, "v3");
   assert.equal(snapshot.holdoutFreezeSha, BENCHMARK_V3_FREEZE_SHA);
   assert.deepEqual(snapshot.productionBaseline, {
-    version: "0.10.0",
+    version: BENCHMARK_V3_PRODUCTION_BASELINE_VERSION,
     sha: BENCHMARK_V3_PRODUCTION_BASELINE_SHA,
   });
+});
+
+test("the V3 production baseline is the released tag commit, not the freeze commit", () => {
+  // The two pins answer different questions: which methodology was reviewed,
+  // and which released product the campaign evaluates. Equal values would mean
+  // one of them had been repointed at the other.
+  assert.equal(BENCHMARK_V3_PRODUCTION_BASELINE_VERSION, "0.11.0");
+  assert.match(BENCHMARK_V3_PRODUCTION_BASELINE_SHA, /^[0-9a-f]{40}$/);
+  assert.notEqual(BENCHMARK_V3_PRODUCTION_BASELINE_SHA, BENCHMARK_V3_FREEZE_SHA);
 });
 
 test("Benchmark V3 enforces the frozen normal-arm repetition policy", () => {
@@ -1292,6 +1358,7 @@ test("V3 campaign analysis and report generation work with synthetic evidence", 
       taskId: "v3-static-site-pipeline",
       routingCategory: "strong-delegation-candidate" as const,
       workloadClass: "delegation-candidate",
+      baselineRuntimeIdentity: V3_SEALED_CELL_IDENTITY,
     };
     const snapshot = buildResultsSnapshot({
       startedAt: "synthetic",
@@ -1304,14 +1371,216 @@ test("V3 campaign analysis and report generation work with synthetic evidence", 
       ...V3_LAUNCH_EVIDENCE,
     });
     fs.writeFileSync(path.join(directory, "synthetic.v3.json"), JSON.stringify(snapshot));
+    const launchMarkerFile = path.join(directory, "campaign-synthetic.v3-launch.json");
+    const launchMarker = {
+      schema: V3_LAUNCH_MARKER_SCHEMA,
+      benchmarkVersion: 3,
+      suite: "v3",
+      campaignId: "v3-synthetic",
+      methodologyDigest: "c".repeat(64),
+      holdoutFreezeSha: BENCHMARK_V3_FREEZE_SHA,
+      productionBaseline: {
+        version: BENCHMARK_V3_PRODUCTION_BASELINE_VERSION,
+        sha: BENCHMARK_V3_PRODUCTION_BASELINE_SHA,
+        runtimeManifestSha256: BENCHMARK_V3_EXPECTED_RUNTIME_MANIFEST_SHA256,
+      },
+      startedAt: "2026-08-29T00:00:00.000Z",
+      state: "started",
+      completedCells: [],
+    };
+    fs.writeFileSync(launchMarkerFile, JSON.stringify(launchMarker));
+    const launchMarkerBeforeAnalysis = fs.readFileSync(launchMarkerFile, "utf8");
     const loaded = loadV3Campaign(directory, "v3-synthetic");
     const report = renderReport(loaded);
     assert.equal(loaded.records.length, 2);
+    assert.equal(readV3LaunchMarker(launchMarkerFile)?.campaignId, "v3-synthetic");
+    const history = deriveV3ExecutionHistory("v3-synthetic", {
+      resultsDir: directory,
+      checkpointsDir: path.join(directory, "checkpoints"),
+    });
+    assert.equal(history.launchMarkerExistsForThisCampaign, true);
+    assert.deepEqual(history.launchMarkerCampaignIds, ["v3-synthetic"]);
+    assert.equal(fs.readFileSync(launchMarkerFile, "utf8"), launchMarkerBeforeAnalysis);
     assert.match(report, /V3 routing analysis/);
     assert.match(report, /strong-delegation-candidate/);
     assert.match(report, /Delegation rate by workload shape/);
     assert.match(report, /beneficial delegation/);
     assert.match(report, /Operational incidence/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("combined V3 campaign analysis preserves reproducibility metadata", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bench-v3-metadata-"));
+  try {
+    const solo = {
+      ...metricRecord({ arm: "solo-medium", repetition: 1 }),
+      benchmarkVersion: 3 as const,
+      suite: "v3",
+      taskId: "v3-static-site-pipeline",
+      routingCategory: "strong-delegation-candidate" as const,
+      workloadClass: "delegation-candidate",
+    };
+    const adaptive = {
+      ...metricRecord({ arm: "adaptive-medium", repetition: 1, workers: 1 }),
+      benchmarkVersion: 3 as const,
+      suite: "v3",
+      taskId: "v3-static-site-pipeline",
+      routingCategory: "strong-delegation-candidate" as const,
+      workloadClass: "delegation-candidate",
+      baselineRuntimeIdentity: V3_SEALED_CELL_IDENTITY,
+    };
+    const first = buildResultsSnapshot({
+      startedAt: "synthetic-first",
+      campaignId: "v3-metadata",
+      reps: 2,
+      records: [solo],
+      suite: "v3",
+      standardSpeedConfirmed: true,
+      pricingProfileConfirmed: true,
+      ...V3_LAUNCH_EVIDENCE,
+    });
+    const second = buildResultsSnapshot({
+      startedAt: "synthetic-second",
+      campaignId: "v3-metadata",
+      reps: 2,
+      records: [adaptive],
+      suite: "v3",
+      standardSpeedConfirmed: true,
+      pricingProfileConfirmed: true,
+      ...V3_LAUNCH_EVIDENCE,
+    });
+    fs.writeFileSync(path.join(directory, "first.v3.json"), JSON.stringify(first));
+    fs.writeFileSync(path.join(directory, "second.v3.json"), JSON.stringify(second));
+
+    const loaded = loadV3Campaign(directory, "v3-metadata");
+    assert.deepEqual(loaded.environment, first.environment);
+    assert.deepEqual(loaded.ordering, first.ordering);
+    assert.equal(loaded.methodologyDigest, first.methodologyDigest);
+    assert.deepEqual(loaded.retryPolicy, first.retryPolicy);
+    const report = renderReport(loaded);
+    assert.match(report, /Commit: `b{40}`/);
+    assert.match(report, /Execution ordering: declared/);
+    assert.match(report, /Methodology digest: `c{64}`/);
+    assert.match(report, /0 automatic run retries/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("campaign analysis rejects conflicting reproducibility metadata by field", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bench-v3-metadata-conflict-"));
+  try {
+    const makeSnapshot = (arm: "solo-medium" | "adaptive-medium") =>
+      buildResultsSnapshot({
+        startedAt: arm,
+        campaignId: "v3-metadata-conflict",
+        reps: 2,
+        records: [
+          {
+            ...metricRecord({ arm, repetition: 1 }),
+            benchmarkVersion: 3 as const,
+            suite: "v3",
+            taskId: "v3-static-site-pipeline",
+            routingCategory: "strong-delegation-candidate" as const,
+            workloadClass: "delegation-candidate",
+            ...(arm === "adaptive-medium"
+              ? { baselineRuntimeIdentity: V3_SEALED_CELL_IDENTITY }
+              : {}),
+          },
+        ],
+        suite: "v3",
+        standardSpeedConfirmed: true,
+        pricingProfileConfirmed: true,
+        ...V3_LAUNCH_EVIDENCE,
+      });
+    const first = makeSnapshot("solo-medium");
+    const second = makeSnapshot("adaptive-medium");
+    fs.writeFileSync(path.join(directory, "first.v3.json"), JSON.stringify(first));
+    fs.writeFileSync(path.join(directory, "second.v3.json"), JSON.stringify(second));
+
+    const conflictingValues: Record<string, unknown> = {
+      environment: {
+        ...second.environment,
+        git: { ...second.environment!.git, branch: "conflicting" },
+      },
+      ordering: { ...second.ordering, seed: "conflicting" },
+      methodologyDigest: "d".repeat(64),
+      retryPolicy: { ...second.retryPolicy, automaticRunRetries: 1 },
+    };
+    for (const [field, value] of Object.entries(conflictingValues)) {
+      const conflicting = JSON.parse(JSON.stringify(second)) as Record<string, unknown>;
+      conflicting[field] = value;
+      fs.writeFileSync(
+        path.join(directory, "second.v3.json"),
+        JSON.stringify(conflicting),
+      );
+      assert.throws(
+        () => loadV3Campaign(directory, "v3-metadata-conflict"),
+        new RegExp(field),
+      );
+    }
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("legacy campaign shards keep missing reproducibility metadata unknown", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bench-v2-legacy-metadata-"));
+  try {
+    const legacy = JSON.parse(
+      JSON.stringify(
+        buildResultsSnapshot({
+          startedAt: "legacy",
+          campaignId: "v2-legacy-metadata",
+          reps: 2,
+          records: [metricRecord({ arm: "solo-medium", repetition: 1 })],
+          standardSpeedConfirmed: true,
+        }),
+      ),
+    ) as Record<string, unknown>;
+    for (const field of ["environment", "ordering", "methodologyDigest", "retryPolicy"]) {
+      delete legacy[field];
+    }
+    fs.writeFileSync(path.join(directory, "legacy.v2.json"), JSON.stringify(legacy));
+
+    const loaded = loadV2Campaign(directory, "v2-legacy-metadata");
+    assert.equal(loaded.environment, undefined);
+    assert.equal(loaded.ordering, undefined);
+    assert.equal(loaded.methodologyDigest, undefined);
+    assert.equal(loaded.retryPolicy, undefined);
+    const report = renderReport(loaded);
+    assert.match(report, /Environment: unknown/);
+    assert.match(report, /Execution ordering: unknown/);
+    assert.match(report, /Methodology digest: `unknown`/);
+    assert.match(report, /Retry treatment: unknown/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("V3 campaign analysis rejects an incompatible genuine result shard", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bench-v3-invalid-shard-"));
+  try {
+    const snapshot = buildResultsSnapshot({
+      startedAt: "synthetic",
+      campaignId: "v3-synthetic",
+      reps: 1,
+      records: [],
+      suite: "v3",
+      standardSpeedConfirmed: true,
+      pricingProfileConfirmed: true,
+      ...V3_LAUNCH_EVIDENCE,
+    });
+    fs.writeFileSync(
+      path.join(directory, "incompatible.v3.json"),
+      JSON.stringify({ ...snapshot, schema: "sol-luna/bench/v3-launch@1" }),
+    );
+    assert.throws(
+      () => loadV3Campaign(directory, "v3-synthetic"),
+      /incomplete schema-4 compatibility metadata/,
+    );
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

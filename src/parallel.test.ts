@@ -36,6 +36,7 @@ import {
 } from "./config.js";
 import { DEFAULT_COMPUTE_POLICY } from "./policy.js";
 import type { OrchestratorEvent } from "./events.js";
+import { reduceEvents, type TimestampedEvent } from "./cli/activity-reducer.js";
 import {
   delegateTaskInputSchema,
   type BatchOutput,
@@ -2515,6 +2516,88 @@ test("sequential cancellation removes a task queued for a worker slot", async ()
   }
 });
 
+test("sequential evidence-scan failure cannot overwrite authoritative cancellation", async () => {
+  const repo = await makeRepo();
+  const events: Array<Record<string, unknown>> = [];
+  try {
+    const result = await runProductionBatch([makeTask()], {
+      mode: "sequential",
+      workingDirectory: repo,
+      eventEmitter: (event) => events.push(event),
+      executor: async () => {
+        await fs.rename(path.join(repo, ".git"), path.join(repo, ".git.fixture"));
+        return makeOutput({
+          verdict: "FAILED",
+          workerClaimedStatus: "FAILED",
+          trustworthy: false,
+          errors: ["Worker was cancelled before it finished."],
+        });
+      },
+    });
+
+    const task = result.tasks[0]!;
+    assert.equal(task.state, "cancelled", describeBatch(result));
+    assert.match(task.result?.errors[0] ?? "", /cancelled before it finished/i);
+    assert.ok(task.warnings.some((warning) => /evidence scan failed/i.test(warning)));
+    assert.equal(events.filter((event) => event.type === "worker.cancelled").length, 1);
+    assert.equal(events.filter((event) => event.type === "batch.cancelled").length, 1);
+    assert.equal(events.filter((event) => event.type === "batch.completed").length, 0);
+  } finally {
+    await fs
+      .rename(path.join(repo, ".git.fixture"), path.join(repo, ".git"))
+      .catch(() => undefined);
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel evidence-scan failure also preserves authoritative cancellation", async () => {
+  const repo = await makeRepo();
+  const events: Array<Record<string, unknown>> = [];
+  let retainedPath: string | null = null;
+  let movedPath: string | null = null;
+  try {
+    const result = await runProductionBatch([makeTask()], {
+      mode: "parallel",
+      workingDirectory: repo,
+      eventEmitter: (event) => events.push(event),
+      executor: async (_input, options) => {
+        movedPath = `${options.workingDirectory}.moved`;
+        await fs.rename(options.workingDirectory, movedPath);
+        await fs.writeFile(options.workingDirectory, "worktree unavailable\n", "utf8");
+        return makeOutput({
+          verdict: "FAILED",
+          workerClaimedStatus: "FAILED",
+          trustworthy: false,
+          errors: ["Worker was cancelled before it finished."],
+        });
+      },
+    });
+
+    const task = result.tasks[0]!;
+    retainedPath = task.worktreePath;
+    assert.equal(task.state, "cancelled", describeBatch(result));
+    assert.match(task.result?.errors[0] ?? "", /cancelled before it finished/i);
+    assert.match(task.error ?? "", /worktree evidence/i);
+    assert.equal(events.filter((event) => event.type === "worker.cancelled").length, 1);
+    assert.equal(events.filter((event) => event.type === "worker.failed").length, 0);
+    assert.equal(events.filter((event) => event.type === "batch.cancelled").length, 1);
+    assert.equal(events.filter((event) => event.type === "batch.completed").length, 0);
+  } finally {
+    if (retainedPath) {
+      await fs.rm(retainedPath, { force: true }).catch(() => undefined);
+      if (movedPath && (await fs.stat(movedPath).catch(() => null))) {
+        await fs.rename(movedPath, retainedPath).catch(() => undefined);
+      }
+      await cleanupWorktree(
+        { taskId: "t1", path: retainedPath, repoRoot: repo, warnings: [] },
+        "success",
+        "never",
+      ).catch(() => undefined);
+    }
+    await cleanupRepo(repo);
+  }
+});
+
 test("a late abort does not rewrite a completed batch as cancelled", async () => {
   const repo = await makeRepo();
   try {
@@ -2942,6 +3025,163 @@ test("parallel timeout recovery resumes the same thread and integrates final evi
       "each started recovery execution must emit exactly one terminal event",
     );
     assert.ok(recoveryDone >= 0 && integration > recoveryDone);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("cancelled automatic recovery survives a later evidence-scan failure", async () => {
+  const repo = await makeRepo();
+  const events: Array<Record<string, unknown>> = [];
+  let calls = 0;
+  let retainedPath: string | null = null;
+  let movedPath: string | null = null;
+  try {
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/recovery-cancel/**"] })],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        eventEmitter: (event) => events.push(event),
+        executor: async (_input, options) => {
+          calls += 1;
+          if (calls === 1) {
+            return makeOutput({
+              verdict: "FAILED",
+              workerClaimedStatus: "FAILED",
+              trustworthy: false,
+              workerThreadId: "thread-recovery-cancel",
+              errors: ["Worker exceeded its 1s budget and was aborted."],
+            });
+          }
+
+          movedPath = `${options.workingDirectory}.moved`;
+          await fs.rename(options.workingDirectory, movedPath);
+          await fs.writeFile(options.workingDirectory, "worktree unavailable\n", "utf8");
+          return makeOutput({
+            verdict: "FAILED",
+            workerClaimedStatus: "FAILED",
+            trustworthy: false,
+            errors: ["Worker was cancelled before it finished."],
+          });
+        },
+      },
+    );
+
+    const task = result.tasks[0]!;
+    retainedPath = task.worktreePath;
+    assert.equal(calls, 2, describeBatch(result));
+    assert.equal(task.state, "cancelled", describeBatch(result));
+    assert.ok(
+      task.warnings.some((warning) => /worktree evidence/i.test(warning)),
+      describeBatch(result),
+    );
+    assert.equal(events.filter((event) => event.type === "worker.cancelled").length, 1);
+    assert.equal(events.filter((event) => event.type === "worker.failed").length, 0);
+    assert.equal(events.filter((event) => event.type === "batch.cancelled").length, 1);
+    assert.equal(events.filter((event) => event.type === "batch.completed").length, 0);
+  } finally {
+    if (retainedPath) {
+      await fs.rm(retainedPath, { force: true }).catch(() => undefined);
+      if (movedPath && (await fs.stat(movedPath).catch(() => null))) {
+        await fs.rename(movedPath, retainedPath).catch(() => undefined);
+      }
+      await cleanupWorktree(
+        { taskId: "t1", path: retainedPath, repoRoot: repo, warnings: [] },
+        "success",
+        "never",
+      ).catch(() => undefined);
+    }
+    await cleanupRepo(repo);
+  }
+});
+
+test("cancellation while queued for a recovery semaphore is terminal", async () => {
+  const repo = await makeRepo();
+  const controller = new AbortController();
+  const events: Array<Record<string, unknown>> = [];
+  const calls = new Map<string, number>();
+  try {
+    const result = await runProductionBatch(
+      [
+        makeTask({
+          objective: "First recovery owns the only policy slot.",
+          allowedFiles: ["src/first/**"],
+        }),
+        makeTask({
+          objective: "Second recovery waits for the policy slot.",
+          allowedFiles: ["src/second/**"],
+        }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        signal: controller.signal,
+        computePolicy: { ...DEFAULT_COMPUTE_POLICY, maxConcurrency: 1 },
+        eventEmitter: (event) => {
+          events.push(event);
+          if (event.type === "recovery.started" && event.taskId === "t1") {
+            controller.abort();
+          }
+        },
+        executor: async (input) => {
+          const key = input.objective.startsWith("First") ? "first" : "second";
+          const count = (calls.get(key) ?? 0) + 1;
+          calls.set(key, count);
+          if (count === 1) throw new Error("Codex Exec exited with code 1");
+          return makeOutput();
+        },
+      },
+    );
+
+    const queued = result.tasks[1]!;
+    assert.equal(calls.get("first"), 2, describeBatch(result));
+    assert.equal(calls.get("second"), 1, describeBatch(result));
+    assert.equal(queued.state, "cancelled", describeBatch(result));
+    assert.equal(queued.recovery?.attempted, false, describeBatch(result));
+    assert.equal(queued.recovery?.classification, "cancellation", describeBatch(result));
+    assert.equal(queued.attempts?.length, 1, describeBatch(result));
+    assert.equal(queued.attempts?.[0]?.termination.kind, "process-exit");
+    assert.equal(
+      events.filter(
+        (event) =>
+          event.type === "recovery.skipped" &&
+          event.taskId === queued.taskId &&
+          event.classification === "cancellation",
+      ).length,
+      1,
+    );
+    assert.equal(
+      events.filter(
+        (event) => event.type === "worker.cancelled" && event.taskId === queued.taskId,
+      ).length,
+      1,
+    );
+    assert.equal(
+      events.filter(
+        (event) =>
+          event.type === "worker.failed" &&
+          event.taskId === queued.taskId &&
+          event.attempt === 2,
+      ).length,
+      0,
+    );
+    assert.equal(events.filter((event) => event.type === "batch.cancelled").length, 1);
+    assert.equal(events.filter((event) => event.type === "batch.completed").length, 0);
+    const projected = reduceEvents(
+      events.map(
+        (event, index) =>
+          ({
+            ...event,
+            timestamp: new Date(Date.UTC(2024, 0, 1, 0, 0, index)).toISOString(),
+          }) as TimestampedEvent,
+      ),
+    );
+    assert.equal(
+      projected.workers.find((worker) => worker.taskId === queued.taskId)?.state,
+      "cancelled",
+    );
+    assert.equal(projected.state, "cancelled");
   } finally {
     await cleanupRepo(repo);
   }
@@ -4346,18 +4586,18 @@ test("routing paths - a single delegation can only be refused for declaring no s
   assert.match(refusal ?? "", /solo|declare the seams/i);
 });
 
-test("routing paths - coupling recommends solo in single, sequential and parallel modes", () => {
+test("routing paths - substantial shared core permits conditional non-parallel delegation", () => {
   for (const mode of ["single", "sequential", "parallel"] as const) {
     const line = routingAdvisoryLine(routingCard({ coreOverlap: "shared-core" }), {
       mode,
       taskCount: 2,
       allowOverlappingScopes: true,
     });
-    assert.match(line ?? "", /^ROUTING: solo advised/, `${mode} should advise solo`);
+    assert.match(line ?? "", /^ROUTING: either/, `${mode} should remain conditional`);
     assert.match(line ?? "", /shared-core/, `${mode} should name the signal`);
     assert.match(
       line ?? "",
-      /executed as requested/,
+      /needs explicit justification/,
       `${mode} must not read as a refusal`,
     );
   }
@@ -4383,6 +4623,8 @@ test("routing paths - an attached card records its raw declaration and route", a
     assert.equal(declared?.seamCount, 1);
     assert.equal(declared?.unknownCount, 0);
     assert.equal(declared?.route, "solo");
+    assert.equal(declared?.ruleId, "R2");
+    assert.equal(declared?.cardProvenance, "explicit");
     assert.equal(declared?.declaredSeamSize, "small");
     assert.equal(declared?.declaredSharedState, "none");
     assert.equal(declared?.declaredCoreOverlap, "disjoint");

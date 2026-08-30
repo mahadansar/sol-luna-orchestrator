@@ -4,8 +4,8 @@
  * A delegation costs a fixed amount of supervisor and worker overhead before it
  * produces anything. The expensive way to discover that a seam was not worth
  * delegating is to delegate it. This module is the cheap way: a pure, synchronous
- * evaluation of a small structured declaration the parent already knows, decided
- * before any repository exploration, worktree, thread, or worker exists.
+ * evaluation of a small structured declaration the parent can form after cheap,
+ * bounded structural inspection, before any worktree, thread, or worker exists.
  *
  * Two ideas keep it honest.
  *
@@ -58,6 +58,14 @@ export type Verification = (typeof VERIFICATIONS)[number];
 /** Advisory outcomes. Only `solo` is a recommendation against delegating. */
 export const ROUTING_ROUTES = ["solo", "either", "delegation-plausible"] as const;
 export type RoutingRoute = (typeof ROUTING_ROUTES)[number];
+
+/** Stable identifier for the first matching row in the ordered route table. */
+export const ROUTING_RULE_IDS = ["R0", "R1", "R2", "R3", "R4", "R5"] as const;
+export type RoutingRuleId = (typeof ROUTING_RULE_IDS)[number];
+
+/** Whether advisory classifications were all stated or cautiously resolved. */
+export const ROUTING_CARD_PROVENANCES = ["explicit", "pessimistic-defaults"] as const;
+export type RoutingCardProvenance = (typeof ROUTING_CARD_PROVENANCES)[number];
 
 /**
  * The policy facts a recommended shape is bounded by.
@@ -129,7 +137,11 @@ export const ROUTING_GATES = [
 ] as const;
 export type RoutingGate = (typeof ROUTING_GATES)[number];
 
-/** Decisive coupling signals. Any one of them recommends Solo, in every mode. */
+/**
+ * Coupling signals used by R1 and R4. Architectural integration, and small work
+ * with mutable/shared-core coupling, recommend Solo; substantial shared leaves
+ * can remain `either` for single or sequential delegation.
+ */
 export const TIER_1_SIGNALS = [
   "shared-mutable-state",
   "shared-core",
@@ -206,6 +218,10 @@ export interface ResolvedRoutingValues {
 
 export interface RoutingEvaluation {
   route: RoutingRoute;
+  /** First matching row in the deterministic route table. */
+  ruleId: RoutingRuleId;
+  /** Whether any classification used a pessimistic `unknown` default. */
+  cardProvenance: RoutingCardProvenance;
   seamCount: number;
   /** How many of the five declared fields were left `unknown` by the caller. */
   unknownCount: number;
@@ -422,7 +438,7 @@ function selectRefusedGate(
   return null;
 }
 
-/** Decisive coupling signals, from resolved values, in every mode. */
+/** Coupling signals consumed by the size-sensitive R1/R4 rules. */
 function tier1Signals(resolved: ResolvedRoutingValues): Tier1Signal[] {
   const signals: Tier1Signal[] = [];
   // read-only shared state is deliberately absent: it is compatible with
@@ -439,6 +455,26 @@ function tier2Signals(resolved: ResolvedRoutingValues): Tier2Signal[] {
   if (resolved.seamSize === "small") signals.push("small-seam");
   if (resolved.verification === "shared-only") signals.push("shared-verification-only");
   return signals;
+}
+
+/**
+ * The narrow R3 exception for aggregate small seams.
+ *
+ * Every favorable classification must be explicit. Shared-only final proof still
+ * makes the recommended execution shape sequential, but three or more disjoint,
+ * read-only, mechanically integrated seams can have enough aggregate work to make
+ * delegation worth considering. This does not make parallel execution safe or
+ * recommended; that remains the separate job of gates and shape selection.
+ */
+function aggregateSmallSeamsMayPay(card: RoutingPreflightCard): boolean {
+  return (
+    card.seams.length >= 3 &&
+    card.seamSize === "small" &&
+    (card.sharedState === "none" || card.sharedState === "read-only") &&
+    card.coreOverlap === "disjoint" &&
+    card.integration === "mechanical" &&
+    card.verification === "shared-only"
+  );
 }
 
 /** Shape advisories that describe the call, without moving the route. */
@@ -614,29 +650,47 @@ export function evaluateRouting(
   // Ordered route table, first match wins. No weighted score, no numeric
   // economic score, no benchmark-tuned threshold.
   let route: RoutingRoute;
+  let ruleId: RoutingRuleId;
   if (card.seams.length === 0) {
-    route = "solo"; // R0
-  } else if (tier1.length > 0) {
-    route = "solo"; // R1
+    route = "solo";
+    ruleId = "R0";
+  } else if (
+    tier1.includes("architectural-integration") ||
+    (resolved.seamSize === "small" &&
+      (tier1.includes("shared-mutable-state") || tier1.includes("shared-core")))
+  ) {
+    // Architectural integration stays with the parent. Small coupled work also
+    // cannot repay delegation overhead, independent of its concurrency safety.
+    route = "solo";
+    ruleId = "R1";
   } else if (tier2.includes("small-seam") && card.seams.length <= 1) {
-    route = "solo"; // R2
+    route = "solo";
+    ruleId = "R2";
   } else if (tier2.length === 2) {
-    route = "solo"; // R3
-  } else if (tier2.length === 1) {
-    route = "either"; // R4
+    route = aggregateSmallSeamsMayPay(card) ? "either" : "solo";
+    ruleId = "R3";
+  } else if (tier1.length > 0 || tier2.length === 1) {
+    // A substantial shared leaf can be uneconomic or unsafe to parallelize
+    // without making single/sequential delegation structurally impossible.
+    route = "either";
+    ruleId = "R4";
   } else {
-    route = "delegation-plausible"; // R5
+    route = "delegation-plausible";
+    ruleId = "R5";
   }
 
   const parallelEligible = evaluateParallelEligibility(card);
+  const unknownCount = countUnknowns(card);
   const shape = context.envelope
     ? recommendExecutionShape(route, card.seams.length, resolved, context.envelope)
     : null;
 
   return {
     route,
+    ruleId,
+    cardProvenance: unknownCount === 0 ? "explicit" : "pessimistic-defaults",
     seamCount: card.seams.length,
-    unknownCount: countUnknowns(card),
+    unknownCount,
     gates,
     signals,
     parallelEligible,
@@ -776,7 +830,7 @@ export function renderRoutingPreflight(evaluation: RoutingEvaluation): string {
   const listed = evaluation.signals.length > 0 ? evaluation.signals.join(",") : "none";
   const shape = describeShape(evaluation);
   const lines = [
-    `ROUTE: ${evaluation.route} | seams ${evaluation.seamCount} | unknown ${evaluation.unknownCount}`,
+    `ROUTE: ${evaluation.route} | rule ${evaluation.ruleId} | provenance ${evaluation.cardProvenance} | seams ${evaluation.seamCount} | unknown ${evaluation.unknownCount}`,
     `SIGNALS: ${listed}`,
     `PARALLEL-ELIGIBLE: ${evaluation.parallelEligible} (structural only; not a worker count)`,
     ...(shape === null ? [] : [`SHAPE: ${shape}`]),

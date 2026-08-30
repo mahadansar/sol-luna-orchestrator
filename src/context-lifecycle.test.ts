@@ -806,6 +806,10 @@ test("lifecycle - routing preflight remains advisory and does not persist contex
 
   const evaluatedEvents = events.filter((e) => e.type === "context.evaluated");
   assert.equal(evaluatedEvents.length, 0);
+  const routingEvent = events.find((e) => e.type === "routing.preflight");
+  assert.equal(routingEvent?.ruleId, "R5");
+  assert.equal(routingEvent?.route, "delegation-plausible");
+  assert.equal(routingEvent?.cardProvenance, "explicit");
 });
 
 test("lifecycle - production registry isolates unrelated fresh MCP calls", async () => {

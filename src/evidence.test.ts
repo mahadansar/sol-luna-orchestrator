@@ -756,6 +756,57 @@ test("single-task delegation records its result exactly once with the existing s
   }
 });
 
+test("legacy delegation records deeply sanitize capability-shaped values before writing", async () => {
+  const workRoot = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-redacted-event-"));
+  const eventsPath = path.join(workRoot, "events.jsonl");
+  const continuation = `ctr_${"c".repeat(32)}`;
+  const handoff = `hdf_${"h".repeat(32)}`;
+
+  try {
+    const result = mockResult();
+    result.workerThreadId = `thread carrying ${continuation}`;
+    result.recovery = {
+      attempted: true,
+      classification: "worker-process-retry",
+      evidence: `recovery observed ${handoff}`,
+      initialAttempt: 1,
+      recoveryAttempt: 2,
+      initialDurationSeconds: 1,
+      recoveryDurationSeconds: 1,
+      initialUsage: null,
+      recoveryUsage: null,
+    };
+    result.usage = {
+      inputTokens: 100,
+      cachedInputTokens: 0,
+      outputTokens: 50,
+      reasoningOutputTokens: 10,
+      metadata: {
+        messages: [continuation, { error: `nested ${handoff}` }],
+      },
+    } as unknown as DelegateTaskOutput["usage"];
+
+    recordEvent(result, eventsPath);
+
+    const raw = await fs.readFile(eventsPath, "utf8");
+    assert.doesNotMatch(raw, /(?:ctr_|hdf_)[A-Za-z0-9_-]{20,}/);
+    assert.equal(raw.match(/\[REDACTED_CAPABILITY\]/g)?.length, 4);
+    const event = JSON.parse(raw) as {
+      workerThreadId: string;
+      recovery: { evidence: string };
+      usage: { metadata: { messages: Array<string | { error: string }> } };
+    };
+    assert.match(event.workerThreadId, /\[REDACTED_CAPABILITY\]/);
+    assert.match(event.recovery.evidence, /\[REDACTED_CAPABILITY\]/);
+    assert.deepEqual(event.usage.metadata.messages, [
+      "[REDACTED_CAPABILITY]",
+      { error: "nested [REDACTED_CAPABILITY]" },
+    ]);
+  } finally {
+    await fs.rm(workRoot, { recursive: true, force: true });
+  }
+});
+
 test("legacy activity records expose repair classification without failure output", async () => {
   const workRoot = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-repair-event-"));
   const eventsPath = path.join(workRoot, "events.jsonl");

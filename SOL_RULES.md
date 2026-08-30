@@ -102,6 +102,19 @@ advisory tool, and the same declaration may be attached to `delegate_task` or
 `delegate_tasks` as `routingPreflight`. It is never required, and omitting it
 leaves behavior exactly as it was.
 
+Before calling it, the parent may do cheap, bounded structural inspection of the
+repository and relevant tests: enough to locate concrete ownership seams and
+their proof boundaries, but not broad exploratory implementation work. The flow
+is objective -> bounded inspection -> concrete seams -> classification ->
+`routing_preflight` -> delegate or stay solo.
+
+Classify those leaves, not the whole objective: the card describes the actual
+candidate delegated leaf.
+For example, use separate leaves such as `JSONL parser` and `access-log parser`,
+not `implement telemetry ingestors and merger`. The parent may retain a canonical
+data contract, immutable AST, shared integration surface, and final verification
+while delegating bounded parsers or renderers that consume that contract.
+
 The card describes one call, not one task, and the runtime never inspects task
 semantics itself:
 
@@ -144,13 +157,23 @@ are evaluated before any worktree exists, and an attached card is recorded in
 telemetry either way.
 
 Everything else **recommends**. The route is `solo`, `either`, or
-`delegation-plausible`; any one decisive coupling signal (mutable shared state,
-shared core, architectural integration) recommends `solo` in every mode. Two
-overhead signals (small seam, shared-only verification) also recommend `solo`,
-one alone gives `either`, and none gives `delegation-plausible`. `either` does
-not mean "delegate by default": it means fixed delegation overhead needs an
-explicit justification, or stay solo. `read-only` shared state is not a coupling
-signal. There is no score, no threshold, and no benchmark-derived tuning.
+`delegation-plausible`. The ordered route table is:
+
+| Rule | First matching condition                                                     | Route                                                                                                          |
+| ---- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| R0   | No seams                                                                     | `solo`                                                                                                         |
+| R1   | Architectural integration, or a small seam with mutable/shared-core coupling | `solo`                                                                                                         |
+| R2   | One small seam                                                               | `solo`                                                                                                         |
+| R3   | Both small-seam and shared-only-verification overhead signals                | `solo`, except three or more explicitly read-only/none, disjoint, mechanically integrated seams reach `either` |
+| R4   | Any remaining coupling or single overhead signal                             | `either`                                                                                                       |
+| R5   | No coupling or overhead signal                                               | `delegation-plausible`                                                                                         |
+
+`either` does not mean "delegate by default": it means fixed delegation overhead
+needs an explicit justification, or stay solo. In particular, substantial
+mutable/shared-core work can reach `either` because a single `delegate_task` or
+sequential delegation may be useful even though parallel execution is unsafe.
+`read-only` shared state is not a coupling signal. There is no score and no
+benchmark-derived tuning.
 
 The **parent keeps every judgement** a recommendation touches: whether to proceed
 against a `solo` recommendation, sequential versus parallel, `delegate_task`
@@ -168,6 +191,12 @@ recommendation to use parallel mode and not a worker count — `seams.length`
 describes separability, not a worker target. It can be `true` while the route is
 `solo`, and while the recommended shape is `solo`, which simply means a split is
 possible but not obviously worth its overhead.
+
+This is the safety/economics boundary: `parallelEligible`, parallel gates, and
+actual scope/worktree checks answer whether concurrent execution is safe. The
+route answers whether delegation overhead is likely economic. A parallel hazard
+does not grant parallel execution and does not by itself prohibit one bounded
+worker or staggered workers.
 
 Alongside the route, the preflight reports one bounded **execution shape**: a
 `mechanism` (`solo`, `delegate_task`, `delegate_tasks_sequential`,
@@ -194,6 +223,10 @@ Calling `routing_preflight` and then delegating nothing is a normal successful
 outcome; zero workers remains first-class. An empty seam list is a valid
 preflight answer that returns `solo`, and becomes a refusal only if the caller
 then actually requests delegation with that card.
+
+Preflight and attached-card telemetry record the matched rule ID, resolved route,
+and whether every classification was explicit or pessimistic defaults were used.
+Seam labels remain excluded.
 
 ## Cost and parallelism
 
