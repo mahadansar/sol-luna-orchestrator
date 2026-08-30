@@ -27,6 +27,7 @@ import type {
 import type { ContinuationStore } from "./continuation.js";
 import type { HandoffStore } from "./handoff.js";
 import { isolateEventEmitter, type EventEmitter } from "./events.js";
+import { redactCapabilityIdentifiers } from "./log.js";
 import {
   CONTEXT_COOLDOWN_TURNS,
   CONTEXT_MAX_BYTES,
@@ -84,6 +85,9 @@ export function scrubSensitiveText(text: string): { scrubbed: string; count: num
   scrubbed = scrubbed.replace(PREFIXED_SECRET, () => {
     count++;
     return "[REDACTED_TOKEN]";
+  });
+  scrubbed = redactCapabilityIdentifiers(scrubbed, () => {
+    count++;
   });
   return { scrubbed, count };
 }

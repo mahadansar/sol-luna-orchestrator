@@ -327,9 +327,12 @@ them from disk. Rotate old files if their contents should no longer be retained.
 Diagnostic logs and tool-result evidence remain more sensitive than current
 activity telemetry.
 
-Only control characters are stripped, from both — enough to stop a crafted
-string forging a log line, not a secret filter. Keep both outside the
-repository, and read either before attaching it to a public issue.
+Control characters and complete bearer-shaped `ctr_*` / `hdf_*` identifiers are
+redacted at the diagnostic and event boundaries. Structured event values are
+sanitized recursively, including nested error and accounting metadata; short
+ordinary prose such as `ctr_example` is preserved. This is still not a general
+secret filter. Keep both files outside the repository, and read either before
+attaching it to a public issue.
 
 **`init` configures both logs by default**, under your Codex home, because
 `sol-luna-orchestrator activity` cannot work without the event log. Nothing is

@@ -594,25 +594,26 @@ export function emitAttemptCompleted(
   });
 }
 
-/** Strip control characters from every string so events cannot forge log lines. */
-function sanitizeEvent(event: OrchestratorEvent): Record<string, unknown> {
-  const output: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(event)) {
-    // Objectives are the worker prompt's first-class task field. Keep the
-    // optional property in the type so old JSONL remains readable, but never
-    // copy it into new telemetry (or re-emit it through renderEvent).
-    if (key === "objective") continue;
-    if (typeof value === "string") {
-      output[key] = sanitizeForLog(value);
-    } else if (Array.isArray(value)) {
-      output[key] = value.map((entry) =>
-        typeof entry === "string" ? sanitizeForLog(entry) : entry,
-      );
-    } else {
-      output[key] = value;
-    }
+/** Sanitize every observable string, including nested accounting metadata. */
+export function sanitizeEventValue(value: unknown): unknown {
+  if (typeof value === "string") return sanitizeForLog(value);
+  if (Array.isArray(value)) return value.map(sanitizeEventValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, sanitizeEventValue(entry)]),
+    );
   }
-  return output;
+  return value;
+}
+
+function sanitizeEvent(event: OrchestratorEvent): Record<string, unknown> {
+  // Objectives are the worker prompt's first-class task field. Keep the
+  // optional property in the type so old JSONL remains readable, but never
+  // copy it into new telemetry or an injected telemetry sink.
+  const { objective: _objective, ...observable } = event as OrchestratorEvent & {
+    objective?: string;
+  };
+  return sanitizeEventValue(observable) as Record<string, unknown>;
 }
 
 export function createEventEmitter(file = EVENTS_FILE): EventEmitter {
@@ -643,7 +644,7 @@ export const emitEvent: EventEmitter = createEventEmitter();
 export function isolateEventEmitter(emit: EventEmitter): EventEmitter {
   return (event): void => {
     try {
-      emit(event);
+      emit(sanitizeEvent(event) as OrchestratorEvent);
     } catch {
       // Observability is deliberately non-authoritative.
     }

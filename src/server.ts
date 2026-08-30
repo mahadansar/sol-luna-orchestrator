@@ -64,6 +64,7 @@ import {
   emitAttemptStarted,
   emitEvent,
   isolateEventEmitter,
+  sanitizeEventValue,
   type EventEmitter,
 } from "./events.js";
 import {
@@ -327,45 +328,43 @@ export const recordEvent = (
 ): void => {
   if (!eventsFile) return;
   try {
-    appendFileSync(
-      eventsFile,
-      `${JSON.stringify({
-        timestamp: new Date().toISOString(),
-        model: result.model,
-        effort: result.effort,
-        attempt: result.attempt,
-        verdict: result.verdict,
-        workerClaimedStatus: result.workerClaimedStatus,
-        trustworthy: result.trustworthy,
-        workerThreadId: result.workerThreadId,
-        durationSeconds: result.durationSeconds,
-        filesChanged: result.filesChanged.length,
-        scopeViolations: result.scopeViolations.length,
-        discrepancies: result.discrepancies.length,
-        ...(result.repair
-          ? {
-              repair: {
-                attempted: result.repair.attempted,
-                classification: result.repair.classification,
-              },
-            }
-          : {}),
-        ...(result.recovery
-          ? {
-              recovery: {
-                attempted: result.recovery.attempted,
-                classification: result.recovery.classification,
-                evidence: result.recovery.evidence,
-                initialAttempt: result.recovery.initialAttempt,
-                recoveryAttempt: result.recovery.recoveryAttempt,
-                initialDurationSeconds: result.recovery.initialDurationSeconds,
-                recoveryDurationSeconds: result.recovery.recoveryDurationSeconds,
-              },
-            }
-          : {}),
-        usage: result.usage,
-      })}\n`,
-    );
+    const record = sanitizeEventValue({
+      timestamp: new Date().toISOString(),
+      model: result.model,
+      effort: result.effort,
+      attempt: result.attempt,
+      verdict: result.verdict,
+      workerClaimedStatus: result.workerClaimedStatus,
+      trustworthy: result.trustworthy,
+      workerThreadId: result.workerThreadId,
+      durationSeconds: result.durationSeconds,
+      filesChanged: result.filesChanged.length,
+      scopeViolations: result.scopeViolations.length,
+      discrepancies: result.discrepancies.length,
+      ...(result.repair
+        ? {
+            repair: {
+              attempted: result.repair.attempted,
+              classification: result.repair.classification,
+            },
+          }
+        : {}),
+      ...(result.recovery
+        ? {
+            recovery: {
+              attempted: result.recovery.attempted,
+              classification: result.recovery.classification,
+              evidence: result.recovery.evidence,
+              initialAttempt: result.recovery.initialAttempt,
+              recoveryAttempt: result.recovery.recoveryAttempt,
+              initialDurationSeconds: result.recovery.initialDurationSeconds,
+              recoveryDurationSeconds: result.recovery.recoveryDurationSeconds,
+            },
+          }
+        : {}),
+      usage: result.usage,
+    });
+    appendFileSync(eventsFile, `${JSON.stringify(record)}\n`);
   } catch {
     // Telemetry must never break a delegation.
   }

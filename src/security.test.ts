@@ -664,6 +664,24 @@ test("model-supplied text cannot forge log lines", () => {
   assert.equal(sanitizeForLog("a\tb\u0000c\u007fd"), "a b c d");
 });
 
+test("observable strings redact capability-shaped values without hiding short prose", () => {
+  const continuation = `ctr_${"c".repeat(32)}`;
+  const handoff = `hdf_${"h".repeat(32)}`;
+  const safe = sanitizeForLog(
+    `failed ${continuation}; nested=${handoff}; keep ctr_example and hdf_label`,
+  );
+
+  assert.equal(safe.includes(continuation), false);
+  assert.equal(safe.includes(handoff), false);
+  assert.equal(
+    safe.match(/\[REDACTED_CAPABILITY\]/g)?.length,
+    2,
+    "each complete capability shape is independently redacted",
+  );
+  assert.match(safe, /ctr_example/);
+  assert.match(safe, /hdf_label/);
+});
+
 // --- Workspace boundary -----------------------------------------------------
 
 /** Simulate a symlink without needing filesystem privileges. */

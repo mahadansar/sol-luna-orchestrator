@@ -178,8 +178,11 @@ labels, conflicting file names and failure reasons can still be revealing.
 Legacy and hand-edited JSONL are treated as untrusted input. Every line is
 validated against the known event shapes; unknown properties and malformed
 optional legacy fields are dropped rather than trusted, and strings are stripped
-of control characters again on read, so a crafted event cannot rewrite the
-terminal it is rendered into.
+of control characters and bearer-shaped `ctr_*` / `hdf_*` values again on read,
+so a crafted event cannot rewrite the terminal it is rendered into or expose a
+capability-shaped value. Current writers apply the same sanitization recursively
+before file or injected event sinks receive nested message, array, or accounting
+metadata. Short prefix prose that is not capability-shaped remains unchanged.
 
 Current writers omit objectives and task context, but an activity file retained
 from a pre-hardening version may still contain older schema fields such as an

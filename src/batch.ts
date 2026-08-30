@@ -1196,12 +1196,23 @@ async function runSequential(
         const after = await snapshotSequentialEvidence(workspace);
         if (!after) {
           const detail = "Sequential Git evidence scan failed after worker execution.";
-          task.result.result.verdict = "FAILED";
-          task.result.result.trustworthy = false;
-          task.result.result.errors.push(detail);
-          task.result.error = detail;
-          task.state = "failed";
-          task.result.state = "failed";
+          // Cancellation is an authoritative terminal outcome. Evidence still
+          // gets scanned so cleanup/diagnosis is not skipped, but a secondary
+          // scan failure cannot rewrite cancellation into an ordinary failure
+          // and make finalization publish batch.completed.
+          if (isCancelled(task)) {
+            task.result.warnings.push(detail);
+            if (!task.result.result.errors.includes(detail)) {
+              task.result.result.errors.push(detail);
+            }
+          } else {
+            task.result.result.verdict = "FAILED";
+            task.result.result.trustworthy = false;
+            task.result.result.errors.push(detail);
+            task.result.error = detail;
+            task.state = "failed";
+            task.result.state = "failed";
+          }
         } else {
           const changed = changedSequentialPaths(before, after).map((file) => ({
             path: file,
@@ -1219,6 +1230,16 @@ async function runSequential(
         }
       }
     } catch (error) {
+      if (isCancelled(task)) {
+        const detail =
+          `Sequential post-cancellation evidence lifecycle failed: ` +
+          `${(error as Error).message}`;
+        task.result.warnings.push(detail);
+        if (task.result.result && !task.result.result.errors.includes(detail)) {
+          task.result.result.errors.push(detail);
+        }
+        continue;
+      }
       if (signal?.aborted) {
         markCancelled(batchId, task, emit);
         continue;
@@ -1420,6 +1441,15 @@ async function runParallel(
           });
         }
       } catch (error) {
+        if (isCancelled(task)) {
+          const detail = `Post-cancellation evidence lifecycle failed: ${(error as Error).message}`;
+          task.result.error ??= detail;
+          task.result.warnings.push(detail);
+          if (task.result.result && !task.result.result.errors.includes(detail)) {
+            task.result.result.errors.push(detail);
+          }
+          return;
+        }
         if (signal?.aborted) {
           markCancelled(batchId, task, emit);
           return;
@@ -1824,9 +1854,17 @@ async function recoverParallel(
         };
         if (outcome.error) {
           task.worktreeOutcomeError = outcome.error;
-          task.result.error = `Could not read worktree evidence: ${outcome.error}`;
-          task.state = "failed";
-          task.result.state = "failed";
+          const detail = `Could not read worktree evidence: ${outcome.error}`;
+          task.result.error = detail;
+          if (isCancelled(task)) {
+            task.result.warnings.push(detail);
+            if (task.result.result && !task.result.result.errors.includes(detail)) {
+              task.result.result.errors.push(detail);
+            }
+          } else {
+            task.state = "failed";
+            task.result.state = "failed";
+          }
         } else if (task.result.result) {
           emitWorkerCompleted(batchId, task, emit, { attempt });
           if (task.state !== "cancelled") task.result.state = task.state;
@@ -1871,7 +1909,31 @@ async function recoverParallel(
           predecessorExecutionId,
         });
       } catch (error) {
-        if (signal?.aborted) return;
+        if (isCancelled(task)) return;
+        if (signal?.aborted) {
+          const recoveryStarted = typeof task.recovery?.recoveryAttempt === "number";
+          task.recovery = {
+            ...(task.recovery ?? decision),
+            attempted: recoveryStarted,
+            classification: "cancellation",
+            evidence: recoveryStarted
+              ? "Batch cancellation interrupted the bounded recovery lifecycle."
+              : "Batch cancellation arrived while the bounded recovery turn waited for execution capacity.",
+          };
+          setRecoveryMetadata(task, task.recovery);
+          if (!recoveryStarted) {
+            emit({
+              type: "recovery.skipped",
+              batchId,
+              taskId: task.taskId,
+              attempt: decision.initialAttempt,
+              classification: "cancellation",
+              evidence: task.recovery.evidence,
+            });
+          }
+          markCancelled(batchId, task, emit);
+          return;
+        }
         const detail = `Post-recovery evidence lifecycle failed: ${(error as Error).message}`;
         const recoveryDurationSeconds = Math.round((Date.now() - startedAt) / 1000);
         const recoveryEvidence = task.result.attempts?.find(
@@ -2300,6 +2362,7 @@ const isCancelled = (task: RunningTask): boolean => task.state === "cancelled";
 const isFailed = (task: RunningTask): boolean => task.state === "failed";
 
 function markCancelled(batchId: string, task: RunningTask, emit: EventEmitter): void {
+  if (isCancelled(task)) return;
   task.state = "cancelled";
   task.result.state = "cancelled";
   task.result.error = "Cancelled before this task started.";

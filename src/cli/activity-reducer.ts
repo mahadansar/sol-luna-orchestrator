@@ -658,7 +658,7 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
       snapshot.supervisor = { state: "awaiting delegation", usage: null };
     } else if (event.type === "batch.completed") {
       if (snapshot.batchId === event.batchId) {
-        snapshot.state = "completed";
+        if (snapshot.state !== "cancelled") snapshot.state = "completed";
         snapshot.durationSeconds = event.durationSeconds ?? null;
         snapshot.passed = event.passed ?? null;
         snapshot.failed = event.failed ?? null;
@@ -944,7 +944,9 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
         worker.attempt = event.attempt ?? worker.attempt;
         break;
       case "worker.started":
-        worker.state = event.recoveryClassification ? "recovering" : "running";
+        if (worker.state !== "cancelled") {
+          worker.state = event.recoveryClassification ? "recovering" : "running";
+        }
         worker.startTime = event.timestamp;
         worker.attempt = event.attempt ?? worker.attempt;
         worker.effort = event.effort ?? worker.effort;
@@ -970,7 +972,9 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
         // Older/runtime paths may emit timedOut followed by the normal
         // completion record. Keep the timeout visible rather than rewriting it
         // as a successful-looking completion.
-        if (worker.state !== "timedOut") worker.state = "completed";
+        if (worker.state !== "timedOut" && worker.state !== "cancelled") {
+          worker.state = "completed";
+        }
         worker.endTime = event.timestamp;
         worker.attempt = event.attempt ?? worker.attempt;
         worker.verdict = event.verdict ?? null;
@@ -985,7 +989,7 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
         activeWorkerIds.delete(event.taskId);
         break;
       case "worker.failed":
-        worker.state = "failed";
+        if (worker.state !== "cancelled") worker.state = "failed";
         worker.endTime = event.timestamp;
         worker.attempt = event.attempt ?? worker.attempt;
         worker.failReason = event.reason ?? null;
@@ -998,14 +1002,14 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
         activeWorkerIds.delete(event.taskId);
         break;
       case "worker.timedOut":
-        worker.state = "timedOut";
+        if (worker.state !== "cancelled") worker.state = "timedOut";
         worker.endTime = event.timestamp;
         worker.attempt = event.attempt ?? worker.attempt;
         worker.timeoutSeconds = event.timeoutSeconds ?? null;
         activeWorkerIds.delete(event.taskId);
         break;
       case "recovery.started":
-        worker.state = "recovering";
+        if (worker.state !== "cancelled") worker.state = "recovering";
         worker.attempt = event.attempt;
         worker.recovery = {
           attempted: true,
@@ -1036,7 +1040,12 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
         break;
       case "recovery.completed":
         worker.attempt = event.attempt;
-        worker.state = event.verdict === "PASS" ? "completed" : "failed";
+        // Recovery completion remains diagnostic after cancellation. The
+        // worker.cancelled event is authoritative and cannot be rewritten by
+        // a late FAILED record emitted while recovery unwinds.
+        if (worker.state !== "cancelled") {
+          worker.state = event.verdict === "PASS" ? "completed" : "failed";
+        }
         worker.verdict = event.verdict;
         worker.recovery ??= {
           attempted: true,
@@ -1057,7 +1066,7 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
         activeWorkerIds.delete(event.taskId);
         break;
       case "repair.started":
-        worker.state = "repairing";
+        if (worker.state !== "cancelled") worker.state = "repairing";
         worker.repair = {
           attempted: true,
           classification: event.classification,
@@ -1066,7 +1075,7 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
         };
         break;
       case "repair.completed":
-        worker.state = "running";
+        if (worker.state !== "cancelled") worker.state = "running";
         worker.repair ??= {
           attempted: true,
           classification: "unknown",
@@ -1082,7 +1091,7 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
         worker.worktreeKept = event.kept ?? null;
         break;
       case "verification.started":
-        worker.state = "verifying";
+        if (worker.state !== "cancelled") worker.state = "verifying";
         worker.verification = {
           started: true,
           total: event.commandCount ?? null,
