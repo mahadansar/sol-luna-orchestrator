@@ -1411,6 +1411,155 @@ test("V3 campaign analysis and report generation work with synthetic evidence", 
   }
 });
 
+test("combined V3 campaign analysis preserves reproducibility metadata", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bench-v3-metadata-"));
+  try {
+    const solo = {
+      ...metricRecord({ arm: "solo-medium", repetition: 1 }),
+      benchmarkVersion: 3 as const,
+      suite: "v3",
+      taskId: "v3-static-site-pipeline",
+      routingCategory: "strong-delegation-candidate" as const,
+      workloadClass: "delegation-candidate",
+    };
+    const adaptive = {
+      ...metricRecord({ arm: "adaptive-medium", repetition: 1, workers: 1 }),
+      benchmarkVersion: 3 as const,
+      suite: "v3",
+      taskId: "v3-static-site-pipeline",
+      routingCategory: "strong-delegation-candidate" as const,
+      workloadClass: "delegation-candidate",
+      baselineRuntimeIdentity: V3_SEALED_CELL_IDENTITY,
+    };
+    const first = buildResultsSnapshot({
+      startedAt: "synthetic-first",
+      campaignId: "v3-metadata",
+      reps: 2,
+      records: [solo],
+      suite: "v3",
+      standardSpeedConfirmed: true,
+      pricingProfileConfirmed: true,
+      ...V3_LAUNCH_EVIDENCE,
+    });
+    const second = buildResultsSnapshot({
+      startedAt: "synthetic-second",
+      campaignId: "v3-metadata",
+      reps: 2,
+      records: [adaptive],
+      suite: "v3",
+      standardSpeedConfirmed: true,
+      pricingProfileConfirmed: true,
+      ...V3_LAUNCH_EVIDENCE,
+    });
+    fs.writeFileSync(path.join(directory, "first.v3.json"), JSON.stringify(first));
+    fs.writeFileSync(path.join(directory, "second.v3.json"), JSON.stringify(second));
+
+    const loaded = loadV3Campaign(directory, "v3-metadata");
+    assert.deepEqual(loaded.environment, first.environment);
+    assert.deepEqual(loaded.ordering, first.ordering);
+    assert.equal(loaded.methodologyDigest, first.methodologyDigest);
+    assert.deepEqual(loaded.retryPolicy, first.retryPolicy);
+    const report = renderReport(loaded);
+    assert.match(report, /Commit: `b{40}`/);
+    assert.match(report, /Execution ordering: declared/);
+    assert.match(report, /Methodology digest: `c{64}`/);
+    assert.match(report, /0 automatic run retries/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("campaign analysis rejects conflicting reproducibility metadata by field", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bench-v3-metadata-conflict-"));
+  try {
+    const makeSnapshot = (arm: "solo-medium" | "adaptive-medium") =>
+      buildResultsSnapshot({
+        startedAt: arm,
+        campaignId: "v3-metadata-conflict",
+        reps: 2,
+        records: [
+          {
+            ...metricRecord({ arm, repetition: 1 }),
+            benchmarkVersion: 3 as const,
+            suite: "v3",
+            taskId: "v3-static-site-pipeline",
+            routingCategory: "strong-delegation-candidate" as const,
+            workloadClass: "delegation-candidate",
+            ...(arm === "adaptive-medium"
+              ? { baselineRuntimeIdentity: V3_SEALED_CELL_IDENTITY }
+              : {}),
+          },
+        ],
+        suite: "v3",
+        standardSpeedConfirmed: true,
+        pricingProfileConfirmed: true,
+        ...V3_LAUNCH_EVIDENCE,
+      });
+    const first = makeSnapshot("solo-medium");
+    const second = makeSnapshot("adaptive-medium");
+    fs.writeFileSync(path.join(directory, "first.v3.json"), JSON.stringify(first));
+    fs.writeFileSync(path.join(directory, "second.v3.json"), JSON.stringify(second));
+
+    const conflictingValues: Record<string, unknown> = {
+      environment: {
+        ...second.environment,
+        git: { ...second.environment!.git, branch: "conflicting" },
+      },
+      ordering: { ...second.ordering, seed: "conflicting" },
+      methodologyDigest: "d".repeat(64),
+      retryPolicy: { ...second.retryPolicy, automaticRunRetries: 1 },
+    };
+    for (const [field, value] of Object.entries(conflictingValues)) {
+      const conflicting = JSON.parse(JSON.stringify(second)) as Record<string, unknown>;
+      conflicting[field] = value;
+      fs.writeFileSync(
+        path.join(directory, "second.v3.json"),
+        JSON.stringify(conflicting),
+      );
+      assert.throws(
+        () => loadV3Campaign(directory, "v3-metadata-conflict"),
+        new RegExp(field),
+      );
+    }
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("legacy campaign shards keep missing reproducibility metadata unknown", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bench-v2-legacy-metadata-"));
+  try {
+    const legacy = JSON.parse(
+      JSON.stringify(
+        buildResultsSnapshot({
+          startedAt: "legacy",
+          campaignId: "v2-legacy-metadata",
+          reps: 2,
+          records: [metricRecord({ arm: "solo-medium", repetition: 1 })],
+          standardSpeedConfirmed: true,
+        }),
+      ),
+    ) as Record<string, unknown>;
+    for (const field of ["environment", "ordering", "methodologyDigest", "retryPolicy"]) {
+      delete legacy[field];
+    }
+    fs.writeFileSync(path.join(directory, "legacy.v2.json"), JSON.stringify(legacy));
+
+    const loaded = loadV2Campaign(directory, "v2-legacy-metadata");
+    assert.equal(loaded.environment, undefined);
+    assert.equal(loaded.ordering, undefined);
+    assert.equal(loaded.methodologyDigest, undefined);
+    assert.equal(loaded.retryPolicy, undefined);
+    const report = renderReport(loaded);
+    assert.match(report, /Environment: unknown/);
+    assert.match(report, /Execution ordering: unknown/);
+    assert.match(report, /Methodology digest: `unknown`/);
+    assert.match(report, /Retry treatment: unknown/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("V3 campaign analysis rejects an incompatible genuine result shard", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bench-v3-invalid-shard-"));
   try {

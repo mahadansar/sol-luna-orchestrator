@@ -120,9 +120,10 @@ The first post-V3 routing-policy correction permits cheap bounded structural
 inspection before preflight, classifies candidate delegated leaves instead of
 whole objectives, separates parallel hazards from delegation economics, and
 narrowly routes three-or-more explicit small read-only/disjoint/mechanical seams
-with shared-only final proof to `either`. Mutable shared state and shared core
-still block parallel execution through the existing gates, while a substantial
-leaf may be considered for single or sequential delegation. Routing telemetry
+with shared-only final proof to `either`. Mutable shared state still blocks
+parallel execution; shared core does too unless the caller deliberately accepts
+that declared overlap with `allowOverlappingScopes: true`. A substantial leaf may
+be considered for single or sequential delegation. Routing telemetry
 adds the matched R0-R5 rule and explicit-versus-defaulted card provenance without
 persisting seam text. Deterministic coverage includes the recorded V3-equivalent
 static-site, observability-parser, and parent-owned-AST renderer shapes; no V3 run

@@ -1,6 +1,7 @@
 /** Combine committed benchmark result files without making model calls. */
 import fs from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
 import {
   assertCampaignCompatibility,
@@ -13,6 +14,35 @@ import { renderReport, type ResultsFile } from "./report.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_DIR = path.resolve(HERE, "..", "..", "bench", "results");
+
+const reproducibilityFields = [
+  "environment",
+  "ordering",
+  "methodologyDigest",
+  "retryPolicy",
+] as const satisfies readonly (keyof ResultsFile)[];
+
+function combineReproducibilityMetadata(
+  matching: readonly { file: string; data: ResultsFile }[],
+): Pick<ResultsFile, (typeof reproducibilityFields)[number]> {
+  const metadata: Record<string, unknown> = {};
+  for (const field of reproducibilityFields) {
+    const first = matching.find(({ data }) => data[field] !== undefined);
+    if (!first) continue;
+    for (const candidate of matching) {
+      if (
+        candidate.data[field] !== undefined &&
+        !isDeepStrictEqual(candidate.data[field], first.data[field])
+      ) {
+        throw new Error(
+          `Campaign shard ${path.basename(candidate.file)} has incompatible ${field}`,
+        );
+      }
+    }
+    metadata[field] = first.data[field];
+  }
+  return metadata as Pick<ResultsFile, (typeof reproducibilityFields)[number]>;
+}
 
 export function loadCampaign(
   directory: string,
@@ -57,6 +87,7 @@ export function loadCampaign(
   const shards = matching as LoadedCampaignShard[];
   const compatibility = campaignCompatibilityFromShard(shards[0]!);
   assertCampaignCompatibility(shards, compatibility);
+  const reproducibilityMetadata = combineReproducibilityMetadata(matching);
   collectCompletedCampaignCells(shards, [...campaignIds][0]!);
   return {
     schema: 4,
@@ -69,6 +100,7 @@ export function loadCampaign(
     campaignId: matching[0]!.data.campaignId,
     holdoutFreezeSha: matching[0]!.data.holdoutFreezeSha,
     productionBaseline: matching[0]!.data.productionBaseline,
+    ...reproducibilityMetadata,
     reps: Math.max(
       ...matching.flatMap(({ data }) => data.records.map((record) => record.repetition)),
     ),

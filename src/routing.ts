@@ -137,7 +137,11 @@ export const ROUTING_GATES = [
 ] as const;
 export type RoutingGate = (typeof ROUTING_GATES)[number];
 
-/** Decisive coupling signals. Any one of them recommends Solo, in every mode. */
+/**
+ * Coupling signals used by R1 and R4. Architectural integration, and small work
+ * with mutable/shared-core coupling, recommend Solo; substantial shared leaves
+ * can remain `either` for single or sequential delegation.
+ */
 export const TIER_1_SIGNALS = [
   "shared-mutable-state",
   "shared-core",
@@ -434,7 +438,7 @@ function selectRefusedGate(
   return null;
 }
 
-/** Decisive coupling signals, from resolved values, in every mode. */
+/** Coupling signals consumed by the size-sensitive R1/R4 rules. */
 function tier1Signals(resolved: ResolvedRoutingValues): Tier1Signal[] {
   const signals: Tier1Signal[] = [];
   // read-only shared state is deliberately absent: it is compatible with
