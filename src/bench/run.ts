@@ -31,6 +31,7 @@ import {
 } from "./campaign.js";
 import {
   BENCHMARK_V2_PRICING_PROFILE,
+  BENCHMARK_V3_PRICING_PROFILE,
   calculateBenchmarkCredits,
   copyPricingProfile,
   type BenchmarkCreditSummary,
@@ -119,13 +120,15 @@ export const BENCHMARK_V3_EXECUTION_PROFILE = BENCHMARK_V2_EXECUTION_PROFILE;
 export function currentCampaignCompatibility(
   suite: SuiteName = "v2",
 ): CampaignCompatibility {
+  const pricingProfile =
+    suite === "v3" ? BENCHMARK_V3_PRICING_PROFILE : BENCHMARK_V2_PRICING_PROFILE;
   return {
     schema: 4,
     benchmarkVersion: suite === "v3" ? 3 : 2,
     suite,
     supervisorModel: SUPERVISOR_MODEL,
     supervisorEffort: "medium",
-    pricingProfile: copyPricingProfile(BENCHMARK_V2_PRICING_PROFILE),
+    pricingProfile: copyPricingProfile(pricingProfile),
     executionProfile: { ...BENCHMARK_V2_EXECUTION_PROFILE },
     ...(suite === "v3"
       ? {
@@ -477,6 +480,8 @@ export function buildResultsSnapshot(options: {
 }): BenchmarkResultsSnapshot {
   assertStandardSpeedConfirmed(options.standardSpeedConfirmed);
   const suite = options.suite ?? "v2";
+  const pricingProfile =
+    suite === "v3" ? BENCHMARK_V3_PRICING_PROFILE : BENCHMARK_V2_PRICING_PROFILE;
   if (suite === "v3") {
     assertV3PricingProfileConfirmed(options.pricingProfileConfirmed === true);
     // A holdout result nobody can attribute to a commit, an order, and a
@@ -526,7 +531,7 @@ export function buildResultsSnapshot(options: {
     supervisorModel: SUPERVISOR_MODEL,
     supervisorEffort: "medium",
     executionProfile: { ...BENCHMARK_V2_EXECUTION_PROFILE },
-    pricingProfile: copyPricingProfile(BENCHMARK_V2_PRICING_PROFILE),
+    pricingProfile: copyPricingProfile(pricingProfile),
     campaignId: options.campaignId ?? options.startedAt,
     startedAt: options.startedAt,
     platform: `${process.platform} ${process.arch}`,
@@ -1341,6 +1346,8 @@ async function runArm(
     supervisorUsage,
     supervisorEffort: armSpec.effort,
     delegations: telemetry.delegations,
+    pricingProfile:
+      suite === "v3" ? BENCHMARK_V3_PRICING_PROFILE : BENCHMARK_V2_PRICING_PROFILE,
   });
 
   // Re-read every executable/dependency byte after the cell and its grading,

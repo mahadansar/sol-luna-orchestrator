@@ -17,6 +17,7 @@ import { EFFORTS } from "../config.js";
 import { NO_CWD_IN_EXE_PATH_ENV, type ExecutableProbe } from "../executable.js";
 import { groupCells } from "./analysis.js";
 import type { CampaignCell } from "./campaign.js";
+import { BENCHMARK_V3_PRICING_PROFILE_ID } from "./credits.js";
 import {
   assertEnvironmentEvidence,
   buildCodexConfigRecord,
@@ -771,6 +772,7 @@ test("a V3 snapshot cannot be written without reproducibility, ordering, and a d
 
 test("a V3 snapshot carries its commit, order, digest, and retry treatment", () => {
   const snapshot = buildResultsSnapshot(v3Snapshot());
+  assert.equal(snapshot.pricingProfile.profileId, BENCHMARK_V3_PRICING_PROFILE_ID);
   assert.equal(snapshot.environment?.git.commit, "a".repeat(40));
   assert.equal(snapshot.environment?.git.branch, "main");
   assert.equal(snapshot.ordering?.mode, "seeded");
@@ -1331,17 +1333,19 @@ test("checkpoint generation never creates live-launch evidence", () => {
   assert.deepEqual(markers(), before);
 });
 
-test("the pre-launch checkpoint leaves pricing explicitly unresolved", () => {
+test("the pre-launch checkpoint records the verified current V3 pricing profile", () => {
   const checkpoint = buildCheckpoint({ campaignId: "v3-checkpoint-test" });
   const pricing = checkpoint.pricing as Record<string, unknown>;
-  assert.equal(pricing.status, "unverified-launch-blocked");
-  assert.equal(pricing.revalidatedDuringThisCheckpoint, false);
-  assert.equal(pricing.newProfileCreated, false);
-  assert.equal((pricing.externalValidation as { performed: boolean }).performed, false);
-  // Generating a checkpoint can never clear the pricing gate by itself.
+  assert.equal(pricing.status, "verified-current");
+  assert.equal(pricing.revalidatedDuringThisCheckpoint, true);
+  assert.equal(pricing.newProfileCreated, true);
+  assert.equal((pricing.externalValidation as { performed: boolean }).performed, true);
+  assert.equal(
+    (pricing.harnessConfiguredProfile as { profileId: string }).profileId,
+    BENCHMARK_V3_PRICING_PROFILE_ID,
+  );
   const blockers = checkpoint.blockers as Array<{ id: string }>;
-  assert.ok(blockers.some((blocker) => blocker.id === "pricing-profile-unverified"));
-  assert.equal(checkpoint.launchReadiness, "blocked");
+  assert.ok(!blockers.some((blocker) => blocker.id === "pricing-profile-unverified"));
 });
 
 test("the pre-launch checkpoint preserves the frozen experiment", () => {

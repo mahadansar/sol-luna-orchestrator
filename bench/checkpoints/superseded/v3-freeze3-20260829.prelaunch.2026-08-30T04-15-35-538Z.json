@@ -1,14 +1,22 @@
 {
   "schema": "sol-luna/bench/v3-prelaunch-checkpoint@3",
   "title": "Benchmark V3 / freeze 3 pre-launch checkpoint",
-  "generatedAt": "2026-08-30T04:15:31.456Z",
+  "generatedAt": "2026-08-29T20:14:38.704Z",
   "generatedBy": "npm run bench:v3:checkpoint (dist/bench/prelaunch.js)",
   "launchReadiness": "blocked",
   "blockers": [
     {
+      "id": "pricing-profile-unverified",
+      "severity": "blocking",
+      "summary": "The configured pricing profile benchmark-v2-chatgpt-plus-codex-credits-2026-08-24 has not been revalidated against the account and credit schedule that will execute V3.",
+      "why": "The frozen methodology makes pricing a measurement dependency that must be revalidated immediately before live execution. No authoritative source was consulted here, and fabricating one is prohibited.",
+      "ownedBy": "launch operator",
+      "clears": "Read the current credit rates on the executing account. If unchanged, record the validation and launch with --confirm-pricing-profile. If changed, add a new dated profile and select it before launching."
+    },
+    {
       "id": "working-tree-not-clean",
       "severity": "blocking-procedural",
-      "summary": "5 path(s) differ from the recorded commit, including this checkpoint itself.",
+      "summary": "2 path(s) differ from the recorded commit, including this checkpoint itself.",
       "why": "A V3 launch refuses a dirty tree because the recorded commit would not describe the code that ran.",
       "ownedBy": "launch operator",
       "clears": "Commit the freeze revision and this checkpoint — the methodology requires the checkpoint be retained before live execution — then confirm `git status --porcelain` is empty immediately before launching."
@@ -16,9 +24,21 @@
   ],
   "advisories": [
     {
+      "id": "canonical-verify-not-recorded",
+      "severity": "non-blocking",
+      "summary": "`npm run verify` was not observed by this checkpoint; it must pass immediately before launch.",
+      "impact": "Evidence completeness only. Re-run with --verify-exit <code> to record it."
+    },
+    {
+      "id": "no-pricing-profile-selection-flag",
+      "severity": "non-blocking",
+      "summary": "currentCampaignCompatibility and buildResultsSnapshot use the frozen V2 pricing profile for V3; there is no CLI flag to select another.",
+      "impact": "If revalidation finds rate drift, a harness change is required before launch. That is a harness change, not a methodology change, and does not disturb the digest gate."
+    },
+    {
       "id": "head-is-not-the-production-baseline",
       "severity": "non-blocking",
-      "summary": "HEAD (62a27b7704b526ca58166ad3431c33c31e327dc1) is not the pinned production baseline df215a170e6a88a6097c56f7ca404358d9d4b050.",
+      "summary": "HEAD (9092257aad1ec890c45054081b3792de1f44b97b) is not the pinned production baseline df215a170e6a88a6097c56f7ca404358d9d4b050.",
       "impact": "The commit that actually executes is recorded separately in environment.git.commit; a report must not present HEAD as the baseline."
     }
   ],
@@ -284,7 +304,7 @@
       "committedAt": "2026-08-29T20:21:53+05:00",
       "packageVersionAtBaseline": "0.11.0"
     },
-    "headCommit": "62a27b7704b526ca58166ad3431c33c31e327dc1",
+    "headCommit": "9092257aad1ec890c45054081b3792de1f44b97b",
     "headBranch": "benchmark-v3-wip",
     "headIsProductionBaseline": false,
     "distinction": "holdoutFreezeSha identifies the reviewed methodology; productionBaseline identifies the released product under evaluation. They are different concepts and are never set from one another."
@@ -358,20 +378,20 @@
     "dependsOnExternalMcpRegistration": false
   },
   "pricing": {
-    "status": "verified-current",
-    "revalidatedDuringThisCheckpoint": true,
+    "status": "unverified-launch-blocked",
+    "revalidatedDuringThisCheckpoint": false,
     "harnessConfiguredProfile": {
-      "profileId": "benchmark-v3-chatgpt-work-codex-credits-2026-08-30",
-      "sourceUrl": "https://learn.chatgpt.com/docs/pricing",
-      "snapshotDate": "2026-08-30",
+      "profileId": "benchmark-v2-chatgpt-plus-codex-credits-2026-08-24",
+      "sourceUrl": "https://help.openai.com/en/articles/20001106",
+      "snapshotDate": "2026-08-24",
       "units": "credits-per-1m-tokens",
-      "applicability": "Token-based ChatGPT Work / Codex credit rate card used by Benchmark V3; excludes the legacy rate card and API-key billing",
-      "promotionalTerms": "GPT-5.6 Sol promotional pricing is available at least through 2026-11-21",
+      "applicability": "Token-based Codex credit rates for the ChatGPT Plus account used by Benchmark V2",
+      "promotionalTerms": null,
       "rates": {
         "gpt-5.6-sol": {
-          "input": 100,
-          "cachedInput": 10,
-          "output": 500,
+          "input": 125,
+          "cachedInput": 12.5,
+          "output": 750,
           "cacheWrite": 0
         },
         "gpt-5.6-luna": {
@@ -395,33 +415,19 @@
       "estimateNaming": "rateCardCredits / estimatedCredits",
       "actualCreditsField": "separate, nullable, never derived by summing estimates",
       "incompleteUsageYieldsNullNotZero": true,
-      "applicabilityMatchesV3CreditBasis": true
+      "applicabilityStillScopedToTheV2Account": true
     },
     "externalValidation": {
-      "performed": true,
-      "checkedOn": "2026-08-30",
-      "officialSources": {
-        "creditRateCard": "https://learn.chatgpt.com/docs/pricing",
-        "solUsdTokenRates": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
-        "lunaUsdTokenRates": "https://developers.openai.com/api/docs/models/gpt-5.6-luna"
-      },
-      "equivalentUsdPer1mTokens": {
-        "gpt-5.6-sol": {
-          "input": 4,
-          "cachedInput": 0.4,
-          "output": 20
-        },
-        "gpt-5.6-luna": {
-          "input": 0.2,
-          "cachedInput": 0.02,
-          "output": 1.2
-        }
-      },
-      "accountingBasis": "ChatGPT Work / Codex credits per 1M tokens are primary; API USD rates are recorded only as equivalent token-rate evidence",
-      "cacheWriteSemantics": "The ChatGPT Work / Codex credit rate card has no separate cache-write rate, so the Codex cacheWriteInputTokens diagnostic remains uncharged; the API model pages separately state that API cache writes are billed at 1.25x uncached input and are not used for this credit-first benchmark"
+      "performed": false,
+      "reason": "Revalidation requires the current provider credit schedule for the account that will execute the campaign. No authoritative rate-card or account source was consulted while generating this checkpoint, and the frozen methodology forbids inventing one.",
+      "requiredEvidence": [
+        "current provider credit rates for gpt-5.6-sol and gpt-5.6-luna",
+        "confirmation that the account tier and credit schedule are unchanged since 2026-08-24",
+        "confirmation that no promotional term applies where the profile records null"
+      ]
     },
-    "newProfileCreated": true,
-    "operatorAction": "Launch with --confirm-pricing-profile to attest that the dated V3 profile still matches the executing account's token-based ChatGPT Work / Codex credit schedule."
+    "newProfileCreated": false,
+    "operatorAction": "Revalidate the rate card immediately before launch. If unchanged, reuse the profile and record --confirm-pricing-profile as the attestation. If it drifted, add a new dated profile, select it, and leave every V2 record unchanged."
   },
   "executionProfile": {
     "status": "frozen",
@@ -726,13 +732,13 @@
     ]
   },
   "environment": {
-    "capturedAt": "2026-08-30T04:15:31.458Z",
+    "capturedAt": "2026-08-29T20:14:38.706Z",
     "git": {
-      "commit": "62a27b7704b526ca58166ad3431c33c31e327dc1",
+      "commit": "9092257aad1ec890c45054081b3792de1f44b97b",
       "branch": "benchmark-v3-wip",
-      "describe": "v0.11.0-5-g62a27b7-dirty",
+      "describe": "v0.11.0-4-g9092257-dirty",
       "workingTreeClean": false,
-      "dirtyPathCount": 5
+      "dirtyPathCount": 2
     },
     "runtime": {
       "nodeVersion": "v26.7.0",
@@ -783,12 +789,8 @@
         "DISPLAY",
         "DriverData",
         "EDITOR",
-        "EFC_10812_1262719628",
-        "EFC_10812_1592913036",
-        "EFC_10812_2283032206",
-        "EFC_10812_2775293581",
-        "EFC_10812_3789132940",
-        "EFC_10812_4126798990",
+        "EFC_5104_1592913036",
+        "EFC_5104_4126798990",
         "EXEPATH",
         "GDAL_DATA",
         "GH_PAGER",
@@ -899,8 +901,8 @@
         "npm_package_name",
         "npm_package_version"
       ],
-      "nameCount": 142,
-      "namesSha256": "8a2a27106e67ea81f28e84106eb6a5c2d86ea8cec5a1074b9c770f3a1df57dca",
+      "nameCount": 138,
+      "namesSha256": "0c77f801aa40f9c1402acae38b516451a4b84f970feba2eccdf07a7d738bd32e",
       "entries": [
         {
           "name": "ACLOCAL_PATH",
@@ -1022,27 +1024,11 @@
           "representation": "presence-only"
         },
         {
-          "name": "EFC_10812_1262719628",
+          "name": "EFC_5104_1592913036",
           "representation": "presence-only"
         },
         {
-          "name": "EFC_10812_1592913036",
-          "representation": "presence-only"
-        },
-        {
-          "name": "EFC_10812_2283032206",
-          "representation": "presence-only"
-        },
-        {
-          "name": "EFC_10812_2775293581",
-          "representation": "presence-only"
-        },
-        {
-          "name": "EFC_10812_3789132940",
-          "representation": "presence-only"
-        },
-        {
-          "name": "EFC_10812_4126798990",
+          "name": "EFC_5104_4126798990",
           "representation": "presence-only"
         },
         {
@@ -1489,13 +1475,13 @@
         "verbatim": 2,
         "url-redacted": 0,
         "trust-material-fingerprint": 1,
-        "presence-only": 138,
+        "presence-only": 134,
         "credential-opaque": 1
       },
       "credentialShapedNames": [
         "CODEX_SESSION_ID"
       ],
-      "opaqueValueCount": 139
+      "opaqueValueCount": 135
     },
     "codex": {
       "homeSource": "default",
@@ -1578,18 +1564,18 @@
         "driftPrevention": "src/bench/harness.test.ts performs a defense-in-depth syntactic scan for the explicitly supported direct process.env access forms and fails when one is in neither list. It is not a semantic proof of computed, indirect, or future access patterns, and detects nothing read by the Codex SDK, the Codex CLI, Node, or the operating system."
       },
       "ambient": {
-        "nameCount": 142,
-        "namesSha256": "8a2a27106e67ea81f28e84106eb6a5c2d86ea8cec5a1074b9c770f3a1df57dca",
+        "nameCount": 138,
+        "namesSha256": "0c77f801aa40f9c1402acae38b516451a4b84f970feba2eccdf07a7d738bd32e",
         "counts": {
           "production-owned": 0,
           "verbatim": 2,
           "url-redacted": 0,
           "trust-material-fingerprint": 1,
-          "presence-only": 138,
+          "presence-only": 134,
           "credential-opaque": 1
         },
         "credentialShapedNameCount": 1,
-        "opaqueValueCount": 139,
+        "opaqueValueCount": 135,
         "safeValueKeys": [
           "LANG",
           "LC_ALL",
@@ -1829,9 +1815,9 @@
       },
       {
         "command": "npm run verify",
-        "exitCode": 0,
-        "result": "pass",
-        "detail": "Externally observed canonical gate: typecheck, format:check, the full test suite, the protocol smoke, and bench:validate."
+        "exitCode": null,
+        "result": "not-recorded",
+        "detail": "Not observed by this checkpoint. Re-run with --verify-exit <code> to record the canonical gate's result."
       }
     ],
     "deliberatelyNotExecuted": [
