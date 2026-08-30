@@ -2621,6 +2621,8 @@ test("routing events render their declaration without the parent's seam labels",
     seamCount: 2,
     unknownCount: 1,
     route: "solo",
+    ruleId: "R1",
+    cardProvenance: "pessimistic-defaults",
     gates: ["parallel-shared-core"],
     signals: ["shared-core", "small-seam"],
     refusedGate: null,
@@ -2639,6 +2641,8 @@ test("routing events render their declaration without the parent's seam labels",
   assert.equal(parsed.declaredCoreOverlap, "shared-core");
   assert.equal(parsed.unknownCount, 1);
   assert.equal(parsed.seamCount, 2);
+  assert.equal(parsed.ruleId, "R1");
+  assert.equal(parsed.cardProvenance, "pessimistic-defaults");
   assert.equal(parsed.seams, undefined);
   assert.equal(parsed.objective, undefined);
   assert.equal(parsed.score, undefined);
@@ -2652,6 +2656,8 @@ test("an advisory preflight record carries no batch and no seam labels", () => {
     type: "routing.preflight",
     preflightId: "p1",
     route: "either",
+    ruleId: "R3",
+    cardProvenance: "explicit",
     seamCount: 3,
     unknownCount: 0,
     gates: [],
@@ -2669,6 +2675,8 @@ test("an advisory preflight record carries no batch and no seam labels", () => {
   assert.equal(parsed.batchId, undefined, "no batch exists yet");
   assert.equal(parsed.seams, undefined);
   assert.equal(parsed.route, "either");
+  assert.equal(parsed.ruleId, "R3");
+  assert.equal(parsed.cardProvenance, "explicit");
   assert.equal(parsed.parallelEligible, true);
 });
 

@@ -503,6 +503,8 @@ export async function runBatch(
       seamCount: routing.seamCount,
       unknownCount: routing.unknownCount,
       route: routing.route,
+      ruleId: routing.ruleId,
+      cardProvenance: routing.cardProvenance,
       gates: routing.gates,
       signals: routing.signals,
       refusedGate: routing.refusedGate,

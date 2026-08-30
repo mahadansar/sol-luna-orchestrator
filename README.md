@@ -85,7 +85,8 @@ The normal parent process registers exactly five MCP tools:
 - `delegate_task` - run one bounded task.
 - `delegate_tasks` - run sequential or parallel task batches.
 - `continue_task` - resume an eligible task with an explicit follow-up.
-- `routing_preflight` - ask for cheap, advisory routing guidance.
+- `routing_preflight` - after cheap bounded structural inspection, classify
+  concrete candidate leaves and ask for advisory routing guidance.
 - `explore` - investigate an admitted scope without changing it.
 
 Worker processes register **no MCP tools** and cannot recurse into delegation.

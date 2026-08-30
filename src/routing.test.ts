@@ -100,7 +100,7 @@ const MAX_ADVISORY_TASK_COUNT = 12;
  * merely reviewed. The shape line is measured inside this same total and did not
  * require raising it.
  */
-const PREFLIGHT_TEXT_BUDGET = 400;
+const PREFLIGHT_TEXT_BUDGET = 460;
 
 // --- Unknown resolution -----------------------------------------------------
 
@@ -307,21 +307,36 @@ test("routing - the advisory surface refuses nothing at all", () => {
 
 // --- Tier 1 -----------------------------------------------------------------
 
-test("routing - each Tier 1 coupling signal alone recommends solo in every mode", () => {
+test("routing - shared state blocks parallel without making substantial delegation impossible", () => {
   const cases: Array<[string, Partial<RoutingPreflightCard>]> = [
     ["shared-mutable-state", { sharedState: "mutable" }],
     ["shared-core", { coreOverlap: "shared-core" }],
-    ["architectural-integration", { integration: "architectural" }],
   ];
   for (const [signal, overrides] of cases) {
     for (const mode of ALL_MODES) {
       const evaluation = evaluateRouting(clean(overrides), { mode, taskCount: 2 });
-      assert.equal(evaluation.route, "solo", `${signal} in ${mode} should advise solo`);
+      assert.equal(
+        evaluation.route,
+        "either",
+        `${signal} may run singly or sequentially`,
+      );
+      assert.equal(evaluation.ruleId, "R4");
       assert.ok(
         evaluation.signals.includes(signal as never),
         `${signal} should be reported in ${mode}`,
       );
     }
+  }
+});
+
+test("routing - architectural integration remains decisive solo advice", () => {
+  for (const mode of ALL_MODES) {
+    const evaluation = evaluateRouting(clean({ integration: "architectural" }), {
+      mode,
+      taskCount: 2,
+    });
+    assert.equal(evaluation.route, "solo");
+    assert.equal(evaluation.ruleId, "R1");
   }
 });
 
@@ -344,7 +359,103 @@ test("routing - both Tier 2 signals recommend solo", () => {
     { mode: "parallel", taskCount: 2 },
   );
   assert.equal(evaluation.route, "solo");
+  assert.equal(evaluation.ruleId, "R3");
   assert.deepEqual(evaluation.signals, ["small-seam", "shared-verification-only"]);
+});
+
+test("routing - three explicit small disjoint read-only seams escape R3 Solo narrowly", () => {
+  const evaluation = evaluateRouting(
+    clean({
+      seams: ["tokenizer", "renderer", "fingerprinter"],
+      seamSize: "small",
+      sharedState: "read-only",
+      coreOverlap: "disjoint",
+      integration: "mechanical",
+      verification: "shared-only",
+    }),
+    { mode: "preflight", envelope: WIDE_ENVELOPE },
+  );
+  assert.equal(evaluation.ruleId, "R3");
+  assert.equal(evaluation.route, "either");
+  assert.equal(evaluation.parallelEligible, true);
+  assert.equal(evaluation.shape?.mechanism, "delegate_tasks_sequential");
+});
+
+test("routing correction - obvious single small coupled seam stays Solo", () => {
+  const evaluation = evaluateRouting(
+    clean({
+      seams: ["coupled-leaf"],
+      seamSize: "small",
+      sharedState: "mutable",
+      coreOverlap: "shared-core",
+    }),
+    { mode: "single", envelope: WIDE_ENVELOPE },
+  );
+  assert.equal(evaluation.route, "solo");
+  assert.equal(evaluation.ruleId, "R1");
+});
+
+test("routing correction - substantial mutable leaf permits one sequential owner", () => {
+  const evaluation = evaluateRouting(
+    clean({ seams: ["mutable-leaf"], sharedState: "mutable" }),
+    { mode: "single", taskCount: 1, envelope: WIDE_ENVELOPE },
+  );
+  assert.equal(evaluation.parallelEligible, false);
+  assert.equal(evaluation.route, "either");
+  assert.equal(evaluation.ruleId, "R4");
+  assert.equal(evaluation.shape?.mechanism, "delegate_task");
+});
+
+test("routing correction - static-site pipeline repetition-2 shape is delegation-plausible enough", () => {
+  const evaluation = evaluateRouting(
+    clean({
+      seams: ["tokenizer", "template renderer", "asset fingerprinter"],
+      seamSize: "small",
+      sharedState: "read-only",
+      coreOverlap: "disjoint",
+      integration: "mechanical",
+      verification: "shared-only",
+    }),
+    { mode: "preflight", envelope: WIDE_ENVELOPE },
+  );
+  assert.equal(evaluation.ruleId, "R3");
+  assert.equal(evaluation.route, "either");
+  assert.equal(evaluation.shape?.mechanism, "delegate_tasks_sequential");
+});
+
+test("routing correction - observability parser leaves are classified independently", () => {
+  for (const seam of ["JSONL parser", "access-log parser"]) {
+    const evaluation = evaluateRouting(
+      clean({ seams: [seam], sharedState: "read-only" }),
+      { mode: "single", taskCount: 1, envelope: WIDE_ENVELOPE },
+    );
+    assert.equal(evaluation.route, "delegation-plausible");
+    assert.equal(evaluation.ruleId, "R5");
+    assert.equal(evaluation.shape?.mechanism, "delegate_task");
+  }
+});
+
+test("routing correction - parent-retained AST contract leaves renderers bounded", () => {
+  for (const seam of ["HTML renderer", "text renderer", "Markdown renderer"]) {
+    const evaluation = evaluateRouting(
+      clean({ seams: [seam], sharedState: "read-only" }),
+      { mode: "single", taskCount: 1, envelope: WIDE_ENVELOPE },
+    );
+    assert.equal(evaluation.route, "delegation-plausible");
+    assert.equal(evaluation.parallelEligible, false, "one leaf is not a parallel plan");
+    assert.equal(evaluation.shape?.mechanism, "delegate_task");
+  }
+});
+
+test("routing correction - provenance distinguishes explicit cards from defaults", () => {
+  const explicit = evaluateRouting(clean(), { mode: "preflight" });
+  const defaulted = evaluateRouting(clean({ verification: "unknown" }), {
+    mode: "preflight",
+  });
+  assert.equal(explicit.cardProvenance, "explicit");
+  assert.equal(explicit.ruleId, "R5");
+  assert.equal(defaulted.cardProvenance, "pessimistic-defaults");
+  assert.equal(defaulted.ruleId, "R4");
 });
 
 test("routing - exactly one Tier 2 signal is ambiguous, not a delegation", () => {
@@ -491,12 +602,15 @@ test("routing - the whole vocabulary upholds the design's invariants", () => {
       for (const taskCount of [1, 3]) {
         const evaluation = evaluateRouting(card, { mode, taskCount });
 
-        // Any Tier 1 coupling signal is decisive, whatever else is present.
+        // Architectural integration and small coupled work remain decisive.
         const coupled =
-          resolved.sharedState === "mutable" ||
-          resolved.coreOverlap === "shared-core" ||
-          resolved.integration === "architectural";
-        if (coupled) assert.equal(evaluation.route, "solo");
+          resolved.sharedState === "mutable" || resolved.coreOverlap === "shared-core";
+        if (
+          resolved.integration === "architectural" ||
+          (coupled && resolved.seamSize === "small")
+        ) {
+          assert.equal(evaluation.route, "solo");
+        }
         if (evaluation.route === "delegation-plausible") {
           assert.equal(coupled, false);
           assert.equal(resolved.seamSize, "substantial");
@@ -652,7 +766,7 @@ test("routing - the advisory line is omitted when routing has nothing to add", (
   const plausible = evaluateRouting(clean(), { mode: "parallel", taskCount: 2 });
   assert.equal(renderRoutingAdvisory(plausible), null);
 
-  const solo = evaluateRouting(clean({ sharedState: "mutable" }), {
+  const solo = evaluateRouting(clean({ integration: "architectural" }), {
     mode: "sequential",
     taskCount: 2,
   });
@@ -996,7 +1110,7 @@ test("routing - the rendered shape line never contradicts the rendered route", (
   }
 });
 
-test("routing - seam count alone decides nothing about delegating", () => {
+test("routing - seam count alone decides nothing about parallel safety", () => {
   // Same seam count, same envelope; only the coupling declaration differs.
   const coupled = evaluateRouting(clean({ sharedState: "mutable" }), {
     mode: "preflight",
@@ -1007,7 +1121,9 @@ test("routing - seam count alone decides nothing about delegating", () => {
     envelope: WIDE_ENVELOPE,
   });
   assert.equal(coupled.seamCount, clean2.seamCount);
-  assert.equal(coupled.shape?.mechanism, "solo");
+  assert.equal(coupled.route, "either");
+  assert.equal(coupled.parallelEligible, false);
+  assert.equal(coupled.shape?.mechanism, "delegate_tasks_sequential");
   assert.equal(clean2.shape?.mechanism, "delegate_tasks_parallel");
 });
 
@@ -1056,19 +1172,25 @@ test("routing - seams that cannot be proven apart are staggered, not raced", () 
   });
 });
 
-test("routing - dependent seams recommend solo rather than a delegated shape", () => {
+test("routing - substantial shared seams stagger while architectural integration stays solo", () => {
   for (const coupling of [
     { sharedState: "mutable" } as const,
     { coreOverlap: "shared-core" } as const,
-    { integration: "architectural" } as const,
   ]) {
     const evaluation = evaluateRouting(clean({ seams: ["a", "b"], ...coupling }), {
       mode: "preflight",
       envelope: WIDE_ENVELOPE,
     });
-    assert.equal(evaluation.route, "solo");
-    assert.equal(evaluation.shape?.mechanism, "solo");
+    assert.equal(evaluation.route, "either");
+    assert.equal(evaluation.parallelEligible, false);
+    assert.equal(evaluation.shape?.mechanism, "delegate_tasks_sequential");
   }
+  const architectural = evaluateRouting(clean({ integration: "architectural" }), {
+    mode: "preflight",
+    envelope: WIDE_ENVELOPE,
+  });
+  assert.equal(architectural.route, "solo");
+  assert.equal(architectural.shape?.mechanism, "solo");
 });
 
 test("routing - an entirely undeclared card is never recommended concurrency", () => {

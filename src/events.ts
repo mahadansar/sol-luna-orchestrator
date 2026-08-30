@@ -14,7 +14,9 @@ import type {
   DeclaredRoutingFields,
   ExecutionMechanism,
   RoutingGate,
+  RoutingCardProvenance,
   RoutingRoute,
+  RoutingRuleId,
   RoutingSignal,
 } from "./routing.js";
 import type { Effort } from "./config.js";
@@ -346,6 +348,10 @@ export type OrchestratorEvent =
       batchId?: undefined;
       preflightId: string;
       route: RoutingRoute;
+      /** Added in routing-policy correction; absent from legacy records. */
+      ruleId?: RoutingRuleId;
+      /** Added in routing-policy correction; absent from legacy records. */
+      cardProvenance?: RoutingCardProvenance;
       seamCount: number;
       unknownCount: number;
       gates: RoutingGate[];
@@ -369,6 +375,10 @@ export type OrchestratorEvent =
       seamCount: number;
       unknownCount: number;
       route: RoutingRoute;
+      /** Added in routing-policy correction; absent from legacy records. */
+      ruleId?: RoutingRuleId;
+      /** Added in routing-policy correction; absent from legacy records. */
+      cardProvenance?: RoutingCardProvenance;
       gates: RoutingGate[];
       signals: RoutingSignal[];
       refusedGate: RoutingGate | null;

@@ -4346,18 +4346,18 @@ test("routing paths - a single delegation can only be refused for declaring no s
   assert.match(refusal ?? "", /solo|declare the seams/i);
 });
 
-test("routing paths - coupling recommends solo in single, sequential and parallel modes", () => {
+test("routing paths - substantial shared core permits conditional non-parallel delegation", () => {
   for (const mode of ["single", "sequential", "parallel"] as const) {
     const line = routingAdvisoryLine(routingCard({ coreOverlap: "shared-core" }), {
       mode,
       taskCount: 2,
       allowOverlappingScopes: true,
     });
-    assert.match(line ?? "", /^ROUTING: solo advised/, `${mode} should advise solo`);
+    assert.match(line ?? "", /^ROUTING: either/, `${mode} should remain conditional`);
     assert.match(line ?? "", /shared-core/, `${mode} should name the signal`);
     assert.match(
       line ?? "",
-      /executed as requested/,
+      /needs explicit justification/,
       `${mode} must not read as a refusal`,
     );
   }
@@ -4383,6 +4383,8 @@ test("routing paths - an attached card records its raw declaration and route", a
     assert.equal(declared?.seamCount, 1);
     assert.equal(declared?.unknownCount, 0);
     assert.equal(declared?.route, "solo");
+    assert.equal(declared?.ruleId, "R2");
+    assert.equal(declared?.cardProvenance, "explicit");
     assert.equal(declared?.declaredSeamSize, "small");
     assert.equal(declared?.declaredSharedState, "none");
     assert.equal(declared?.declaredCoreOverlap, "disjoint");

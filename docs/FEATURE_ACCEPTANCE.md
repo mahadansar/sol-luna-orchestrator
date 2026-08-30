@@ -116,6 +116,17 @@ without treating `allowedModels` list position as an inferred strength order. Te
 in single delegation, preflight, and batch execution records recommended mechanism,
 worker count, concurrency, effort, selected model, selected effort, and selection reason;
 existing worker lifecycle and attempt records remain the authority on actual execution.
+The first post-V3 routing-policy correction permits cheap bounded structural
+inspection before preflight, classifies candidate delegated leaves instead of
+whole objectives, separates parallel hazards from delegation economics, and
+narrowly routes three-or-more explicit small read-only/disjoint/mechanical seams
+with shared-only final proof to `either`. Mutable shared state and shared core
+still block parallel execution through the existing gates, while a substantial
+leaf may be considered for single or sequential delegation. Routing telemetry
+adds the matched R0-R5 rule and explicit-versus-defaulted card provenance without
+persisting seam text. Deterministic coverage includes the recorded V3-equivalent
+static-site, observability-parser, and parent-owned-AST renderer shapes; no V3 run
+or benchmark fixture was changed or rerun.
 The production single and batch surfaces now pass selected model and effort into
 the Codex SDK turn, and continuation retains the model/effort lineage it actually
 resumes. An eligible P1.1 bounded retry can bootstrap authenticated lineage,

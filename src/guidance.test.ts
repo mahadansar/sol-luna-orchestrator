@@ -1086,9 +1086,15 @@ test("the routing_preflight tool description stays discoverable", () => {
   // this surface exists and when to reach for it. Pin the discoverability claims
   // so they cannot be trimmed away for budget headroom without a test failing.
   assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /cheap/i);
-  assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /before any repository exploration/i);
+  assert.match(
+    ROUTING_PREFLIGHT_TOOL_DESCRIPTION,
+    /cheap, bounded repository\/test inspection/i,
+  );
+  assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /candidate delegated leaves/i);
+  assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /not the whole objective/i);
+  assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /defer broad exploration/i);
   assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /whether delegating/i);
-  assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /declare the ownership seams/i);
+  assert.match(ROUTING_PREFLIGHT_TOOL_DESCRIPTION, /describe those leaves/i);
   // It must remain reachable as a named tool in the guidance a parent reads.
   assert.ok(ROUTING_PREFLIGHT_TOOL_DESCRIPTION.length > 0);
 });
@@ -1195,7 +1201,12 @@ test("SOL_RULES and the runtime agree on refuse, recommend, and parent judgement
   }
   assert.match(rules, /either.{0,80}does\s+not\s+mean\s+"delegate by default"/is);
   assert.match(rules, /read-only.{0,60}not a coupling\s+signal/is);
-  assert.match(rules, /no score, no threshold/i);
+  assert.match(rules, /no score/i);
+  for (const rule of ["R0", "R1", "R2", "R3", "R4", "R5"]) {
+    assert.match(rules, new RegExp(`\\|\\s*${rule}\\s*\\|`));
+  }
+  assert.match(rules, /substantial[\s\S]*single `delegate_task`[\s\S]*sequential/i);
+  assert.match(rules, /classify those leaves, not the whole objective/i);
 
   // Parent judgement, and the guarantees that make the card safe to attach.
   assert.match(rules, /parent keeps every judgement/i);

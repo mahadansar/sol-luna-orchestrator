@@ -157,7 +157,8 @@ Carried on those records:
 - Attempt ordinal and bounded recovery classification/evidence when applicable
 - Per-execution identity, role, predecessor, lifecycle timing, termination, and
   reported/unavailable usage status
-- Raw declared routing values, seam and unknown counts, route, gates and signals
+- Raw declared routing values, seam and unknown counts, matched rule, resolved
+  route, explicit/defaulted card provenance, gates and signals
 - Recommended routing shape and compute selection; factual worker lifecycle
   records separately carry the model and effort that actually ran
 
@@ -194,7 +195,8 @@ unknown event shapes, so they never alter an `ActivitySnapshot` or raise an
 operator warning.
 
 `routing.preflight` records one advisory `routing_preflight` call. It carries a
-`preflightId`, the route, seam count, unknown count, gates, signals, and
+`preflightId`, matched rule ID, resolved route, card provenance (`explicit` or
+`pessimistic-defaults`), seam count, unknown count, gates, signals, and
 `parallelEligible`, plus the five raw declared values. It also records the bounded
 recommended mechanism, worker count, concurrency and effort, followed by the
 selector's model, effort and reason. It has **no** `batchId` and no actual execution
@@ -216,7 +218,8 @@ worker output, paths, failure prose, secrets, or continuation/handoff capability
 `routing.declared` records what a real delegation call declared. It always
 carries `batchId`, `declaration` (`attached` or `absent`), `mode`, and
 `taskCount`. An attached declaration additionally carries `seamCount`,
-`unknownCount`, `route`, `gates`, `signals`, `refusedGate` (or `null`), the raw
+`unknownCount`, matched `ruleId`, resolved `route`, `cardProvenance`, `gates`,
+`signals`, `refusedGate` (or `null`), the raw
 declared values, and `parallelEligible`. An absent declaration carries none of
 those: nothing was evaluated, so no route or eligibility is claimed for it.
 Attached declarations also carry the same recommended/selected fields as preflight.
