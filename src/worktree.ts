@@ -5,6 +5,7 @@ import picomatch from "picomatch";
 import {
   ALLOW_DIRTY_WORKTREE_BASE,
   KEEP_WORKTREES,
+  parseWorktreeLinkDirectories,
   WORKTREE_DIR,
   WORKTREE_LINK_DIRS,
 } from "./config.js";
@@ -894,10 +895,14 @@ export async function linkSharedDirectories(
   dirs: string[] = WORKTREE_LINK_DIRS,
 ): Promise<string[]> {
   const warnings: string[] = [];
+  const parsed = parseWorktreeLinkDirectories(dirs.join(","));
+  for (const invalid of parsed.invalid) {
+    warnings.push(`Skipped unsafe shared worktree link path: ${invalid}`);
+  }
 
-  for (const dir of dirs) {
+  for (const dir of parsed.dirs) {
     const source = path.resolve(mainWorkspace, dir);
-    const destination = path.join(worktreePath, dir);
+    const destination = path.resolve(worktreePath, dir);
 
     const sourceStat = await fs.stat(source).catch(() => null);
     if (!sourceStat?.isDirectory()) continue;
@@ -938,7 +943,8 @@ export async function filterOrchestratorOwnedSharedLinks(
   dirs: string[] = WORKTREE_LINK_DIRS,
 ): Promise<WorktreeChanges["files"]> {
   const unchangedLinks = new Set<string>();
-  for (const dir of dirs) {
+  const parsed = parseWorktreeLinkDirectories(dirs.join(","));
+  for (const dir of parsed.dirs) {
     const source = path.resolve(repoRoot, dir);
     const destination = path.resolve(worktreePath, dir);
     const stat = await fs.lstat(destination).catch(() => null);
@@ -953,11 +959,11 @@ export async function filterOrchestratorOwnedSharedLinks(
       destinationTarget &&
       worktreePathKey(sourceTarget) === worktreePathKey(destinationTarget)
     ) {
-      unchangedLinks.add(dir);
+      unchangedLinks.add(dir.split(path.sep).join("/"));
     }
   }
 
-  return files.filter((file) => !unchangedLinks.has(file.path.split("/")[0] ?? ""));
+  return files.filter((file) => !unchangedLinks.has(file.path));
 }
 
 export interface WorktreeOutcome {
@@ -1090,8 +1096,9 @@ export async function unlinkSharedDirectories(
   worktreePath: string,
   dirs: string[] = WORKTREE_LINK_DIRS,
 ): Promise<void> {
-  for (const dir of dirs) {
-    const destination = path.join(worktreePath, dir);
+  const parsed = parseWorktreeLinkDirectories(dirs.join(","));
+  for (const dir of parsed.dirs) {
+    const destination = path.resolve(worktreePath, dir);
     const stat = await fs.lstat(destination).catch(() => null);
     if (!stat?.isSymbolicLink()) continue;
     await fs.unlink(destination).catch(() => undefined);

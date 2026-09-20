@@ -19,6 +19,7 @@ import {
 } from "./policy.js";
 import { runBatch, BatchRejectedError } from "./batch.js";
 import {
+  configurationCorrectionWarnings,
   ContextLifecycleRegistry,
   handleContinueTask,
   handleDelegateTask,
@@ -647,6 +648,173 @@ test("a continuation with no lease expires without inventing a release", async (
   assert.equal(store.consume(reference).status, "expired");
   await store.whenExpiredLeasesReleased();
   assert.equal(released.length, 0);
+});
+
+test("a continuation reservation blocks peers and release restores unexpired authority", () => {
+  let now = 9_000_000;
+  const store = new ContinuationStore({ now: () => now });
+  const worktree = "/repo/.sol-luna/worktrees/t-reserved";
+  const reference = store.issue(
+    makeTask(),
+    "th_reserved",
+    worktree,
+    true,
+    makeLease(worktree),
+    null,
+    2,
+    LUNA,
+    "ctx_reserved",
+    "/repo",
+  );
+
+  const held = store.reserve(reference);
+  assert.equal(held.status, "ready");
+  if (held.status !== "ready") return;
+  assert.equal(store.status(reference), "consumed");
+  assert.equal(store.consume(reference).status, "used");
+  assert.equal(store.hasContextKey("ctx_reserved"), true);
+  assert.deepEqual(store.protectedWorkingDirectories(), [worktree]);
+
+  now += 1_000;
+  held.reservation.release();
+  assert.equal(store.status(reference), "issued");
+  assert.equal(store.hasContextKey("ctx_reserved"), true);
+  assert.deepEqual(store.protectedWorkingDirectories(), [worktree]);
+
+  const consumed = store.consume(reference);
+  assert.equal(consumed.status, "ready");
+  store.release(reference);
+  assert.equal(store.consume(reference).status, "used");
+});
+
+test("a continuation reservation that expires before release surrenders its lease once", async () => {
+  let now = 10_000_000;
+  const released: WorktreeLease[] = [];
+  const store = new ContinuationStore({
+    now: () => now,
+    releaseLease: (lease) => {
+      released.push(lease);
+    },
+  });
+  const worktree = "/repo/.sol-luna/worktrees/t-reserved-expiry";
+  const lease = makeLease(worktree);
+  const reference = store.issue(makeTask(), "th_reserved_expiry", worktree, true, lease);
+  const held = store.reserve(reference);
+  assert.equal(held.status, "ready");
+  if (held.status !== "ready") return;
+
+  now += CONTINUATION_TTL_MS + 1;
+  assert.equal(store.status(reference), "consumed");
+  assert.deepEqual(store.protectedWorkingDirectories(), [worktree]);
+  assert.equal(released.length, 0, "reservation owns the lease until it settles");
+
+  held.reservation.release();
+  await store.whenExpiredLeasesReleased();
+  assert.equal(store.status(reference), "unavailable");
+  assert.equal(store.consume(reference).status, "expired");
+  assert.deepEqual(store.protectedWorkingDirectories(), []);
+  assert.deepEqual(released.map((item) => item.ownerToken), [lease.ownerToken]);
+});
+
+test("continuation setup failure restores authority without releasing its retained lease", async () => {
+  const continuationStore = new ContinuationStore();
+  const registry = new ContextLifecycleRegistry({ continuationStore });
+  const worktree = "/repo/.sol-luna/worktrees/t-refresh-failure";
+  const reference = continuationStore.issue(
+    makeTask(),
+    "th_refresh_failure",
+    worktree,
+    true,
+    makeLease(worktree),
+    null,
+    2,
+    LUNA,
+    null,
+    "/repo",
+  );
+  let executions = 0;
+  let releases = 0;
+
+  const response = await handleContinueTask(
+    { continuationReference: reference, instruction: "Retry after setup is available" },
+    undefined,
+    {
+      store: continuationStore,
+      contextRegistry: registry,
+      refreshLease: async () => {
+        throw new Error("transient lease I/O failure");
+      },
+      releaseLease: async () => {
+        releases += 1;
+      },
+      continueTask: async () => {
+        executions += 1;
+        return makeFailure();
+      },
+      emit: () => undefined,
+      record: () => undefined,
+      makeBatchId: () => "b_refresh_failure",
+    },
+  );
+
+  assert.equal(response.isError, true);
+  assert.match(response.content[0]?.text ?? "", /could not be refreshed/i);
+  assert.equal(executions, 0);
+  assert.equal(releases, 0, "the restored continuation still owns its retained lease");
+  assert.equal(continuationStore.status(reference), "issued");
+  assert.deepEqual(continuationStore.protectedWorkingDirectories(), [worktree]);
+});
+
+test("pre-execution continuation cancellation restores authority and never enters executor", async () => {
+  const continuationStore = new ContinuationStore();
+  const registry = new ContextLifecycleRegistry({ continuationStore });
+  const reference = continuationStore.issue(makeTask(), "th_cancelled", process.cwd());
+  const controller = new AbortController();
+  controller.abort();
+  let executions = 0;
+
+  const response = await handleContinueTask(
+    { continuationReference: reference, instruction: "Do not start this turn" },
+    controller.signal,
+    {
+      store: continuationStore,
+      contextRegistry: registry,
+      continueTask: async () => {
+        executions += 1;
+        return makeFailure();
+      },
+      emit: () => undefined,
+      record: () => undefined,
+      makeBatchId: () => "b_cancelled_before_start",
+    },
+  );
+
+  assert.equal(response.isError, true);
+  assert.match(response.content[0]?.text ?? "", /cancelled before worker start/i);
+  assert.equal(executions, 0);
+  assert.equal(continuationStore.status(reference), "issued");
+});
+
+test("configuration correction warnings report only effective runtime values", () => {
+  const warnings = configurationCorrectionWarnings({
+    allowedEffortsInvalid: true,
+    allowedEfforts: ["medium", "high"],
+    maxParallelClamped: true,
+    maxParallel: 8,
+    maxParallelLimit: 8,
+    maxWorkersPerBatchClamped: true,
+    maxWorkersPerBatch: 12,
+    maxBatchSize: 12,
+    worktreeLinkInvalid: true,
+    worktreeLinkDirs: ["node_modules"],
+  });
+
+  assert.equal(warnings.length, 4);
+  assert.match(warnings[0] ?? "", /effective allowed efforts: medium, high/i);
+  assert.match(warnings[1] ?? "", /effective concurrency: 8/i);
+  assert.match(warnings[2] ?? "", /effective workers per batch: 12/i);
+  assert.match(warnings[3] ?? "", /effective shared link paths: node_modules/i);
+  assert.equal(warnings.some((warning) => warning.includes("process.env")), false);
 });
 
 // ---------------------------------------------------------------------------

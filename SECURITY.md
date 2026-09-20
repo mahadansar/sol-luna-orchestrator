@@ -233,7 +233,11 @@ cannot remove a replacement artifact or reservation.
 `SOL_LUNA_WORKTREE_LINK` (default `node_modules`) links directories from your
 repository into each worktree — a junction on Windows, a directory symlink
 elsewhere. Anything linked is **shared, not copied**: a worker writing through
-that link writes into your real directory.
+that link writes into your real directory. Link entries are normalized as
+repository-relative paths before setup and cleanup; absolute, drive-qualified,
+traversal, and dot-segment entries are rejected so a configured link cannot
+escape either workspace root. Evidence filtering matches the exact normalized
+link path, including nested links, instead of hiding sibling worker edits.
 
 Worktrees are created, removed and pruned one at a time, including across MCP
 server processes sharing a repository. `git worktree add` walks metadata shared
@@ -293,13 +297,15 @@ history. Both are single-use and TTL-bounded in memory; restarting the server
 invalidates them rather than reconstructing authority from retained logs or
 caller-supplied history.
 
-An `hdf_*` next-action reference has an atomic `ready -> reserved -> consumed`
-lifecycle. Admission reserves it before gates that may still refuse the call, so
-a concurrent consumer cannot also execute. A refusal before execution releases
-the reservation with its original expiry; an expiry while reserved retires it,
-and entry into worker execution commits consumption. Release never grants a new
-TTL or reconstructs a capability. `ctr_*` continuation references are likewise
-consumed once, but do not use the pre-execution handoff-reservation path.
+Both `hdf_*` next-action references and `ctr_*` continuation references have
+an atomic `ready -> reserved -> consumed` lifecycle. Admission reserves them
+before gates that may still refuse the call, so a concurrent consumer cannot
+also execute. A refusal or cancellation before execution releases the
+reservation with its original expiry; release after that expiry retires it
+instead of restoring authority, and entry into worker execution commits
+consumption. Release never grants a new TTL or reconstructs a capability. A
+reserved continuation also keeps its lifecycle context and retained-worktree
+ownership until the reservation is either committed or released.
 
 Cross-session handoff artifacts are different: they are portable, caller-held
 historical context and are never bearer capabilities or authenticated runtime

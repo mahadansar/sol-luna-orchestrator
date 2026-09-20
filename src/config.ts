@@ -398,10 +398,47 @@ export const WORKTREE_DIR = ".sol-luna/worktrees";
  * every verification command would fail with "module not found". Linking is the
  * difference between worktrees being usable and being a curiosity.
  */
-export const WORKTREE_LINK_DIRS = (process.env.SOL_LUNA_WORKTREE_LINK ?? "node_modules")
-  .split(",")
-  .map((entry) => entry.trim())
-  .filter(Boolean);
+export interface WorktreeLinkDirectoryConfig {
+  dirs: string[];
+  invalid: string[];
+}
+
+export function parseWorktreeLinkDirectories(
+  raw: string | null | undefined,
+): WorktreeLinkDirectoryConfig {
+  const entries = (raw ?? "node_modules")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const dirs: string[] = [];
+  const invalid: string[] = [];
+
+  for (const entry of entries) {
+    const portable = entry.replace(/\\/g, "/");
+    const segments = portable.split("/");
+    const unsafe =
+      path.isAbsolute(entry) ||
+      path.win32.isAbsolute(entry) ||
+      /^[A-Za-z]:/.test(entry) ||
+      portable.startsWith("//") ||
+      segments.some((segment) => segment === "." || segment === ".." || segment === "");
+    if (unsafe) {
+      invalid.push(entry);
+      continue;
+    }
+
+    const normalized = segments.join("/");
+    if (!dirs.includes(normalized)) dirs.push(normalized);
+  }
+
+  return { dirs, invalid };
+}
+
+export const WORKTREE_LINK_CONFIG = parseWorktreeLinkDirectories(
+  process.env.SOL_LUNA_WORKTREE_LINK,
+);
+export const WORKTREE_LINK_DIRS = WORKTREE_LINK_CONFIG.dirs;
+export const WORKTREE_LINK_DIRS_INVALID = WORKTREE_LINK_CONFIG.invalid.length > 0;
 
 /**
  * When to keep a worktree after a batch finishes.

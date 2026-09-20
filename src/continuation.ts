@@ -60,6 +60,24 @@ export type ContinuationConsumeResult =
   | { status: "ready"; entry: ContinuationEntry }
   | { status: "invalid" | "unknown" | "expired" | "used" };
 
+/**
+ * Authority taken out of circulation while pre-execution gates run.
+ *
+ * The holder must settle it exactly once. commit spends the continuation and
+ * transfers its retained-worktree ownership to the executing turn; release
+ * restores the original authority only when its original TTL is still live.
+ */
+export interface ContinuationReservation {
+  readonly reference: string;
+  readonly entry: ContinuationEntry;
+  commit(): void;
+  release(): void;
+}
+
+export type ContinuationReserveResult =
+  | { status: "ready"; reservation: ContinuationReservation }
+  | { status: "invalid" | "unknown" | "expired" | "used" };
+
 export interface ContinuationStoreOptions {
   /** Injected clock keeps expiry tests deterministic. */
   now?: () => number;
@@ -87,6 +105,8 @@ export interface ContinuationStoreOptions {
  */
 export class ContinuationStore {
   private readonly active = new Map<string, ContinuationRecord>();
+  /** Reserved but not yet spent: unavailable to peers, still restorable. */
+  private readonly reserved = new Map<string, ContinuationRecord>();
   /** Consumed references stay leased until their one continuation turn exits. */
   private readonly leased = new Map<string, ContinuationRecord>();
   private readonly retired = new Map<string, RetiredReference>();
@@ -125,6 +145,7 @@ export class ContinuationStore {
     let reference = this.tokenFactory();
     while (
       this.active.has(reference) ||
+      this.reserved.has(reference) ||
       this.leased.has(reference) ||
       this.retired.has(reference)
     ) {
@@ -147,43 +168,57 @@ export class ContinuationStore {
     return reference;
   }
 
-  /** Consume a reference atomically, enforcing expiry and the one-turn bound. */
-  consume(reference: string): ContinuationConsumeResult {
+  /**
+   * Reserve a reference atomically without spending it.
+   *
+   * A reserved continuation remains the owner of its lifecycle context and any
+   * retained worktree, but every concurrent consumer observes it as used. This
+   * lets callers run setup gates before execution without burning authority when
+   * nothing actually starts.
+   */
+  reserve(reference: string): ContinuationReserveResult {
     if (this.disposed) return { status: "unknown" };
-    if (!isContinuationReference(reference)) return { status: "invalid" };
+    const taken = this.take(reference);
+    if (taken.status !== "ready") return taken;
+    const { record, entry } = taken;
 
-    const now = this.now();
-    const record = this.active.get(reference);
-    if (record) {
-      if (now >= record.expiresAt) {
-        this.expire(reference, record, now);
-        return { status: "expired" };
-      }
+    let settled = false;
+    const reservation: ContinuationReservation = {
+      reference,
+      entry,
+      commit: () => {
+        if (settled) return;
+        settled = true;
+        this.reserved.delete(reference);
+        this.leased.set(reference, record);
+      },
+      release: () => {
+        if (settled) return;
+        settled = true;
+        this.reserved.delete(reference);
+        const now = this.now();
+        if (now >= record.expiresAt) {
+          this.expireUnspent(reference, record, now);
+          return;
+        }
+        this.retired.delete(reference);
+        this.active.set(reference, record);
+      },
+    };
+    this.reserved.set(reference, record);
+    return { status: "ready", reservation };
+  }
 
-      this.active.delete(reference);
-      this.leased.set(reference, record);
-      this.retired.set(reference, { status: "used", until: now + CONTINUATION_TTL_MS });
-      return {
-        status: "ready",
-        entry: {
-          input: cloneTaskInput(record.input),
-          threadId: record.threadId,
-          workingDirectory: record.workingDirectory,
-          authoritativeWorkspace: record.authoritativeWorkspace,
-          reconcileFinalGit: record.reconcileFinalGit,
-          worktreeLease: record.worktreeLease ? { ...record.worktreeLease } : null,
-          predecessorExecutionId: record.predecessorExecutionId,
-          logicalAttempt: record.logicalAttempt,
-          model: record.model,
-          contextKey: record.contextKey,
-        },
-      };
-    }
-
-    const retired = this.retired.get(reference);
-    if (retired && now < retired.until) return { status: retired.status };
-    if (retired) this.retired.delete(reference);
-    return { status: "unknown" };
+  /**
+   * Consume a reference atomically when no pre-execution gate remains.
+   *
+   * Equivalent to reserving and immediately committing.
+   */
+  consume(reference: string): ContinuationConsumeResult {
+    const reserved = this.reserve(reference);
+    if (reserved.status !== "ready") return reserved;
+    reserved.reservation.commit();
+    return { status: "ready", entry: reserved.reservation.entry };
   }
 
   /** Release the filesystem lease after the consumed continuation turn exits. */
@@ -203,6 +238,7 @@ export class ContinuationStore {
       }
       return "issued";
     }
+    if (this.reserved.has(reference)) return "consumed";
     const leased = this.leased.get(reference);
     if (leased) {
       return "consumed";
@@ -217,7 +253,7 @@ export class ContinuationStore {
   /** Whether an active or executing reference still owns a lifecycle context. */
   hasContextKey(contextKey: string): boolean {
     this.prune(this.now());
-    return [...this.active.values(), ...this.leased.values()].some(
+    return [...this.active.values(), ...this.reserved.values(), ...this.leased.values()].some(
       (record) => record.contextKey === contextKey,
     );
   }
@@ -227,7 +263,7 @@ export class ContinuationStore {
     this.prune(this.now());
     return [
       ...new Set(
-        [...this.active.values(), ...this.leased.values()].map(
+        [...this.active.values(), ...this.reserved.values(), ...this.leased.values()].map(
           (record) => record.workingDirectory,
         ),
       ),
@@ -248,8 +284,13 @@ export class ContinuationStore {
   async dispose(): Promise<void> {
     if (this.disposed) return this.leaseReleases;
     this.disposed = true;
-    const records = [...this.active.values(), ...this.leased.values()];
+    const records = [
+      ...this.active.values(),
+      ...this.reserved.values(),
+      ...this.leased.values(),
+    ];
     this.active.clear();
+    this.reserved.clear();
     this.leased.clear();
     this.retired.clear();
     if (this.releaseLease) {
@@ -273,8 +314,9 @@ export class ContinuationStore {
    * record is removed from `active` first, so a concurrent expiry, consume, or
    * prune of the same reference cannot reach it a second time.
    */
-  private expire(reference: string, record: ContinuationRecord, now: number): void {
+  private expireUnspent(reference: string, record: ContinuationRecord, now: number): void {
     this.active.delete(reference);
+    this.reserved.delete(reference);
     this.retired.set(reference, {
       status: "expired",
       until: now + CONTINUATION_TTL_MS,
@@ -290,12 +332,57 @@ export class ContinuationStore {
     });
   }
 
+  /** The one place an issued reference leaves circulation. */
+  private take(
+    reference: string,
+  ):
+    | { status: "ready"; record: ContinuationRecord; entry: ContinuationEntry }
+    | { status: "invalid" | "unknown" | "expired" | "used" } {
+    if (!isContinuationReference(reference)) return { status: "invalid" };
+
+    const now = this.now();
+    const record = this.active.get(reference);
+    if (record) {
+      if (now >= record.expiresAt) {
+        this.expireUnspent(reference, record, now);
+        return { status: "expired" };
+      }
+
+      this.active.delete(reference);
+      this.retired.set(reference, { status: "used", until: now + CONTINUATION_TTL_MS });
+      return {
+        status: "ready",
+        record,
+        entry: {
+          input: cloneTaskInput(record.input),
+          threadId: record.threadId,
+          workingDirectory: record.workingDirectory,
+          authoritativeWorkspace: record.authoritativeWorkspace,
+          reconcileFinalGit: record.reconcileFinalGit,
+          worktreeLease: record.worktreeLease ? { ...record.worktreeLease } : null,
+          predecessorExecutionId: record.predecessorExecutionId,
+          logicalAttempt: record.logicalAttempt,
+          model: record.model,
+          contextKey: record.contextKey,
+        },
+      };
+    }
+
+    if (this.reserved.has(reference) || this.leased.has(reference)) {
+      return { status: "used" };
+    }
+    const retired = this.retired.get(reference);
+    if (retired && now < retired.until) return { status: retired.status };
+    if (retired) this.retired.delete(reference);
+    return { status: "unknown" };
+  }
+
   private prune(now: number): void {
     for (const [reference, record] of this.active) {
-      if (now >= record.expiresAt) this.expire(reference, record, now);
+      if (now >= record.expiresAt) this.expireUnspent(reference, record, now);
     }
     for (const [reference, retired] of this.retired) {
-      if (this.leased.has(reference)) continue;
+      if (this.reserved.has(reference) || this.leased.has(reference)) continue;
       if (now >= retired.until) this.retired.delete(reference);
     }
   }

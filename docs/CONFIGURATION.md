@@ -28,9 +28,9 @@ Everything the orchestrator reads, and how to change it. The
 
 `sol-luna-orchestrator doctor` checks the supported Node range, git and Codex
 availability, the presence of Codex's local authentication file, registration,
-owned settings, and runtime policy, then prints remedies. It does not validate
-git's numeric minimum or make a network call to prove the stored credentials
-are currently usable.
+owned settings, and runtime policy, then prints remedies. It validates git
+against the `2.20` minimum, but does not make a network call to prove the stored
+credentials are currently usable.
 
 Some required Codex behaviors are experimental surfaces established by testing
 rather than documented stable APIs. This release was built against
@@ -292,14 +292,14 @@ environment parser:
 - `SOL_LUNA_MAX_PARALLEL` is converted with `Number`, floored, and clamped to
   `1..8`; invalid or values below one resolve to `1`.
   `SOL_LUNA_MAX_WORKERS_PER_BATCH` is likewise floored and capped at `12`, but
-  invalid or values below one resolve to the default `12`. These corrections do
-  not produce a startup warning, so use `status` or `doctor` to inspect the
-  resolved envelope.
+  invalid or values below one resolve to the default `12`. The server logs a
+  startup warning when either value is corrected, and `status` / `doctor` show
+  the effective envelope and correction diagnostics.
 - `SOL_LUNA_ALLOWED_EFFORTS` is case-insensitive, comma-separated, and
   order-insensitive. Unknown entries are dropped when at least one usable effort
   remains; an empty or wholly unusable list falls back to all four efforts. That
-  fallback can be wider than a mistyped intended restriction, so confirm it with
-  `status` or `doctor`.
+  fallback can be wider than a mistyped intended restriction, so the server logs
+  a startup warning and `status` / `doctor` expose the corrected effort set.
 - `SOL_LUNA_ALLOWED_MODELS` and `SOL_LUNA_EXECUTOR_ORDER` are comma-separated,
   trimmed model names. The configured `LUNA_MODEL` is always added to the
   authorized model set. An executor order grants no model membership and is
@@ -313,7 +313,9 @@ environment parser:
   `SOL_LUNA_VERIFY_ALLOW` and `SOL_LUNA_WORKTREE_LINK` are comma-separated and
   trimmed. Extra verification entries may be bare executable names or explicit
   operator-authorized paths; worktree-link entries name shared directories, so
-  an empty list disables dependency linking.
+  an empty list disables dependency linking. Worktree-link entries must stay
+  repository-relative: absolute, drive-qualified, traversal, and dot-segment
+  paths are ignored fail-closed and reported through the startup diagnostics.
 - `SOL_LUNA_ALLOWED_ROOTS` uses the platform path-list delimiter (`;` on
   Windows, `:` on POSIX). Each delegation canonicalizes the requested workspace
   and configured roots before applying the boundary. An unset or empty list
@@ -353,7 +355,22 @@ sequential batches too — they enlist as many workers, they only stagger them.
 
 `sol-luna-orchestrator status` and `sol-luna-orchestrator doctor` print the
 resolved envelope, so you can confirm what a registered server will actually
-allow rather than what your current shell happens to say.
+allow rather than what your current shell happens to say. `status` separates the
+current CLI install from the command and arguments stored in the Codex
+registration, and reports effective maximum concurrency, maximum workers per
+batch, worker and verification timeouts, sandbox/network policy, worktree
+retention, dirty-base policy, verification mode, and any registered values the
+runtime corrected. `status --json` exposes the same configuration and correction
+diagnostics for scripts. An explicitly empty `LUNA_MODEL` is preserved as an
+invalid configured value rather than disguised as the default; `doctor` reports
+it as a failure.
+
+`doctor --strict` keeps the normal diagnostic report but returns non-zero when
+warnings are present as well as failures. This is useful in CI when optional or
+risk-bearing states such as shell verification, dirty-base parallel work, an
+unhealthy telemetry path, or a corrected environment value should fail the
+check. `doctor --json --strict` remains machine-readable; strictness changes the
+exit status, not the report schema.
 
 A supervisor may attach an optional `computePolicy` to `delegate_task` or
 `delegate_tasks` to narrow the envelope for one call — fewer concurrent workers,
@@ -511,6 +528,13 @@ the shell you run the CLI from changes what the CLI reads, not what the
 already-running server writes. When the two disagree, the running server and
 the file it is actually appending to are the evidence — which is why `status`
 reports the registered server's value rather than only this shell's.
+
+`doctor` also checks the configured log and activity destinations without
+writing test records into them. An existing destination must be a regular file
+with the required access; a not-yet-created destination is healthy only when its
+parent directory already exists and is writable. These checks diagnose a bad
+path without turning telemetry into an execution dependency: runtime logging
+and activity emission remain best-effort.
 
 ### Cost
 

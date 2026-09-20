@@ -6,6 +6,8 @@ import { createLogger } from "./log.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
+  ALLOWED_EFFORTS,
+  ALLOWED_EFFORTS_INVALID,
   DEFAULT_EFFORT,
   DEFAULT_TIMEOUT_SECONDS,
   DEFAULT_TIMEOUT_SECONDS_INVALID,
@@ -14,6 +16,10 @@ import {
   LUNA_MODEL,
   MAX_BATCH_SIZE,
   MAX_PARALLEL,
+  MAX_PARALLEL_CLAMPED,
+  MAX_PARALLEL_LIMIT,
+  MAX_WORKERS_PER_BATCH,
+  MAX_WORKERS_PER_BATCH_CLAMPED,
   VERIFY_MODE,
   VERIFY_MODE_INVALID,
   KEEP_WORKTREES,
@@ -23,6 +29,7 @@ import {
   VERIFY_TIMEOUT_SECONDS,
   VERIFY_TIMEOUT_SECONDS_INVALID,
   WORKTREE_DIR,
+  WORKTREE_LINK_CONFIG,
   WORKER_MARKER_ENV,
 } from "./config.js";
 import {
@@ -46,7 +53,11 @@ import {
   type RoutingPreflightInput,
 } from "./contract.js";
 import { BatchRejectedError, runBatch } from "./batch.js";
-import { ContinuationStore, type ContinuationConsumeResult } from "./continuation.js";
+import {
+  ContinuationStore,
+  type ContinuationConsumeResult,
+  type ContinuationReserveResult,
+} from "./continuation.js";
 import {
   applyFailureDecision,
   continueToLuna,
@@ -269,7 +280,9 @@ function registerContinuation(
   return reference;
 }
 
-function continuationError(result: ContinuationConsumeResult): string {
+function continuationError(
+  result: ContinuationConsumeResult | ContinuationReserveResult,
+): string {
   switch (result.status) {
     case "invalid":
       return "Invalid continuation reference. Use the opaque reference returned by an eligible result.";
@@ -1021,6 +1034,62 @@ export function assertMetadataBudgets(): void {
   }
 }
 
+export interface ConfigurationCorrectionWarningState {
+  allowedEffortsInvalid: boolean;
+  allowedEfforts: readonly string[];
+  maxParallelClamped: boolean;
+  maxParallel: number;
+  maxParallelLimit: number;
+  maxWorkersPerBatchClamped: boolean;
+  maxWorkersPerBatch: number;
+  maxBatchSize: number;
+  worktreeLinkInvalid: boolean;
+  worktreeLinkDirs: readonly string[];
+}
+
+/** Privacy-safe startup diagnostics for operator values the runtime corrected. */
+export function configurationCorrectionWarnings(
+  state: ConfigurationCorrectionWarningState = {
+    allowedEffortsInvalid: ALLOWED_EFFORTS_INVALID,
+    allowedEfforts: ALLOWED_EFFORTS,
+    maxParallelClamped: MAX_PARALLEL_CLAMPED,
+    maxParallel: MAX_PARALLEL,
+    maxParallelLimit: MAX_PARALLEL_LIMIT,
+    maxWorkersPerBatchClamped: MAX_WORKERS_PER_BATCH_CLAMPED,
+    maxWorkersPerBatch: MAX_WORKERS_PER_BATCH,
+    maxBatchSize: MAX_BATCH_SIZE,
+    worktreeLinkInvalid: WORKTREE_LINK_CONFIG.invalid.length > 0,
+    worktreeLinkDirs: WORKTREE_LINK_CONFIG.dirs,
+  },
+): string[] {
+  const warnings: string[] = [];
+  if (state.allowedEffortsInvalid) {
+    warnings.push(
+      "WARNING: SOL_LUNA_ALLOWED_EFFORTS contained unsupported entries and was corrected. " +
+        `Effective allowed efforts: ${state.allowedEfforts.join(", ")}.`,
+    );
+  }
+  if (state.maxParallelClamped) {
+    warnings.push(
+      "WARNING: SOL_LUNA_MAX_PARALLEL was corrected. " +
+        `Effective concurrency: ${state.maxParallel} (supported range 1..${state.maxParallelLimit}).`,
+    );
+  }
+  if (state.maxWorkersPerBatchClamped) {
+    warnings.push(
+      "WARNING: SOL_LUNA_MAX_WORKERS_PER_BATCH was corrected. " +
+        `Effective workers per batch: ${state.maxWorkersPerBatch} (supported range 1..${state.maxBatchSize}).`,
+    );
+  }
+  if (state.worktreeLinkInvalid) {
+    warnings.push(
+      "WARNING: SOL_LUNA_WORKTREE_LINK contained unsafe entries and was corrected. " +
+        `Effective shared link paths: ${state.worktreeLinkDirs.join(", ") || "none"}.`,
+    );
+  }
+  return warnings;
+}
+
 const server = new McpServer(
   { name: "sol-luna-orchestrator", version: SERVER_VERSION },
   { instructions: SERVER_INSTRUCTIONS },
@@ -1558,7 +1627,7 @@ export async function handleContinueTask(
     ...overrides,
     emit: isolateEventEmitter(overrides.emit ?? emitEvent),
   };
-  const reserved = dependencies.store.consume(request.continuationReference);
+  const reserved = dependencies.store.reserve(request.continuationReference);
   if (reserved.status !== "ready") {
     const message = continuationError(reserved);
     log(`continue_task rejected: ${message}`);
@@ -1568,7 +1637,8 @@ export async function handleContinueTask(
     };
   }
 
-  const { entry } = reserved;
+  const reservation = reserved.reservation;
+  const { entry } = reservation;
   const batchId = dependencies.makeBatchId();
   const taskId = "t1";
   const contextKey = entry.contextKey ?? batchId;
@@ -1591,14 +1661,13 @@ export async function handleContinueTask(
         "executing-continuation",
       );
     } catch (error) {
-      let message =
+      const message =
         `Continuation could not start because its retained worktree lease ` +
         `could not be refreshed: ${(error as Error).message}`;
-      try {
-        await dependencies.releaseLease(entry.worktreeLease);
-      } catch (cleanupError) {
-        message += ` Worktree lease cleanup also failed: ${(cleanupError as Error).message}`;
-      }
+      // No executor has received the contract yet. Restore the exact original
+      // capability rather than spending it on a setup failure; its original TTL
+      // is retained by the reservation and its worktree remains protected.
+      reservation.release();
       log(`continue_task rejected: ${message}`);
       recordLifecycleTurn("continuation setup failure", () =>
         lifecycleStore.recordRuntimeFailure({
@@ -1614,7 +1683,6 @@ export async function handleContinueTask(
         }),
       );
       releaseExecution();
-      dependencies.store.release(request.continuationReference);
       evaluateLifecycleCompaction(lifecycleStore, "post-continuation", {
         batchId,
         emit: dependencies.emit,
@@ -1627,6 +1695,24 @@ export async function handleContinueTask(
         isError: true,
       };
     }
+  }
+  if (signal?.aborted) {
+    reservation.release();
+    const message = "Continuation cancelled before worker start.";
+    dependencies.emit({
+      type: "batch.cancelled",
+      batchId,
+      reason: "cancelled before worker start",
+    });
+    log(`continue_task cancelled: ${message}`);
+    releaseExecution();
+    if (persistedContextKey) {
+      dependencies.contextRegistry.releaseIfUnreferenced(persistedContextKey);
+    }
+    return {
+      content: [{ type: "text" as const, text: message }],
+      isError: true,
+    };
   }
   const startedAt = Date.now();
   let workerStarted = false;
@@ -1655,6 +1741,10 @@ export async function handleContinueTask(
     attempt: entry.logicalAttempt,
   });
 
+  // Every pre-execution gate has passed. Spending the reservation immediately
+  // before entering the executor keeps single-use authority aligned with actual
+  // execution: any outcome from this point consumes the continuation.
+  reservation.commit();
   try {
     let result = await dependencies.continueTask(entry.input, {
       workingDirectory: entry.workingDirectory,
@@ -2765,6 +2855,9 @@ async function main(): Promise<void> {
     log(`client connected: ${client?.name ?? "unknown"} ${client?.version ?? ""}`);
   };
 
+  for (const warning of configurationCorrectionWarnings()) {
+    log(warning);
+  }
   if (EXECUTOR_ORDER_UNUSABLE) {
     log(
       `WARNING: SOL_LUNA_EXECUTOR_ORDER="${process.env.SOL_LUNA_EXECUTOR_ORDER}" does ` +

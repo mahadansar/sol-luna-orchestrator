@@ -6,6 +6,24 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Continuation references now reserve their single-use authority through
+  pre-execution setup, so a retained-worktree lease refresh failure or
+  cancellation before worker entry no longer burns an otherwise retryable
+  continuation. Reservations keep lifecycle/worktree ownership protected,
+  preserve the original expiry, and still become permanently consumed at
+  executor entry.
+- Startup diagnostics now report when invalid allowed-effort entries,
+  parallelism, or per-batch worker limits were corrected, naming only the
+  effective runtime values rather than echoing raw environment input.
+- Final Git evidence now preserves both sides of staged rename/copy records, so
+  deleting an out-of-scope source through a rename cannot disappear behind an
+  allowed destination path during reconciliation.
+- Shared worktree-link configuration now rejects paths that could escape the
+  repository/worktree roots, reports the effective safe link set at startup,
+  and filters nested orchestrator-owned links without hiding sibling edits.
+
 ## [0.12.0] - 2026-08-30
 
 ### Changed

@@ -277,7 +277,14 @@ export async function pruneWorktrees(repoRoot: string): Promise<void> {
 }
 
 export interface WorktreeChanges {
-  /** Repository-relative POSIX paths that differ from the base commit. */
+  /**
+   * Repository-relative POSIX paths implicated in final changes.
+   *
+   * Rename/copy records include both Git's destination path and its second
+   * NUL-terminated source path so scope/evidence consumers cannot lose the old
+   * side of a rename. Rename sources are deletion evidence; copy sources carry
+   * an explicit copy-source status because the source itself still exists.
+   */
   files: Array<{ path: string; status: string }>;
   /** Unified diff of tracked changes; empty when only untracked files exist. */
   diff: string;
@@ -304,12 +311,30 @@ export async function collectWorktreeChanges(
 
   for (let i = 0; i < entries.length; i += 1) {
     const entry = entries[i]!;
-    const code = entry.slice(0, 2).trim() || "?";
+    const rawCode = entry.slice(0, 2);
+    const code = rawCode.trim() || "?";
     const target = entry.slice(3);
     if (target) {
       files.push({ path: target.split(path.sep).join("/"), status: code });
     }
-    if (code.startsWith("R") || code.startsWith("C")) i += 1;
+
+    // In porcelain v1 -z, rename/copy records are XY destination + NUL + source.
+    // The relation can appear in either status column, so inspect the raw XY
+    // pair rather than the trimmed display code. The source side of a rename
+    // is a deletion from the final tree. A copy source is evidence needed to
+    // preserve the complete Git relation, but the source itself remains.
+    const renamed = rawCode.includes("R");
+    const copied = !renamed && rawCode.includes("C");
+    if (renamed || copied) {
+      const source = entries[i + 1];
+      if (source) {
+        files.push({
+          path: source.split(path.sep).join("/"),
+          status: renamed ? "D" : "C-source",
+        });
+        i += 1;
+      }
+    }
   }
 
   // A failed diff is missing evidence, not an empty successful diff. Let the
