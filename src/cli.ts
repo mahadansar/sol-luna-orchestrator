@@ -20,8 +20,8 @@ import { initCommand } from "./cli/init.js";
 import { codexConfigPath, installLocation, packageVersion } from "./cli/paths.js";
 import { resolveRegisteredServerConfig } from "./cli/server-config.js";
 import { describeComputePolicy } from "./policy.js";
-import { SERVER_NAME, inspectSettings } from "./cli/settings.js";
-import { findTable, fromTomlValue } from "./cli/toml-edit.js";
+import { SERVER_NAME, inspectSettings, serverTable } from "./cli/settings.js";
+import { findTable, fromTomlValue, readKey, toTomlValue } from "./cli/toml-edit.js";
 import { bold, dim, errOut, out, symbols, table } from "./cli/ui.js";
 import { uninstallCommand } from "./cli/uninstall.js";
 
@@ -48,6 +48,8 @@ ${bold("Options")}
   init --allow-ephemeral   Permit registering a temporary npx install
   init --no-discovery-hint Skip the optional fresh-chat discovery hint
   doctor --json            Machine-readable report
+  doctor --strict          Treat warnings as a non-zero diagnostic result
+  status --json            Machine-readable configuration summary
   uninstall --dry-run      Show what would be removed, write nothing
 
 ${bold("After init")}
@@ -56,7 +58,30 @@ ${bold("After init")}
 
 ${dim("The MCP server itself runs as `sol-luna-orchestrator-mcp` and is launched by Codex.")}`;
 
-function statusCommand(): number {
+const STATUS_HELP = `${bold("Usage")}
+  sol-luna-orchestrator status [--json]
+
+${bold("Options")}
+  --json    Output a machine-readable configuration summary
+  --help    Show this help`;
+
+function statusCommand(argv: string[]): number {
+  if (argv.includes("--help") || argv.includes("-h")) {
+    const unknownWithHelp = argv.filter((arg) => arg !== "--help" && arg !== "-h");
+    if (unknownWithHelp.length > 0) {
+      for (const arg of unknownWithHelp) errOut(`Unknown option: ${arg}`);
+      return 1;
+    }
+    out(STATUS_HELP);
+    return 0;
+  }
+  const unknown = argv.filter((arg) => arg !== "--json");
+  if (unknown.length > 0) {
+    for (const arg of unknown) errOut(`Unknown option: ${arg}`);
+    errOut("Valid options: --json, --help");
+    return 1;
+  }
+  const asJson = argv.includes("--json");
   const location = installLocation();
   const configText = readConfig();
   const configured = findTable(configText, ["mcp_servers", SERVER_NAME]) !== null;
@@ -66,6 +91,71 @@ function statusCommand(): number {
   const discovery = inspectDiscoveryHint(readDiscoveryInstructions());
   const value = (key: string): string =>
     settings.find((setting) => setting.key === key)?.actual ?? "unset";
+  const registeredCommand = fromTomlValue(readKey(configText, serverTable(), "command"));
+  const registeredArgs = readKey(configText, serverTable(), "args");
+  const registrationMatchesCurrentInstall =
+    configured &&
+    registeredCommand === process.execPath &&
+    registeredArgs === toTomlValue([location.serverEntry]);
+
+  if (asJson) {
+    out(
+      JSON.stringify(
+        {
+          version: packageVersion(),
+          configured,
+          mcpName: SERVER_NAME,
+          currentInstall: {
+            serverEntry: location.serverEntry,
+            serverEntryExists: location.serverEntryExists,
+          },
+          registration: {
+            command: registeredCommand,
+            args: registeredArgs,
+            matchesCurrentInstall: registrationMatchesCurrentInstall,
+          },
+          codexSettings: Object.fromEntries(
+            settings.map((setting) => [
+              setting.key,
+              {
+                state: setting.state,
+                actual: setting.actual,
+                expected: setting.expected,
+              },
+            ]),
+          ),
+          runtime: {
+            workerModel: serverConfig.workerModel,
+            maxConcurrency: serverConfig.maxParallel,
+            maxWorkersPerBatch: serverConfig.maxWorkersPerBatch,
+            workerTimeoutSeconds: serverConfig.workerTimeoutSeconds,
+            verificationTimeoutSeconds: serverConfig.verificationTimeoutSeconds,
+            verificationMode: serverConfig.verificationMode,
+            workerSandbox: serverConfig.workerSandbox,
+            workerNetworkAccess: serverConfig.workerNetworkAccess,
+            keepWorktrees: serverConfig.keepWorktrees,
+            allowDirtyWorktreeBase: serverConfig.allowDirtyWorktreeBase,
+            allowedRoots: serverConfig.allowedRoots,
+            recursionDisableTarget: serverConfig.recursionDisableTarget,
+            computePolicy: serverConfig.computePolicy,
+            diagnostics: serverConfig.diagnostics,
+          },
+          activity: {
+            path: events.path,
+            source: events.source,
+          },
+          discovery: {
+            state: discovery.state,
+            path: discoveryHintPath(),
+          },
+          configPath: codexConfigPath(),
+        },
+        null,
+        2,
+      ),
+    );
+    return configured ? 0 : 1;
+  }
 
   out(bold("Sol-Luna Orchestrator"));
   out();
@@ -73,16 +163,36 @@ function statusCommand(): number {
     ["Version", packageVersion()],
     ["Configured", configured ? "yes" : `no  (run: sol-luna-orchestrator init)`],
     ["MCP name", SERVER_NAME],
-    ["Server", location.serverEntryExists ? location.serverEntry : "not built"],
+    [
+      "Current server build",
+      location.serverEntryExists ? location.serverEntry : "not built",
+    ],
+    ["Registered command", configured ? (registeredCommand ?? "missing") : "-"],
+    ["Registered args", configured ? (registeredArgs ?? "missing") : "-"],
+    [
+      "Registration match",
+      configured
+        ? registrationMatchesCurrentInstall
+          ? "yes"
+          : "no  (run init to reconcile)"
+        : "-",
+    ],
     ["Timeout", configured ? `${value("tool_timeout_sec")}s` : "-"],
     [
       "Approval",
       configured ? (fromTomlValue(value("default_tools_approval_mode")) ?? "-") : "-",
     ],
     ["Worker model", serverConfig.workerModel],
-    ["Max workers", String(serverConfig.maxParallel)],
+    ["Max concurrency", String(serverConfig.maxParallel)],
+    ["Max workers/batch", String(serverConfig.maxWorkersPerBatch)],
+    ["Worker timeout", `${serverConfig.workerTimeoutSeconds}s`],
+    ["Verify timeout", `${serverConfig.verificationTimeoutSeconds}s`],
     ["Compute policy", describeComputePolicy(serverConfig.computePolicy)],
     ["Verification", serverConfig.verificationMode],
+    ["Worker sandbox", serverConfig.workerSandbox],
+    ["Worker network", serverConfig.workerNetworkAccess ? "enabled" : "disabled"],
+    ["Keep worktrees", serverConfig.keepWorktrees],
+    ["Dirty worktree base", serverConfig.allowDirtyWorktreeBase ? "allowed" : "refused"],
     ["Workspace roots", serverConfig.allowedRoots || "any existing directory"],
     [
       "Activity log",
@@ -102,6 +212,14 @@ function statusCommand(): number {
     ],
     ["Codex config", codexConfigPath()],
   ]);
+  if (serverConfig.diagnostics.length > 0) {
+    out();
+    for (const diagnostic of serverConfig.diagnostics) {
+      out(
+        `${symbols.warn} ${diagnostic.key}="${diagnostic.raw}" -> ${diagnostic.effective}: ${diagnostic.message}`,
+      );
+    }
+  }
 
   if (!configured) {
     out();
@@ -128,7 +246,7 @@ async function main(): Promise<number> {
     case "doctor":
       return doctorCommand(argv.slice(1));
     case "status":
-      return statusCommand();
+      return statusCommand(argv.slice(1));
     case "uninstall":
       return uninstallCommand(argv.slice(1));
     case "version":

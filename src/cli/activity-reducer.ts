@@ -377,6 +377,70 @@ function eventTime(timestamp: string): number {
   return Date.parse(timestamp);
 }
 
+type BatchStartedEvent = Extract<TimestampedEvent, { type: "batch.started" }>;
+
+interface RankedBatchStart {
+  event: BatchStartedEvent;
+  index: number;
+  time: number;
+}
+
+function rankBatchStarts(events: TimestampedEvent[]): RankedBatchStart[] {
+  return events
+    .map((event, index) => ({ event, index, time: eventTime(event.timestamp) }))
+    .filter(
+      (entry): entry is RankedBatchStart =>
+        entry.event.type === "batch.started",
+    )
+    .sort((a, b) => {
+      const aFinite = Number.isFinite(a.time);
+      const bFinite = Number.isFinite(b.time);
+      if (aFinite && bFinite && a.time !== b.time) return b.time - a.time;
+      if (aFinite !== bFinite) return aFinite ? -1 : 1;
+      // Equal timestamps and legacy/non-date timestamps follow physical append
+      // order, matching reduceEvents' existing "later record wins" semantics.
+      return b.index - a.index;
+    });
+}
+
+function latestBatchStart(events: TimestampedEvent[]): BatchStartedEvent | null {
+  return rankBatchStarts(events)[0]?.event ?? null;
+}
+
+/**
+ * Keep only the event family that can affect the latest-batch projection.
+ *
+ * Watch mode calls this after each parsed line. Once a batch start exists, old
+ * completed batches and late records for them can no longer accumulate in
+ * memory. This uses the exact same timestamp/append-order ranking as reduceEvents,
+ * so compaction cannot change which batch is considered latest.
+ */
+export function selectLatestBatchEvents(events: TimestampedEvent[]): TimestampedEvent[] {
+  const latest = latestBatchStart(events);
+  return latest ? events.filter((event) => event.batchId === latest.batchId) : events;
+}
+
+/** Reduce the newest distinct batch ids, newest first, for bounded history output. */
+export function reduceRecentBatches(
+  events: TimestampedEvent[],
+  limit: number,
+): ActivitySnapshot[] {
+  if (!Number.isSafeInteger(limit) || limit <= 0) return [];
+
+  const selected: TimestampedEvent[] = [];
+  const seen = new Set<string>();
+  for (const entry of rankBatchStarts(events)) {
+    if (seen.has(entry.event.batchId)) continue;
+    seen.add(entry.event.batchId);
+    selected.push(entry.event);
+    if (selected.length >= limit) break;
+  }
+
+  return selected.map((start) =>
+    reduceEvents(events.filter((event) => event.batchId === start.batchId)),
+  );
+}
+
 export type WorkerState =
   | "queued"
   | "running"
@@ -605,21 +669,7 @@ export function reduceEvents(events: TimestampedEvent[]): ActivitySnapshot {
   // A shared append-only log can contain records from more than one process.
   // Select the newest batch by its event timestamp before reducing, so a stale
   // batch appended late cannot make the operational view jump backwards.
-  const batchStarts = events.filter((event) => event.type === "batch.started");
-  const latestBatch = batchStarts.reduce<TimestampedEvent | null>((latest, event) => {
-    if (!latest) return event;
-    const latestTimestamp = eventTime(latest.timestamp);
-    const currentTimestamp = eventTime(event.timestamp);
-    if (Number.isFinite(latestTimestamp) && Number.isFinite(currentTimestamp)) {
-      return currentTimestamp >= latestTimestamp ? event : latest;
-    }
-    if (Number.isFinite(latestTimestamp)) return latest;
-    if (Number.isFinite(currentTimestamp)) return event;
-    return event;
-  }, null);
-  const selectedEvents = latestBatch
-    ? events.filter((event) => event.batchId === latestBatch.batchId)
-    : events;
+  const selectedEvents = selectLatestBatchEvents(events);
 
   // Timestamps are normally ISO strings. Keep the physical append order for
   // legacy/non-date timestamps, while making reconstruction deterministic when

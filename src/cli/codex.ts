@@ -98,7 +98,7 @@ export async function codexVersion(): Promise<ToolInfo> {
 export async function gitVersion(): Promise<ToolInfo> {
   const result = await run("git", ["--version"], 20_000);
   if (result.code !== 0) {
-    return { available: false, error: "git not found on PATH" };
+    return { available: false, error: result.stderr.trim() || "git --version failed" };
   }
   return { available: true, version: result.stdout.trim() };
 }
@@ -123,12 +123,20 @@ export interface RegisteredServer {
   enabled?: boolean;
   command?: string;
   args?: string;
+  inspectionError?: string;
 }
 
-/** Ask Codex what it thinks is registered under `name`. */
-export async function getRegisteredServer(name: string): Promise<RegisteredServer> {
-  const result = await run("codex", ["mcp", "get", name], 30_000);
-  if (result.code !== 0) return { registered: false };
+export function parseRegisteredServerResult(
+  name: string,
+  result: CommandResult,
+): RegisteredServer {
+  if (result.code !== 0) {
+    return {
+      registered: false,
+      inspectionError:
+        result.stderr.trim() || result.stdout.trim() || `codex mcp get ${name} failed`,
+    };
+  }
 
   const raw = result.stdout;
   const field = (label: string): string | undefined =>
@@ -141,6 +149,12 @@ export async function getRegisteredServer(name: string): Promise<RegisteredServe
     command: field("command"),
     args: field("args"),
   };
+}
+
+/** Ask Codex what it thinks is registered under `name`. */
+export async function getRegisteredServer(name: string): Promise<RegisteredServer> {
+  const result = await run("codex", ["mcp", "get", name], 30_000);
+  return parseRegisteredServerResult(name, result);
 }
 
 // `codex mcp add` / `codex mcp remove` are deliberately not used. Both rewrite

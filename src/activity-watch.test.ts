@@ -531,3 +531,80 @@ test("watch mode detects a same-size file replacement", async () => {
     await fs.rm(workRoot, { recursive: true, force: true }).catch(() => {});
   }
 });
+
+test("watch json mode emits newline-delimited snapshots without terminal redraws", async () => {
+  const workRoot = await fs.mkdtemp(path.join(os.tmpdir(), "luna-watch-json-"));
+  const eventsPath = path.join(workRoot, "events.jsonl");
+  await fs.writeFile(
+    eventsPath,
+    JSON.stringify({
+      timestamp: "2024-05-01T00:00:00Z",
+      type: "batch.started",
+      batchId: "json-batch",
+      mode: "parallel",
+      taskCount: 1,
+      maxParallel: 1,
+    }) + "\n",
+    "utf8",
+  );
+
+  const originalStdoutWrite = process.stdout.write;
+  let output = "";
+  process.stdout.write = ((
+    chunk: string | Uint8Array,
+    encoding?: unknown,
+    cb?: unknown,
+  ) => {
+    output += chunk.toString();
+    if (typeof encoding === "function") encoding();
+    else if (typeof cb === "function") cb();
+    return true;
+  }) as any;
+
+  const lines = (): string[] => output.split(/\r?\n/).filter(Boolean);
+  const waitFor = async (condition: () => boolean): Promise<void> => {
+    const deadline = Date.now() + 5_000;
+    while (!condition()) {
+      if (Date.now() >= deadline) {
+        throw new Error(`Timed out waiting for NDJSON activity output:\n${output}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  };
+
+  let watchPromise: Promise<number> | undefined;
+  try {
+    const { activityCommand } = await import("./cli/activity.js");
+    watchPromise = activityCommand(["--watch", "--json"], { eventsFile: eventsPath });
+    await waitFor(() => lines().length >= 1);
+
+    await fs.appendFile(
+      eventsPath,
+      JSON.stringify({
+        timestamp: "2024-05-01T00:00:01Z",
+        type: "task.queued",
+        batchId: "json-batch",
+        taskId: "json-task",
+        effort: "high",
+        activityLabel: "JSON watch task",
+      }) + "\n",
+      "utf8",
+    );
+    await waitFor(() => lines().length >= 2);
+
+    const snapshots = lines().map((line) => JSON.parse(line) as {
+      batchId: string | null;
+      workers: Array<{ activityLabel: string | null }>;
+    });
+    assert.equal(snapshots[0]?.batchId, "json-batch");
+    assert.equal(snapshots.at(-1)?.workers[0]?.activityLabel, "JSON watch task");
+    assert.doesNotMatch(output, /Sol-Luna Activity|\x1b/);
+  } finally {
+    if (watchPromise) {
+      process.emit("SIGINT", "SIGINT");
+      await watchPromise.catch(() => undefined);
+    }
+    process.stdout.write = originalStdoutWrite;
+    await fs.rm(workRoot, { recursive: true, force: true }).catch(() => undefined);
+  }
+});

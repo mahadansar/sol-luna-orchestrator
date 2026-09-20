@@ -75,9 +75,13 @@ by deterministic worktree tests.
 Start with `sol-luna-orchestrator doctor`. It checks the Node range, git and
 Codex availability, Codex's local authentication file, the registration, the
 resolved server path, required settings, logs, discovery hint and runtime
-policy, and prints the command that fixes each failure. It does not validate
-git's numeric minimum or prove that stored credentials still work. `--json`
-gives the same report for scripts.
+policy, and prints the command that fixes each failure. Git is checked against
+the supported `2.20` minimum used by parallel worktrees. A failed `codex mcp get`
+inspection keeps its actual error instead of being flattened into "not
+registered", which helps distinguish an absent registration from a broken Codex
+configuration or timed-out inspection. `doctor` still cannot prove that stored
+credentials work without making a network call. `--json` gives the same report
+for scripts; add `--strict` when warnings should also produce a non-zero exit.
 
 Most problems are repaired by re-running `sol-luna-orchestrator init`. It is
 idempotent, it repairs only what is wrong, and it preserves any custom paths
@@ -101,8 +105,18 @@ If instead you get `Activity logging is not configured.`, the event path is
 missing from the registered server. Run `sol-luna-orchestrator init` to add it.
 Installations created before v0.6.1 need this once.
 
+If `doctor` reports `Activity log path healthy` or `Diagnostic log path healthy`
+as a warning, the configured destination is a directory, is not accessible with
+the required permissions, or has a missing/unwritable parent directory. Fix the
+path or permissions, or choose another destination with `init --events <path>`
+or `init --log <path>`. The checks are non-mutating and do not write probe
+records.
+
 `sol-luna-orchestrator status` shows the effective event path and whether it
-came from the configuration or from a `SOL_LUNA_EVENTS` override in your shell. See [Observability](OBSERVABILITY.md) for what each log contains and how to read
+came from the configuration or from a `SOL_LUNA_EVENTS` override in your shell.
+It also shows whether the stored registration points at the current CLI install
+and the effective runtime policy; use `status --json` for scripts. See
+[Observability](OBSERVABILITY.md) for what each log contains and how to read
 `activity` output.
 
 ## Testing a change to the server

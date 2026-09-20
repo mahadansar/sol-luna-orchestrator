@@ -9,6 +9,8 @@ import {
   type TimestampedEvent,
   parseEventLine,
   reduceEvents,
+  reduceRecentBatches,
+  selectLatestBatchEvents,
 } from "./activity-reducer.js";
 import { bold, dim, errOut, green, out, red, symbols, yellow } from "./ui.js";
 
@@ -386,12 +388,113 @@ async function readEvents(file: string): Promise<TimestampedEvent[]> {
   });
 }
 
+export const ACTIVITY_HISTORY_MAX = 100;
+
+export type ActivityArgs =
+  | {
+      ok: true;
+      watch: boolean;
+      json: boolean;
+      history: number | null;
+      help: boolean;
+    }
+  | { ok: false; error: string };
+
+export function parseActivityArgs(argv: string[]): ActivityArgs {
+  let watch = false;
+  let json = false;
+  let history: number | null = null;
+  let help = false;
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]!;
+    if (arg === "--watch") {
+      if (watch) return { ok: false, error: "Duplicate option: --watch" };
+      watch = true;
+      continue;
+    }
+    if (arg === "--json") {
+      if (json) return { ok: false, error: "Duplicate option: --json" };
+      json = true;
+      continue;
+    }
+    if (arg === "--history") {
+      if (history !== null) return { ok: false, error: "Duplicate option: --history" };
+      const raw = argv[index + 1];
+      if (raw === undefined || raw.startsWith("--")) {
+        return { ok: false, error: "--history requires a positive integer" };
+      }
+      if (!/^[1-9]\d*$/.test(raw)) {
+        return { ok: false, error: "--history requires a positive integer" };
+      }
+      const value = Number(raw);
+      if (!Number.isSafeInteger(value) || value > ACTIVITY_HISTORY_MAX) {
+        return {
+          ok: false,
+          error: `--history must be between 1 and ${ACTIVITY_HISTORY_MAX}`,
+        };
+      }
+      history = value;
+      index += 1;
+      continue;
+    }
+    if (arg === "--help" || arg === "-h") {
+      if (help) return { ok: false, error: `Duplicate option: ${arg}` };
+      help = true;
+      continue;
+    }
+    return { ok: false, error: `Unknown option: ${arg}` };
+  }
+
+  if (help && (watch || json || history !== null)) {
+    return { ok: false, error: "--help cannot be combined with other activity options" };
+  }
+  if (watch && history !== null) {
+    return { ok: false, error: "--watch and --history cannot be used together" };
+  }
+
+  return { ok: true, watch, json, history, help };
+}
+
+const ACTIVITY_HELP = `Usage
+  sol-luna-orchestrator activity [--json]
+  sol-luna-orchestrator activity --history <N> [--json]
+  sol-luna-orchestrator activity --watch [--json]
+
+Options
+  --watch        Continuously watch activity; with --json emits NDJSON snapshots
+  --json         Machine-readable JSON output
+  --history <N>  Show the most recent N batches (1-${ACTIVITY_HISTORY_MAX})
+  --help, -h     Show this help`;
+
+function renderHumanHistory(snapshots: ActivitySnapshot[]): void {
+  if (snapshots.length === 0) {
+    renderHuman(reduceEvents([]));
+    return;
+  }
+  for (const [index, snapshot] of snapshots.entries()) {
+    if (index > 0) out();
+    out(dim(`Recent batch ${index + 1} of ${snapshots.length}${index === 0 ? " (latest)" : ""}`));
+    renderHuman(snapshot);
+  }
+}
+
 export async function activityCommand(
   argv: string[],
   options: { eventsFile?: string } = {},
 ): Promise<number> {
-  const watchMode = argv.includes("--watch");
-  const jsonMode = argv.includes("--json");
+  const parsedArgs = parseActivityArgs(argv);
+  if (!parsedArgs.ok) {
+    errOut(`${bold(red("Error:"))} ${parsedArgs.error}`);
+    errOut("Run: sol-luna-orchestrator activity --help");
+    return 1;
+  }
+  if (parsedArgs.help) {
+    out(ACTIVITY_HELP);
+    return 0;
+  }
+  const watchMode = parsedArgs.watch;
+  const jsonMode = parsedArgs.json;
 
   // Resolved from this process first, then from the registered MCP server's
   // env table — which is where `init` puts it and where the running server
@@ -407,14 +510,15 @@ export async function activityCommand(
     return 1;
   }
 
-  if (watchMode && jsonMode) {
-    errOut(`${bold(red("Error:"))} --watch and --json cannot be used together.`);
-    return 1;
-  }
-
   const eventsFile = resolved.path;
   if (!watchMode) {
     const events = await readEvents(eventsFile);
+    if (parsedArgs.history !== null) {
+      const snapshots = reduceRecentBatches(events, parsedArgs.history);
+      if (jsonMode) out(JSON.stringify(snapshots, null, 2));
+      else renderHumanHistory(snapshots);
+      return 0;
+    }
     const snapshot = reduceEvents(events);
     if (jsonMode) {
       out(JSON.stringify(snapshot, null, 2));
@@ -514,14 +618,36 @@ export async function activityCommand(
       for (const line of parts) {
         const event = parseEventLine(line);
         if (event) {
+          const currentBatchId = events.find(
+            (candidate) => candidate.type === "batch.started",
+          )?.batchId;
+          if (
+            event.type !== "batch.started" &&
+            currentBatchId !== undefined &&
+            event.batchId !== currentBatchId
+          ) {
+            continue;
+          }
           events.push(event);
-          changed = true;
+          if (event.type === "batch.started") {
+            const compacted = selectLatestBatchEvents(events);
+            const retained = compacted.includes(event);
+            events.splice(0, events.length, ...compacted);
+            changed ||= retained;
+          } else {
+            changed = true;
+          }
         }
       }
       return changed;
     };
 
     const updateElapsedTimer = (): void => {
+      if (jsonMode) {
+        if (elapsedTimer) clearInterval(elapsedTimer);
+        elapsedTimer = undefined;
+        return;
+      }
       const active =
         snapshot.state === "running" &&
         snapshot.workers.some(
@@ -551,8 +677,12 @@ export async function activityCommand(
 
     const renderCurrent = (): void => {
       snapshot = reduceEvents(events);
-      clearScreen();
-      renderHuman(snapshot);
+      if (jsonMode) {
+        out(JSON.stringify(snapshot));
+      } else {
+        clearScreen();
+        renderHuman(snapshot);
+      }
       updateElapsedTimer();
     };
 
@@ -616,7 +746,7 @@ export async function activityCommand(
       if (elapsedTimer) clearInterval(elapsedTimer);
       watcher?.close();
       process.off("SIGINT", onSigint);
-      out();
+      if (!jsonMode) out();
       resolve(0);
     };
 
@@ -645,7 +775,8 @@ export async function activityCommand(
       if (closed) return;
       // Exactly one startup render, containing the reconstructed latest state.
       snapshot = reduceEvents(events);
-      renderHuman(snapshot);
+      if (jsonMode) out(JSON.stringify(snapshot));
+      else renderHuman(snapshot);
       updateElapsedTimer();
       ready = true;
       if (pendingChange) {
@@ -658,7 +789,8 @@ export async function activityCommand(
       if (closed) return;
       // Keep watch mode useful even if a transient startup read failed.
       snapshot = reduceEvents(events);
-      renderHuman(snapshot);
+      if (jsonMode) out(JSON.stringify(snapshot));
+      else renderHuman(snapshot);
       ready = true;
       scheduleFileChange();
     });

@@ -30,7 +30,8 @@ import {
 } from "./cli/toml-edit.js";
 import { parseInitOptions } from "./cli/init.js";
 import { ensureDiscoveryHint } from "./cli/discovery-hint.js";
-import { run as runCodex } from "./cli/codex.js";
+import { parseRegisteredServerResult, run as runCodex } from "./cli/codex.js";
+import { doctorExitCode, gitVersionSupported, type DoctorReport } from "./cli/doctor.js";
 import { minimumNode } from "./cli/paths.js";
 import { inspectSettings, settingsSatisfied } from "./cli/settings.js";
 
@@ -411,6 +412,56 @@ test("status reports an unconfigured install without throwing", async () => {
   const result = await runCli(["status"], { CODEX_HOME: emptyCodexHome() });
   assert.equal(result.code, 1);
   assert.match(result.stdout, /Configured:\s*no/);
+});
+
+test("status and doctor reject unknown options and expose subcommand help", async () => {
+  const home = emptyCodexHome();
+  const statusUnknown = await runCli(["status", "--jsoon"], { CODEX_HOME: home });
+  assert.equal(statusUnknown.code, 1);
+  assert.match(statusUnknown.stderr, /Unknown option: --jsoon/);
+
+  const doctorUnknown = await runCli(["doctor", "--jsoon"], { CODEX_HOME: home });
+  assert.equal(doctorUnknown.code, 1);
+  assert.match(doctorUnknown.stderr, /Unknown option: --jsoon/);
+
+  const statusHelp = await runCli(["status", "--help"], { CODEX_HOME: home });
+  assert.equal(statusHelp.code, 0);
+  assert.match(statusHelp.stdout, /status \[--json\]/);
+
+  const doctorHelp = await runCli(["doctor", "--help"], { CODEX_HOME: home });
+  assert.equal(doctorHelp.code, 0);
+  assert.match(doctorHelp.stdout, /doctor \[--json\] \[--strict\]/);
+});
+
+test("doctor strict mode turns warnings into a non-zero diagnostic result", () => {
+  const report: DoctorReport = {
+    version: "0.0.0-test",
+    ok: true,
+    checks: [{ name: "optional signal", status: "warn", detail: "warning" }],
+  };
+  assert.equal(doctorExitCode(report, false), 0);
+  assert.equal(doctorExitCode(report, true), 1);
+});
+
+test("git support check enforces the documented 2.20 minimum", () => {
+  assert.equal(gitVersionSupported("git version 2.19.9"), false);
+  assert.equal(gitVersionSupported("git version 2.20.0"), true);
+  assert.equal(gitVersionSupported("git version 2.47.1.windows.2"), true);
+  assert.equal(gitVersionSupported("unexpected output"), null);
+});
+
+test("Codex registration inspection preserves command failures", () => {
+  assert.deepEqual(
+    parseRegisteredServerResult("sol-luna-orchestrator", {
+      code: 1,
+      stdout: "",
+      stderr: "failed to parse config.toml",
+    }),
+    {
+      registered: false,
+      inspectionError: "failed to parse config.toml",
+    },
+  );
 });
 
 test("doctor --json emits a parseable report", async () => {

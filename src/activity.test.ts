@@ -2,10 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   reduceEvents,
+  reduceRecentBatches,
   parseEventLine,
+  selectLatestBatchEvents,
   TimestampedEvent,
 } from "./cli/activity-reducer.js";
-import { renderHumanLines } from "./cli/activity.js";
+import {
+  ACTIVITY_HISTORY_MAX,
+  parseActivityArgs,
+  renderHumanLines,
+} from "./cli/activity.js";
 import { symbols } from "./cli/ui.js";
 import {
   activityFailureReason,
@@ -92,6 +98,137 @@ test("parseEventLine sanitizes control characters in existing event logs", () =>
   const snapshot = reduceEvents([queued]);
   assert.equal(snapshot.workers[0]?.activityLabel, "Update [2J auth retries");
   assert.doesNotMatch(renderHumanLines(snapshot).join("\n"), /\u001b\[2J/);
+});
+
+test("activity option parsing is strict and history is bounded", () => {
+  assert.deepEqual(parseActivityArgs([]), {
+    ok: true,
+    watch: false,
+    json: false,
+    history: null,
+    help: false,
+  });
+  assert.deepEqual(parseActivityArgs(["--watch", "--json"]), {
+    ok: true,
+    watch: true,
+    json: true,
+    history: null,
+    help: false,
+  });
+  assert.deepEqual(parseActivityArgs(["--history", "3", "--json"]), {
+    ok: true,
+    watch: false,
+    json: true,
+    history: 3,
+    help: false,
+  });
+
+  for (const argv of [
+    ["--watc"],
+    ["positional"],
+    ["--json", "--json"],
+    ["--history"],
+    ["--history", "0"],
+    ["--history", "-1"],
+    ["--history", "1.5"],
+    ["--history", String(ACTIVITY_HISTORY_MAX + 1)],
+    ["--watch", "--history", "2"],
+    ["--help", "--json"],
+  ]) {
+    assert.equal(parseActivityArgs(argv).ok, false, argv.join(" "));
+  }
+});
+
+test("latest-batch compaction drops old and late stale batch records", () => {
+  const events: TimestampedEvent[] = [
+    {
+      timestamp: "2024-01-02T00:00:00Z",
+      type: "batch.started",
+      batchId: "latest",
+      mode: "parallel",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-02T00:00:01Z",
+      type: "task.queued",
+      batchId: "latest",
+      taskId: "t-latest",
+      effort: "high",
+    },
+    {
+      timestamp: "2024-01-01T00:00:00Z",
+      type: "batch.started",
+      batchId: "stale",
+      mode: "sequential",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-03T00:00:00Z",
+      type: "worker.failed",
+      batchId: "stale",
+      taskId: "t-stale",
+      reason: "stale failure",
+    },
+  ];
+
+  const compacted = selectLatestBatchEvents(events);
+  assert.equal(compacted.length, 2);
+  assert.ok(compacted.every((event) => event.batchId === "latest"));
+  assert.equal(reduceEvents(compacted).batchId, reduceEvents(events).batchId);
+});
+
+test("recent batch history is newest first, distinct, and limited", () => {
+  const events: TimestampedEvent[] = [
+    {
+      timestamp: "legacy-time",
+      type: "batch.started",
+      batchId: "legacy",
+      mode: "sequential",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-03T00:00:00Z",
+      type: "batch.started",
+      batchId: "newest",
+      mode: "parallel",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T00:00:00Z",
+      type: "batch.started",
+      batchId: "oldest",
+      mode: "sequential",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-02T00:00:00Z",
+      type: "batch.started",
+      batchId: "middle",
+      mode: "parallel",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-03T00:00:01Z",
+      type: "batch.completed",
+      batchId: "newest",
+      durationSeconds: 1,
+      passed: 1,
+      failed: 0,
+    },
+  ];
+
+  const history = reduceRecentBatches(events, 3);
+  assert.deepEqual(
+    history.map((snapshot) => snapshot.batchId),
+    ["newest", "middle", "oldest"],
+  );
+  assert.equal(history[0]?.state, "completed");
 });
 
 test("event rendering omits prompt objectives while sanitizing other strings", () => {

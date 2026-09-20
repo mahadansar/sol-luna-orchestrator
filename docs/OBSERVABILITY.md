@@ -335,9 +335,20 @@ always carried it.
   worker events are still reduced for compatibility but do not duplicate a
   canonical attempt. Older records use truthful unknown or empty defaults for
   fields introduced later.
+- **`sol-luna-orchestrator activity --history N`** prints up to the `N` most
+  recent batch snapshots, newest first. `N` must be an integer from 1 through
+  100. With `--json`, the result is one JSON array containing those reduced
+  snapshots.
+- **`sol-luna-orchestrator activity --watch --json`** emits newline-delimited
+  JSON (NDJSON): one compact snapshot at startup and another after each accepted
+  state-changing event. It does not emit terminal clear-screen sequences or
+  periodic elapsed-time-only refreshes, so each line can be consumed
+  independently by scripts.
 
-`--watch` and `--json` cannot be combined; the CLI rejects the pair rather than
-guessing which was meant.
+`--watch` is a live latest-batch view and therefore cannot be combined with
+`--history`. Activity option parsing is strict: unknown options, duplicates,
+missing or malformed history counts, and unsupported option combinations return
+a non-zero result instead of being silently ignored.
 
 ### Snapshot semantics
 
@@ -367,11 +378,15 @@ refused counts without inventing another worker; the raw command strings and
 their output remain outside the activity stream.
 
 `--watch` folds the existing history silently at startup and renders only that
-latest run, so an old log does not scroll past. It attaches its watcher before
-reading history, and records appended during that catch-up are replayed as a
-normal incremental read rather than falling into the gap. Before anything has
-ever been delegated it prints `No orchestration activity found.` and keeps
-waiting, so it is safe to start the watcher first.
+latest run, so an old log does not scroll past. As soon as a batch start is
+known, the watcher retains only the events belonging to the newest batch under
+the same timestamp/append-order rules used by the reducer. Completed historical
+batches and late stale records therefore do not accumulate for the lifetime of
+a long-running watcher. It attaches its watcher before reading history, and
+records appended during that catch-up are replayed as a normal incremental read
+rather than falling into the gap. Before anything has ever been delegated the
+human view prints `No orchestration activity found.` and keeps waiting; JSON
+watch emits the corresponding empty snapshot and also keeps waiting.
 
 The snapshot also carries a legacy `objective` field. It is always `null`:
 objectives are not persisted, and the field survives only so that older readers

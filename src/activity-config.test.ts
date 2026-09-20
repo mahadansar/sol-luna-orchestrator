@@ -99,6 +99,45 @@ test("registered configuration preserves explicit empty strings without converti
   assert.equal(resolved.computePolicy.maxConcurrency, 1);
 });
 
+test("registered configuration reports runtime corrections and effective operational settings", () => {
+  let config = REALISTIC;
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_MAX_PARALLEL", "abc");
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_MAX_WORKERS_PER_BATCH", "-2");
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_ALLOWED_EFFORTS", "medium,warp");
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_VERIFY_MODE", " off ");
+  config = upsertKey(config, serverEnvTable(), "LUNA_TIMEOUT_SECONDS", "0");
+  config = upsertKey(config, serverEnvTable(), "LUNA_VERIFY_TIMEOUT_SECONDS", "wat");
+  config = upsertKey(config, serverEnvTable(), "LUNA_SANDBOX", "wat");
+  config = upsertKey(config, serverEnvTable(), "LUNA_NETWORK_ACCESS", "1");
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_KEEP_WORKTREES", "wat");
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_ALLOW_DIRTY", "1");
+
+  const resolved = resolveRegisteredServerConfig(config);
+  assert.equal(resolved.maxParallel, 1);
+  assert.equal(resolved.maxWorkersPerBatch, 12);
+  assert.deepEqual(resolved.computePolicy.allowedEfforts, ["medium"]);
+  assert.equal(resolved.verificationMode, "allowlist");
+  assert.equal(resolved.workerTimeoutSeconds, 1800);
+  assert.equal(resolved.verificationTimeoutSeconds, 600);
+  assert.equal(resolved.workerSandbox, "read-only");
+  assert.equal(resolved.workerNetworkAccess, true);
+  assert.equal(resolved.keepWorktrees, "onfailure");
+  assert.equal(resolved.allowDirtyWorktreeBase, true);
+  assert.deepEqual(
+    new Set(resolved.diagnostics.map((diagnostic) => diagnostic.key)),
+    new Set([
+      "SOL_LUNA_MAX_PARALLEL",
+      "SOL_LUNA_MAX_WORKERS_PER_BATCH",
+      "SOL_LUNA_ALLOWED_EFFORTS",
+      "SOL_LUNA_VERIFY_MODE",
+      "LUNA_TIMEOUT_SECONDS",
+      "LUNA_VERIFY_TIMEOUT_SECONDS",
+      "LUNA_SANDBOX",
+      "SOL_LUNA_KEEP_WORKTREES",
+    ]),
+  );
+});
+
 /** What a v0.6.0 install looks like: registered, configured, no event path. */
 const V060 = `[mcp_servers.sol-luna-orchestrator]
 command = "/usr/bin/node"
@@ -629,11 +668,19 @@ test("a process override redirects activity away from the configured path", asyn
   assert.equal(snapshot.batchId, "from-override");
 });
 
-test("activity rejects --watch with --json before touching the filesystem", async () => {
+test("activity keeps history static while allowing json as an output format", async () => {
   const { home } = configuredHome();
-  const result = await runCli(["activity", "--watch", "--json"], { CODEX_HOME: home });
-  assert.equal(result.code, 1);
-  assert.match(result.stderr, /cannot be used together/);
+  const history = await runCli(["activity", "--history", "1", "--json"], {
+    CODEX_HOME: home,
+  });
+  assert.equal(history.code, 0);
+  assert.deepEqual(JSON.parse(history.stdout), []);
+
+  const incompatible = await runCli(["activity", "--watch", "--history", "1"], {
+    CODEX_HOME: home,
+  });
+  assert.equal(incompatible.code, 1);
+  assert.match(incompatible.stderr, /--watch and --history cannot be used together/);
 });
 
 // --- status and doctor agree with activity ----------------------------------
@@ -680,10 +727,63 @@ test("status reports registered server policy instead of differing CLI-shell val
     SOL_LUNA_ALLOWED_ROOTS: "/shell",
   });
   assert.match(result.stdout, /registered-model/);
-  assert.match(result.stdout, /Max workers:\s+6/);
+  assert.match(result.stdout, /Max concurrency:\s+6/);
+  assert.match(result.stdout, /Max workers\/batch:\s+12/);
   assert.match(result.stdout, /Verification:\s+off/);
   assert.match(result.stdout, /Workspace roots:\s+\/registered/);
   assert.doesNotMatch(result.stdout, /shell-model|\/shell/);
+});
+
+test("status --json exposes registration identity, effective policy, and corrections", async () => {
+  const { home } = configuredHome();
+  const configPath = path.join(home, "config.toml");
+  let config = fs.readFileSync(configPath, "utf8");
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_MAX_PARALLEL", "99");
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_MAX_WORKERS_PER_BATCH", "5");
+  config = upsertKey(config, serverEnvTable(), "LUNA_TIMEOUT_SECONDS", "45");
+  config = upsertKey(config, serverEnvTable(), "LUNA_SANDBOX", "read-only");
+  config = upsertKey(config, serverEnvTable(), "LUNA_NETWORK_ACCESS", "1");
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_KEEP_WORKTREES", "never");
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_ALLOW_DIRTY", "1");
+  fs.writeFileSync(configPath, config, "utf8");
+
+  const result = await runCli(["status", "--json"], { CODEX_HOME: home });
+  assert.equal(result.code, 0);
+  const status = JSON.parse(result.stdout) as {
+    configured: boolean;
+    currentInstall: { serverEntry: string };
+    registration: {
+      command: string | null;
+      args: string | null;
+      matchesCurrentInstall: boolean;
+    };
+    runtime: {
+      maxConcurrency: number;
+      maxWorkersPerBatch: number;
+      workerTimeoutSeconds: number;
+      workerSandbox: string;
+      workerNetworkAccess: boolean;
+      keepWorktrees: string;
+      allowDirtyWorktreeBase: boolean;
+      diagnostics: Array<{ key: string }>;
+    };
+  };
+  assert.equal(status.configured, true);
+  assert.ok(status.currentInstall.serverEntry.endsWith("server.js"));
+  assert.ok(status.registration.command);
+  assert.ok(status.registration.args);
+  assert.equal(status.runtime.maxConcurrency, 8);
+  assert.equal(status.runtime.maxWorkersPerBatch, 5);
+  assert.equal(status.runtime.workerTimeoutSeconds, 45);
+  assert.equal(status.runtime.workerSandbox, "read-only");
+  assert.equal(status.runtime.workerNetworkAccess, true);
+  assert.equal(status.runtime.keepWorktrees, "never");
+  assert.equal(status.runtime.allowDirtyWorktreeBase, true);
+  assert.ok(
+    status.runtime.diagnostics.some(
+      (diagnostic) => diagnostic.key === "SOL_LUNA_MAX_PARALLEL",
+    ),
+  );
 });
 
 test("status says how to fix an unconfigured install", async () => {
@@ -739,6 +839,64 @@ test("doctor reports registered policy and verifies the recursion disable target
   assert.equal(
     report.checks.some((c) => c.name === "Worker recursion blocked"),
     false,
+  );
+});
+
+test("doctor reports corrected runtime settings and rejects an empty worker model", async () => {
+  const { home } = configuredHome();
+  const configPath = path.join(home, "config.toml");
+  let config = fs.readFileSync(configPath, "utf8");
+  config = upsertKey(config, serverEnvTable(), "LUNA_MODEL", "");
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_MAX_PARALLEL", "oops");
+  config = upsertKey(config, serverEnvTable(), "LUNA_VERIFY_TIMEOUT_SECONDS", "0");
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_KEEP_WORKTREES", "sometimes");
+  fs.writeFileSync(configPath, config, "utf8");
+
+  const result = await runCli(["doctor", "--json"], { CODEX_HOME: home });
+  const report = JSON.parse(result.stdout) as {
+    checks: Array<{ name: string; status: string; detail?: string }>;
+  };
+  assert.equal(
+    report.checks.find((check) => check.name === "Worker model")?.status,
+    "fail",
+  );
+  assert.equal(
+    report.checks.find((check) => check.name === "Worker model")?.detail,
+    "empty",
+  );
+  for (const key of [
+    "SOL_LUNA_MAX_PARALLEL",
+    "LUNA_VERIFY_TIMEOUT_SECONDS",
+    "SOL_LUNA_KEEP_WORKTREES",
+  ]) {
+    const correction = report.checks.find(
+      (check) => check.name === `Config correction: ${key}`,
+    );
+    assert.equal(correction?.status, "warn", key);
+  }
+});
+
+test("doctor warns when configured telemetry targets are directories", async () => {
+  const { home } = configuredHome();
+  const configPath = path.join(home, "config.toml");
+  const sinkDirectory = path.join(home, "not-a-log-file");
+  fs.mkdirSync(sinkDirectory);
+  let config = fs.readFileSync(configPath, "utf8");
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_LOG", sinkDirectory);
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_EVENTS", sinkDirectory);
+  fs.writeFileSync(configPath, config, "utf8");
+
+  const result = await runCli(["doctor", "--json"], { CODEX_HOME: home });
+  const report = JSON.parse(result.stdout) as {
+    checks: Array<{ name: string; status: string; detail?: string }>;
+  };
+  assert.equal(
+    report.checks.find((check) => check.name === "Diagnostic log path healthy")?.status,
+    "warn",
+  );
+  assert.equal(
+    report.checks.find((check) => check.name === "Activity log path healthy")?.status,
+    "warn",
   );
 });
 

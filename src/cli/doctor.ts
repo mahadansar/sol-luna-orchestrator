@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import {
   codexAuthPresent,
   codexVersion,
@@ -20,9 +21,9 @@ import {
 } from "./discovery-hint.js";
 import { describeComputePolicy } from "../policy.js";
 import { SERVER_NAME, inspectSettings, serverTable } from "./settings.js";
-import { fromTomlValue, readKey } from "./toml-edit.js";
+import { findTable, fromTomlValue, readKey } from "./toml-edit.js";
 import { resolveRegisteredServerConfig } from "./server-config.js";
-import { bold, dim, out, symbols } from "./ui.js";
+import { bold, dim, errOut, out, symbols } from "./ui.js";
 
 /**
  * Diagnose an installation without spending a single model call.
@@ -48,6 +49,72 @@ export interface DoctorReport {
   ok: boolean;
 }
 
+const MIN_GIT_MAJOR = 2;
+const MIN_GIT_MINOR = 20;
+
+const findRegisteredTable = (configText: string): boolean =>
+  findTable(configText, serverTable()) !== null;
+
+export function gitVersionSupported(version: string | undefined): boolean | null {
+  if (!version) return null;
+  const match = /(?:^|\s)(\d+)\.(\d+)(?:\.\d+)?/.exec(version);
+  if (!match) return null;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major > MIN_GIT_MAJOR || (major === MIN_GIT_MAJOR && minor >= MIN_GIT_MINOR);
+}
+
+function pathHealthCheck(
+  name: string,
+  target: string,
+  options: { readable: boolean; initFlag: "--log" | "--events" },
+): Check {
+  const accessMode = fs.constants.W_OK | (options.readable ? fs.constants.R_OK : 0);
+  try {
+    const stat = fs.statSync(target);
+    if (!stat.isFile()) {
+      return {
+        name,
+        status: "warn",
+        detail: `${target} (not a regular file)`,
+        remedy: `Choose a file path and run: sol-luna-orchestrator init ${options.initFlag} <path>`,
+      };
+    }
+    fs.accessSync(target, accessMode);
+    return { name, status: "ok", detail: target };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") {
+      const parent = path.dirname(target);
+      try {
+        const parentStat = fs.statSync(parent);
+        if (!parentStat.isDirectory()) throw new Error("parent is not a directory");
+        fs.accessSync(parent, fs.constants.W_OK);
+        return {
+          name,
+          status: "ok",
+          detail: `${target} (will be created on first write)`,
+        };
+      } catch (parentError) {
+        return {
+          name,
+          status: "warn",
+          detail: `${target} (${(parentError as Error).message})`,
+          remedy: "Choose a path whose parent directory exists and is writable.",
+        };
+      }
+    }
+    return {
+      name,
+      status: "warn",
+      detail: `${target} (${(error as Error).message})`,
+      remedy: options.readable
+        ? "Make the activity file readable and writable, or configure another path."
+        : "Make the diagnostic log writable, or configure another path.",
+    };
+  }
+}
+
 export async function collectChecks(): Promise<Check[]> {
   const checks: Check[] = [];
 
@@ -67,13 +134,20 @@ export async function collectChecks(): Promise<Check[]> {
   });
 
   const git = await gitVersion();
+  const gitSupported = git.available ? gitVersionSupported(git.version) : null;
   checks.push({
-    name: "git available",
-    status: git.available ? "ok" : "warn",
-    detail: git.available ? git.version : "not found",
-    remedy: git.available
-      ? undefined
-      : "Install git — required only for parallel batches (worktrees)",
+    name: "git supported",
+    status: git.available && gitSupported === true ? "ok" : "warn",
+    detail: git.available ? git.version : (git.error ?? "not found"),
+    expected: `>=${MIN_GIT_MAJOR}.${MIN_GIT_MINOR}`,
+    remedy:
+      git.available && gitSupported === true
+        ? undefined
+        : git.available && gitSupported === false
+          ? `Upgrade git to ${MIN_GIT_MAJOR}.${MIN_GIT_MINOR} or newer for parallel worktrees.`
+          : git.available
+            ? "Could not parse the git version; parallel worktree support is unverified."
+            : "Install git — required only for parallel batches (worktrees)",
   });
 
   // --- Codex ---------------------------------------------------------------
@@ -81,7 +155,7 @@ export async function collectChecks(): Promise<Check[]> {
   checks.push({
     name: "Codex CLI found",
     status: codex.available ? "ok" : "fail",
-    detail: codex.available ? codex.version : "not found on PATH",
+    detail: codex.available ? codex.version : (codex.error ?? "not found on PATH"),
     remedy: codex.available ? undefined : "Install the OpenAI Codex CLI",
   });
 
@@ -111,15 +185,27 @@ export async function collectChecks(): Promise<Check[]> {
   }
 
   // --- Registration --------------------------------------------------------
+  const configText = readConfig();
+  const configuredInFile = findRegisteredTable(configText);
   const registered = codex.available
     ? await getRegisteredServer(SERVER_NAME)
-    : { registered: false };
+    : { registered: false, inspectionError: codex.error };
 
   checks.push({
     name: "MCP server registered",
     status: registered.registered ? "ok" : "fail",
-    detail: registered.registered ? SERVER_NAME : "not registered with Codex",
-    remedy: registered.registered ? undefined : "Run: sol-luna-orchestrator init",
+    detail: registered.registered
+      ? SERVER_NAME
+      : registered.inspectionError
+        ? `Codex inspection failed: ${registered.inspectionError}`
+        : configuredInFile
+          ? "configured in config.toml but not confirmed by Codex"
+          : "not registered with Codex",
+    remedy: registered.registered
+      ? undefined
+      : registered.inspectionError && configuredInFile
+        ? "Fix the reported Codex/config error, then rerun doctor."
+        : "Run: sol-luna-orchestrator init",
   });
 
   if (registered.registered) {
@@ -145,7 +231,6 @@ export async function collectChecks(): Promise<Check[]> {
   }
 
   // --- Required settings ---------------------------------------------------
-  const configText = readConfig();
   const serverConfig = resolveRegisteredServerConfig(configText);
   const discovery = inspectDiscoveryHint(readDiscoveryInstructions());
   for (const setting of inspectSettings(configText)) {
@@ -181,14 +266,66 @@ export async function collectChecks(): Promise<Check[]> {
 
   checks.push({
     name: "Worker model",
-    status: "ok",
-    detail: serverConfig.workerModel,
+    status: serverConfig.workerModel.trim() ? "ok" : "fail",
+    detail: serverConfig.workerModel.trim() ? serverConfig.workerModel : "empty",
+    remedy: serverConfig.workerModel.trim()
+      ? undefined
+      : "Set LUNA_MODEL to a non-empty model name in the registered MCP environment.",
   });
 
   checks.push({
-    name: "Maximum workers",
+    name: "Maximum concurrency",
     status: "ok",
     detail: String(serverConfig.maxParallel),
+  });
+
+  checks.push({
+    name: "Maximum workers per batch",
+    status: "ok",
+    detail: String(serverConfig.maxWorkersPerBatch),
+  });
+
+  checks.push({
+    name: "Worker timeout",
+    status: "ok",
+    detail: `${serverConfig.workerTimeoutSeconds}s`,
+  });
+
+  checks.push({
+    name: "Verification timeout",
+    status: "ok",
+    detail: `${serverConfig.verificationTimeoutSeconds}s`,
+  });
+
+  checks.push({
+    name: "Worker sandbox",
+    status: serverConfig.workerSandbox === "danger-full-access" ? "warn" : "ok",
+    detail: serverConfig.workerSandbox,
+    remedy:
+      serverConfig.workerSandbox === "danger-full-access"
+        ? "Use workspace-write unless the host requires this trusted-machine workaround."
+        : undefined,
+  });
+
+  checks.push({
+    name: "Worker network access",
+    status: "ok",
+    detail: serverConfig.workerNetworkAccess ? "enabled" : "disabled",
+  });
+
+  checks.push({
+    name: "Worktree retention",
+    status: "ok",
+    detail: serverConfig.keepWorktrees,
+  });
+
+  checks.push({
+    name: "Dirty parallel base",
+    status: serverConfig.allowDirtyWorktreeBase ? "warn" : "ok",
+    detail: serverConfig.allowDirtyWorktreeBase ? "allowed" : "refused",
+    remedy: serverConfig.allowDirtyWorktreeBase
+      ? "Unset SOL_LUNA_ALLOW_DIRTY unless stale-base parallel work is intentional."
+      : undefined,
   });
 
   checks.push({
@@ -201,6 +338,15 @@ export async function collectChecks(): Promise<Check[]> {
         "ignored and stronger-executor fallback stays unresolvable"
       : undefined,
   });
+
+  for (const diagnostic of serverConfig.diagnostics) {
+    checks.push({
+      name: `Config correction: ${diagnostic.key}`,
+      status: "warn",
+      detail: `"${diagnostic.raw}" -> ${diagnostic.effective}`,
+      remedy: diagnostic.message,
+    });
+  }
 
   const disableTargetMatches = serverConfig.recursionDisableTarget === SERVER_NAME;
   checks.push({
@@ -224,6 +370,14 @@ export async function collectChecks(): Promise<Check[]> {
       ? undefined
       : "Optional, but it is the best troubleshooting signal. Run: sol-luna-orchestrator init",
   });
+  if (logPath) {
+    checks.push(
+      pathHealthCheck("Diagnostic log path healthy", logPath, {
+        readable: false,
+        initFlag: "--log",
+      }),
+    );
+  }
 
   // `init` owns this key now, so doctor has to check it — a setup command that
   // writes something its own diagnostic ignores is how the two start disagreeing.
@@ -238,6 +392,14 @@ export async function collectChecks(): Promise<Check[]> {
       ? undefined
       : "`sol-luna-orchestrator activity` needs this. Run: sol-luna-orchestrator init",
   });
+  if (events.path) {
+    checks.push(
+      pathHealthCheck("Activity log path healthy", events.path, {
+        readable: true,
+        initFlag: "--events",
+      }),
+    );
+  }
 
   checks.push({
     name: "Codex discovery hint",
@@ -274,13 +436,45 @@ export async function buildReport(): Promise<DoctorReport> {
   };
 }
 
+export function doctorExitCode(report: DoctorReport, strict: boolean): number {
+  if (!report.ok) return 1;
+  if (strict && report.checks.some((check) => check.status === "warn")) return 1;
+  return 0;
+}
+
+const DOCTOR_HELP = `${bold("Usage")}
+  sol-luna-orchestrator doctor [--json] [--strict]
+
+${bold("Options")}
+  --json    Output a machine-readable diagnostic report
+  --strict  Return non-zero when warnings are present
+  --help    Show this help`;
+
 export async function doctorCommand(argv: string[]): Promise<number> {
+  if (argv.includes("--help") || argv.includes("-h")) {
+    const unknownWithHelp = argv.filter((arg) => arg !== "--help" && arg !== "-h");
+    if (unknownWithHelp.length > 0) {
+      for (const arg of unknownWithHelp) errOut(`Unknown option: ${arg}`);
+      return 1;
+    }
+    out(DOCTOR_HELP);
+    return 0;
+  }
+  const unknown = argv.filter((arg) => arg !== "--json" && arg !== "--strict");
+  if (unknown.length > 0) {
+    for (const arg of unknown) errOut(`Unknown option: ${arg}`);
+    errOut("Valid options: --json, --strict, --help");
+    return 1;
+  }
   const asJson = argv.includes("--json");
+  const strict = argv.includes("--strict");
   const report = await buildReport();
+  const warnings = report.checks.filter((check) => check.status === "warn").length;
+  const exitCode = doctorExitCode(report, strict);
 
   if (asJson) {
     out(JSON.stringify(report, null, 2));
-    return report.ok ? 0 : 1;
+    return exitCode;
   }
 
   out(bold(`Sol-Luna Orchestrator Doctor  ${dim(`v${report.version}`)}`));
@@ -305,7 +499,6 @@ export async function doctorCommand(argv: string[]): Promise<number> {
 
   out();
   const failures = report.checks.filter((check) => check.status === "fail").length;
-  const warnings = report.checks.filter((check) => check.status === "warn").length;
 
   if (failures === 0 && warnings === 0) {
     out(`${symbols.ok} Ready.`);
@@ -321,5 +514,5 @@ export async function doctorCommand(argv: string[]): Promise<number> {
     ),
   );
 
-  return report.ok ? 0 : 1;
+  return exitCode;
 }
