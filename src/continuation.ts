@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { ContinuationState, DelegateTaskInput } from "./contract.js";
 import { LUNA_MODEL } from "./config.js";
+import type { GitEvidenceAuthority } from "./git.js";
 import type { WorktreeLease } from "./worktree.js";
 
 /** How long an unused continuation remains valid in one server process. */
@@ -24,6 +25,7 @@ interface ContinuationRecord {
   authoritativeWorkspace: string;
   reconcileFinalGit: boolean;
   worktreeLease: WorktreeLease | null;
+  gitEvidenceAuthority: GitEvidenceAuthority | null;
   predecessorExecutionId: string | null;
   logicalAttempt: number;
   model: string;
@@ -47,6 +49,8 @@ export interface ContinuationEntry {
   reconcileFinalGit: boolean;
   /** Exact persistent owner for a retained parallel worktree, when applicable. */
   worktreeLease: WorktreeLease | null;
+  /** Git identity/base pinned before the retained worker was allowed to execute. */
+  gitEvidenceAuthority: GitEvidenceAuthority | null;
   /** Factual in-process lineage; never persisted across server sessions. */
   predecessorExecutionId: string | null;
   logicalAttempt: number;
@@ -137,6 +141,7 @@ export class ContinuationStore {
     model = LUNA_MODEL,
     contextKey: string | null = null,
     authoritativeWorkspace: string = workingDirectory,
+    gitEvidenceAuthority: GitEvidenceAuthority | null = null,
   ): string {
     if (this.disposed) throw new Error("Continuation store is shut down.");
     const now = this.now();
@@ -159,6 +164,9 @@ export class ContinuationStore {
       authoritativeWorkspace,
       reconcileFinalGit,
       worktreeLease: worktreeLease ? { ...worktreeLease } : null,
+      gitEvidenceAuthority: gitEvidenceAuthority
+        ? structuredClone(gitEvidenceAuthority)
+        : null,
       predecessorExecutionId,
       logicalAttempt,
       model,
@@ -253,9 +261,11 @@ export class ContinuationStore {
   /** Whether an active or executing reference still owns a lifecycle context. */
   hasContextKey(contextKey: string): boolean {
     this.prune(this.now());
-    return [...this.active.values(), ...this.reserved.values(), ...this.leased.values()].some(
-      (record) => record.contextKey === contextKey,
-    );
+    return [
+      ...this.active.values(),
+      ...this.reserved.values(),
+      ...this.leased.values(),
+    ].some((record) => record.contextKey === contextKey);
   }
 
   /** Directories that must not be pruned while a reference can still use them. */
@@ -314,7 +324,11 @@ export class ContinuationStore {
    * record is removed from `active` first, so a concurrent expiry, consume, or
    * prune of the same reference cannot reach it a second time.
    */
-  private expireUnspent(reference: string, record: ContinuationRecord, now: number): void {
+  private expireUnspent(
+    reference: string,
+    record: ContinuationRecord,
+    now: number,
+  ): void {
     this.active.delete(reference);
     this.reserved.delete(reference);
     this.retired.set(reference, {
@@ -360,6 +374,9 @@ export class ContinuationStore {
           authoritativeWorkspace: record.authoritativeWorkspace,
           reconcileFinalGit: record.reconcileFinalGit,
           worktreeLease: record.worktreeLease ? { ...record.worktreeLease } : null,
+          gitEvidenceAuthority: record.gitEvidenceAuthority
+            ? structuredClone(record.gitEvidenceAuthority)
+            : null,
           predecessorExecutionId: record.predecessorExecutionId,
           logicalAttempt: record.logicalAttempt,
           model: record.model,

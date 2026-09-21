@@ -870,18 +870,28 @@ test("current documentation distinguishes diagnostics, activity privacy, and leg
 
 test("acceptance ledger owns the current release baseline", async () => {
   const acceptance = await readDoc("docs/FEATURE_ACCEPTANCE.md");
+  const manifest = JSON.parse(await readDoc("package.json")) as { version: string };
+  const escapedVersion = manifest.version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   assert.match(
     acceptance,
-    /current release baseline is\s+`0\.11\.0`|package version is `0\.11\.0`/i,
+    new RegExp("current release baseline is\\s+`" + escapedVersion + "`", "i"),
   );
   assert.match(
     acceptance,
-    /current (?:main )?runtime is its release baseline|runtime baseline:\*\* v0\.11\.0 release candidate/i,
+    new RegExp("runtime baseline:\\*\\* v" + escapedVersion + "\\b", "i"),
+  );
+  assert.match(
+    acceptance,
+    new RegExp("package and lockfile versions set to\\s+`" + escapedVersion + "`", "i"),
+  );
+  assert.match(
+    acceptance,
+    /Benchmark V3 baseline evidence:[\s\S]{0,240}v0\.11\.0 production baseline/i,
   );
   assert.match(acceptance, /`npm run verify` passed/i);
   assert.match(
     acceptance,
-    /no failures and (?:three expected|only expected platform-specific skips)/i,
+    /no failures and\s+(?:three\s+expected|only\s+expected\s+platform-specific\s+skips)/i,
   );
   assert.match(acceptance, /## Current capability matrix/);
   assert.match(

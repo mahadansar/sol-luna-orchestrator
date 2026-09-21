@@ -388,10 +388,7 @@ interface RankedBatchStart {
 function rankBatchStarts(events: TimestampedEvent[]): RankedBatchStart[] {
   return events
     .map((event, index) => ({ event, index, time: eventTime(event.timestamp) }))
-    .filter(
-      (entry): entry is RankedBatchStart =>
-        entry.event.type === "batch.started",
-    )
+    .filter((entry): entry is RankedBatchStart => entry.event.type === "batch.started")
     .sort((a, b) => {
       const aFinite = Number.isFinite(a.time);
       const bFinite = Number.isFinite(b.time);

@@ -8,6 +8,9 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { CONTINUATION_TTL_MS, ContinuationStore } from "./continuation.js";
 import { HANDOFF_TTL_MS, HandoffStore } from "./handoff.js";
 import {
@@ -32,7 +35,12 @@ import type {
   FailureDecision,
 } from "./contract.js";
 import type { OrchestratorEvent } from "./events.js";
-import type { WorktreeLease } from "./worktree.js";
+import { allowedEffortsInvalid, parseAllowedEfforts } from "./config.js";
+import {
+  WorktreeLeaseOwnershipError,
+  type RepositoryOperationAuthority,
+  type WorktreeLease,
+} from "./worktree.js";
 import { ShutdownCoordinator } from "./shutdown.js";
 
 const LUNA = "gpt-5.6-luna";
@@ -128,6 +136,39 @@ function makeFailure(overrides: Partial<DelegateTaskOutput> = {}): DelegateTaskO
     handoffReference: null,
     handoffState: { status: "not-eligible", reason: "not-eligible" },
     failureDecision: { ...ESCALATION_DECISION },
+    ...overrides,
+  };
+}
+
+function makePass(overrides: Partial<DelegateTaskOutput> = {}): DelegateTaskOutput {
+  return {
+    verdict: "PASS",
+    workerClaimedStatus: "PASS",
+    workerClaimedFailureCauses: [],
+    trustworthy: true,
+    filesChanged: [],
+    verification: [],
+    verificationMode: "allowlist",
+    scopeViolations: [],
+    discrepancies: [],
+    errors: [],
+    followUps: [],
+    notes: "",
+    summary: "Completed the bounded task",
+    reviewChecklist: [],
+    escalationAdvice: null,
+    usage: null,
+    attempt: 1,
+    durationSeconds: 1,
+    model: LUNA,
+    effort: "medium",
+    effortReason: "Bounded single-seam change",
+    workerThreadId: "th_cap_pass",
+    changeIntent: "optional",
+    continuationReference: null,
+    continuationState: { status: "not-eligible", reason: "not-eligible" },
+    handoffReference: null,
+    handoffState: { status: "not-eligible", reason: "not-eligible" },
     ...overrides,
   };
 }
@@ -386,6 +427,229 @@ test("cancellation before the executor is entered hands the escalation back", as
   assert.equal(harness.handoffStore.status(reference), "issued");
 });
 
+test("direct cancellation while waiting for repository operation authority stays pre-worker and unspent", async () => {
+  const harness = makeDelegateHarness();
+  const task = makeTask();
+  const reference = issueEscalation(harness.handoffStore, task);
+  const controller = new AbortController();
+  let workerEntries = 0;
+  let markAuthorityAttempted!: () => void;
+  const authorityAttempted = new Promise<void>((resolve) => {
+    markAuthorityAttempted = resolve;
+  });
+
+  const pending = handleDelegateTask(
+    { ...task, handoffReference: reference },
+    controller.signal,
+    {
+      handoffStore: harness.handoffStore,
+      continuationStore: harness.continuationStore,
+      contextRegistry: harness.registry,
+      contextStore: harness.contextStore,
+      operationAuthorityAcquirer: async (_workspace, signal) => {
+        markAuthorityAttempted();
+        return await new Promise<RepositoryOperationAuthority | null>(
+          (_resolve, reject) => {
+            const onAbort = (): void => {
+              const error = new Error("Repository operation was cancelled.");
+              error.name = "AbortError";
+              reject(error);
+            };
+            if (signal?.aborted) onAbort();
+            else signal?.addEventListener("abort", onAbort, { once: true });
+          },
+        );
+      },
+      delegateToLuna: async () => {
+        workerEntries += 1;
+        return makeFailure();
+      },
+      emit: (event) => harness.events.push(event),
+      record: () => undefined,
+      makeBatchId: () => "b_direct_operation_wait_cancel",
+    },
+  );
+
+  await authorityAttempted;
+  controller.abort();
+  const response = await pending;
+
+  assert.equal(response.isError, true);
+  assert.match(response.content[0]?.text ?? "", /cancelled before worker start/i);
+  assert.equal(workerEntries, 0);
+  assert.equal(harness.handoffStore.status(reference), "issued");
+  assert.equal(
+    harness.events.filter((event) => event.type === "batch.cancelled").length,
+    1,
+  );
+  assert.equal(
+    harness.events.filter((event) => event.type === "batch.rejected").length,
+    0,
+  );
+  assert.equal(
+    harness.events.filter((event) => event.type === "worker.started").length,
+    0,
+  );
+});
+
+test("single lifecycle setup failure releases repository operation authority before refusing", async () => {
+  const harness = makeDelegateHarness();
+  const task = makeTask();
+  const reference = issueEscalation(harness.handoffStore, task);
+  let authorityReleases = 0;
+  let workerEntries = 0;
+  harness.contextStore.acquireExecutionLease = () => {
+    throw new Error("injected lifecycle lease failure");
+  };
+
+  const response = await handleDelegateTask(
+    { ...task, handoffReference: reference },
+    undefined,
+    {
+      handoffStore: harness.handoffStore,
+      continuationStore: harness.continuationStore,
+      contextRegistry: harness.registry,
+      contextStore: harness.contextStore,
+      operationAuthorityAcquirer: async () => ({
+        commonGitDir: process.cwd(),
+        assertHealthy: () => undefined,
+        release: async () => {
+          authorityReleases += 1;
+        },
+      }),
+      delegateToLuna: async () => {
+        workerEntries += 1;
+        return makeFailure();
+      },
+      emit: (event) => harness.events.push(event),
+      record: () => undefined,
+      makeBatchId: () => "b_lifecycle_setup_failure",
+    },
+  );
+
+  assert.equal(response.isError, true);
+  assert.match(
+    response.content[0]?.text ?? "",
+    /lifecycle authority.*injected lifecycle/i,
+  );
+  assert.equal(authorityReleases, 1);
+  assert.equal(workerEntries, 0);
+  assert.equal(harness.handoffStore.status(reference), "issued");
+  assert.equal(
+    harness.events.filter((event) => event.type === "batch.rejected").length,
+    1,
+  );
+  assert.equal(
+    harness.events.filter((event) => event.type === "worker.started").length,
+    0,
+  );
+});
+
+test("single delegation catches an unreported non-Git out-of-scope filesystem side effect", async () => {
+  const plain = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-single-fs-evidence-"));
+  const workspace = await fs.realpath(plain);
+  const harness = makeDelegateHarness();
+
+  try {
+    const response = await handleDelegateTask(
+      makeTask({
+        workingDirectory: workspace,
+        allowedFiles: ["allowed/**"],
+        changeIntent: "optional",
+        resultDetail: "full",
+      }),
+      undefined,
+      {
+        handoffStore: harness.handoffStore,
+        continuationStore: harness.continuationStore,
+        contextRegistry: harness.registry,
+        contextStore: harness.contextStore,
+        delegateToLuna: async (input) => {
+          await fs.writeFile(path.join(workspace, "outside.txt"), "unreported\n", "utf8");
+          return makePass({
+            effort: input.effort,
+            effortReason: input.effortReason,
+            changeIntent: input.changeIntent,
+          });
+        },
+        emit: (event) => harness.events.push(event),
+        record: () => undefined,
+        makeBatchId: () => "b_single_fs_side_effect",
+      },
+    );
+
+    const result = response.structuredContent;
+    assert.ok(result, "full detail must expose the reconciled single-task result");
+    assert.equal(result.verdict, "FAILED");
+    assert.equal(result.trustworthy, false);
+    assert.ok(
+      result.scopeViolations.some((item) =>
+        /outside\.txt.*outside allowedFiles/i.test(item),
+      ),
+      JSON.stringify(result.scopeViolations),
+    );
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("single delegation rejects a no-verification dependency mutation before completion telemetry", async () => {
+  const plain = await fs.mkdtemp(
+    path.join(os.tmpdir(), "sol-luna-single-dependency-evidence-"),
+  );
+  const workspace = await fs.realpath(plain);
+  const dependency = path.join(workspace, "node_modules", "fixture-package", "index.js");
+  const harness = makeDelegateHarness();
+  await fs.mkdir(path.dirname(dependency), { recursive: true });
+  await fs.writeFile(dependency, "module.exports = 'operator';\n", "utf8");
+
+  try {
+    const response = await handleDelegateTask(
+      makeTask({
+        workingDirectory: workspace,
+        allowedFiles: ["allowed/**"],
+        changeIntent: "optional",
+        verificationCommands: [],
+        resultDetail: "full",
+      }),
+      undefined,
+      {
+        handoffStore: harness.handoffStore,
+        continuationStore: harness.continuationStore,
+        contextRegistry: harness.registry,
+        contextStore: harness.contextStore,
+        delegateToLuna: async (input) => {
+          await fs.writeFile(dependency, "module.exports = 'worker';\n", "utf8");
+          return makePass({
+            effort: input.effort,
+            effortReason: input.effortReason,
+            changeIntent: input.changeIntent,
+          });
+        },
+        emit: (event) => harness.events.push(event),
+        record: () => undefined,
+        makeBatchId: () => "b_single_dependency_evidence",
+      },
+    );
+
+    const result = response.structuredContent;
+    assert.ok(result, "full detail must expose dependency evidence");
+    assert.equal(result.verdict, "FAILED");
+    assert.equal(result.trustworthy, false);
+    assert.match(
+      [...result.errors, ...result.discrepancies].join("\n"),
+      /dependency evidence.*shared dependency state changed/i,
+    );
+    const completions = harness.events.filter(
+      (event) => event.type === "worker.completed",
+    );
+    assert.equal(completions.length, 1, JSON.stringify(harness.events));
+    assert.equal(completions[0]?.verdict, "FAILED", JSON.stringify(completions));
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
 test("a context is not reclaimed while a reserved capability still references it", async () => {
   const events: OrchestratorEvent[] = [];
   const emit = (event: OrchestratorEvent): void => {
@@ -498,6 +762,29 @@ test("an overlapping-scope refusal hands every reserved batch handoff back", asy
 
   assert.equal(handoffStore.status(first), "issued");
   assert.equal(handoffStore.status(second), "issued");
+});
+
+test("parallel worktree setup refusal restores a reserved handoff before worker entry", async () => {
+  const handoffStore = new HandoffStore();
+  const task = makeTask({ allowedFiles: ["src/only.ts"] });
+  const reference = issueEscalation(handoffStore, task);
+  const plain = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-handoff-setup-"));
+  try {
+    await assert.rejects(
+      runBatch(
+        [{ ...task, handoffReference: reference }],
+        batchOptionsFor(handoffStore, { workingDirectory: plain }),
+      ),
+      BatchRejectedError,
+    );
+    assert.equal(
+      handoffStore.status(reference),
+      "issued",
+      "worktree setup failed before execution, so earned authority must remain usable",
+    );
+  } finally {
+    await fs.rm(plain, { recursive: true, force: true });
+  }
 });
 
 test("a batch that reaches its workers spends every handoff it reserved", async () => {
@@ -713,7 +1000,10 @@ test("a continuation reservation that expires before release surrenders its leas
   assert.equal(store.status(reference), "unavailable");
   assert.equal(store.consume(reference).status, "expired");
   assert.deepEqual(store.protectedWorkingDirectories(), []);
-  assert.deepEqual(released.map((item) => item.ownerToken), [lease.ownerToken]);
+  assert.deepEqual(
+    released.map((item) => item.ownerToken),
+    [lease.ownerToken],
+  );
 });
 
 test("continuation setup failure restores authority without releasing its retained lease", async () => {
@@ -765,6 +1055,44 @@ test("continuation setup failure restores authority without releasing its retain
   assert.deepEqual(continuationStore.protectedWorkingDirectories(), [worktree]);
 });
 
+test("lost retained-worktree ownership consumes the continuation instead of restoring unsafe authority", async () => {
+  const continuationStore = new ContinuationStore();
+  const registry = new ContextLifecycleRegistry({ continuationStore });
+  const worktree = "/repo/.sol-luna/worktrees/t-owner-lost";
+  const reference = continuationStore.issue(
+    makeTask(),
+    "th_owner_lost",
+    worktree,
+    true,
+    makeLease(worktree),
+  );
+  let executions = 0;
+
+  const response = await handleContinueTask(
+    { continuationReference: reference, instruction: "Do not reuse an unowned worktree" },
+    undefined,
+    {
+      store: continuationStore,
+      contextRegistry: registry,
+      refreshLease: async () => {
+        throw new WorktreeLeaseOwnershipError();
+      },
+      continueTask: async () => {
+        executions += 1;
+        return makeFailure();
+      },
+      emit: () => undefined,
+      record: () => undefined,
+      makeBatchId: () => "b_owner_lost",
+    },
+  );
+
+  assert.equal(response.isError, true);
+  assert.equal(executions, 0);
+  assert.equal(continuationStore.status(reference), "consumed");
+  assert.deepEqual(continuationStore.protectedWorkingDirectories(), []);
+});
+
 test("pre-execution continuation cancellation restores authority and never enters executor", async () => {
   const continuationStore = new ContinuationStore();
   const registry = new ContextLifecycleRegistry({ continuationStore });
@@ -772,6 +1100,7 @@ test("pre-execution continuation cancellation restores authority and never enter
   const controller = new AbortController();
   controller.abort();
   let executions = 0;
+  let operationAuthorityAcquisitions = 0;
 
   const response = await handleContinueTask(
     { continuationReference: reference, instruction: "Do not start this turn" },
@@ -783,6 +1112,12 @@ test("pre-execution continuation cancellation restores authority and never enter
         executions += 1;
         return makeFailure();
       },
+      operationAuthorityAcquirer: async () => {
+        operationAuthorityAcquisitions += 1;
+        throw new Error(
+          "operation authority must not be acquired for an already-cancelled turn",
+        );
+      },
       emit: () => undefined,
       record: () => undefined,
       makeBatchId: () => "b_cancelled_before_start",
@@ -792,7 +1127,135 @@ test("pre-execution continuation cancellation restores authority and never enter
   assert.equal(response.isError, true);
   assert.match(response.content[0]?.text ?? "", /cancelled before worker start/i);
   assert.equal(executions, 0);
+  assert.equal(operationAuthorityAcquisitions, 0);
   assert.equal(continuationStore.status(reference), "issued");
+});
+
+test("shared-workspace continuation cannot keep a trustworthy PASS after an unreported out-of-scope filesystem side effect", async () => {
+  const plain = await fs.mkdtemp(
+    path.join(os.tmpdir(), "sol-luna-continuation-fs-evidence-"),
+  );
+  const workspace = await fs.realpath(plain);
+  const continuationStore = new ContinuationStore();
+  const handoffStore = new HandoffStore();
+  const registry = new ContextLifecycleRegistry({ handoffStore, continuationStore });
+  const task = makeTask({
+    workingDirectory: workspace,
+    allowedFiles: ["allowed/**"],
+    changeIntent: "optional",
+  });
+  const reference = continuationStore.issue(task, "th_shared_fs_side_effect", workspace);
+
+  try {
+    const response = await handleContinueTask(
+      {
+        continuationReference: reference,
+        instruction:
+          "Continue the bounded task without touching anything outside allowed/.",
+        resultDetail: "full",
+      },
+      undefined,
+      {
+        store: continuationStore,
+        handoffStore,
+        contextRegistry: registry,
+        continueTask: async (input) => {
+          await fs.writeFile(path.join(workspace, "outside.txt"), "unreported\n", "utf8");
+          return makePass({
+            effort: input.effort,
+            effortReason: input.effortReason,
+            changeIntent: input.changeIntent,
+            workerThreadId: "th_shared_fs_side_effect",
+          });
+        },
+        emit: () => undefined,
+        record: () => undefined,
+        makeBatchId: () => "b_continuation_fs_side_effect",
+      },
+    );
+
+    const result = response.structuredContent;
+    assert.ok(result, "full detail must expose the reconciled continuation result");
+    assert.equal(result.verdict, "FAILED");
+    assert.equal(result.trustworthy, false);
+    assert.ok(
+      result.scopeViolations.some((item) =>
+        /outside\.txt.*outside allowedFiles/i.test(item),
+      ),
+      JSON.stringify(result.scopeViolations),
+    );
+    assert.equal(continuationStore.status(reference), "consumed");
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("shared-workspace continuation rejects a no-verification dependency mutation before completion telemetry", async () => {
+  const plain = await fs.mkdtemp(
+    path.join(os.tmpdir(), "sol-luna-continuation-dependency-evidence-"),
+  );
+  const workspace = await fs.realpath(plain);
+  const dependency = path.join(workspace, "node_modules", "fixture-package", "index.js");
+  await fs.mkdir(path.dirname(dependency), { recursive: true });
+  await fs.writeFile(dependency, "module.exports = 'operator';\n", "utf8");
+  const continuationStore = new ContinuationStore();
+  const handoffStore = new HandoffStore();
+  const registry = new ContextLifecycleRegistry({ handoffStore, continuationStore });
+  const task = makeTask({
+    workingDirectory: workspace,
+    allowedFiles: ["allowed/**"],
+    changeIntent: "optional",
+    verificationCommands: [],
+  });
+  const reference = continuationStore.issue(
+    task,
+    "th_shared_dependency_side_effect",
+    workspace,
+  );
+  const events: OrchestratorEvent[] = [];
+
+  try {
+    const response = await handleContinueTask(
+      {
+        continuationReference: reference,
+        instruction: "Continue without changing the operator dependency tree.",
+        resultDetail: "full",
+      },
+      undefined,
+      {
+        store: continuationStore,
+        handoffStore,
+        contextRegistry: registry,
+        continueTask: async (input) => {
+          await fs.writeFile(dependency, "module.exports = 'worker';\n", "utf8");
+          return makePass({
+            effort: input.effort,
+            effortReason: input.effortReason,
+            changeIntent: input.changeIntent,
+            workerThreadId: "th_shared_dependency_side_effect",
+          });
+        },
+        emit: (event) => events.push(event),
+        record: () => undefined,
+        makeBatchId: () => "b_continuation_dependency_evidence",
+      },
+    );
+
+    const result = response.structuredContent;
+    assert.ok(result, "full detail must expose dependency evidence");
+    assert.equal(result.verdict, "FAILED");
+    assert.equal(result.trustworthy, false);
+    assert.match(
+      [...result.errors, ...result.discrepancies].join("\n"),
+      /dependency evidence.*shared dependency state changed/i,
+    );
+    const completions = events.filter((event) => event.type === "worker.completed");
+    assert.equal(completions.length, 1, JSON.stringify(events));
+    assert.equal(completions[0]?.verdict, "FAILED", JSON.stringify(completions));
+    assert.equal(continuationStore.status(reference), "consumed");
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
 });
 
 test("configuration correction warnings report only effective runtime values", () => {
@@ -807,6 +1270,8 @@ test("configuration correction warnings report only effective runtime values", (
     maxBatchSize: 12,
     worktreeLinkInvalid: true,
     worktreeLinkDirs: ["node_modules"],
+    eventsFileInvalid: false,
+    diagnosticLogFileInvalid: false,
   });
 
   assert.equal(warnings.length, 4);
@@ -814,7 +1279,37 @@ test("configuration correction warnings report only effective runtime values", (
   assert.match(warnings[1] ?? "", /effective concurrency: 8/i);
   assert.match(warnings[2] ?? "", /effective workers per batch: 12/i);
   assert.match(warnings[3] ?? "", /effective shared link paths: node_modules/i);
-  assert.equal(warnings.some((warning) => warning.includes("process.env")), false);
+  assert.equal(
+    warnings.some((warning) => warning.includes("process.env")),
+    false,
+  );
+});
+
+test("startup correction warnings disable invalid relative telemetry paths without echoing them", () => {
+  const warnings = configurationCorrectionWarnings({
+    allowedEffortsInvalid: false,
+    allowedEfforts: ["medium", "high", "xhigh", "max"],
+    maxParallelClamped: false,
+    maxParallel: 3,
+    maxParallelLimit: 8,
+    maxWorkersPerBatchClamped: false,
+    maxWorkersPerBatch: 12,
+    maxBatchSize: 12,
+    worktreeLinkInvalid: false,
+    worktreeLinkDirs: ["node_modules"],
+    eventsFileInvalid: true,
+    diagnosticLogFileInvalid: true,
+  });
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0] ?? "", /activity file emission is disabled/i);
+  assert.match(warnings[1] ?? "", /diagnostic file logging is disabled/i);
+});
+
+test("an explicitly empty allowed-effort setting is detected before it widens to defaults", () => {
+  assert.equal(allowedEffortsInvalid(undefined), false);
+  assert.equal(allowedEffortsInvalid(""), true);
+  assert.equal(allowedEffortsInvalid(" , "), true);
+  assert.deepEqual(parseAllowedEfforts(""), ["medium", "high", "xhigh", "max"]);
 });
 
 // ---------------------------------------------------------------------------
@@ -1059,6 +1554,11 @@ test("a finished execution cannot compact or reclaim a context a sibling still h
     emit,
     record: () => undefined,
     makeBatchId: () => "b_long",
+    // This is a context-compaction concurrency fixture, not a repository
+    // operation-coordination test. Production same-repo handlers serialize at
+    // the operation boundary; bypass that independent seam so the shared
+    // ContextLifecycleStore can still be exercised with overlapping holders.
+    operationAuthorityAcquirer: async () => null,
   });
 
   await bIsRunning;
@@ -1073,6 +1573,7 @@ test("a finished execution cannot compact or reclaim a context a sibling still h
     emit,
     record: () => undefined,
     makeBatchId: () => "b_short",
+    operationAuthorityAcquirer: async () => null,
   });
 
   assert.equal(contextStore.isInFlight(), true, "B's lease survives A's release");

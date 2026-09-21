@@ -1,11 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
+import { absoluteOptionalPathInvalid, parseAbsoluteOptionalPath } from "../config.js";
 import {
   codexAuthPresent,
   codexVersion,
   getRegisteredServer,
   gitVersion,
   readConfig,
+  type RegisteredServer,
 } from "./codex.js";
 import { describeEventsSource, resolveEventsPath } from "./events-path.js";
 import {
@@ -47,6 +49,20 @@ export interface DoctorReport {
   version: string;
   checks: Check[];
   ok: boolean;
+}
+
+export function registeredLaunchMatches(
+  registered: RegisteredServer,
+  expectedCommand: string,
+  serverEntry: string,
+  serverEntryExists: boolean,
+): boolean {
+  return (
+    registered.registered &&
+    registered.command === expectedCommand &&
+    registered.args?.trim() === serverEntry &&
+    serverEntryExists
+  );
 }
 
 const MIN_GIT_MAJOR = 2;
@@ -209,16 +225,20 @@ export async function collectChecks(): Promise<Check[]> {
   });
 
   if (registered.registered) {
-    const argsMatch = registered.args?.includes(location.serverEntry) ?? false;
+    const launchMatches = registeredLaunchMatches(
+      registered,
+      process.execPath,
+      location.serverEntry,
+      location.serverEntryExists,
+    );
     checks.push({
       name: "Registered command resolves",
-      status: argsMatch && location.serverEntryExists ? "ok" : "fail",
-      detail: registered.args ?? "unknown",
-      expected: location.serverEntry,
-      remedy:
-        argsMatch && location.serverEntryExists
-          ? undefined
-          : "Registered path differs from this install. Run: sol-luna-orchestrator init",
+      status: launchMatches ? "ok" : "fail",
+      detail: `${registered.command ?? "unknown"} ${registered.args ?? ""}`.trim(),
+      expected: `${process.execPath} ${location.serverEntry}`,
+      remedy: launchMatches
+        ? undefined
+        : "Registered command or path differs from this install. Run: sol-luna-orchestrator init",
     });
 
     checks.push({
@@ -359,16 +379,22 @@ export async function collectChecks(): Promise<Check[]> {
       : "Registered name and SOL_LUNA_SERVER_NAME differ. Run: sol-luna-orchestrator init",
   });
 
-  const logPath = fromTomlValue(
+  const rawLogPath = fromTomlValue(
     readKey(configText, [...serverTable(), "env"], "SOL_LUNA_LOG"),
   );
+  const logPath = parseAbsoluteOptionalPath(rawLogPath);
+  const logPathInvalid = absoluteOptionalPathInvalid(rawLogPath);
   checks.push({
     name: "Diagnostic log configured",
-    status: logPath ? "ok" : "warn",
-    detail: logPath ?? "not set",
+    status: logPathInvalid ? "fail" : logPath ? "ok" : "warn",
+    detail: logPathInvalid
+      ? "invalid: must be a non-empty absolute path"
+      : (logPath ?? "not set"),
     remedy: logPath
       ? undefined
-      : "Optional, but it is the best troubleshooting signal. Run: sol-luna-orchestrator init",
+      : logPathInvalid
+        ? "Run: sol-luna-orchestrator init --log <absolute-path>"
+        : "Optional, but it is the best troubleshooting signal. Run: sol-luna-orchestrator init",
   });
   if (logPath) {
     checks.push(
@@ -381,16 +407,22 @@ export async function collectChecks(): Promise<Check[]> {
 
   // `init` owns this key now, so doctor has to check it — a setup command that
   // writes something its own diagnostic ignores is how the two start disagreeing.
-  const events = resolveEventsPath(configText);
+  // Doctor diagnoses the registered server, not an unrelated override exported
+  // in the shell that launched this one-shot CLI process.
+  const events = resolveEventsPath(configText, {});
   checks.push({
     name: "Activity log configured",
-    status: events.path ? "ok" : "warn",
-    detail: events.path
-      ? `${events.path} (${describeEventsSource(events.source)})`
-      : "not set",
+    status: events.error ? "fail" : events.path ? "ok" : "warn",
+    detail: events.error
+      ? events.error
+      : events.path
+        ? `${events.path} (${describeEventsSource(events.source)})`
+        : "not set",
     remedy: events.path
       ? undefined
-      : "`sol-luna-orchestrator activity` needs this. Run: sol-luna-orchestrator init",
+      : events.error
+        ? "Run: sol-luna-orchestrator init --events <absolute-path>"
+        : "`sol-luna-orchestrator activity` needs this. Run: sol-luna-orchestrator init",
   });
   if (events.path) {
     checks.push(

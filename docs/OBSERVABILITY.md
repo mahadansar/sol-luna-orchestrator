@@ -25,6 +25,16 @@ Representation details below describe what each contains and how consumers
 should interpret it. Sensitivity and sharing boundaries are defined in
 [Security](../SECURITY.md#logs-and-telemetry).
 
+Both file destinations use non-empty absolute paths. `init` persists absolute
+paths even when an operator supplies a relative `--events` or `--log` argument;
+invalid legacy/manual relative values are disabled by the server and surfaced by
+startup/status/doctor diagnostics rather than being interpreted relative to an
+arbitrary process CWD. `status` reports the registered diagnostic path and the
+registered activity path separately from any standalone activity override, so a
+shell value cannot disguise what the MCP server will use. A missing event file
+means no activity has been recorded yet, while a configured directory or
+unreadable/non-file target is an error.
+
 ## Model-facing result surfaces
 
 The human-readable tool text has a thin fast path for a clean verified PASS. It
@@ -336,8 +346,7 @@ always carried it.
   canonical attempt. Older records use truthful unknown or empty defaults for
   fields introduced later.
 - **`sol-luna-orchestrator activity --history N`** prints up to the `N` most
-  recent batch snapshots, newest first. `N` must be an integer from 1 through
-  100. With `--json`, the result is one JSON array containing those reduced
+  recent batch snapshots, newest first. `N` must be an integer from 1 through 100. With `--json`, the result is one JSON array containing those reduced
   snapshots.
 - **`sol-luna-orchestrator activity --watch --json`** emits newline-delimited
   JSON (NDJSON): one compact snapshot at startup and another after each accepted
@@ -366,10 +375,15 @@ unknown because they did not prove that every attempted copy succeeded. Human
 and watch views render integration facts without claiming a worktree was kept;
 an actual `worktree.retained` event supplies that separate warning. They do not
 render command output, objectives, thread ids, or raw retention paths.
-Raw `integration.blocked` records identify the excluded task and either a
-`scope-violation` or `protected-control-path` reason; the current reduced
-snapshot derives its public integration summary from the terminal integration
-events above rather than projecting `integration.blocked` itself.
+Raw `integration.blocked` records identify the excluded task and a
+`scope-violation`, `protected-control-path`, `workspace-drift`, or `source-drift`
+reason; the current reduced snapshot derives its public integration summary from
+the terminal integration events above rather than projecting
+`integration.blocked` itself. For `integration.partial`, `appliedFiles` is the
+number of authoritative paths that were actually changed before integration
+stopped; later cancellation does not reset it to zero. A deletion namespace move
+also counts as applied when rollback cannot safely restore it, with the warning
+record preserving that the moved bytes remain in orchestrator quarantine.
 
 Typed `integration.verification.started` and
 `integration.verification.completed` events are reduced into a separate final

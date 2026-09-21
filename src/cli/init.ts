@@ -1,10 +1,12 @@
 import path from "node:path";
+import { parseAbsoluteOptionalPath } from "../config.js";
 import {
   codexAuthPresent,
   codexVersion,
   getRegisteredServer,
   readConfig,
   writeConfig,
+  type RegisteredServer,
 } from "./codex.js";
 import {
   discoveryHintPath,
@@ -20,6 +22,7 @@ import {
   REQUIRED_SETTINGS,
   SERVER_NAME,
   inspectSettings,
+  registrationEnabled,
   serverEnvTable,
   serverTable,
   settingsSatisfied,
@@ -108,8 +111,14 @@ export function parseInitOptions(argv: string[]): InitOptions {
         options.missingValue.push(arg);
         continue;
       }
-      if (arg === "--log") options.logPath = value;
-      if (arg === "--events") options.eventsPath = value;
+      const normalized = value.trim();
+      if (!normalized) {
+        options.missingValue.push(arg);
+        i += 1;
+        continue;
+      }
+      if (arg === "--log") options.logPath = normalized;
+      if (arg === "--events") options.eventsPath = normalized;
       i += 1;
       continue;
     }
@@ -133,6 +142,78 @@ export interface InitConfigInput {
   forceEventsPath: boolean;
 }
 
+export interface InitConfigVerification {
+  registrationPresent: boolean;
+  commandMatches: boolean;
+  argsMatch: boolean;
+  enabled: boolean;
+  serverNameMatches: boolean;
+  logPathMatches: boolean;
+  eventsPathMatches: boolean;
+  requiredSettingsMatch: boolean;
+  ok: boolean;
+}
+
+/**
+ * Verify the exact operator-owned registration values init expects to persist.
+ * Exported so the post-write trust boundary can be regression-tested without a
+ * Codex binary or filesystem race harness.
+ */
+export function inspectInitConfigVerification(
+  configText: string,
+  expected: Pick<InitConfigInput, "command" | "serverEntry" | "logPath" | "eventsPath">,
+): InitConfigVerification {
+  const registrationPresent = findTable(configText, serverTable()) !== null;
+  const commandMatches =
+    readKey(configText, serverTable(), "command") === toTomlValue(expected.command);
+  const argsMatch =
+    readKey(configText, serverTable(), "args") === toTomlValue([expected.serverEntry]);
+  const enabled = registrationEnabled(configText);
+  const serverNameMatches =
+    fromTomlValue(readKey(configText, serverEnvTable(), "SOL_LUNA_SERVER_NAME")) ===
+    SERVER_NAME;
+  const logPathMatches =
+    fromTomlValue(readKey(configText, serverEnvTable(), "SOL_LUNA_LOG")) ===
+    expected.logPath;
+  const eventsPathMatches =
+    fromTomlValue(readKey(configText, serverEnvTable(), "SOL_LUNA_EVENTS")) ===
+    expected.eventsPath;
+  const requiredSettingsMatch = settingsSatisfied(inspectSettings(configText));
+
+  return {
+    registrationPresent,
+    commandMatches,
+    argsMatch,
+    enabled,
+    serverNameMatches,
+    logPathMatches,
+    eventsPathMatches,
+    requiredSettingsMatch,
+    ok:
+      registrationPresent &&
+      commandMatches &&
+      argsMatch &&
+      enabled &&
+      serverNameMatches &&
+      logPathMatches &&
+      eventsPathMatches &&
+      requiredSettingsMatch,
+  };
+}
+
+export function codexRegistrationMatchesExpected(
+  registered: RegisteredServer,
+  command: string,
+  serverEntry: string,
+): boolean {
+  return (
+    !registered.registered ||
+    (registered.enabled !== false &&
+      registered.command === command &&
+      registered.args?.trim() === serverEntry)
+  );
+}
+
 /**
  * Produce the new config text from the old one.
  *
@@ -150,6 +231,13 @@ export function applyInitConfig(before: string, input: InitConfigInput): string 
   });
   text = upsertKey(text, serverTable(), "args", [input.serverEntry]);
 
+  // A server disabled in Codex is just as unusable as a bad command/path. Keep
+  // the default implicit-enabled form untouched, but repair any explicit false
+  // (or otherwise invalid present value) to the boolean Codex expects.
+  if (!registrationEnabled(text)) {
+    text = upsertKey(text, serverTable(), "enabled", true);
+  }
+
   for (const setting of REQUIRED_SETTINGS) {
     if (readKey(text, serverTable(), setting.key) === setting.expected) continue;
     text = upsertKey(text, serverTable(), setting.key, setting.value, {
@@ -157,15 +245,16 @@ export function applyInitConfig(before: string, input: InitConfigInput): string 
     });
   }
 
-  // Same rule as the event path below: an explicit `--log` replaces whatever is
-  // there, a plain re-run never does.
+  // Same rule as the event path below: an explicit `--log` replaces a valid
+  // custom path. The command layer also sets forceLogPath when a legacy/manual
+  // value is invalid so a plain init can repair it to a usable absolute default.
   if (input.forceLogPath || !readKey(text, serverEnvTable(), "SOL_LUNA_LOG")) {
     text = upsertKey(text, serverEnvTable(), "SOL_LUNA_LOG", input.logPath);
   }
 
-  // Never overwrite a path the user chose. `--events` is an explicit request
-  // and wins; otherwise an existing value is left exactly as it is, so
-  // re-running init cannot redirect someone's history to the default.
+  // Preserve a valid path the user chose. `--events` is an explicit request and
+  // wins; the command layer also sets forceEventsPath for invalid legacy/manual
+  // values so a plain init repairs those instead of preserving unusable config.
   if (input.forceEventsPath || !readKey(text, serverEnvTable(), "SOL_LUNA_EVENTS")) {
     text = upsertKey(text, serverEnvTable(), "SOL_LUNA_EVENTS", input.eventsPath, {
       comment: ["Structured activity events, read by `sol-luna-orchestrator activity`."],
@@ -248,23 +337,31 @@ export async function initCommand(argv: string[]): Promise<number> {
     readKey(before, serverTable(), "args") === toTomlValue([location.serverEntry]);
   const commandMatches =
     readKey(before, serverTable(), "command") === toTomlValue(process.execPath);
+  const registrationIsEnabled = registrationEnabled(before);
 
   // Activity logging is configuration this command owns, so a config missing it
   // is not "already configured". Without this an installation made by an
   // earlier version reports Already configured forever and `activity` never
   // works, which is exactly the bug this check exists to prevent.
-  const eventsConfigured = readKey(before, serverEnvTable(), "SOL_LUNA_EVENTS") !== null;
+  const rawEventsPath = fromTomlValue(
+    readKey(before, serverEnvTable(), "SOL_LUNA_EVENTS"),
+  );
+  const rawLogPath = fromTomlValue(readKey(before, serverEnvTable(), "SOL_LUNA_LOG"));
+  const eventsConfigured = parseAbsoluteOptionalPath(rawEventsPath) !== undefined;
+  const logConfigured = parseAbsoluteOptionalPath(rawLogPath) !== undefined;
   const serverNameConfigured =
     fromTomlValue(readKey(before, serverEnvTable(), "SOL_LUNA_SERVER_NAME")) ===
     SERVER_NAME;
 
-  const registrationOk = isRegistered && pathMatches && commandMatches;
+  const registrationOk =
+    isRegistered && pathMatches && commandMatches && registrationIsEnabled;
   const discoveryHintConfigured =
     options.noDiscoveryHint || discoveryBefore.exactCount > 0;
   const alreadyDone =
     registrationOk &&
     settingsSatisfied(settingsBefore) &&
     eventsConfigured &&
+    logConfigured &&
     serverNameConfigured &&
     discoveryHintConfigured;
 
@@ -281,14 +378,24 @@ export async function initCommand(argv: string[]): Promise<number> {
     return 0;
   }
 
-  const logPath =
-    options.logPath ?? path.join(path.dirname(configPath), "sol-luna-orchestrator.log");
-  const eventsPath = options.eventsPath ?? defaultEventsPath();
+  const logPath = options.logPath
+    ? path.resolve(options.logPath)
+    : path.join(path.dirname(configPath), "sol-luna-orchestrator.log");
+  const eventsPath = options.eventsPath
+    ? path.resolve(options.eventsPath)
+    : defaultEventsPath();
+  const expectedLogPath =
+    options.logPath !== undefined || !logConfigured ? logPath : (rawLogPath as string);
+  const expectedEventsPath =
+    options.eventsPath !== undefined || !eventsConfigured
+      ? eventsPath
+      : (rawEventsPath as string);
 
   const planned: string[] = [];
   if (!isRegistered) planned.push(`register MCP server "${SERVER_NAME}"`);
   else if (!pathMatches || !commandMatches)
     planned.push(`re-point "${SERVER_NAME}" at this install`);
+  else if (!registrationIsEnabled) planned.push(`enable MCP server "${SERVER_NAME}"`);
   else if (options.force) planned.push(`re-register "${SERVER_NAME}"`);
 
   for (const setting of settingsBefore) {
@@ -298,13 +405,14 @@ export async function initCommand(argv: string[]): Promise<number> {
         (setting.actual ? ` (currently ${setting.actual})` : ""),
     );
   }
-  const logConfigured = readKey(before, serverEnvTable(), "SOL_LUNA_LOG") !== null;
-  if (options.logPath !== undefined && logConfigured) {
+  const logKeyPresent = rawLogPath !== null;
+  const eventsKeyPresent = rawEventsPath !== null;
+  if ((options.logPath !== undefined || !logConfigured) && logKeyPresent) {
     planned.push(`replace SOL_LUNA_LOG with ${logPath}`);
   } else if (!logConfigured) {
     planned.push(`set SOL_LUNA_LOG for diagnostics (${logPath})`);
   }
-  if (options.eventsPath !== undefined && eventsConfigured) {
+  if ((options.eventsPath !== undefined || !eventsConfigured) && eventsKeyPresent) {
     planned.push(`replace SOL_LUNA_EVENTS with ${eventsPath}`);
   } else if (!eventsConfigured) {
     planned.push(`set SOL_LUNA_EVENTS so \`activity\` works (${eventsPath})`);
@@ -338,8 +446,8 @@ export async function initCommand(argv: string[]): Promise<number> {
     serverEntry: location.serverEntry,
     logPath,
     eventsPath,
-    forceLogPath: options.logPath !== undefined,
-    forceEventsPath: options.eventsPath !== undefined,
+    forceLogPath: options.logPath !== undefined || !logConfigured,
+    forceEventsPath: options.eventsPath !== undefined || !eventsConfigured,
   });
 
   let backupPath: string | undefined;
@@ -357,7 +465,12 @@ export async function initCommand(argv: string[]): Promise<number> {
   // --- Verify what we wrote ------------------------------------------------
   const after = readConfig(configPath);
   const settingsAfter = inspectSettings(after);
-  const wroteRegistration = findTable(after, serverTable()) !== null;
+  const verificationAfter = inspectInitConfigVerification(after, {
+    command: process.execPath,
+    serverEntry: location.serverEntry,
+    logPath: expectedLogPath,
+    eventsPath: expectedEventsPath,
+  });
 
   // Cross-check against Codex itself where possible, but do not fail on it:
   // `codex mcp get` needs a parseable config and Codex on PATH, neither of
@@ -366,10 +479,43 @@ export async function initCommand(argv: string[]): Promise<number> {
   if (!seenByCodex.registered) {
     out(dim("Note: `codex mcp get` did not confirm the entry; verifying from the file."));
   }
+  const codexRegistrationMatches = codexRegistrationMatchesExpected(
+    seenByCodex,
+    process.execPath,
+    location.serverEntry,
+  );
 
-  if (!wroteRegistration || !settingsSatisfied(settingsAfter)) {
+  if (!verificationAfter.ok || !codexRegistrationMatches) {
     out();
     out(`${symbols.fail} Configuration did not verify after writing.`);
+    if (!verificationAfter.commandMatches) {
+      out(`    command: mismatch (expected ${process.execPath})`);
+    }
+    if (!verificationAfter.argsMatch) {
+      out(`    args: mismatch (expected ${location.serverEntry})`);
+    }
+    if (
+      !verificationAfter.enabled ||
+      (seenByCodex.registered && seenByCodex.enabled === false)
+    ) {
+      out(`    enabled: false (expected true)`);
+    }
+    if (!verificationAfter.serverNameMatches) {
+      out(`    SOL_LUNA_SERVER_NAME: mismatch (expected ${SERVER_NAME})`);
+    }
+    if (!verificationAfter.logPathMatches) {
+      out(`    SOL_LUNA_LOG: mismatch (expected ${expectedLogPath})`);
+    }
+    if (!verificationAfter.eventsPathMatches) {
+      out(`    SOL_LUNA_EVENTS: mismatch (expected ${expectedEventsPath})`);
+    }
+    if (
+      seenByCodex.registered &&
+      (seenByCodex.command !== process.execPath ||
+        seenByCodex.args?.trim() !== location.serverEntry)
+    ) {
+      out(`    Codex registration: command/args differ from this install`);
+    }
     for (const setting of settingsAfter) {
       if (setting.state === "ok") continue;
       out(

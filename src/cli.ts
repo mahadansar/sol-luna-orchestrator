@@ -8,6 +8,7 @@
  * exactly what happens if one binary tries to be both.
  */
 import { activityCommand } from "./cli/activity.js";
+import { absoluteOptionalPathInvalid, parseAbsoluteOptionalPath } from "./config.js";
 import { readConfig } from "./cli/codex.js";
 import { doctorCommand } from "./cli/doctor.js";
 import {
@@ -20,7 +21,13 @@ import { initCommand } from "./cli/init.js";
 import { codexConfigPath, installLocation, packageVersion } from "./cli/paths.js";
 import { resolveRegisteredServerConfig } from "./cli/server-config.js";
 import { describeComputePolicy } from "./policy.js";
-import { SERVER_NAME, inspectSettings, serverTable } from "./cli/settings.js";
+import {
+  SERVER_NAME,
+  inspectSettings,
+  registrationEnabled,
+  serverEnvTable,
+  serverTable,
+} from "./cli/settings.js";
 import { findTable, fromTomlValue, readKey, toTomlValue } from "./cli/toml-edit.js";
 import { bold, dim, errOut, out, symbols, table } from "./cli/ui.js";
 import { uninstallCommand } from "./cli/uninstall.js";
@@ -86,15 +93,32 @@ function statusCommand(argv: string[]): number {
   const configText = readConfig();
   const configured = findTable(configText, ["mcp_servers", SERVER_NAME]) !== null;
   const settings = inspectSettings(configText);
-  const events = resolveEventsPath(configText);
+  // Status describes what the registered MCP server will actually use. A shell
+  // override affects only this standalone CLI process, so surface it separately
+  // instead of letting it mask a broken registered path.
+  const events = resolveEventsPath(configText, {});
+  const rawDiagnosticLog = fromTomlValue(
+    readKey(configText, serverEnvTable(), "SOL_LUNA_LOG"),
+  );
+  const diagnosticLogPath = parseAbsoluteOptionalPath(rawDiagnosticLog) ?? null;
+  const diagnosticLogError = absoluteOptionalPathInvalid(rawDiagnosticLog)
+    ? "Configured SOL_LUNA_LOG must be a non-empty absolute path"
+    : null;
+  const diagnosticLogSource = rawDiagnosticLog === null ? "unconfigured" : "configured";
+  const cliEventsOverride =
+    process.env.SOL_LUNA_EVENTS !== undefined
+      ? resolveEventsPath("", { SOL_LUNA_EVENTS: process.env.SOL_LUNA_EVENTS })
+      : null;
   const serverConfig = resolveRegisteredServerConfig(configText);
   const discovery = inspectDiscoveryHint(readDiscoveryInstructions());
   const value = (key: string): string =>
     settings.find((setting) => setting.key === key)?.actual ?? "unset";
   const registeredCommand = fromTomlValue(readKey(configText, serverTable(), "command"));
   const registeredArgs = readKey(configText, serverTable(), "args");
+  const registeredEnabled = configured ? registrationEnabled(configText) : null;
   const registrationMatchesCurrentInstall =
     configured &&
+    registeredEnabled === true &&
     registeredCommand === process.execPath &&
     registeredArgs === toTomlValue([location.serverEntry]);
 
@@ -112,6 +136,7 @@ function statusCommand(argv: string[]): number {
           registration: {
             command: registeredCommand,
             args: registeredArgs,
+            enabled: registeredEnabled,
             matchesCurrentInstall: registrationMatchesCurrentInstall,
           },
           codexSettings: Object.fromEntries(
@@ -143,6 +168,18 @@ function statusCommand(argv: string[]): number {
           activity: {
             path: events.path,
             source: events.source,
+            error: events.error ?? null,
+            cliOverride: cliEventsOverride
+              ? {
+                  path: cliEventsOverride.path,
+                  error: cliEventsOverride.error ?? null,
+                }
+              : null,
+          },
+          diagnosticLog: {
+            path: diagnosticLogPath,
+            source: diagnosticLogSource,
+            error: diagnosticLogError,
           },
           discovery: {
             state: discovery.state,
@@ -170,6 +207,10 @@ function statusCommand(argv: string[]): number {
     ["Registered command", configured ? (registeredCommand ?? "missing") : "-"],
     ["Registered args", configured ? (registeredArgs ?? "missing") : "-"],
     [
+      "Registered enabled",
+      configured ? (registeredEnabled ? "yes" : "no  (run init to reconcile)") : "-",
+    ],
+    [
       "Registration match",
       configured
         ? registrationMatchesCurrentInstall
@@ -195,13 +236,31 @@ function statusCommand(argv: string[]): number {
     ["Dirty worktree base", serverConfig.allowDirtyWorktreeBase ? "allowed" : "refused"],
     ["Workspace roots", serverConfig.allowedRoots || "any existing directory"],
     [
+      "Diagnostic log",
+      diagnosticLogPath
+        ? `${diagnosticLogPath}  ${dim("(registered config)")}`
+        : diagnosticLogError
+          ? `invalid  (${diagnosticLogError}; run init to reconcile)`
+          : "not configured  (run: sol-luna-orchestrator init)",
+    ],
+    [
       "Activity log",
-      // Same resolver `activity` uses. Reporting only this shell's environment
-      // told people telemetry was off while the server was busy writing it.
       events.path
         ? `${events.path}  ${dim(`(${describeEventsSource(events.source)})`)}`
-        : "not configured  (run: sol-luna-orchestrator init)",
+        : events.error
+          ? `invalid  (${events.error}; run init to reconcile)`
+          : "not configured  (run: sol-luna-orchestrator init)",
     ],
+    ...(cliEventsOverride
+      ? ([
+          [
+            "CLI activity override",
+            cliEventsOverride.path
+              ? `${cliEventsOverride.path}  ${dim("(standalone activity only)")}`
+              : `invalid  (${cliEventsOverride.error ?? "invalid override"})`,
+          ],
+        ] as Array<[string, string]>)
+      : []),
     [
       "Discovery hint",
       discovery.state === "installed"

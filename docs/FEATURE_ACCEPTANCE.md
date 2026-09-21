@@ -2,22 +2,22 @@
 
 This is the authoritative current capability, evidence, freshness, and
 confidence ledger for the repository. The current release baseline is
-`0.11.0`. It adds P1.0 attempt-usage and failure-evidence hardening plus P1.1
-reasoned failure decisions to the Thin Supervisor, terminal batch verification,
-and bounded parallel recovery baseline described below. Shipped history belongs in
-`CHANGELOG.md`; future work belongs in `ROADMAP.md`.
+`0.12.0`. Shipped history belongs in `CHANGELOG.md`; future work belongs in
+`ROADMAP.md`.
 
 ## Current baseline
 
-- **Runtime baseline:** v0.11.0 release candidate, with package and lockfile
-  versions set to `0.11.0`.
+- **Runtime baseline:** v0.12.0, with package and lockfile versions set to
+  `0.12.0`.
 - **Latest full deterministic validation:** `npm run verify` passed on
-  2026-08-29 with no failures and only expected platform-specific skips, plus
-  typecheck and the deterministic MCP protocol smoke test. `npm run verify`
-  invokes `bench:validate`, whose default suite includes V3: every V3 starting
-  state fails, every hidden reference passes, and every mutation and
-  immutable-specification check discriminates. Exact test totals belong in the
-  validation output, not this ledger, so adding a test cannot stale this status.
+  2026-09-21 on the current v0.12.0 hardening tree with no failures and only
+  expected platform-specific skips: 1,187 tests, 1,184 passed, 0 failed, and 3
+  skipped on this Windows run. The gate included typecheck, format, the complete
+  deterministic test suite, the MCP protocol smoke test (`All protocol checks
+passed.`), and `bench:validate` (`All fixtures discriminate correctly.`). The
+  benchmark fixture validator confirmed every starting state fails, every
+  reference solution passes, and every required mutation and
+  immutable-specification check discriminates.
 - **Benchmark V3 baseline evidence:** campaign `2026-08-30T04-26-16-817Z`
   completed 36/36 valid runs against the v0.11.0 production baseline at standard
   Codex speed: nine tasks, Solo Medium versus Adaptive Medium, two repetitions,
@@ -25,8 +25,10 @@ and bounded parallel recovery baseline described below. Shipped history belongs 
   Adaptive delegated zero workers and was slower and more expensive overall.
   Two repetitions are directional evidence, not statistical significance.
 - **Current native platform evidence:** deterministic CI covers Windows, Linux,
-  and macOS. Focused Linux/POSIX symlink, dependency-link, and process-group
-  paths passed natively. Live Codex delegation has representative Windows and
+  and macOS. Focused Linux/POSIX symlink and process-group paths passed natively;
+  the dependency-link run is historical evidence for the former provisioning
+  implementation, not proof of current private dependency snapshots. Live Codex
+  delegation has representative Windows and
   Linux evidence; the accepted Ubuntu runs used the documented repo-local
   `LUNA_SANDBOX=danger-full-access` trusted-development workaround.
 - **Live-evidence boundary:** published-v0.9.0 and earlier pre-release live runs
@@ -948,16 +950,20 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   clean disjoint integration, same-file conflict retention, policy cleanup of
   completed worktrees and leases, and a deliberately retained
   integration-disabled worktree used by continuation under the then-current
-  default policy. It remains applicable to isolation, linking, integration, and
-  cleanup mechanics, but does not prove every current retention mode. Current
-  retention precedence and finalization instead have focused deterministic
-  coverage in the 516-test baseline. Older committed evidence remains **STALE**
-  for lifecycle/lease seams that later changed. The
-  focused Linux run added native POSIX evidence: the dependency link was an
-  actual directory symlink resolving to the source dependency tree, cleanup
-  removed the link/worktree without deleting the source, stale pruning left a
-  user worktree intact, and the complete 73-test suite passed with no skips. The
-  focused lifecycle closure advanced deterministic evidence to **DEEP PASS** by
+  default policy. It remains applicable to isolation, integration, and cleanup
+  mechanics that have not changed, but it does not prove current dependency
+  provisioning or every current retention mode. Current retention precedence,
+  finalization, and private dependency-snapshot confinement instead have focused
+  deterministic coverage in the current full deterministic baseline. Older
+  committed evidence remains **STALE** for lifecycle/lease seams that later
+  changed. The focused Linux run added historical native POSIX evidence for the
+  former dependency-link implementation: the dependency link was an actual
+  directory symlink resolving to the source dependency tree, cleanup removed the
+  link/worktree without deleting the source, stale pruning left a user worktree
+  intact, and the complete 73-test suite passed with no skips. That link evidence
+  does not prove current private-snapshot provisioning; the current deterministic
+  snapshot/confinement regressions do. The focused lifecycle closure advanced
+  deterministic evidence to **DEEP PASS** by
   combining partial main-workspace integration, in-flight parallel cancellation,
   retained-worktree policy, exact lease release, consumed-continuation
   finalization, and orchestrator pruning in end-to-end cases.

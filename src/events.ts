@@ -317,7 +317,8 @@ export type OrchestratorEvent =
       type: "integration.blocked";
       batchId: string;
       taskId: string;
-      reason: "scope-violation" | "protected-control-path";
+      reason:
+        "scope-violation" | "protected-control-path" | "workspace-drift" | "source-drift";
     }
   | {
       type: "integration.partial";

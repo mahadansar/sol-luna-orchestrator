@@ -450,6 +450,56 @@ test("retained continuations ignore only unchanged orchestrator dependency links
   }
 });
 
+test("retained continuations preserve a nested authoritative workspace as the shared-link source", async () => {
+  const repo = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-retained-nested-"));
+  const authoritativeWorkspace = path.join(repo, "packages", "app");
+  const worktree = path.join(repo, ".sol-luna", "worktrees", "continued");
+  const source = path.join(authoritativeWorkspace, "node_modules");
+  const destination = path.join(worktree, "node_modules");
+  await fs.mkdir(source, { recursive: true });
+  await fs.mkdir(worktree, { recursive: true });
+
+  try {
+    await fs.symlink(
+      source,
+      destination,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    const input = delegateTaskInputSchema.parse({
+      objective: "Continue the nested retained read-only review.",
+      effortReason: "The same bounded review needs one follow-up.",
+      acceptanceCriteria: ["Nested orchestrator setup is not attributed to the worker."],
+      allowedFiles: ["src/**"],
+      changeIntent: "forbidden",
+    });
+    const result = mockResult();
+    result.changeIntent = "forbidden";
+    result.continuationReference = null;
+    result.filesChanged = [];
+
+    const reconciled = await reconcileRetainedContinuationEvidence(
+      input,
+      result,
+      worktree,
+      async () => ({
+        files: [
+          { path: "node_modules", status: "??" },
+          { path: "node_modules/dependency.js", status: "??" },
+        ],
+        diff: "",
+      }),
+      authoritativeWorkspace,
+    );
+
+    assert.equal(reconciled.verdict, "PASS");
+    assert.deepEqual(reconciled.filesChanged, []);
+  } finally {
+    await fs.unlink(destination).catch(() => undefined);
+    await fs.rm(repo, { recursive: true, force: true });
+  }
+});
+
 test("evidence packet - integration conflict", () => {
   const batch: BatchOutput = {
     batchId: "b1",

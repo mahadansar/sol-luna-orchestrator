@@ -23,6 +23,118 @@ All notable changes to this project are documented here. Format follows
 - Shared worktree-link configuration now rejects paths that could escape the
   repository/worktree roots, reports the effective safe link set at startup,
   and filters nested orchestrator-owned links without hiding sibling edits.
+- Bounded shutdown now keeps its timeout authority alive until settlement, so
+  an operation that ignores cancellation fails closed with `ShutdownTimeoutError`
+  instead of leaving the shutdown promise pending while the event loop drains.
+- Retained-worktree continuation setup now distinguishes transient refresh
+  failure from lost persistent ownership: transient failures remain retryable
+  within the original TTL, while owner loss consumes the reference so unsafe
+  cross-process workspace authority cannot be restored.
+- Explicitly empty `SOL_LUNA_ALLOWED_EFFORTS` is now treated as a corrected
+  widening and produces the same startup diagnostic as other unusable effort
+  declarations.
+- Persistent worktree-lease maintenance keeps its renewal timer alive until the
+  owner stops it, so callers awaiting renewal failure cannot be stranded by an
+  otherwise-empty event loop. An owning batch abort now stops that referenced
+  timer immediately, so the same liveness guarantee cannot keep a timed-out
+  process shutdown alive indefinitely.
+- The deterministic test and coverage gates now include the Git-evidence and
+  worktree-link regression suites added by this release.
+- Runtime and CLI telemetry-path handling now share one absolute-path policy:
+  `init` persists absolute log/event paths, invalid legacy relative or empty
+  values are reported and disabled, and `activity` distinguishes a missing fresh
+  log from an unusable directory/non-file target. Windows root-relative paths are
+  rejected as drive-dependent, and a watched file that becomes unusable now
+  terminates with an error rather than silently retaining stale state. NDJSON
+  watch mode emits each accepted state transition even when several records
+  arrive in one filesystem read. Delete/recreate and atomic log rotation now
+  detach a stale inode watcher and poll/reattach the pathname; an independent
+  low-frequency pathname/content health poll also stays active while `fs.watch`
+  appears healthy, so a completely silent stale watcher cannot freeze the live
+  view.
+- `doctor` now validates both the registered interpreter command and exact server
+  entry, while Codex's normal "No MCP server named ... found" response is
+  classified as an absent registration instead of an inspection failure.
+- Plain `init` now repairs an explicitly disabled MCP registration, verifies the
+  enabled state after writing, and `status` exposes that state in human and JSON
+  output.
+- `status` now reports the registered diagnostic-log path and invalid-path state
+  alongside activity telemetry in both human and JSON output; shell
+  `SOL_LUNA_LOG` does not mask the server registration.
+- Parallel dependency provisioning is now private per worktree. The historical
+  `SOL_LUNA_WORKTREE_LINK` setting still selects directories (default
+  `node_modules`), but production snapshots them instead of creating writable
+  links to the operator workspace. Snapshot ancestry and descendant
+  symlink/junction targets are confined, worker mutations cannot alter the source
+  dependency tree, and parent verification fingerprints the private copy before
+  execution so worker-authored dependency code is never silently executed.
+- Git evidence is pinned to an immutable pre-worker authority: common/worktree
+  control metadata is fingerprinted, delegated/evidence Git gets private
+  config/refs/index/object-write state with replace objects disabled, trusted
+  scans use a fresh index and immutable base, ignored files are enumerated, and
+  Git stdout/stderr are bounded. Real `.git/modules/**` submodule control
+  metadata (including config/hooks/refs/index and lock/control state) is part of
+  that authority, and redirected module/control paths fail closed without hashing
+  submodule object databases. Nested workspaces preserve normal Git semantics
+  while local worker Git config remains private.
+- Worktree metadata and integration are serialized by canonical common-Git
+  identity across linked worktrees/processes. Integration revalidates
+  authoritative destination state and sealed source evidence under that
+  authority, binds final copies to the accepted source bytes and destination
+  state, and moves proven deletions through a confined quarantine before unlink.
+  Cancellation observed before the first write produces no authoritative write;
+  later observed cancellation stops further writes and reports already-applied
+  changes truthfully, preserving quarantined deletion bytes when rollback is
+  unsafe.
+- Evidence-bearing operations now hold a separate persistent repository
+  operation authority keyed by canonical common-Git identity, serializing
+  direct/sequential/shared-workspace evidence against parallel worktree and
+  continuation-lease lifecycle churn without excluding protected `.sol-luna`
+  paths from evidence. Continuation expiry reacquires the same authority before
+  lease release, different repositories remain concurrent, and final persistent
+  owner loss is proven before terminal success and fails closed.
+- Single/sequential non-Git workspaces and shared-workspace continuations now
+  receive independent content-hashed pre/post filesystem evidence, so
+  shell-created or ignored side effects omitted from runtime `file_change`
+  events still affect scope/change-intent trust. Nested requested workspaces use
+  the same path namespace for execution, evidence, recovery and integration.
+- Orchestrator `.sol-luna` worktree/lease roots reject symlink/junction
+  redirection before parent-owned mutation. Final/stale worktree deletion removes
+  the filesystem tree junction-safely before pruning Git metadata, so
+  worker-created links cannot redirect cleanup outside the isolated worktree.
+- Integration now treats exclusive create, existing-file truncate, and deletion
+  quarantine rename as authoritative mutation boundaries. Short writes are
+  completed in a loop; a later write/sync/snapshot/unlink failure either proves a
+  safe rollback or is counted truthfully as an applied partial mutation before
+  integration stops, so telemetry cannot report zero after authoritative bytes or
+  namespace state changed.
+- Missing destination ancestry for authoritative integration and private
+  dependency snapshots now fails closed instead of being created through a
+  pathname race. Every required parent segment must already exist as a real,
+  canonically confined directory; missing, replaced, non-directory, or
+  symlink/junction ancestry is rejected before any file/snapshot mutation.
+- Final integrated verification is enclosed by fresh trusted workspace/Git and
+  dependency evidence, and private worktree dependency snapshots are
+  fingerprinted again after each worker verification turn. A passing verifier can
+  no longer mutate workspace, protected Git/control state, ignored files, or
+  dependencies and still produce terminal verified completion or a poisoned
+  retained continuation.
+- Repository-operation and metadata leases now pin the in-memory filesystem
+  identity of their common-Git lease namespace, continuation-lease root, and
+  exact artifact. Refresh/release rejects ancestor redirection, artifact
+  replacement, replayed stale owner records, coexisting live owners, missing live
+  generations, and unexpected residual bytes while preserving replacement-owner
+  state during stale-acquirer rollback.
+- Trusted Git evidence now recursively pins initialized submodule worktrees from
+  the immutable gitlink index and independently reports their tracked, untracked,
+  and ignored effects. Committed `.gitmodules` `ignore = all` therefore cannot
+  suppress child mutations, while post-capture submodule `.git`, worktree, or
+  `.git/modules/**` redirection continues to fail closed before unsafe traversal.
+- Gitlinks that are uninitialized at admission are pinned separately as missing or
+  an exact empty-directory identity. Later population, replacement, non-directory
+  state, or symlink/junction redirection invalidates trusted evidence, including
+  the final integrated-verifier seal, instead of letting bytes appear underneath a
+  previously uninitialized submodule path invisibly.
 
 ## [0.12.0] - 2026-08-30
 

@@ -37,6 +37,7 @@ export class ShutdownCoordinator {
   private readonly active = new Map<symbol, AbortController>();
   private readonly settlements = new Map<symbol, Promise<void>>();
   private readonly cleanups: Cleanup[] = [];
+  private readonly forcedCleanups: Cleanup[] = [];
   private shutdownPromise: Promise<ShutdownResult> | null = null;
 
   get state(): ShutdownState {
@@ -50,6 +51,16 @@ export class ShutdownCoordinator {
   registerCleanup(cleanup: Cleanup): void {
     if (this.stateValue !== "accepting") throw new ShutdownInProgressError();
     this.cleanups.push(cleanup);
+  }
+
+  /**
+   * Register process-liveness cleanup that is unsafe during ordinary request
+   * cancellation and therefore runs only after the normal shutdown bound has
+   * already failed. These hooks must not publish success or reopen admission.
+   */
+  registerForcedCleanup(cleanup: Cleanup): void {
+    if (this.stateValue !== "accepting") throw new ShutdownInProgressError();
+    this.forcedCleanups.push(cleanup);
   }
 
   async run<T>(
@@ -106,7 +117,6 @@ export class ShutdownCoordinator {
     let timer: NodeJS.Timeout | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new ShutdownTimeoutError(timeoutMs)), timeoutMs);
-      timer.unref?.();
     });
 
     try {
@@ -131,6 +141,18 @@ export class ShutdownCoordinator {
       return { state: "closed", cancelledOperations };
     } catch (error) {
       this.stateValue = "failed";
+      if (error instanceof ShutdownTimeoutError) {
+        // The normal ownership/finally path exceeded its bound. At this point no
+        // active operation may publish success (`run` checks stateValue), so run
+        // only the distinct liveness finalizers needed to stop referenced
+        // process-lifetime resources such as repository-operation renewal
+        // timers. Their errors cannot make the already-failed shutdown less
+        // failed; each hook is attempted so one broken finalizer cannot strand
+        // another live timer.
+        await Promise.allSettled(
+          this.forcedCleanups.map((cleanup) => Promise.resolve(cleanup())),
+        );
+      }
       throw error;
     } finally {
       if (timer) clearTimeout(timer);

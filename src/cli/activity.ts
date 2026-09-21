@@ -1,5 +1,6 @@
 import { createReadStream, statSync, watch, type FSWatcher } from "node:fs";
 import { stat } from "node:fs/promises";
+import path from "node:path";
 import { createInterface } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
 import { readConfig } from "./codex.js";
@@ -367,9 +368,12 @@ async function readEvents(file: string): Promise<TimestampedEvent[]> {
   const events: TimestampedEvent[] = [];
   try {
     const s = statSync(file);
-    if (!s.isFile()) return events;
-  } catch {
-    return events; // file might not exist yet
+    if (!s.isFile()) {
+      throw new Error(`Activity log is not a regular file: ${file}`);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return events;
+    throw error;
   }
 
   return new Promise((resolve, reject) => {
@@ -474,14 +478,22 @@ function renderHumanHistory(snapshots: ActivitySnapshot[]): void {
   }
   for (const [index, snapshot] of snapshots.entries()) {
     if (index > 0) out();
-    out(dim(`Recent batch ${index + 1} of ${snapshots.length}${index === 0 ? " (latest)" : ""}`));
+    out(
+      dim(
+        `Recent batch ${index + 1} of ${snapshots.length}${index === 0 ? " (latest)" : ""}`,
+      ),
+    );
     renderHuman(snapshot);
   }
 }
 
 export async function activityCommand(
   argv: string[],
-  options: { eventsFile?: string } = {},
+  options: {
+    eventsFile?: string;
+    watchFile?: typeof watch;
+    watchHealthIntervalMs?: number;
+  } = {},
 ): Promise<number> {
   const parsedArgs = parseActivityArgs(argv);
   if (!parsedArgs.ok) {
@@ -501,9 +513,13 @@ export async function activityCommand(
   // reads it from. A missing file is not an error: it simply means nothing has
   // been delegated yet.
   const resolved = options.eventsFile
-    ? { path: options.eventsFile }
+    ? { path: path.resolve(options.eventsFile) }
     : resolveEventsPath(readConfig());
 
+  if ("error" in resolved && resolved.error) {
+    errOut(`${bold(red("Error:"))} ${resolved.error}.`);
+    return 1;
+  }
   if (!resolved.path) {
     errOut(`${bold(red("Error:"))} Activity logging is not configured.`);
     errOut("Run: sol-luna-orchestrator init");
@@ -511,8 +527,18 @@ export async function activityCommand(
   }
 
   const eventsFile = resolved.path;
+  const watchFile = options.watchFile ?? watch;
+  const watchHealthIntervalMs = options.watchHealthIntervalMs ?? 1_000;
   if (!watchMode) {
-    const events = await readEvents(eventsFile);
+    let events: TimestampedEvent[];
+    try {
+      events = await readEvents(eventsFile);
+    } catch (error) {
+      errOut(
+        `${bold(red("Error:"))} Cannot read activity log: ${(error as Error).message}`,
+      );
+      return 1;
+    }
     if (parsedArgs.history !== null) {
       const snapshots = reduceRecentBatches(events, parsedArgs.history);
       if (jsonMode) out(JSON.stringify(snapshots, null, 2));
@@ -538,6 +564,7 @@ export async function activityCommand(
   return new Promise<number>((resolve) => {
     let watcher: FSWatcher | undefined;
     let missingFilePoll: NodeJS.Timeout | undefined;
+    let watchHealthPoll: NodeJS.Timeout | undefined;
     let elapsedTimer: NodeJS.Timeout | undefined;
     let changeQueue = Promise.resolve();
     let currentSize = 0;
@@ -546,6 +573,7 @@ export async function activityCommand(
     let decoder = new StringDecoder("utf-8");
     let ready = false;
     let pendingChange = false;
+    let pollReadPending = false;
     let closed = false;
 
     const resetReadState = (): void => {
@@ -564,23 +592,65 @@ export async function activityCommand(
     } | null> => {
       try {
         const current = await stat(eventsFile);
-        return current.isFile()
-          ? {
-              size: current.size,
-              dev: current.dev,
-              ino: current.ino,
-              mtimeMs: current.mtimeMs,
-            }
-          : null;
-      } catch {
-        return null;
+        if (!current.isFile()) {
+          throw new Error(`Activity log is not a regular file: ${eventsFile}`);
+        }
+        return {
+          size: current.size,
+          dev: current.dev,
+          ino: current.ino,
+          mtimeMs: current.mtimeMs,
+        };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+        throw error;
       }
     };
 
+    const fileInfoSync = (): {
+      size: number;
+      dev: number;
+      ino: number;
+      mtimeMs: number;
+    } | null => {
+      try {
+        const current = statSync(eventsFile);
+        if (!current.isFile()) {
+          throw new Error(`Activity log is not a regular file: ${eventsFile}`);
+        }
+        return {
+          size: current.size,
+          dev: current.dev,
+          ino: current.ino,
+          mtimeMs: current.mtimeMs,
+        };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+        throw error;
+      }
+    };
+
+    const sameFileIdentity = (
+      left: { dev: number; ino: number },
+      right: { dev: number; ino: number },
+    ): boolean => left.dev === right.dev && left.ino === right.ino;
+
     /** Consume complete records from the current file tail. */
-    const readAvailable = async (): Promise<boolean> => {
+    const readAvailable = async (
+      captureIncrementalSnapshots = false,
+    ): Promise<{
+      changed: boolean;
+      snapshots: ActivitySnapshot[];
+      watchTarget: "same" | "missing" | "replaced";
+    }> => {
       const info = await fileInfo();
-      if (info === null) return false;
+      if (info === null) {
+        // Once a pathname disappears, any later file at that path is a new
+        // stream even if the platform happens to recycle the same inode/mtime.
+        // Reset the byte cursor now so reattachment always reads from byte 0.
+        resetReadState();
+        return { changed: false, snapshots: [], watchTarget: "missing" };
+      }
 
       const replaced =
         currentFile !== null &&
@@ -593,7 +663,11 @@ export async function activityCommand(
       if (info.size < currentSize || replaced || rewritten) resetReadState();
       if (info.size <= currentSize) {
         currentFile = info;
-        return false;
+        return {
+          changed: false,
+          snapshots: [],
+          watchTarget: replaced ? "replaced" : "same",
+        };
       }
 
       const chunks: Buffer[] = [];
@@ -615,6 +689,7 @@ export async function activityCommand(
       trailingFragment = parts.pop() ?? "";
 
       let changed = false;
+      const snapshots: ActivitySnapshot[] = [];
       for (const line of parts) {
         const event = parseEventLine(line);
         if (event) {
@@ -634,12 +709,20 @@ export async function activityCommand(
             const retained = compacted.includes(event);
             events.splice(0, events.length, ...compacted);
             changed ||= retained;
+            if (retained && captureIncrementalSnapshots) {
+              snapshots.push(reduceEvents(events));
+            }
           } else {
             changed = true;
+            if (captureIncrementalSnapshots) snapshots.push(reduceEvents(events));
           }
         }
       }
-      return changed;
+      return {
+        changed,
+        snapshots,
+        watchTarget: replaced ? "replaced" : "same",
+      };
     };
 
     const updateElapsedTimer = (): void => {
@@ -687,11 +770,28 @@ export async function activityCommand(
     };
 
     const onFileChange = async (render = true): Promise<void> => {
-      try {
-        const changed = await readAvailable();
-        if (!closed && changed && render) renderCurrent();
-      } catch {
-        // The file can be temporarily unavailable while it is replaced.
+      const { changed, snapshots, watchTarget } = await readAvailable(render && jsonMode);
+      if (watchTarget !== "same" && watcher) {
+        const staleWatcher = watcher;
+        watcher = undefined;
+        staleWatcher.close();
+
+        // File watchers may stay bound to the old inode after delete/recreate
+        // or atomic log rotation and then go permanently silent. Reattach to
+        // the pathname we just inspected; if it is still absent, poll until a
+        // new file can be watched. Schedule one catch-up after attachment so an
+        // append racing the handoff cannot be missed.
+        if (attachWatcher()) scheduleFileChange();
+        else startMissingFilePoll();
+      }
+      if (closed || !changed || !render) return;
+      if (jsonMode) {
+        for (const next of snapshots) {
+          snapshot = next;
+          out(JSON.stringify(snapshot));
+        }
+      } else {
+        renderCurrent();
       }
     };
 
@@ -701,29 +801,50 @@ export async function activityCommand(
         pendingChange = true;
         return;
       }
-      changeQueue = changeQueue.then(
-        () => onFileChange(),
-        () => onFileChange(),
-      );
+      changeQueue = changeQueue
+        .then(() => onFileChange())
+        .catch((error) => finish(1, error));
     };
 
     const attachWatcher = (): boolean => {
       if (watcher) return true;
+      let nextWatcher: FSWatcher | undefined;
       try {
+        // Bind the watcher to a pathname identity we can prove. Without the two
+        // stats below, an atomic rotation inside `watch(...)` can leave us
+        // watching the old inode while the first history read silently consumes
+        // the replacement. A silent old watcher would then freeze the live view.
+        const beforeWatch = fileInfoSync();
+        if (beforeWatch === null) return false;
         // This is deliberately done before the initial read. The immediate
         // catch-up below handles records written before or during attachment.
-        const nextWatcher = watch(eventsFile, () => scheduleFileChange());
+        nextWatcher = watchFile(eventsFile, () => scheduleFileChange());
+        const attachedWatcher = nextWatcher;
         // On Windows, a watcher can report EPERM asynchronously (including
         // while its directory is being cleaned up). Never let that become an
         // uncaught process error in a long-running CLI command.
-        nextWatcher.on("error", () => {
-          if (watcher === nextWatcher) watcher = undefined;
-          nextWatcher.close();
+        attachedWatcher.on("error", () => {
+          if (watcher !== attachedWatcher) {
+            attachedWatcher.close();
+            return;
+          }
+          watcher = undefined;
+          attachedWatcher.close();
           startMissingFilePoll();
         });
-        watcher = nextWatcher;
+        const afterWatch = fileInfoSync();
+        if (afterWatch === null || !sameFileIdentity(beforeWatch, afterWatch)) {
+          attachedWatcher.close();
+          return false;
+        }
+        watcher = attachedWatcher;
+        // Seed the initial identity before the first read. If rotation happens
+        // after this check but before that read, readAvailable() now recognizes
+        // the replacement and immediately drops/re-attaches this stale watcher.
+        if (currentFile === null) currentFile = afterWatch;
         return true;
       } catch {
+        nextWatcher?.close();
         return false;
       }
     };
@@ -732,22 +853,67 @@ export async function activityCommand(
       if (missingFilePoll || closed) return;
       missingFilePoll = setInterval(() => {
         if (closed || watcher) return;
-        if (!attachWatcher()) return;
-        if (missingFilePoll) clearInterval(missingFilePoll);
-        missingFilePoll = undefined;
-        scheduleFileChange();
+        if (attachWatcher()) {
+          if (missingFilePoll) clearInterval(missingFilePoll);
+          missingFilePoll = undefined;
+          scheduleFileChange();
+          return;
+        }
+
+        // A missing file and an unavailable platform watcher both land here.
+        // Poll the actual file contents while no watcher can be attached: ENOENT
+        // remains a harmless empty state, a readable file stays live, and a
+        // directory/permission failure terminates truthfully instead of leaving
+        // a stale snapshot on screen forever.
+        if (!ready || pollReadPending) return;
+        pollReadPending = true;
+        changeQueue = changeQueue
+          .then(() => onFileChange())
+          .catch((error) => finish(1, error))
+          .finally(() => {
+            pollReadPending = false;
+          });
       }, 100);
     };
 
-    const onSigint = (): void => {
+    const startWatchHealthPoll = (): void => {
+      if (watchHealthPoll || closed) return;
+      watchHealthPoll = setInterval(() => {
+        // fs.watch is advisory: on some filesystems a watcher can remain bound
+        // to an unlinked inode and never emit rename/error. Independently re-stat
+        // and tail the pathname while a watcher is nominally healthy so silent
+        // rotation, delete/recreate, and silent appends cannot freeze the view.
+        if (closed || !ready || !watcher || pollReadPending) return;
+        pollReadPending = true;
+        changeQueue = changeQueue
+          .then(() => onFileChange())
+          .catch((error) => finish(1, error))
+          .finally(() => {
+            pollReadPending = false;
+          });
+      }, watchHealthIntervalMs);
+    };
+
+    const finish = (code: number, error?: unknown): void => {
       if (closed) return;
       closed = true;
       if (missingFilePoll) clearInterval(missingFilePoll);
+      if (watchHealthPoll) clearInterval(watchHealthPoll);
       if (elapsedTimer) clearInterval(elapsedTimer);
       watcher?.close();
       process.off("SIGINT", onSigint);
-      if (!jsonMode) out();
-      resolve(0);
+      if (error) {
+        errOut(
+          `${bold(red("Error:"))} Cannot watch activity log: ${(error as Error).message}`,
+        );
+      } else if (!jsonMode) {
+        out();
+      }
+      resolve(code);
+    };
+
+    const onSigint = (): void => {
+      finish(0);
     };
 
     process.on("SIGINT", onSigint);
@@ -779,20 +945,13 @@ export async function activityCommand(
       else renderHuman(snapshot);
       updateElapsedTimer();
       ready = true;
+      startWatchHealthPoll();
       if (pendingChange) {
         pendingChange = false;
         scheduleFileChange();
       }
     };
 
-    void initialize().catch(() => {
-      if (closed) return;
-      // Keep watch mode useful even if a transient startup read failed.
-      snapshot = reduceEvents(events);
-      if (jsonMode) out(JSON.stringify(snapshot));
-      else renderHuman(snapshot);
-      ready = true;
-      scheduleFileChange();
-    });
+    void initialize().catch((error) => finish(1, error));
   });
 }

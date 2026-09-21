@@ -18,6 +18,15 @@ export const serverEnvTable = (name = SERVER_NAME): string[] => [
   "env",
 ];
 
+/**
+ * Codex treats a missing `enabled` key as enabled. `false` is the valid disabled
+ * state; any other present value is unhealthy and should be reconciled by init.
+ */
+export function registrationEnabled(configText: string, name = SERVER_NAME): boolean {
+  const value = readKey(configText, serverTable(name), "enabled");
+  return value === null || value === "true";
+}
+
 export interface RequiredSetting {
   key: string;
   value: number | string;

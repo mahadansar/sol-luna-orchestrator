@@ -28,12 +28,29 @@ import {
   toTomlValue,
   upsertKey,
 } from "./cli/toml-edit.js";
-import { parseInitOptions } from "./cli/init.js";
+import {
+  applyInitConfig,
+  codexRegistrationMatchesExpected,
+  inspectInitConfigVerification,
+  parseInitOptions,
+} from "./cli/init.js";
 import { ensureDiscoveryHint } from "./cli/discovery-hint.js";
 import { parseRegisteredServerResult, run as runCodex } from "./cli/codex.js";
-import { doctorExitCode, gitVersionSupported, type DoctorReport } from "./cli/doctor.js";
+import {
+  doctorExitCode,
+  gitVersionSupported,
+  registeredLaunchMatches,
+  type DoctorReport,
+} from "./cli/doctor.js";
 import { minimumNode } from "./cli/paths.js";
-import { inspectSettings, settingsSatisfied } from "./cli/settings.js";
+import {
+  inspectSettings,
+  registrationEnabled,
+  serverEnvTable,
+  serverTable,
+  settingsSatisfied,
+} from "./cli/settings.js";
+import { parseAbsoluteOptionalPath } from "./config.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.join(HERE, "cli.js");
@@ -282,6 +299,168 @@ test("a fully configured table satisfies the required settings", () => {
   );
 });
 
+test("registration enabled state treats omission as enabled and explicit false as disabled", () => {
+  const base = `[mcp_servers.sol-luna-orchestrator]\ncommand = "node"\n`;
+  assert.equal(registrationEnabled(base), true);
+  assert.equal(
+    registrationEnabled(
+      upsertKey(base, ["mcp_servers", "sol-luna-orchestrator"], "enabled", true),
+    ),
+    true,
+  );
+  assert.equal(
+    registrationEnabled(
+      upsertKey(base, ["mcp_servers", "sol-luna-orchestrator"], "enabled", false),
+    ),
+    false,
+  );
+});
+
+test("init post-write verification rejects drift in every owned registration field", () => {
+  const root = path.parse(process.cwd()).root;
+  const expected = {
+    command: process.execPath,
+    serverEntry: path.join(root, "tmp", "sol-luna", "server.js"),
+    logPath: path.join(root, "tmp", "sol-luna", "diagnostic.log"),
+    eventsPath: path.join(root, "tmp", "sol-luna", "events.jsonl"),
+  };
+  const configured = applyInitConfig("", {
+    ...expected,
+    forceLogPath: false,
+    forceEventsPath: false,
+  });
+  assert.equal(inspectInitConfigVerification(configured, expected).ok, true);
+
+  const cases: Array<[string, string]> = [
+    ["command", upsertKey(configured, serverTable(), "command", "wrong-node")],
+    [
+      "args",
+      upsertKey(configured, serverTable(), "args", [path.join(root, "tmp", "wrong.js")]),
+    ],
+    ["enabled", upsertKey(configured, serverTable(), "enabled", false)],
+    [
+      "server name",
+      upsertKey(configured, serverEnvTable(), "SOL_LUNA_SERVER_NAME", "wrong-name"),
+    ],
+    [
+      "log path",
+      upsertKey(
+        configured,
+        serverEnvTable(),
+        "SOL_LUNA_LOG",
+        path.join(root, "tmp", "other.log"),
+      ),
+    ],
+    [
+      "event path",
+      upsertKey(
+        configured,
+        serverEnvTable(),
+        "SOL_LUNA_EVENTS",
+        path.join(root, "tmp", "other.jsonl"),
+      ),
+    ],
+  ];
+
+  for (const [label, drifted] of cases) {
+    assert.equal(
+      inspectInitConfigVerification(drifted, expected).ok,
+      false,
+      `${label} drift must fail post-write verification`,
+    );
+  }
+});
+
+test("init post-write Codex verification checks enabled command and args when available", () => {
+  const command = process.execPath;
+  const serverEntry = path.join(path.parse(process.cwd()).root, "tmp", "server.js");
+  const good = {
+    registered: true,
+    enabled: true,
+    command,
+    args: serverEntry,
+  };
+
+  assert.equal(codexRegistrationMatchesExpected(good, command, serverEntry), true);
+  assert.equal(
+    codexRegistrationMatchesExpected({ ...good, enabled: false }, command, serverEntry),
+    false,
+  );
+  assert.equal(
+    codexRegistrationMatchesExpected(
+      { ...good, command: "wrong-node" },
+      command,
+      serverEntry,
+    ),
+    false,
+  );
+  assert.equal(
+    codexRegistrationMatchesExpected(
+      { ...good, args: "wrong-server.js" },
+      command,
+      serverEntry,
+    ),
+    false,
+  );
+  assert.equal(
+    codexRegistrationMatchesExpected({ registered: false }, command, serverEntry),
+    true,
+    "file verification remains authoritative when Codex inspection is unavailable",
+  );
+});
+
+test("plain init policy preserves valid custom telemetry but repairs invalid paths", () => {
+  const root = path.parse(process.cwd()).root;
+  const defaults = {
+    command: process.execPath,
+    serverEntry: path.join(root, "tmp", "server.js"),
+    logPath: path.join(root, "tmp", "default.log"),
+    eventsPath: path.join(root, "tmp", "default.events.jsonl"),
+    forceLogPath: false,
+    forceEventsPath: false,
+  };
+  const customLog = path.join(root, "tmp", "custom.log");
+  const customEvents = path.join(root, "tmp", "custom.events.jsonl");
+  let configured = applyInitConfig("", defaults);
+  configured = upsertKey(configured, serverEnvTable(), "SOL_LUNA_LOG", customLog);
+  configured = upsertKey(configured, serverEnvTable(), "SOL_LUNA_EVENTS", customEvents);
+
+  const preserved = applyInitConfig(configured, defaults);
+  assert.equal(
+    fromTomlValue(readKey(preserved, serverEnvTable(), "SOL_LUNA_LOG")),
+    customLog,
+  );
+  assert.equal(
+    fromTomlValue(readKey(preserved, serverEnvTable(), "SOL_LUNA_EVENTS")),
+    customEvents,
+  );
+
+  let invalid = upsertKey(preserved, serverEnvTable(), "SOL_LUNA_LOG", "relative.log");
+  invalid = upsertKey(
+    invalid,
+    serverEnvTable(),
+    "SOL_LUNA_EVENTS",
+    "relative.events.jsonl",
+  );
+  const invalidLog = fromTomlValue(readKey(invalid, serverEnvTable(), "SOL_LUNA_LOG"));
+  const invalidEvents = fromTomlValue(
+    readKey(invalid, serverEnvTable(), "SOL_LUNA_EVENTS"),
+  );
+  const repaired = applyInitConfig(invalid, {
+    ...defaults,
+    forceLogPath: parseAbsoluteOptionalPath(invalidLog) === undefined,
+    forceEventsPath: parseAbsoluteOptionalPath(invalidEvents) === undefined,
+  });
+  assert.equal(
+    fromTomlValue(readKey(repaired, serverEnvTable(), "SOL_LUNA_LOG")),
+    defaults.logPath,
+  );
+  assert.equal(
+    fromTomlValue(readKey(repaired, serverEnvTable(), "SOL_LUNA_EVENTS")),
+    defaults.eventsPath,
+  );
+});
+
 // --- Malicious / hostile input ----------------------------------------------
 
 test("a server name cannot inject TOML structure", () => {
@@ -461,6 +640,47 @@ test("Codex registration inspection preserves command failures", () => {
       registered: false,
       inspectionError: "failed to parse config.toml",
     },
+  );
+});
+
+test("Codex registration inspection distinguishes a genuinely missing server", () => {
+  assert.deepEqual(
+    parseRegisteredServerResult("sol-luna-orchestrator", {
+      code: 1,
+      stdout: "",
+      stderr: "No MCP server named 'sol-luna-orchestrator' found",
+    }),
+    { registered: false },
+  );
+});
+
+test("doctor launch matching checks the interpreter as well as the server entry", () => {
+  const expectedEntry = "/install/dist/server.js";
+  assert.equal(
+    registeredLaunchMatches(
+      {
+        registered: true,
+        command: process.execPath,
+        args: expectedEntry,
+      },
+      process.execPath,
+      expectedEntry,
+      true,
+    ),
+    true,
+  );
+  assert.equal(
+    registeredLaunchMatches(
+      {
+        registered: true,
+        command: "wrong-node",
+        args: expectedEntry,
+      },
+      process.execPath,
+      expectedEntry,
+      true,
+    ),
+    false,
   );
 });
 

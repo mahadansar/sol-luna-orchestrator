@@ -229,38 +229,41 @@ concurrency. That separation is the core of the security model.
 The annotated table under [What init writes](#what-init-writes) is the single
 authoritative presentation of the required keys, values, and failure rationale.
 `init` reconciles those owned values and `doctor` diagnoses either mismatch.
+Codex treats an omitted registration `enabled` key as enabled; if an existing
+registration explicitly has `enabled = false`, a plain `init` repairs it to
+`true`, and `status` reports the effective registration state.
 
 ### Environment variables
 
-| Variable                           | Default                 | Purpose                                                           |
-| ---------------------------------- | ----------------------- | ----------------------------------------------------------------- |
-| `LUNA_MODEL`                       | `gpt-5.6-luna`          | Worker model                                                      |
-| `LUNA_TIMEOUT_SECONDS`             | `1800`                  | Wall-clock budget per worker turn                                 |
-| `LUNA_VERIFY_TIMEOUT_SECONDS`      | `600`                   | Wall-clock budget per independently rerun verification command    |
-| `LUNA_SANDBOX`                     | `workspace-write`       | Codex sandbox mode for workers                                    |
-| `LUNA_NETWORK_ACCESS`              | off                     | `1` allows workers network access                                 |
-| `SOL_LUNA_MAX_PARALLEL`            | `3`                     | Concurrent workers; hard ceiling 8                                |
-| `SOL_LUNA_MAX_WORKERS_PER_BATCH`   | `12`                    | Workers one batch may enlist, either mode; hard ceiling 12        |
-| `SOL_LUNA_ALLOWED_MODELS`          | `LUNA_MODEL`            | Additional authorised worker models, comma separated              |
-| `SOL_LUNA_ALLOWED_EFFORTS`         | all four                | Permitted efforts, comma separated, e.g. `medium,high`            |
-| `SOL_LUNA_ALLOW_EFFORT_ESCALATION` | on                      | `0` stops the runtime recommending a higher effort                |
-| `SOL_LUNA_ALLOW_STRONGER_FALLBACK` | on                      | `0` stops the runtime recommending a stronger executor            |
-| `SOL_LUNA_EXECUTOR_ORDER`          | —                       | Complete executor hierarchy, weakest to strongest                 |
-| `SOL_LUNA_WORKTREE_LINK`           | `node_modules`          | Directories linked into each worktree                             |
-| `SOL_LUNA_KEEP_WORKTREES`          | `onFailure`             | Parallel-task retention: `always`, `never`, or `onFailure`        |
-| `SOL_LUNA_ALLOW_DIRTY`             | off                     | `1` permits parallel batches over uncommitted in-scope changes    |
-| `SOL_LUNA_VERIFY_MODE`             | `allowlist`             | `allowlist`, `off`, or `shell` — see [Security](../SECURITY.md)   |
-| `SOL_LUNA_VERIFY_ALLOW`            | —                       | Extra permitted executables, comma separated                      |
-| `SOL_LUNA_VERIFY_ENV_PASSTHROUGH`  | off                     | `1` stops withholding credential-shaped env vars                  |
-| `SOL_LUNA_ALLOWED_ROOTS`           | —                       | Confine delegation to these directory trees                       |
-| `SOL_LUNA_SERVER_NAME`             | `sol-luna-orchestrator` | **Must match** the name registered in Codex                       |
-| `SOL_LUNA_CONTEXT_MAX_BYTES`       | `50000`                 | P1.3B policy threshold in exact serialized UTF-8 bytes            |
-| `SOL_LUNA_CONTEXT_MAX_TURNS`       | `20`                    | P1.3B total-turn threshold                                        |
-| `SOL_LUNA_CONTEXT_MAX_CLEAN_TURNS` | `5`                     | P1.3B clean PASS accumulation threshold                           |
-| `SOL_LUNA_CONTEXT_COOLDOWN_TURNS`  | `2`                     | P1.3B authoritative turns required between compact projections    |
-| `SOL_LUNA_WORKER`                  | set per worker          | Internal marker; a server seeing it registers zero tools          |
-| `SOL_LUNA_EVENTS`                  | set by `init`           | Structured JSONL activity log, read by `activity`. Unset = no log |
-| `SOL_LUNA_LOG`                     | set by `init`           | Human-readable diagnostics log. Unset in the server env = no log  |
+| Variable                           | Default                 | Purpose                                                         |
+| ---------------------------------- | ----------------------- | --------------------------------------------------------------- |
+| `LUNA_MODEL`                       | `gpt-5.6-luna`          | Worker model                                                    |
+| `LUNA_TIMEOUT_SECONDS`             | `1800`                  | Wall-clock budget per worker turn                               |
+| `LUNA_VERIFY_TIMEOUT_SECONDS`      | `600`                   | Wall-clock budget per independently rerun verification command  |
+| `LUNA_SANDBOX`                     | `workspace-write`       | Codex sandbox mode for workers                                  |
+| `LUNA_NETWORK_ACCESS`              | off                     | `1` allows workers network access                               |
+| `SOL_LUNA_MAX_PARALLEL`            | `3`                     | Concurrent workers; hard ceiling 8                              |
+| `SOL_LUNA_MAX_WORKERS_PER_BATCH`   | `12`                    | Workers one batch may enlist, either mode; hard ceiling 12      |
+| `SOL_LUNA_ALLOWED_MODELS`          | `LUNA_MODEL`            | Additional authorised worker models, comma separated            |
+| `SOL_LUNA_ALLOWED_EFFORTS`         | all four                | Permitted efforts, comma separated, e.g. `medium,high`          |
+| `SOL_LUNA_ALLOW_EFFORT_ESCALATION` | on                      | `0` stops the runtime recommending a higher effort              |
+| `SOL_LUNA_ALLOW_STRONGER_FALLBACK` | on                      | `0` stops the runtime recommending a stronger executor          |
+| `SOL_LUNA_EXECUTOR_ORDER`          | —                       | Complete executor hierarchy, weakest to strongest               |
+| `SOL_LUNA_WORKTREE_LINK`           | `node_modules`          | Dependency directories privately snapshotted per worktree       |
+| `SOL_LUNA_KEEP_WORKTREES`          | `onFailure`             | Parallel-task retention: `always`, `never`, or `onFailure`      |
+| `SOL_LUNA_ALLOW_DIRTY`             | off                     | `1` permits parallel batches over uncommitted in-scope changes  |
+| `SOL_LUNA_VERIFY_MODE`             | `allowlist`             | `allowlist`, `off`, or `shell` — see [Security](../SECURITY.md) |
+| `SOL_LUNA_VERIFY_ALLOW`            | —                       | Extra permitted executables, comma separated                    |
+| `SOL_LUNA_VERIFY_ENV_PASSTHROUGH`  | off                     | `1` stops withholding credential-shaped env vars                |
+| `SOL_LUNA_ALLOWED_ROOTS`           | —                       | Confine delegation to these directory trees                     |
+| `SOL_LUNA_SERVER_NAME`             | `sol-luna-orchestrator` | **Must match** the name registered in Codex                     |
+| `SOL_LUNA_CONTEXT_MAX_BYTES`       | `50000`                 | P1.3B policy threshold in exact serialized UTF-8 bytes          |
+| `SOL_LUNA_CONTEXT_MAX_TURNS`       | `20`                    | P1.3B total-turn threshold                                      |
+| `SOL_LUNA_CONTEXT_MAX_CLEAN_TURNS` | `5`                     | P1.3B clean PASS accumulation threshold                         |
+| `SOL_LUNA_CONTEXT_COOLDOWN_TURNS`  | `2`                     | P1.3B authoritative turns required between compact projections  |
+| `SOL_LUNA_WORKER`                  | set per worker          | Internal marker; a server seeing it registers zero tools        |
+| `SOL_LUNA_EVENTS`                  | set by `init`           | Absolute path to the structured JSONL activity log              |
+| `SOL_LUNA_LOG`                     | set by `init`           | Absolute path to the human-readable diagnostics log             |
 
 The three context thresholds must be positive safe integers; the cooldown must
 be a non-negative safe integer. Invalid values fail startup instead of silently
@@ -312,20 +315,31 @@ environment parser:
   unrecognized value falls back to `allowlist` with a warning.
   `SOL_LUNA_VERIFY_ALLOW` and `SOL_LUNA_WORKTREE_LINK` are comma-separated and
   trimmed. Extra verification entries may be bare executable names or explicit
-  operator-authorized paths; worktree-link entries name shared directories, so
-  an empty list disables dependency linking. Worktree-link entries must stay
-  repository-relative: absolute, drive-qualified, traversal, and dot-segment
-  paths are ignored fail-closed and reported through the startup diagnostics.
+  operator-authorized paths. `SOL_LUNA_WORKTREE_LINK` is the historical setting
+  name; production now uses its entries as dependency **snapshot** directories,
+  not writable links. An empty list disables dependency snapshot provisioning.
+  Entries must stay repository-relative: absolute, drive-qualified, traversal,
+  and dot-segment paths are ignored fail-closed and reported through startup
+  diagnostics. Source/destination ancestry and dependency-tree symlink/junction
+  targets are canonically confined before any copy.
 - `SOL_LUNA_ALLOWED_ROOTS` uses the platform path-list delimiter (`;` on
   Windows, `:` on POSIX). Each delegation canonicalizes the requested workspace
   and configured roots before applying the boundary. An unset or empty list
   permits any existing non-control-metadata directory; it never overrides the
   protected `.git` and `.sol-luna` rules.
-- `LUNA_MODEL`, `SOL_LUNA_SERVER_NAME`, `SOL_LUNA_EVENTS`, and `SOL_LUNA_LOG`
-  are literal strings with no runtime value validation. An unset or empty log
-  path disables that sink. `init` supplies non-empty defaults and the registered
-  server name; a hand-written empty or incorrect model/server value can instead
-  cause execution or recursion-isolation setup to fail.
+- `SOL_LUNA_EVENTS` and `SOL_LUNA_LOG` must be non-empty absolute paths. Runtime
+  file emission is disabled for an invalid relative or whitespace-only value and
+  startup diagnostics report the correction; `status` / `doctor` report the same
+  effective path policy. `init --events` and `init --log` resolve explicit
+  relative arguments to absolute paths before persisting them, avoiding CWD-based
+  disagreement between the standalone CLI and the server process. On Windows,
+  root-relative paths such as `\logs\events.jsonl` are also rejected because
+  they still depend on the receiving process's current drive; use a drive-qualified
+  path or UNC path instead.
+- `LUNA_MODEL` and `SOL_LUNA_SERVER_NAME` remain literal strings. `init` supplies
+  non-empty defaults and the registered server name; a hand-written empty or
+  incorrect model/server value can cause execution or recursion-isolation setup
+  to fail.
 
 Every variable above configures this orchestrator and its workers. None of them
 reaches the parent — the parent model and effort are set in your Codex session,
@@ -515,14 +529,18 @@ The default is `sol-luna-orchestrator.events.jsonl` inside your Codex home, so
 the log accumulates across projects rather than landing in whichever repository
 you happened to run `init` from. Choose another with
 `sol-luna-orchestrator init --events /path/to/events.jsonl`, which replaces an
-existing value because you asked it to; a plain `init` never overwrites a path
-you set. `--log` behaves the same way for the diagnostic log.
+existing value because you asked it to. A plain `init` preserves an existing
+valid custom absolute path, but repairs an invalid relative/blank or unconfigured
+value to the absolute default it owns. Relative values supplied explicitly to
+`--events` are normalized to an absolute path before they are saved. `--log`
+behaves the same way for the diagnostic log.
 
-`sol-luna-orchestrator status` shows the effective activity path and where it
-came from. The diagnostic sink is simpler: the MCP server reads
-`SOL_LUNA_LOG` from its own process environment. `init` normally supplies that
-through the registered server's `env` table, while the standalone CLI neither
-reads nor overrides the already-running server's diagnostic destination.
+`sol-luna-orchestrator status` shows both registered telemetry destinations: the
+diagnostic log path/validity and the effective activity path plus its source.
+The diagnostic sink is simpler: the MCP server reads `SOL_LUNA_LOG` from its own
+process environment. `init` normally supplies that through the registered
+server's `env` table, while the standalone CLI neither reads nor overrides the
+already-running server's diagnostic destination.
 The CLI and the server are separate processes: exporting `SOL_LUNA_EVENTS` in
 the shell you run the CLI from changes what the CLI reads, not what the
 already-running server writes. When the two disagree, the running server and
@@ -534,7 +552,10 @@ writing test records into them. An existing destination must be a regular file
 with the required access; a not-yet-created destination is healthy only when its
 parent directory already exists and is writable. These checks diagnose a bad
 path without turning telemetry into an execution dependency: runtime logging
-and activity emission remain best-effort.
+and activity emission remain best-effort. A genuinely missing event file is the
+normal "no activity yet" state. A configured directory, unreadable target, or
+invalid relative path is instead reported as an error rather than silently
+collapsed into an empty history.
 
 ### Cost
 

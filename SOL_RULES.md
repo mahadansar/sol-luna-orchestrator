@@ -321,10 +321,13 @@ parent must explicitly call `continue_task` with that reference and one bounded
 follow-up `instruction`; a continuation is never automatic repair or retry.
 References are in-memory, server-lifetime, single-use values with a 15-minute
 TTL. Invalid, unknown, expired and already-used references are rejected.
-The runtime reserves a valid reference while pre-execution setup runs. A setup
-failure or cancellation before worker entry restores the same reference only
-for the remainder of its original TTL; concurrent consumers remain refused
-throughout the reservation, and worker entry commits the one allowed use.
+The runtime reserves a valid reference while pre-execution setup runs. A
+transient setup failure or cancellation before worker entry restores the same
+reference only for the remainder of its original TTL; concurrent consumers
+remain refused throughout the reservation, and worker entry commits the one
+allowed use. A retained-worktree reference is not restored when its persistent
+owner-token protection has already disappeared, because that workspace can no
+longer be treated as safely reserved across processes.
 
 The continuation resumes the exact Luna thread with the same worker isolation
 guards. Its original objective, `allowedFiles`, `forbiddenFiles`,

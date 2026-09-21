@@ -1,12 +1,19 @@
 import fs from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 import picomatch from "picomatch";
+import {
+  capturePinnedDirectoryAuthority,
+  PinnedDirectoryMutationError,
+  runPinnedDirectoryMutation,
+  type PinnedDirectoryAuthority,
+} from "./fs-authority.js";
 import {
   DEFAULT_TIMEOUT_SECONDS,
   LUNA_MODEL,
   MAX_BATCH_SIZE,
   MAX_PARALLEL,
+  WORKTREE_LINK_DIRS,
 } from "./config.js";
 import type {
   BatchOutput,
@@ -69,7 +76,12 @@ import {
   PROTECTED_CONTROL_VIOLATION,
 } from "./scope.js";
 import {
+  acquireRepositoryOperationAuthority,
   cleanupWorktree,
+  assertSharedDirectoryFingerprint,
+  captureSharedDirectoryFingerprint,
+  assertConfinedDirectoryChain,
+  continuationLeasePath,
   createTaskWorktree,
   maintainWorktreeLease,
   prepareWorktreeBase,
@@ -78,16 +90,27 @@ import {
   refreshWorktreeLease,
   releaseWorktreeLease,
   releaseWorktreeOwnership,
+  withWorktreeMetadataAuthority,
   WORKTREE_LEASE_GRACE_MS,
   WorktreeUnavailableError,
   type CleanupReason,
+  type SharedDirectoryFingerprint,
+  type RepositoryOperationAuthority,
+  type WorktreeLeaseMaintenance,
   type WorktreeLease,
   type WorktreeRetentionPolicy,
   type TaskWorktree,
 } from "./worktree.js";
 import { resolveWorkspace } from "./workspace.js";
 import { CONTINUATION_TTL_MS } from "./continuation.js";
-import { collectWorktreeChanges } from "./git.js";
+import {
+  assertGitEvidenceAuthority,
+  captureGitEvidenceAuthority,
+  changedTrustedWorkspacePaths,
+  snapshotFilesystemWorkspaceEvidence,
+  snapshotTrustedWorkspaceEvidence,
+  type GitEvidenceAuthority,
+} from "./git.js";
 import {
   runVerifications,
   type VerificationRun as FinalVerificationRun,
@@ -116,10 +139,13 @@ interface RunningTask {
   predecessorExecutionId?: string | null;
   logicalAttempt?: number;
   authoritativePrior: boolean;
+  handoffReservation: HandoffReservation | null;
+  sharedDependencyBaseline: SharedDirectoryFingerprint | null;
   state: TaskState;
   worktree: TaskWorktree | null;
-  leaseRenewal: { stop: () => Promise<void> } | null;
+  leaseRenewal: WorktreeLeaseMaintenance | null;
   worktreeOutcomeError: string | null;
+  worktreeEvidenceDigest: string | null;
   result: BatchTaskResult;
   recovery: RecoveryDecision | null;
 }
@@ -194,6 +220,8 @@ export async function runBatch(
        * contract must use the batch workspace instead.
        */
       authoritativeWorkspace: string,
+      /** Pinned Git identity for a retained isolated worktree continuation. */
+      gitEvidenceAuthority: GitEvidenceAuthority | null,
     ) => string | null | Promise<string | null>;
     /**
      * Register an eligible result for server-authoritative next-action handoff
@@ -213,8 +241,55 @@ export async function runBatch(
     batchId?: string;
     /** Deterministic lease-maintenance seam; production uses persistent renewal. */
     leaseMaintainer?: typeof maintainWorktreeLease;
+    /** Deterministic repository-operation authority seam; production uses persistent ownership. */
+    operationAuthorityAcquirer?: typeof acquireRepositoryOperationAuthority;
     /** Deterministic retention seam; production uses configured policy. */
     keepWorktrees?: WorktreeRetentionPolicy;
+    /** Deterministic dirty-base seam; production uses SOL_LUNA_ALLOW_DIRTY. */
+    allowDirtyWorktreeBase?: boolean;
+    /**
+     * Deterministic integration race seam. Production leaves this unset; tests
+     * use it to mutate/cancel after admission validation but before the final
+     * write-boundary evidence check.
+     */
+    integrationBeforeWrite?: (context: {
+      batchId: string;
+      taskId: string;
+      file: string;
+      appliedFiles: number;
+    }) => void | Promise<void>;
+    /** Deterministic final parent-creation seam; production leaves this unset. */
+    integrationBeforeParentCreate?: (context: {
+      batchId: string;
+      taskId: string;
+      file: string;
+      parent: string;
+      candidate: string;
+      segment: string;
+      appliedFiles: number;
+    }) => void | Promise<void>;
+    /** Deterministic pinned-write fault/short-write seam; production leaves this unset. */
+    integrationPinnedWriteTest?: {
+      maxWriteBytes?: number;
+      failAfterTruncate?: boolean;
+      failAfterBytes?: number;
+    };
+    /** Deterministic pinned-deletion cleanup seam; production leaves this unset. */
+    integrationPinnedDeleteTest?: {
+      failQuarantineCleanup?: boolean;
+    };
+    /**
+     * Deterministic deletion-boundary seam. Production leaves this unset; tests
+     * use it after the final accepted snapshots and before the namespace move
+     * that makes a proven deletion authoritative.
+     */
+    integrationBeforeDelete?: (context: {
+      batchId: string;
+      taskId: string;
+      file: string;
+      appliedFiles: number;
+      phase: "validated" | "moved";
+    }) => void | Promise<void>;
     /** Deterministic exceptional-cleanup seam. */
     worktreeCleaner?: typeof cleanupWorktree;
     /**
@@ -323,6 +398,7 @@ export async function runBatch(
       let predecessorExecutionId: string | null = null;
       let logicalAttempt = input.previousAttempts.length + 1;
       let authoritativePrior = false;
+      let handoffReservation: HandoffReservation | null = null;
 
       if (input.handoffReference && options.handoffStore) {
         const reserved = options.handoffStore.reserve(input.handoffReference);
@@ -332,6 +408,7 @@ export async function runBatch(
           );
         }
         handoffReservations.push(reserved.reservation);
+        handoffReservation = reserved.reservation;
         const consumed = { entry: reserved.reservation.entry };
         resolvedInput = {
           ...consumed.entry.input,
@@ -380,10 +457,13 @@ export async function runBatch(
         predecessorExecutionId,
         logicalAttempt,
         authoritativePrior,
+        handoffReservation,
+        sharedDependencyBaseline: null,
         state: "queued" as TaskState,
         worktree: null,
         leaseRenewal: null,
         worktreeOutcomeError: null,
+        worktreeEvidenceDigest: null,
         result: {
           taskId,
           state: "queued",
@@ -573,584 +653,778 @@ export async function runBatch(
 
   const warnings: string[] = [...routingWarnings];
 
-  // Last gate cleared.
-  //
-  // Cancellation that already arrived ran nothing, so earned authority goes
-  // back rather than being spent on a batch that will only mark every task
-  // cancelled. The run still proceeds into the ordinary cancellation path below
-  // so its per-task telemetry is exactly what it always was.
-  //
-  // Otherwise the batch is now committed to running workers, and whatever
-  // happens from here - a worker that fails, a worktree that cannot be created,
-  // a cancellation that arrives mid-flight - the escalation each reserved
-  // handoff granted has been spent.
-  if (options.signal?.aborted) {
-    releaseReservedHandoffs();
-  } else {
-    for (const reservation of handoffReservations) reservation.commit();
-    handoffReservations.length = 0;
+  let operationAuthority: RepositoryOperationAuthority | null = null;
+  const batchHasAuthoritativeCancellation = (): boolean =>
+    running.some((task) => task.state === "cancelled");
+  const describeOperationAuthorityFailure = (phase: string, error: unknown): string =>
+    `Repository operation authority ${phase} failed after cancellation: ${(error as Error).message}. ` +
+    "Cancellation remains authoritative and no later repository work was started because of this failure.";
+  const assertOperationAuthorityAfterExecution = (phase: string): void => {
+    if (!operationAuthority) return;
+    try {
+      operationAuthority.assertHealthy();
+    } catch (error) {
+      if (!batchHasAuthoritativeCancellation()) throw error;
+      warnings.push(describeOperationAuthorityFailure(phase, error));
+    }
+  };
+  const releaseOperationAuthorityBeforeTerminal = async (): Promise<void> => {
+    if (!operationAuthority) return;
+    const authority = operationAuthority;
+    operationAuthority = null;
+    let failure: unknown = null;
+    try {
+      authority.assertHealthy();
+    } catch (error) {
+      failure = error;
+    }
+    try {
+      await authority.release();
+    } catch (error) {
+      failure ??= error;
+    }
+    if (!failure) return;
+    if (!batchHasAuthoritativeCancellation()) throw failure;
+    warnings.push(describeOperationAuthorityFailure("final release", failure));
+  };
+
+  // An already-cancelled batch is non-authoritative: it creates no worktree,
+  // captures no execution evidence, and does not need to mutate repository
+  // operation metadata merely to report that nothing ran. If cancellation
+  // arrives while waiting for another same-repository operation, preserve that
+  // same cancellation result instead of turning it into a BatchRejectedError.
+  if (!options.signal?.aborted) {
+    try {
+      operationAuthority = await (
+        options.operationAuthorityAcquirer ?? acquireRepositoryOperationAuthority
+      )(workspace, options.signal);
+      operationAuthority?.assertHealthy();
+    } catch (error) {
+      if (!(options.signal?.aborted && (error as Error).name === "AbortError")) {
+        rejectBeforeExecution(
+          `Could not acquire repository operation authority before execution: ${(error as Error).message}`,
+        );
+      }
+    }
   }
 
   try {
-    if (mode === "sequential") {
-      await runSequential(batchId, running, workspace, run, emit, options.signal);
-    } else {
-      warnings.push(
-        ...(await runParallel(
-          batchId,
-          running,
-          workspace,
-          run,
-          emit,
-          options.signal,
-          options.protectedWorktreePaths,
-          options.leaseMaintainer,
-          policySlots,
-        )),
-      );
-    }
-  } catch (error) {
-    // Anything thrown out of the execution window skips the whole cleanup
-    // section below, so the renewal timers keep firing and every created
-    // worktree stays registered as owned by this process for the rest of its
-    // life - which also makes `pruneStaleWorktrees` refuse to reclaim it. The
-    // directories themselves are deliberately left on disk as evidence; only
-    // the in-process ownership and the timers are surrendered here.
-    for (const task of running) {
+    // Worker-visible dependency links may resolve to the authoritative workspace.
+    // Pin their content before any worker starts so neither per-turn verification
+    // nor final integrated verification can execute dependency code authored by a
+    // delegated worker during this batch.
+    let sharedDependencyBaseline: SharedDirectoryFingerprint | null = null;
+    if (
+      !options.signal?.aborted &&
+      running.some((task) => task.input.verificationCommands.length > 0)
+    ) {
       try {
-        await task.leaseRenewal?.stop();
-      } catch {
-        // Best effort: the batch is already failing with a more useful error.
-      } finally {
-        task.leaseRenewal = null;
+        sharedDependencyBaseline = await captureSharedDirectoryFingerprint(workspace);
+        for (const task of running)
+          task.sharedDependencyBaseline = sharedDependencyBaseline;
+      } catch (error) {
+        rejectBeforeExecution(
+          `Could not establish trusted shared-dependency state before execution: ${(error as Error).message}`,
+        );
       }
-      if (!task.worktree) continue;
-      if (task.worktree.lease) {
-        // The persistent lease outlives this process by design, so leaving it
-        // held reserved the identity for the task's whole timeout plus grace -
-        // roughly half an hour by default - and made `pruneStaleWorktrees`
-        // refuse to reclaim the directory. The directory itself stays as
-        // evidence; only the reservation is surrendered.
-        await releaseWorktreeLease(task.worktree.lease).catch(() => undefined);
+    }
+
+    // Last gate cleared.
+    //
+    // Cancellation that already arrived ran nothing, so earned authority goes
+    // back rather than being spent on a batch that will only mark every task
+    // cancelled. The run still proceeds into the ordinary cancellation path below
+    // so its per-task telemetry is exactly what it always was.
+    //
+    // Otherwise setup may proceed, but each earned handoff remains reserved until
+    // its own worker is actually about to enter execution. Parallel Git/worktree
+    // setup can still fail after this point without spending a capability that ran
+    // nothing.
+    if (options.signal?.aborted) {
+      releaseReservedHandoffs();
+    }
+
+    try {
+      if (!options.signal?.aborted) operationAuthority?.assertHealthy();
+      if (mode === "sequential") {
+        await runSequential(batchId, running, workspace, run, emit, options.signal);
+      } else {
+        warnings.push(
+          ...(await runParallel(
+            batchId,
+            running,
+            workspace,
+            run,
+            emit,
+            options.signal,
+            options.protectedWorktreePaths,
+            options.leaseMaintainer,
+            policySlots,
+            options.allowDirtyWorktreeBase,
+          )),
+        );
       }
-      releaseWorktreeOwnership(task.worktree);
+      assertOperationAuthorityAfterExecution("post-execution health check");
+      // Any reservation whose task never reached worker entry (setup failure,
+      // cancellation, queue refusal) remains unspent and is restored here.
+      releaseReservedHandoffs();
+    } catch (error) {
+      // Anything thrown out of the execution window skips the whole cleanup
+      // section below, so the renewal timers keep firing and every created
+      // worktree stays registered as owned by this process for the rest of its
+      // life - which also makes `pruneStaleWorktrees` refuse to reclaim it. The
+      // directories themselves are deliberately left on disk as evidence; only
+      // the in-process ownership and the timers are surrendered here.
+      for (const task of running) {
+        try {
+          await task.leaseRenewal?.stop();
+        } catch {
+          // Best effort: the batch is already failing with a more useful error.
+        } finally {
+          task.leaseRenewal = null;
+        }
+        if (!task.worktree) continue;
+        if (task.worktree.lease) {
+          // The persistent lease outlives this process by design, so leaving it
+          // held reserved the identity for the task's whole timeout plus grace -
+          // roughly half an hour by default - and made `pruneStaleWorktrees`
+          // refuse to reclaim the directory. The directory itself stays as
+          // evidence; only the reservation is surrendered.
+          await releaseWorktreeLease(task.worktree.lease).catch(() => undefined);
+        }
+        releaseWorktreeOwnership(task.worktree);
+      }
+      releaseReservedHandoffs();
+      if (error instanceof WorktreeUnavailableError) {
+        emit({ type: "batch.rejected", batchId, reason: error.message });
+        throw new BatchRejectedError(error.message);
+      }
+      throw error;
     }
-    if (error instanceof WorktreeUnavailableError) {
-      emit({ type: "batch.rejected", batchId, reason: error.message });
-      throw new BatchRejectedError(error.message);
-    }
-    throw error;
-  }
 
-  // Recovery is deliberately decided only after every initial parallel worker
-  // has finished and its owned worktree evidence has been reconciled. This
-  // keeps integration/cleanup out of the recovery window and preserves sibling
-  // successes while failed streams get at most one extra turn.
-  if (mode === "parallel") {
-    const initialConflicts = findIntegrationConflicts(
-      running
-        .filter((task) => task.result.changedFiles.length > 0)
-        .map((task) => ({ taskId: task.taskId, changedFiles: task.result.changedFiles })),
-    );
-    await recoverParallel(
-      batchId,
-      running,
-      workspace,
-      run,
-      emit,
-      options.signal,
-      options.automaticRecovery ?? true,
-      initialConflicts,
-      policySlots,
-    );
-  }
-
-  // --- Integration ---------------------------------------------------------
-  const completed = running.filter(
-    (task) => task.state === "completed" && task.result.changedFiles.length > 0,
-  );
-
-  // A worker that edited outside its declared scope produced unauthorized
-  // changes. "Completed" only says the turn ended; it says nothing about the
-  // changes being ones the caller asked for, and copying them into the
-  // authoritative workspace on the strength of the turn having finished is the
-  // one outcome the scope contract exists to prevent. The worktree keeps every
-  // byte, the violation is reported, and the parent decides.
-  const scopeViolatingTasks = completed.filter(
-    (task) => (task.result.result?.scopeViolations.length ?? 0) > 0,
-  );
-  const integrationConflicts =
-    mode === "parallel"
-      ? findIntegrationConflicts(
-          completed.map((task) => ({
+    // Recovery is deliberately decided only after every initial parallel worker
+    // has finished and its owned worktree evidence has been reconciled. This
+    // keeps integration/cleanup out of the recovery window and preserves sibling
+    // successes while failed streams get at most one extra turn.
+    if (mode === "parallel") {
+      assertOperationAuthorityAfterExecution("pre-recovery health check");
+      const initialConflicts = findIntegrationConflicts(
+        running
+          .filter((task) => task.result.changedFiles.length > 0)
+          .map((task) => ({
             taskId: task.taskId,
             changedFiles: task.result.changedFiles,
           })),
-        )
-      : [];
-  for (const conflict of integrationConflicts) {
-    emit({
-      type: "integration.conflict",
-      batchId,
-      path: conflict.path,
-      tasks: conflict.tasks,
-    });
-  }
-  // Declared disjoint cores, but the workers demonstrably wrote the same file.
-  // Measured from what was written, so it is worth recording even though the
-  // integration gate has already prevented the collision from being applied.
-  if (card?.coreOverlap === "disjoint" && integrationConflicts.length > 0) {
-    emit({
-      type: "routing.contradiction",
-      batchId,
-      kind: "declared-disjoint-core-files-collided",
-      declaredCoreOverlap: card.coreOverlap,
-      observed: integrationConflicts.length,
-    });
-  }
+      );
+      await recoverParallel(
+        batchId,
+        running,
+        workspace,
+        run,
+        emit,
+        options.signal,
+        options.automaticRecovery ?? true,
+        initialConflicts,
+        policySlots,
+      );
+      assertOperationAuthorityAfterExecution("post-recovery health check");
+    }
 
-  let integrated = false;
-  let integrationIncomplete = false;
-  let integrationSummary: string;
-  const outcomeFailures = running.filter((task) => task.worktreeOutcomeError !== null);
+    // --- Integration ---------------------------------------------------------
+    const completed = running.filter(
+      (task) => task.state === "completed" && task.result.changedFiles.length > 0,
+    );
 
-  if (mode === "sequential") {
-    integrated = true;
-    integrationSummary =
-      "Sequential tasks worked directly in the workspace, so their changes are already in place.";
-    // Sequential tasks write into the workspace as they run, so there is no
-    // integration step to withhold and nothing to un-apply. Say so plainly
-    // rather than letting "already in place" imply the changes were authorized.
-    if (scopeViolatingTasks.length > 0) {
+    // A worker that edited outside its declared scope produced unauthorized
+    // changes. "Completed" only says the turn ended; it says nothing about the
+    // changes being ones the caller asked for, and copying them into the
+    // authoritative workspace on the strength of the turn having finished is the
+    // one outcome the scope contract exists to prevent. The worktree keeps every
+    // byte, the violation is reported, and the parent decides.
+    const scopeViolatingTasks = completed.filter(
+      (task) => (task.result.result?.scopeViolations.length ?? 0) > 0,
+    );
+    const integrationConflicts =
+      mode === "parallel"
+        ? findIntegrationConflicts(
+            completed.map((task) => ({
+              taskId: task.taskId,
+              changedFiles: task.result.changedFiles,
+            })),
+          )
+        : [];
+    for (const conflict of integrationConflicts) {
+      emit({
+        type: "integration.conflict",
+        batchId,
+        path: conflict.path,
+        tasks: conflict.tasks,
+      });
+    }
+    // Declared disjoint cores, but the workers demonstrably wrote the same file.
+    // Measured from what was written, so it is worth recording even though the
+    // integration gate has already prevented the collision from being applied.
+    if (card?.coreOverlap === "disjoint" && integrationConflicts.length > 0) {
+      emit({
+        type: "routing.contradiction",
+        batchId,
+        kind: "declared-disjoint-core-files-collided",
+        declaredCoreOverlap: card.coreOverlap,
+        observed: integrationConflicts.length,
+      });
+    }
+
+    let integrated = false;
+    let integrationIncomplete = false;
+    let integrationSummary: string;
+    const outcomeFailures = running.filter((task) => task.worktreeOutcomeError !== null);
+
+    if (mode === "sequential") {
+      integrated = true;
+      integrationSummary =
+        "Sequential tasks worked directly in the workspace, so their changes are already in place.";
+      // Sequential tasks write into the workspace as they run, so there is no
+      // integration step to withhold and nothing to un-apply. Say so plainly
+      // rather than letting "already in place" imply the changes were authorized.
+      if (scopeViolatingTasks.length > 0) {
+        const violators = scopeViolatingTasks.map((task) => task.taskId).join(", ");
+        warnings.push(
+          `${violators} changed files outside declared scope. Sequential tasks write ` +
+            `directly into the workspace, so those changes are already there and were ` +
+            `not withheld the way a parallel task's would be. Review the per-task scope ` +
+            `evidence and revert what you did not ask for.`,
+        );
+        // Deliberately no `integration.blocked` event here: nothing was blocked.
+        // The changes are in the workspace, and telemetry saying otherwise would
+        // be the opposite of the truth a reader needs.
+      }
+    } else if (options.integrate === false) {
+      emit({ type: "integration.disabled", batchId });
+      integrationSummary =
+        "Integration was disabled, so worker changes were not copied into the requested " +
+        "workspace. Any worktree that remains after cleanup is listed per task.";
+    } else if (outcomeFailures.length > 0) {
+      integrationIncomplete = true;
+      warnings.push(
+        `Integration was not attempted because worktree evidence could not be read ` +
+          `for ${outcomeFailures.map((task) => task.taskId).join(", ")}.`,
+      );
+      integrationSummary =
+        "Integration was not attempted because at least one worker's final worktree " +
+        "evidence scan failed. Structured failure evidence remains available; any " +
+        "worktree that remains after cleanup is listed per task.";
+      emit({ type: "integration.notAttempted", batchId, reason: "evidence-failure" });
+    } else if (integrationConflicts.length > 0) {
+      integrationSummary =
+        `Nothing was integrated: ${integrationConflicts.length} file(s) were changed by ` +
+        `more than one worker. Conflict evidence is listed above; any worktree retained ` +
+        `after cleanup is listed per task.`;
+    } else if (completed.length === 0) {
+      integrationSummary =
+        "No worker produced changes, so there was nothing to integrate.";
+    } else if (scopeViolatingTasks.length > 0 && options.allowOverlappingScopes) {
+      // Selective exclusion is only safe because parallel tasks are normally
+      // required to declare disjoint scopes, which is what makes one task's
+      // changes independent of another's. `allowOverlappingScopes` is the caller
+      // withdrawing exactly that declaration, so integrating the clean siblings
+      // of a violating task could leave the workspace holding one half of a set
+      // of changes that were never independent. Refuse the whole batch instead of
+      // choosing which half to apply.
+      integrationIncomplete = true;
       const violators = scopeViolatingTasks.map((task) => task.taskId).join(", ");
       warnings.push(
-        `${violators} changed files outside declared scope. Sequential tasks write ` +
-          `directly into the workspace, so those changes are already there and were ` +
-          `not withheld the way a parallel task's would be. Review the per-task scope ` +
-          `evidence and revert what you did not ask for.`,
+        `Nothing was integrated: ${violators} violated declared file scope, and this ` +
+          `batch set allowOverlappingScopes:true, so the remaining tasks are not ` +
+          `declared independent of it. Every worktree is retained for review.`,
       );
-      // Deliberately no `integration.blocked` event here: nothing was blocked.
-      // The changes are in the workspace, and telemetry saying otherwise would
-      // be the opposite of the truth a reader needs.
-    }
-  } else if (options.integrate === false) {
-    emit({ type: "integration.disabled", batchId });
-    integrationSummary =
-      "Integration was disabled, so worker changes were not copied into the requested " +
-      "workspace. Any worktree that remains after cleanup is listed per task.";
-  } else if (outcomeFailures.length > 0) {
-    integrationIncomplete = true;
-    warnings.push(
-      `Integration was not attempted because worktree evidence could not be read ` +
-        `for ${outcomeFailures.map((task) => task.taskId).join(", ")}.`,
-    );
-    integrationSummary =
-      "Integration was not attempted because at least one worker's final worktree " +
-      "evidence scan failed. Structured failure evidence remains available; any " +
-      "worktree that remains after cleanup is listed per task.";
-    emit({ type: "integration.notAttempted", batchId, reason: "evidence-failure" });
-  } else if (integrationConflicts.length > 0) {
-    integrationSummary =
-      `Nothing was integrated: ${integrationConflicts.length} file(s) were changed by ` +
-      `more than one worker. Conflict evidence is listed above; any worktree retained ` +
-      `after cleanup is listed per task.`;
-  } else if (completed.length === 0) {
-    integrationSummary = "No worker produced changes, so there was nothing to integrate.";
-  } else if (scopeViolatingTasks.length > 0 && options.allowOverlappingScopes) {
-    // Selective exclusion is only safe because parallel tasks are normally
-    // required to declare disjoint scopes, which is what makes one task's
-    // changes independent of another's. `allowOverlappingScopes` is the caller
-    // withdrawing exactly that declaration, so integrating the clean siblings
-    // of a violating task could leave the workspace holding one half of a set
-    // of changes that were never independent. Refuse the whole batch instead of
-    // choosing which half to apply.
-    integrationIncomplete = true;
-    const violators = scopeViolatingTasks.map((task) => task.taskId).join(", ");
-    warnings.push(
-      `Nothing was integrated: ${violators} violated declared file scope, and this ` +
-        `batch set allowOverlappingScopes:true, so the remaining tasks are not ` +
-        `declared independent of it. Every worktree is retained for review.`,
-    );
-    integrationSummary =
-      `Nothing was integrated: ${scopeViolatingTasks.length} task(s) changed files ` +
-      `outside their declared scope, and allowOverlappingScopes:true means the ` +
-      `siblings cannot be integrated on their own. Scope evidence is per task; any ` +
-      `worktree retained after cleanup is listed there too.`;
-    for (const task of scopeViolatingTasks) {
-      emit({
-        type: "integration.blocked",
-        batchId,
-        taskId: task.taskId,
-        reason: "scope-violation",
-      });
-    }
-  } else {
-    const integrable = completed.filter((task) => !scopeViolatingTasks.includes(task));
-    for (const task of scopeViolatingTasks) {
-      warnings.push(
-        `${task.taskId} was excluded from integration because it changed files ` +
-          `outside its declared scope: ${task.result.result?.scopeViolations.join("; ")}. ` +
-          `Its worktree keeps the full change for review.`,
-      );
-      emit({
-        type: "integration.blocked",
-        batchId,
-        taskId: task.taskId,
-        reason: "scope-violation",
-      });
-    }
-    const applied = await integrateWorktrees(batchId, integrable, workspace, emit);
-    integrationIncomplete = applied.warnings.length > 0;
-    integrated = !integrationIncomplete;
-    warnings.push(...applied.warnings);
-    const excluded =
-      scopeViolatingTasks.length > 0
-        ? ` ${scopeViolatingTasks.length} task(s) were excluded for changing files ` +
-          `outside their declared scope; their changes remain only in their own ` +
-          `worktrees and were not copied into the workspace.`
-        : "";
-    integrationSummary = integrationIncomplete
-      ? `Integration was incomplete after copying ${applied.fileCount} file(s). ` +
-        `Any worktree that remains after cleanup is listed per task.${excluded}`
-      : `Copied ${applied.fileCount} file(s) from ${integrable.length} worker(s) into ` +
-        `the workspace. No two workers touched the same file.${excluded}`;
-    if (!integrationIncomplete) emit({ type: "integration.completed", batchId });
-  }
-
-  // Workers prove their owned seams in isolation. Once those seams share the
-  // requested workspace, deterministic code (not another Sol reasoning loop)
-  // reruns the union of their declared checks exactly once.
-  const declaredFinalCommands = [
-    ...new Set(
-      running
-        .filter((task) => task.state === "completed")
-        .flatMap((task) => task.input.verificationCommands),
-    ),
-  ];
-  const finalCommands = declaredFinalCommands;
-  const integrationVerification: BatchOutput["integrationVerification"] = [];
-  if (integrated && finalCommands.length > 0 && !options.signal?.aborted) {
-    emit({
-      type: "integration.verification.started",
-      batchId,
-      commandCount: finalCommands.length,
-    });
-    try {
-      const runs = await (options.integrationVerifier ?? runVerifications)(
-        finalCommands,
-        workspace,
-        { signal: options.signal },
-      );
-      integrationVerification.push(
-        ...runs.map((run) => ({ ...run, source: "orchestrator" as const })),
-      );
-    } catch (error) {
-      warnings.push(
-        `Final integrated verification could not run: ${(error as Error).message}`,
-      );
-    }
-    const passed = integrationVerification.filter((run) => run.passed).length;
-    const refused = integrationVerification.filter(
-      (run) => run.execution === "rejected" || run.execution === "skipped",
-    ).length;
-    emit({
-      type: "integration.verification.completed",
-      batchId,
-      passed,
-      failed: integrationVerification.length - passed - refused,
-      refused,
-    });
-  }
-
-  const finalVerificationPassed =
-    finalCommands.length > 0 &&
-    integrationVerification.length === finalCommands.length &&
-    integrationVerification.every(
-      (run) => (run.execution === "argv" || run.execution === "shell") && run.passed,
-    );
-  let completionState: BatchOutput["completionState"] =
-    integrated && running.every(isCleanTask) && finalVerificationPassed
-      ? "verified-complete"
-      : "needs-supervisor";
-  if (integrated && finalCommands.length === 0) {
-    warnings.push(
-      "No final workspace verification commands were declared; the batch cannot use the terminal verified fast path.",
-    );
-  } else if (integrated && finalCommands.length > 0 && !finalVerificationPassed) {
-    warnings.push(
-      "Final integrated verification did not pass completely; use the returned evidence for targeted diagnosis.",
-    );
-  } else if (completionState === "verified-complete") {
-    integrationSummary +=
-      ` Final workspace verification passed ` +
-      `${integrationVerification.length}/${integrationVerification.length} declared check(s).`;
-  }
-
-  // --- Cleanup -------------------------------------------------------------
-  let lifecycleError: unknown = null;
-  for (const task of running) {
-    if (!task.worktree) {
-      if (task.result.result && options.continuationRegistrar) {
-        try {
-          task.result.result.continuationReference = await options.continuationRegistrar(
-            task.input,
-            task.result.result,
-            workspace,
-            false,
-            null,
-            workspace,
-          );
-        } catch (error) {
-          const detail = `Continuation registration failed after execution: ${(error as Error).message}`;
-          task.result.error ??= detail;
-          task.result.warnings.push(detail);
-          task.result.result.continuationState = {
-            status: "unavailable",
-            reason: detail,
-          };
-          lifecycleError ??= error;
-        }
-      }
-      continue;
-    }
-    const keepForConflict =
-      integrationConflicts.length > 0 ||
-      options.integrate === false ||
-      integrationIncomplete;
-    const reason = worktreeCleanupReason(task, keepForConflict);
-
-    let renewalError: unknown = null;
-    try {
-      await task.leaseRenewal?.stop();
-    } catch (error) {
-      renewalError = error;
-      lifecycleError ??= error;
-      task.result.warnings.push(
-        `Persistent worktree lease renewal failed: ${(error as Error).message}`,
-      );
-    } finally {
-      task.leaseRenewal = null;
-    }
-
-    try {
-      const cleanup = await (options.worktreeCleaner ?? cleanupWorktree)(
-        task.worktree,
-        reason,
-        options.keepWorktrees,
-      );
-      emit({
-        type: "worktree.removed",
-        batchId,
-        taskId: task.taskId,
-        kept: !cleanup.removed,
-      });
-      task.result.worktreePath = cleanup.removed ? null : (cleanup.keptAt ?? null);
-      if (!cleanup.removed) {
-        const retainedReason = cleanup.error
-          ? "cleanup-failed"
-          : task.worktreeOutcomeError
-            ? "evidence-failure"
-            : integrationConflicts.length > 0
-              ? "integration-conflict"
-              : options.integrate === false
-                ? "integration-disabled"
-                : integrationIncomplete
-                  ? outcomeFailures.length > 0
-                    ? "integration-not-attempted"
-                    : "integration-partial"
-                  : "retention-policy";
+      integrationSummary =
+        `Nothing was integrated: ${scopeViolatingTasks.length} task(s) changed files ` +
+        `outside their declared scope, and allowOverlappingScopes:true means the ` +
+        `siblings cannot be integrated on their own. Scope evidence is per task; any ` +
+        `worktree retained after cleanup is listed there too.`;
+      for (const task of scopeViolatingTasks) {
         emit({
-          type: "worktree.retained",
+          type: "integration.blocked",
           batchId,
           taskId: task.taskId,
-          reason: retainedReason,
+          reason: "scope-violation",
         });
       }
-      if (cleanup.error) {
-        task.result.warnings.push(`Worktree cleanup incomplete: ${cleanup.error}`);
-        lifecycleError ??= new Error(cleanup.error);
+    } else {
+      assertOperationAuthorityAfterExecution("pre-integration health check");
+      const integrable = completed.filter((task) => !scopeViolatingTasks.includes(task));
+      for (const task of scopeViolatingTasks) {
+        warnings.push(
+          `${task.taskId} was excluded from integration because it changed files ` +
+            `outside its declared scope: ${task.result.result?.scopeViolations.join("; ")}. ` +
+            `Its worktree keeps the full change for review.`,
+        );
+        emit({
+          type: "integration.blocked",
+          batchId,
+          taskId: task.taskId,
+          reason: "scope-violation",
+        });
+      }
+      const applied = await integrateWorktrees(
+        batchId,
+        integrable,
+        workspace,
+        emit,
+        options.signal,
+        options.integrationBeforeWrite,
+        options.integrationBeforeDelete,
+        options.integrationBeforeParentCreate,
+        options.integrationPinnedWriteTest,
+        options.integrationPinnedDeleteTest,
+      );
+      integrationIncomplete = applied.warnings.length > 0;
+      integrated = !integrationIncomplete;
+      warnings.push(...applied.warnings);
+      const excluded =
+        scopeViolatingTasks.length > 0
+          ? ` ${scopeViolatingTasks.length} task(s) were excluded for changing files ` +
+            `outside their declared scope; their changes remain only in their own ` +
+            `worktrees and were not copied into the workspace.`
+          : "";
+      integrationSummary = integrationIncomplete
+        ? `Integration was incomplete after copying ${applied.fileCount} file(s). ` +
+          `Any worktree that remains after cleanup is listed per task.${excluded}`
+        : `Copied ${applied.fileCount} file(s) from ${integrable.length} worker(s) into ` +
+          `the workspace. No two workers touched the same file.${excluded}`;
+      if (!integrationIncomplete) emit({ type: "integration.completed", batchId });
+    }
+
+    // Workers prove their owned seams in isolation. Once those seams share the
+    // requested workspace, deterministic code (not another Sol reasoning loop)
+    // reruns the union of their declared checks exactly once.
+    const declaredFinalCommands = [
+      ...new Set(
+        running
+          .filter((task) => task.state === "completed")
+          .flatMap((task) => task.input.verificationCommands),
+      ),
+    ];
+    const finalCommands = declaredFinalCommands;
+    const integrationVerification: BatchOutput["integrationVerification"] = [];
+    let finalVerificationEvidenceError: string | null = null;
+    if (integrated && finalCommands.length > 0 && !options.signal?.aborted) {
+      assertOperationAuthorityAfterExecution("pre-final-verification health check");
+      let finalVerificationAuthority: GitEvidenceAuthority | null = null;
+      let finalVerificationBaseline: ReadonlyMap<string, string> | null = null;
+      const liveLeaseExclusions = running.flatMap((task) => {
+        const lease = task.worktree?.lease;
+        if (!lease) return [];
+        const relative = path.relative(
+          workspace,
+          continuationLeasePath(lease.worktreePath),
+        );
+        return [relative.split(path.sep).join("/")];
+      });
+      try {
+        if (sharedDependencyBaseline) {
+          await assertSharedDirectoryFingerprint(sharedDependencyBaseline);
+        }
+        finalVerificationAuthority = await captureGitEvidenceAuthority(workspace);
+        finalVerificationBaseline = finalVerificationAuthority
+          ? await snapshotTrustedWorkspaceEvidence(
+              finalVerificationAuthority,
+              workspace,
+              [...WORKTREE_LINK_DIRS, ...liveLeaseExclusions],
+            )
+          : await snapshotFilesystemWorkspaceEvidence(workspace);
+      } catch (error) {
+        finalVerificationEvidenceError =
+          `Final verification evidence could not be sealed before execution: ` +
+          `${(error as Error).message}`;
+        warnings.push(finalVerificationEvidenceError);
+        for (const task of running)
+          task.result.warnings.push(finalVerificationEvidenceError);
       }
 
-      let retainedLease = false;
-      if (
-        !renewalError &&
-        task.result.result &&
-        !resultWasCancelled(task.result.result) &&
-        options.continuationRegistrar
-      ) {
-        // Integrated parallel work can safely continue in the requested
-        // workspace after its temporary worktree is removed. When integration
-        // was disabled or conflicted, the kept worktree is the only honest
-        // continuation directory and must remain available until expiry.
-        const continuationInWorkspace =
-          mode === "sequential" || (task.state === "completed" && !keepForConflict);
-        const continuationDirectory = continuationInWorkspace
-          ? workspace
-          : cleanup.removed
-            ? null
-            : (cleanup.keptAt ?? null);
-        if (continuationDirectory && !task.worktreeOutcomeError) {
-          let continuationProtected = true;
-          const worktreeLease = continuationInWorkspace
-            ? null
-            : (task.worktree.lease ?? null);
-          if (!continuationInWorkspace) {
-            if (!worktreeLease) {
-              continuationProtected = false;
-              task.result.warnings.push(
-                "Continuation was not issued because its retained worktree has no persistent lease.",
+      if (!finalVerificationEvidenceError && finalVerificationBaseline) {
+        emit({
+          type: "integration.verification.started",
+          batchId,
+          commandCount: finalCommands.length,
+        });
+        try {
+          const runs = await (options.integrationVerifier ?? runVerifications)(
+            finalCommands,
+            workspace,
+            { signal: options.signal },
+          );
+          integrationVerification.push(
+            ...runs.map((run) => ({ ...run, source: "orchestrator" as const })),
+          );
+        } catch (error) {
+          const detail =
+            `Final verification evidence is incomplete because the integrated verifier ` +
+            `could not run: ${(error as Error).message}`;
+          warnings.push(detail);
+          for (const task of running) task.result.warnings.push(detail);
+        }
+
+        try {
+          assertOperationAuthorityAfterExecution("post-final-verification health check");
+          const afterVerification = finalVerificationAuthority
+            ? await snapshotTrustedWorkspaceEvidence(
+                finalVerificationAuthority,
+                workspace,
+                [...WORKTREE_LINK_DIRS, ...liveLeaseExclusions],
+              )
+            : await snapshotFilesystemWorkspaceEvidence(workspace);
+          const verifierChanges = changedTrustedWorkspacePaths(
+            finalVerificationBaseline,
+            afterVerification,
+          );
+          if (verifierChanges.length > 0) {
+            throw new Error(
+              `the verifier changed authoritative workspace paths: ${verifierChanges
+                .slice(0, 10)
+                .join(", ")}${verifierChanges.length > 10 ? ", ..." : ""}`,
+            );
+          }
+          if (sharedDependencyBaseline) {
+            await assertSharedDirectoryFingerprint(sharedDependencyBaseline);
+          }
+        } catch (error) {
+          finalVerificationEvidenceError = `Final verification evidence changed after execution: ${(error as Error).message}`;
+          warnings.push(finalVerificationEvidenceError);
+          for (const task of running)
+            task.result.warnings.push(finalVerificationEvidenceError);
+        }
+      }
+      const passed = integrationVerification.filter((run) => run.passed).length;
+      const refused = integrationVerification.filter(
+        (run) => run.execution === "rejected" || run.execution === "skipped",
+      ).length;
+      emit({
+        type: "integration.verification.completed",
+        batchId,
+        passed,
+        failed: integrationVerification.length - passed - refused,
+        refused,
+      });
+    }
+
+    const finalVerificationPassed =
+      !finalVerificationEvidenceError &&
+      finalCommands.length > 0 &&
+      integrationVerification.length === finalCommands.length &&
+      integrationVerification.every(
+        (run) => (run.execution === "argv" || run.execution === "shell") && run.passed,
+      );
+    let completionState: BatchOutput["completionState"] =
+      integrated && running.every(isCleanTask) && finalVerificationPassed
+        ? "verified-complete"
+        : "needs-supervisor";
+    if (integrated && finalCommands.length === 0) {
+      warnings.push(
+        "No final workspace verification commands were declared; the batch cannot use the terminal verified fast path.",
+      );
+    } else if (integrated && finalCommands.length > 0 && !finalVerificationPassed) {
+      warnings.push(
+        "Final integrated verification did not pass completely; use the returned evidence for targeted diagnosis.",
+      );
+    } else if (completionState === "verified-complete") {
+      integrationSummary +=
+        ` Final workspace verification passed ` +
+        `${integrationVerification.length}/${integrationVerification.length} declared check(s).`;
+    }
+
+    // --- Cleanup -------------------------------------------------------------
+    assertOperationAuthorityAfterExecution("post-cleanup health check");
+    let lifecycleError: unknown = null;
+    for (const task of running) {
+      if (!task.worktree) {
+        if (task.result.result && options.continuationRegistrar) {
+          try {
+            task.result.result.continuationReference =
+              await options.continuationRegistrar(
+                task.input,
+                task.result.result,
+                workspace,
+                false,
+                null,
+                workspace,
+                null,
               );
-            } else {
-              try {
-                await refreshWorktreeLease(
-                  worktreeLease,
-                  Date.now() + CONTINUATION_TTL_MS + WORKTREE_LEASE_GRACE_MS,
-                  "retained-continuation",
-                );
-              } catch (error) {
+          } catch (error) {
+            const detail = `Continuation registration failed after execution: ${(error as Error).message}`;
+            task.result.error ??= detail;
+            task.result.warnings.push(detail);
+            task.result.result.continuationState = {
+              status: "unavailable",
+              reason: detail,
+            };
+            lifecycleError ??= error;
+          }
+        }
+        continue;
+      }
+      const keepForConflict =
+        integrationConflicts.length > 0 ||
+        options.integrate === false ||
+        integrationIncomplete;
+      const reason = worktreeCleanupReason(task, keepForConflict);
+
+      let renewalError: unknown = null;
+      try {
+        await task.leaseRenewal?.stop();
+      } catch (error) {
+        renewalError = error;
+        lifecycleError ??= error;
+        task.result.warnings.push(
+          `Persistent worktree lease renewal failed: ${(error as Error).message}`,
+        );
+      } finally {
+        task.leaseRenewal = null;
+      }
+
+      try {
+        const cleanup = await (options.worktreeCleaner ?? cleanupWorktree)(
+          task.worktree,
+          reason,
+          options.keepWorktrees,
+          // Cancellation stops workers and prevents new integration, but
+          // already-created worktrees still need deterministic settlement.
+          // Renewal is stopped immediately above; passing an already-aborted
+          // signal here would strand completed sibling evidence and skip
+          // continuation settlement rather than making shutdown safer.
+          undefined,
+        );
+        emit({
+          type: "worktree.removed",
+          batchId,
+          taskId: task.taskId,
+          kept: !cleanup.removed,
+        });
+        task.result.worktreePath = cleanup.removed ? null : (cleanup.keptAt ?? null);
+        if (!cleanup.removed) {
+          const retainedReason = cleanup.error
+            ? "cleanup-failed"
+            : task.worktreeOutcomeError
+              ? "evidence-failure"
+              : integrationConflicts.length > 0
+                ? "integration-conflict"
+                : options.integrate === false
+                  ? "integration-disabled"
+                  : integrationIncomplete
+                    ? outcomeFailures.length > 0
+                      ? "integration-not-attempted"
+                      : "integration-partial"
+                    : "retention-policy";
+          emit({
+            type: "worktree.retained",
+            batchId,
+            taskId: task.taskId,
+            reason: retainedReason,
+          });
+        }
+        if (cleanup.error) {
+          task.result.warnings.push(`Worktree cleanup incomplete: ${cleanup.error}`);
+          lifecycleError ??= new Error(cleanup.error);
+        }
+
+        let retainedLease = false;
+        if (
+          !renewalError &&
+          task.result.result &&
+          !resultWasCancelled(task.result.result) &&
+          options.continuationRegistrar
+        ) {
+          // Integrated parallel work can safely continue in the requested
+          // workspace after its temporary worktree is removed. When integration
+          // was disabled or conflicted, the kept worktree is the only honest
+          // continuation directory and must remain available until expiry.
+          const continuationInWorkspace =
+            mode === "sequential" || (task.state === "completed" && !keepForConflict);
+          const continuationDirectory = continuationInWorkspace
+            ? workspace
+            : cleanup.removed
+              ? null
+              : (task.worktree.workingDirectory ?? task.worktree.path);
+          if (continuationDirectory && !task.worktreeOutcomeError) {
+            let continuationProtected = true;
+            const worktreeLease = continuationInWorkspace
+              ? null
+              : (task.worktree.lease ?? null);
+            if (!continuationInWorkspace) {
+              if (!worktreeLease) {
                 continuationProtected = false;
                 task.result.warnings.push(
-                  `Continuation was not issued because its retained worktree could not be protected: ${(error as Error).message}`,
+                  "Continuation was not issued because its retained worktree has no persistent lease.",
                 );
+              } else {
+                try {
+                  await refreshWorktreeLease(
+                    worktreeLease,
+                    Date.now() + CONTINUATION_TTL_MS + WORKTREE_LEASE_GRACE_MS,
+                    "retained-continuation",
+                  );
+                } catch (error) {
+                  continuationProtected = false;
+                  task.result.warnings.push(
+                    `Continuation was not issued because its retained worktree could not be protected: ${(error as Error).message}`,
+                  );
+                }
+              }
+            }
+            if (continuationProtected) {
+              try {
+                const reference = await options.continuationRegistrar(
+                  task.input,
+                  task.result.result,
+                  continuationDirectory,
+                  !continuationInWorkspace,
+                  worktreeLease,
+                  workspace,
+                  continuationInWorkspace
+                    ? null
+                    : (task.worktree.gitEvidenceAuthority ?? null),
+                );
+                task.result.result.continuationReference = reference;
+                retainedLease = Boolean(reference && worktreeLease);
+              } catch (error) {
+                lifecycleError ??= error;
+                task.result.warnings.push(
+                  `Continuation registration failed: ${(error as Error).message}`,
+                );
+                task.result.result.continuationState = {
+                  status: "unavailable",
+                  reason: `Continuation registration failed: ${(error as Error).message}`,
+                };
               }
             }
           }
-          if (continuationProtected) {
-            try {
-              const reference = await options.continuationRegistrar(
-                task.input,
-                task.result.result,
-                continuationDirectory,
-                !continuationInWorkspace,
-                worktreeLease,
-                workspace,
-              );
-              task.result.result.continuationReference = reference;
-              retainedLease = Boolean(reference && worktreeLease);
-            } catch (error) {
-              lifecycleError ??= error;
-              task.result.warnings.push(
-                `Continuation registration failed: ${(error as Error).message}`,
-              );
-              task.result.result.continuationState = {
-                status: "unavailable",
-                reason: `Continuation registration failed: ${(error as Error).message}`,
-              };
-            }
+        }
+        if (!cleanup.removed && task.worktree.lease && !retainedLease && !renewalError) {
+          await releaseWorktreeLease(task.worktree.lease);
+        }
+      } catch (error) {
+        lifecycleError ??= error;
+        const detail = `Worktree lifecycle cleanup failed after execution: ${(error as Error).message}`;
+        task.result.error ??= detail;
+        task.result.warnings.push(detail);
+        task.result.worktreePath = task.worktree.path;
+        if (task.worktree.lease && !renewalError) {
+          await releaseWorktreeLease(task.worktree.lease).catch((leaseError) => {
+            task.result.warnings.push(
+              `Persistent worktree lease release also failed: ${(leaseError as Error).message}`,
+            );
+          });
+        }
+      } finally {
+        releaseWorktreeOwnership(task.worktree);
+      }
+    }
+    assertOperationAuthorityAfterExecution("post-lifecycle health check");
+
+    if (lifecycleError) {
+      completionState = "needs-supervisor";
+      warnings.push(
+        `Post-execution lifecycle cleanup was incomplete: ${(lifecycleError as Error).message}. ` +
+          "Completed worker and sibling evidence has been retained.",
+      );
+    }
+
+    for (const task of running) {
+      const taskFinalVerification = integrationVerification.filter((run) =>
+        task.input.verificationCommands.includes(run.command),
+      );
+      setFailureDecision(
+        task,
+        integrationConflicts.some((conflict) => conflict.tasks.includes(task.taskId)),
+        taskFinalVerification,
+      );
+    }
+
+    // Issue next-action authority only from the final task classification. Final
+    // integration, verification, or lifecycle evidence can conservatively replace
+    // an earlier provisional retry/escalation with parent takeover.
+    if (options.handoffStore || options.handoffRegistrar) {
+      for (const task of running) {
+        if (task.result.result) {
+          if (options.handoffRegistrar) {
+            const ref = options.handoffRegistrar(task.input, task.result.result);
+            task.result.handoffReference = ref;
+            task.result.handoffState = task.result.result.handoffState;
+          } else if (options.handoffStore) {
+            const ref = registerHandoff(
+              task.input,
+              task.result.result,
+              options.handoffStore,
+              {
+                authoritativePrior: task.authoritativePrior,
+                workingDirectory: workspace,
+                contextKey: options.handoffContextKey ?? null,
+              },
+            );
+            task.result.handoffReference = ref;
+            task.result.handoffState = task.result.result.handoffState;
           }
         }
       }
-      if (!cleanup.removed && task.worktree.lease && !retainedLease && !renewalError) {
-        await releaseWorktreeLease(task.worktree.lease);
-      }
-    } catch (error) {
-      lifecycleError ??= error;
-      const detail = `Worktree lifecycle cleanup failed after execution: ${(error as Error).message}`;
-      task.result.error ??= detail;
-      task.result.warnings.push(detail);
-      task.result.worktreePath = task.worktree.path;
-      if (task.worktree.lease && !renewalError) {
-        await releaseWorktreeLease(task.worktree.lease).catch((leaseError) => {
-          task.result.warnings.push(
-            `Persistent worktree lease release also failed: ${(leaseError as Error).message}`,
-          );
-        });
-      }
-    } finally {
-      releaseWorktreeOwnership(task.worktree);
     }
-  }
 
-  if (lifecycleError) {
-    completionState = "needs-supervisor";
-    warnings.push(
-      `Post-execution lifecycle cleanup was incomplete: ${(lifecycleError as Error).message}. ` +
-        "Completed worker and sibling evidence has been retained.",
-    );
-  }
+    // The repository authority covers every parent mutation that could otherwise
+    // appear in sibling evidence, including retained-worktree lease settlement.
+    // Settle it before publishing terminal success so renewal/ownership loss is a
+    // real pre-terminal failure rather than contradictory post-completion telemetry.
+    await releaseOperationAuthorityBeforeTerminal();
 
-  for (const task of running) {
-    const taskFinalVerification = integrationVerification.filter((run) =>
-      task.input.verificationCommands.includes(run.command),
-    );
-    setFailureDecision(
-      task,
-      integrationConflicts.some((conflict) => conflict.tasks.includes(task.taskId)),
-      taskFinalVerification,
-    );
-  }
+    const durationSeconds = Math.round((Date.now() - startedAt) / 1000);
+    const passed = running.filter(
+      (task) => task.result.result?.verdict === "PASS",
+    ).length;
+    const failed = running.length - passed;
 
-  // Issue next-action authority only from the final task classification. Final
-  // integration, verification, or lifecycle evidence can conservatively replace
-  // an earlier provisional retry/escalation with parent takeover.
-  if (options.handoffStore || options.handoffRegistrar) {
-    for (const task of running) {
-      if (task.result.result) {
-        if (options.handoffRegistrar) {
-          const ref = options.handoffRegistrar(task.input, task.result.result);
-          task.result.handoffReference = ref;
-          task.result.handoffState = task.result.result.handoffState;
-        } else if (options.handoffStore) {
-          const ref = registerHandoff(
-            task.input,
-            task.result.result,
-            options.handoffStore,
-            {
-              authoritativePrior: task.authoritativePrior,
-              workingDirectory: workspace,
-              contextKey: options.handoffContextKey ?? null,
-            },
-          );
-          task.result.handoffReference = ref;
-          task.result.handoffState = task.result.result.handoffState;
-        }
-      }
+    if (running.some((task) => task.state === "cancelled")) {
+      emit({
+        type: "batch.cancelled",
+        batchId,
+        reason: "Batch cancellation was requested before the batch completed.",
+      });
+    } else {
+      emit({ type: "batch.completed", batchId, durationSeconds, passed, failed });
     }
-  }
 
-  const durationSeconds = Math.round((Date.now() - startedAt) / 1000);
-  const passed = running.filter((task) => task.result.result?.verdict === "PASS").length;
-  const failed = running.length - passed;
-
-  if (running.some((task) => task.state === "cancelled")) {
-    emit({
-      type: "batch.cancelled",
+    return {
       batchId,
-      reason: "Batch cancellation was requested before the batch completed.",
-    });
-  } else {
-    emit({ type: "batch.completed", batchId, durationSeconds, passed, failed });
-  }
-
-  return {
-    batchId,
-    mode,
-    maxParallel,
-    taskCount: running.length,
-    passed,
-    failed,
-    durationSeconds,
-    tasks: running.map((task) => task.result),
-    scopeConflicts: scopeConflicts.map((conflict) => conflict.detail),
-    integrationConflicts: integrationConflicts.map((conflict) => ({
-      path: conflict.path,
-      tasks: conflict.tasks,
-    })),
-    integrated,
-    integrationSummary,
-    integrationVerification,
-    completionState,
-    warnings,
-    automaticRecovery: options.automaticRecovery ?? true,
-    reviewChecklist: buildBatchChecklist(
-      running,
-      integrationConflicts,
-      integrated,
       mode,
+      maxParallel,
+      taskCount: running.length,
+      passed,
+      failed,
+      durationSeconds,
+      tasks: running.map((task) => task.result),
+      scopeConflicts: scopeConflicts.map((conflict) => conflict.detail),
+      integrationConflicts: integrationConflicts.map((conflict) => ({
+        path: conflict.path,
+        tasks: conflict.tasks,
+      })),
+      integrated,
+      integrationSummary,
       integrationVerification,
       completionState,
-    ),
-  };
+      warnings,
+      automaticRecovery: options.automaticRecovery ?? true,
+      reviewChecklist: buildBatchChecklist(
+        running,
+        integrationConflicts,
+        integrated,
+        mode,
+        integrationVerification,
+        completionState,
+      ),
+    };
+  } finally {
+    if (operationAuthority) {
+      await operationAuthority.release().catch(() => undefined);
+      operationAuthority = null;
+    }
+  }
 }
 
 /** Convert task, verdict, evidence, and integration state into one cleanup decision. */
@@ -1181,19 +1455,33 @@ async function runSequential(
 ): Promise<void> {
   for (const task of running) {
     if (signal?.aborted) {
+      task.handoffReservation?.release();
+      task.handoffReservation = null;
       markCancelled(batchId, task, emit);
       continue;
     }
-    const before = await snapshotSequentialEvidence(workspace);
+    const authority = await captureGitEvidenceAuthority(workspace);
+    const before = await snapshotSequentialEvidence(workspace, authority);
+    const dependencyBaseline = await captureSharedDirectoryFingerprint(workspace);
+    task.sharedDependencyBaseline = dependencyBaseline;
     let release: (() => void) | null = null;
     try {
       release = await workerSlots.acquire(signal);
-      await runOne(batchId, task, workspace, run, emit, signal, true, {
+      if (signal?.aborted) {
+        task.handoffReservation?.release();
+        task.handoffReservation = null;
+        markCancelled(batchId, task, emit);
+        continue;
+      }
+      task.handoffReservation?.commit();
+      task.handoffReservation = null;
+      await runOne(batchId, task, workspace, run, emit, signal, false, {
         attempt: task.result.attempt ?? 1,
         predecessorExecutionId: task.predecessorExecutionId ?? null,
+        gitEvidenceAuthority: authority,
       });
       if (before && task.result.result) {
-        const after = await snapshotSequentialEvidence(workspace);
+        const after = await snapshotSequentialEvidence(workspace, authority);
         if (!after) {
           const detail = "Sequential Git evidence scan failed after worker execution.";
           // Cancellation is an authoritative terminal outcome. Evidence still
@@ -1212,6 +1500,13 @@ async function runSequential(
             task.result.error = detail;
             task.state = "failed";
             task.result.state = "failed";
+            emit({
+              type: "worker.failed",
+              batchId,
+              taskId: task.taskId,
+              reason: detail,
+              attempt: task.result.attempt ?? 1,
+            });
           }
         } else {
           const changed = changedSequentialPaths(before, after).map((file) => ({
@@ -1228,6 +1523,28 @@ async function runSequential(
             .filter((file) => file.observed)
             .map((file) => file.path);
         }
+      }
+      if (task.result.result) {
+        try {
+          await assertSharedDirectoryFingerprint(dependencyBaseline);
+        } catch (error) {
+          const detail = `Sequential dependency evidence failed: ${(error as Error).message}`;
+          task.result.result.verdict = "FAILED";
+          task.result.result.trustworthy = false;
+          if (!task.result.result.errors.includes(detail)) {
+            task.result.result.errors.push(detail);
+          }
+          if (!task.result.result.discrepancies.includes(detail)) {
+            task.result.result.discrepancies.push(detail);
+          }
+          task.result.warnings.push(detail);
+        }
+      }
+      if (!isCancelled(task) && !isFailed(task) && task.result.result) {
+        emitWorkerCompleted(batchId, task, emit, {
+          attempt: task.result.attempt ?? 1,
+          predecessorExecutionId: task.predecessorExecutionId ?? null,
+        });
       }
     } catch (error) {
       if (isCancelled(task)) {
@@ -1253,30 +1570,14 @@ async function runSequential(
 
 async function snapshotSequentialEvidence(
   workspace: string,
+  authority: GitEvidenceAuthority | null,
 ): Promise<Map<string, string> | null> {
   try {
-    const outcome = await collectWorktreeChanges(workspace);
-    const snapshot = new Map<string, string>();
-    for (const file of outcome.files) {
-      const target = path.join(workspace, ...file.path.split("/"));
-      const stat = await fs.lstat(target).catch(() => null);
-      if (!stat) {
-        snapshot.set(file.path, `${file.status}:missing`);
-      } else if (stat.isSymbolicLink()) {
-        snapshot.set(file.path, `${file.status}:link:${await fs.readlink(target)}`);
-      } else if (stat.isFile()) {
-        const digest = createHash("sha256")
-          .update(await fs.readFile(target))
-          .digest("hex");
-        snapshot.set(file.path, `${file.status}:file:${digest}`);
-      } else {
-        snapshot.set(file.path, `${file.status}:${stat.mode}:${stat.size}`);
-      }
-    }
-    return snapshot;
+    return authority
+      ? await snapshotTrustedWorkspaceEvidence(authority, workspace, WORKTREE_LINK_DIRS)
+      : await snapshotFilesystemWorkspaceEvidence(workspace);
   } catch {
-    // Sequential mode deliberately supports directories that are not Git
-    // repositories. Runtime observations remain the evidence source there.
+    // Evidence failure is handled fail-closed by the caller.
     return null;
   }
 }
@@ -1285,8 +1586,7 @@ function changedSequentialPaths(
   before: ReadonlyMap<string, string>,
   after: ReadonlyMap<string, string>,
 ): string[] {
-  const paths = new Set([...before.keys(), ...after.keys()]);
-  return [...paths].filter((file) => before.get(file) !== after.get(file)).sort();
+  return changedTrustedWorkspacePaths(before, after);
 }
 
 /** Tasks run concurrently, each in its own worktree. */
@@ -1300,23 +1600,48 @@ async function runParallel(
   protectedWorktreePaths: Iterable<string> = [],
   leaseMaintainer: typeof maintainWorktreeLease = maintainWorktreeLease,
   policySlots: Semaphore = new Semaphore(MAX_PARALLEL),
+  allowDirtyWorktreeBase?: boolean,
 ): Promise<string[]> {
   const warnings: string[] = [];
+  if (signal?.aborted) {
+    for (const task of running) markCancelled(batchId, task, emit);
+    return warnings;
+  }
 
   const base = await prepareWorktreeBase(
     workspace,
     running.map((task) => task.input.allowedFiles),
+    allowDirtyWorktreeBase,
   );
 
-  const pruned = await pruneStaleWorktrees(base.repoRoot, protectedWorktreePaths);
+  const pruned = await pruneStaleWorktrees(base.repoRoot, protectedWorktreePaths, signal);
   if (pruned.length > 0) {
     warnings.push(`Removed ${pruned.length} stale worktree(s) from an earlier run.`);
   }
   if (base.dirtyPaths.length > 0) {
-    warnings.push(
-      `The repository has ${base.dirtyPaths.length} uncommitted path(s) outside the ` +
-        `task scopes. Workers branched from HEAD and did not see them.`,
+    const inScopeDirty = base.workspaceDirtyPaths.filter((dirty) =>
+      running.some((task) => {
+        if (task.input.allowedFiles.length === 0) return true;
+        return picomatch(task.input.allowedFiles, {
+          dot: true,
+          nocase: process.platform === "win32" || process.platform === "darwin",
+        })(dirty);
+      }),
     );
+    if (inScopeDirty.length > 0) {
+      warnings.push(
+        `Dirty-base override accepted ${inScopeDirty.length} uncommitted in-scope path(s) ` +
+          `(${inScopeDirty.slice(0, 10).join(", ")}${inScopeDirty.length > 10 ? ", ..." : ""}). ` +
+          "Workers branched from HEAD and did not see those edits; integrating a worker change to the same path can overwrite them.",
+      );
+    }
+    const otherDirtyCount = base.dirtyPaths.length - inScopeDirty.length;
+    if (otherDirtyCount > 0) {
+      warnings.push(
+        `The repository also has ${otherDirtyCount} uncommitted path(s) outside the active ` +
+          "task scopes or requested workspace. Workers branched from HEAD and did not see them.",
+      );
+    }
   }
 
   // --- Setup: build every isolated workspace before any worker starts ------
@@ -1342,16 +1667,22 @@ async function runParallel(
         task,
         workspace,
         emit,
+        signal,
       );
       if (task.worktree.lease) {
         task.leaseRenewal = leaseMaintainer(
           task.worktree.lease,
           taskLeaseLifetimeMs(task.input),
           "running",
+          signal,
         );
       }
+      task.sharedDependencyBaseline =
+        task.worktree.sharedDirectoryBaseline ?? task.sharedDependencyBaseline;
       task.result.warnings.push(...task.worktree.warnings);
     } catch (error) {
+      task.handoffReservation?.release();
+      task.handoffReservation = null;
       // Partial failure is preserved: this task is marked failed and the rest
       // of the batch still runs.
       task.state = "failed";
@@ -1363,6 +1694,28 @@ async function runParallel(
         taskId: task.taskId,
         reason: task.result.error,
       });
+    }
+  }
+
+  const integrationAuthority = await captureGitEvidenceAuthority(
+    base.repoRoot,
+    base.baseCommit,
+  );
+  if (!integrationAuthority) {
+    throw new WorktreeUnavailableError(
+      "Could not pin authoritative repository state for parallel integration.",
+      "Retry the batch; integration is refused without a stable Git authority.",
+    );
+  }
+  const integrationBaseline = await snapshotTrustedWorkspaceEvidence(
+    integrationAuthority,
+    workspace,
+    WORKTREE_LINK_DIRS,
+  );
+  for (const task of running) {
+    if (task.worktree) {
+      task.worktree.integrationAuthority = integrationAuthority;
+      task.worktree.integrationBaseline = integrationBaseline;
     }
   }
 
@@ -1380,6 +1733,8 @@ async function runParallel(
       if (!worktree || task.state === "failed" || task.state === "cancelled") return;
 
       if (signal?.aborted) {
+        task.handoffReservation?.release();
+        task.handoffReservation = null;
         markCancelled(batchId, task, emit);
         return;
       }
@@ -1389,20 +1744,42 @@ async function runParallel(
         policyRelease = await policySlots.acquire(signal);
         release = await workerSlots.acquire(signal);
         if (signal?.aborted) {
+          task.handoffReservation?.release();
+          task.handoffReservation = null;
           markCancelled(batchId, task, emit);
           return;
         }
 
-        await runOne(batchId, task, worktree.path, run, emit, signal, false, {
-          attempt: task.result.attempt ?? 1,
-          predecessorExecutionId: task.predecessorExecutionId ?? null,
-        });
+        task.handoffReservation?.commit();
+        task.handoffReservation = null;
+        await runOne(
+          batchId,
+          task,
+          worktree.workingDirectory ?? worktree.path,
+          run,
+          emit,
+          signal,
+          false,
+          {
+            attempt: task.result.attempt ?? 1,
+            predecessorExecutionId: task.predecessorExecutionId ?? null,
+          },
+        );
 
         const outcome = await readWorktreeOutcome(worktree);
         task.result.warnings.push(...outcome.warnings);
         task.result.diff = truncateDiff(outcome.changes.diff);
+        task.worktreeEvidenceDigest = outcome.error
+          ? null
+          : await digestWorktreeEvidence(
+              outcome.changes,
+              worktree.workingDirectory ?? worktree.path,
+            );
 
-        const changes = outcome.changes.files.map((file) => ({
+        const mutationFiles = outcome.changes.files.filter(
+          (file) => file.status !== "C-source",
+        );
+        const changes = mutationFiles.map((file) => ({
           path: file.path,
           kind: file.status,
         }));
@@ -1410,7 +1787,7 @@ async function runParallel(
           task.result.result = reconcileParallelWorktreeEvidence(
             task.input,
             task.result.result,
-            worktree.path,
+            worktree.workingDirectory ?? worktree.path,
             changes,
             outcome.error,
           );
@@ -1418,7 +1795,7 @@ async function runParallel(
             .filter((file) => file.observed)
             .map((file) => file.path);
         } else {
-          task.result.changedFiles = outcome.changes.files.map((file) => file.path);
+          task.result.changedFiles = mutationFiles.map((file) => file.path);
         }
 
         if (outcome.error) {
@@ -1502,7 +1879,7 @@ function confinedWorktreeEvidence(task: RunningTask): boolean {
     task.result.changedFiles,
     task.input.allowedFiles,
     task.input.forbiddenFiles,
-    task.worktree.path,
+    task.worktree.workingDirectory ?? task.worktree.path,
   );
   return violations.length === 0;
 }
@@ -1785,6 +2162,58 @@ async function recoverParallel(
       try {
         policyRelease = await policySlots.acquire(signal);
         release = await workerSlots.acquire(signal);
+        if (!task.worktree?.lease || !task.leaseRenewal) {
+          const evidence =
+            "Bounded recovery was refused because the owned worktree has no active persistent lease maintenance.";
+          task.recovery = {
+            ...decision,
+            attempted: false,
+            classification: "security-or-trust-boundary",
+            evidence,
+          };
+          setRecoveryMetadata(task, task.recovery);
+          task.result.warnings.push(evidence);
+          emit({
+            type: "recovery.skipped",
+            batchId,
+            taskId: task.taskId,
+            attempt: decision.initialAttempt,
+            classification: task.recovery.classification,
+            evidence,
+          });
+          return;
+        }
+        try {
+          task.leaseRenewal.assertHealthy();
+          const recoveryHorizon = taskLeaseLifetimeMs(task.input);
+          await refreshWorktreeLease(
+            task.worktree.lease,
+            Date.now() + recoveryHorizon,
+            "running",
+          );
+          task.leaseRenewal.assertHealthy(Math.max(0, recoveryHorizon - 1_000));
+        } catch (error) {
+          const evidence =
+            `Bounded recovery was refused because persistent worktree protection ` +
+            `could not cover the recovery window: ${(error as Error).message}`;
+          task.recovery = {
+            ...decision,
+            attempted: false,
+            classification: "security-or-trust-boundary",
+            evidence,
+          };
+          setRecoveryMetadata(task, task.recovery);
+          task.result.warnings.push(evidence);
+          emit({
+            type: "recovery.skipped",
+            batchId,
+            taskId: task.taskId,
+            attempt: decision.initialAttempt,
+            classification: task.recovery.classification,
+            evidence,
+          });
+          return;
+        }
         task.recovery = { ...decision, recoveryAttempt: attempt };
         setRecoveryMetadata(task, task.recovery);
         task.result.attempt = attempt;
@@ -1802,26 +2231,44 @@ async function recoverParallel(
           predecessorExecutionId,
         });
 
-        await runOne(batchId, task, task.worktree!.path, run, emit, signal, false, {
-          attempt,
-          resumeThreadId:
-            decision.classification === "timeout-continuation"
-              ? (initial?.workerThreadId ?? undefined)
-              : undefined,
-          continuationInstruction: recoveryInstruction(decision),
-          allowAutomaticRepair: false,
-          executionId,
-          role:
-            decision.classification === "timeout-continuation"
-              ? "timeout-recovery"
-              : "process-retry",
-          predecessorExecutionId,
-        });
+        await runOne(
+          batchId,
+          task,
+          task.worktree.workingDirectory ?? task.worktree.path,
+          run,
+          emit,
+          signal,
+          false,
+          {
+            attempt,
+            resumeThreadId:
+              decision.classification === "timeout-continuation"
+                ? (initial?.workerThreadId ?? undefined)
+                : undefined,
+            continuationInstruction: recoveryInstruction(decision),
+            allowAutomaticRepair: false,
+            executionId,
+            role:
+              decision.classification === "timeout-continuation"
+                ? "timeout-recovery"
+                : "process-retry",
+            predecessorExecutionId,
+          },
+        );
 
         const outcome = await readWorktreeOutcome(task.worktree!);
         task.result.warnings.push(...outcome.warnings);
         task.result.diff = truncateDiff(outcome.changes.diff);
-        const changes = outcome.changes.files.map((file) => ({
+        task.worktreeEvidenceDigest = outcome.error
+          ? null
+          : await digestWorktreeEvidence(
+              outcome.changes,
+              task.worktree!.workingDirectory ?? task.worktree!.path,
+            );
+        const mutationFiles = outcome.changes.files.filter(
+          (file) => file.status !== "C-source",
+        );
+        const changes = mutationFiles.map((file) => ({
           path: file.path,
           kind: file.status,
         }));
@@ -1829,7 +2276,7 @@ async function recoverParallel(
           task.result.result = reconcileParallelWorktreeEvidence(
             task.input,
             task.result.result,
-            task.worktree!.path,
+            task.worktree.workingDirectory ?? task.worktree.path,
             changes,
             outcome.error,
           );
@@ -1837,7 +2284,7 @@ async function recoverParallel(
             .filter((file) => file.observed)
             .map((file) => file.path);
         } else {
-          task.result.changedFiles = outcome.changes.files.map((file) => file.path);
+          task.result.changedFiles = mutationFiles.map((file) => file.path);
         }
 
         const recoveryDurationSeconds = Math.round((Date.now() - startedAt) / 1000);
@@ -2013,12 +2460,14 @@ async function createTaskWorktreeTracked(
   task: RunningTask,
   workspace: string,
   emit: EventEmitter,
+  signal?: AbortSignal,
 ): Promise<TaskWorktree> {
   const worktree = await createTaskWorktree(
     base,
     `${batchId}-${task.taskId}`,
     workspace,
     taskLeaseLifetimeMs(task.input),
+    signal,
   );
   emit({
     type: "worktree.created",
@@ -2045,6 +2494,7 @@ interface RunAttemptOptions {
   executionId?: string;
   role?: AttemptRole;
   predecessorExecutionId?: string | null;
+  gitEvidenceAuthority?: GitEvidenceAuthority | null;
 }
 
 function emitCanonicalAttemptCompletion(
@@ -2089,6 +2539,8 @@ async function runOne(
   const startedAt = new Date();
   const startedMs = Date.now();
   const emittedAttemptStarts = new Set<string>();
+  const gitEvidenceAuthority =
+    attemptOptions.gitEvidenceAuthority ?? task.worktree?.gitEvidenceAuthority ?? null;
   emitAttemptStarted(emit, batchId, task.taskId, {
     executionId,
     logicalAttempt: attemptOptions.attempt,
@@ -2124,6 +2576,13 @@ async function runOne(
       workingDirectory,
       model: taskModel,
       signal,
+      gitEvidenceAuthority,
+      beforeVerification: async () => {
+        if (gitEvidenceAuthority) await assertGitEvidenceAuthority(gitEvidenceAuthority);
+        if (task.sharedDependencyBaseline) {
+          await assertSharedDirectoryFingerprint(task.sharedDependencyBaseline);
+        }
+      },
       resumeThreadId: attemptOptions.resumeThreadId,
       continuationInstruction: attemptOptions.continuationInstruction,
       executionId,
@@ -2173,6 +2632,30 @@ async function runOne(
         emitCanonicalAttemptCompletion(emit, batchId, task.taskId, evidence);
       },
     });
+
+    // Parallel worktrees carry private dependency snapshots. The executor's
+    // beforeVerification hook proves that snapshot immediately before checks,
+    // but a check itself still runs with filesystem access and can mutate the
+    // snapshot after that proof. Revalidate after the complete worker+verifier
+    // turn, before worktree evidence is accepted or a retained continuation can
+    // inherit the poisoned dependency state.
+    if (task.worktree && task.sharedDependencyBaseline) {
+      try {
+        await assertSharedDirectoryFingerprint(task.sharedDependencyBaseline);
+      } catch (error) {
+        const detail = `Post-verification dependency evidence failed: ${(error as Error).message}`;
+        task.worktreeOutcomeError = detail;
+        task.result.warnings.push(detail);
+        if (!resultWasCancelled(result)) {
+          result.verdict = "FAILED";
+          result.trustworthy = false;
+          if (!result.errors.includes(detail)) result.errors.push(detail);
+          if (!result.discrepancies.includes(detail)) result.discrepancies.push(detail);
+        } else if (!result.errors.includes(detail)) {
+          result.errors.push(detail);
+        }
+      }
+    }
 
     if (!task.result.attempts?.some((entry) => entry.executionId === executionId)) {
       const timedOut = result.errors.some((error) =>
@@ -2375,6 +2858,517 @@ function markCancelled(batchId: string, task: RunningTask, emit: EventEmitter): 
 }
 
 const MAX_DIFF_CHARS = 20_000;
+interface IntegrationPathSnapshot {
+  signature: string;
+  bytes: Buffer | null;
+  kind: "missing" | "file" | "link" | "directory" | "other";
+  identity: string | null;
+  linkTarget?: string;
+}
+
+const integrationFileSignature = (bytes: Uint8Array): string =>
+  `file:${createHash("sha256").update(bytes).digest("hex")}`;
+
+const integrationStatIdentity = (entry: {
+  dev: number | bigint;
+  ino: number | bigint;
+  birthtimeMs: number;
+}): string => `${entry.dev}:${entry.ino}:${entry.birthtimeMs}`;
+
+async function snapshotIntegrationPath(target: string): Promise<IntegrationPathSnapshot> {
+  const entry = await fs.lstat(target).catch(() => null);
+  if (!entry) {
+    return { signature: "missing", bytes: null, kind: "missing", identity: null };
+  }
+  if (entry.isSymbolicLink()) {
+    const linkTarget = await fs.readlink(target);
+    return {
+      signature: `link:${linkTarget}`,
+      bytes: null,
+      kind: "link",
+      identity: integrationStatIdentity(entry),
+      linkTarget,
+    };
+  }
+  if (entry.isFile()) {
+    const expectedIdentity = integrationStatIdentity(entry);
+    const handle = await fs.open(target, "r");
+    try {
+      const opened = await handle.stat();
+      if (!opened.isFile() || integrationStatIdentity(opened) !== expectedIdentity) {
+        throw new Error(`Integration path changed identity while opening ${target}.`);
+      }
+      const bytes = await readAllIntegrationBytes(handle);
+      const after = await handle.stat();
+      if (!after.isFile() || integrationStatIdentity(after) !== expectedIdentity) {
+        throw new Error(`Integration path changed identity while reading ${target}.`);
+      }
+      return {
+        signature: integrationFileSignature(bytes),
+        bytes,
+        kind: "file",
+        identity: expectedIdentity,
+      };
+    } finally {
+      await handle.close();
+    }
+  }
+  if (entry.isDirectory()) {
+    return {
+      signature: `dir:${entry.mode}:${entry.size}`,
+      bytes: null,
+      kind: "directory",
+      identity: integrationStatIdentity(entry),
+    };
+  }
+  return {
+    signature: `other:${entry.mode}:${entry.size}`,
+    bytes: null,
+    kind: "other",
+    identity: integrationStatIdentity(entry),
+  };
+}
+
+async function readAllIntegrationBytes(
+  handle: Awaited<ReturnType<typeof fs.open>>,
+): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let position = 0;
+  while (true) {
+    const chunk = Buffer.allocUnsafe(64 * 1024);
+    const { bytesRead } = await handle.read(chunk, 0, chunk.length, position);
+    if (bytesRead === 0) break;
+    chunks.push(chunk.subarray(0, bytesRead));
+    position += bytesRead;
+  }
+  return Buffer.concat(chunks);
+}
+
+async function writeAllIntegrationBytes(
+  handle: Awaited<ReturnType<typeof fs.open>>,
+  bytes: Buffer,
+): Promise<void> {
+  let offset = 0;
+  while (offset < bytes.length) {
+    const { bytesWritten } = await handle.write(
+      bytes,
+      offset,
+      bytes.length - offset,
+      offset,
+    );
+    if (bytesWritten <= 0) {
+      throw new Error(
+        "Destination write made no progress before all bytes were written.",
+      );
+    }
+    offset += bytesWritten;
+  }
+}
+
+async function restoreQuarantinedIntegrationPath(
+  quarantine: string,
+  destination: string,
+  quarantined: IntegrationPathSnapshot,
+): Promise<boolean> {
+  if ((await snapshotIntegrationPath(destination)).kind !== "missing") return false;
+  try {
+    if (quarantined.kind === "file") {
+      // link(2) is exclusive at the destination name, so a concurrent operator
+      // replacement wins rather than being overwritten by rollback.
+      await fs.link(quarantine, destination);
+    } else if (quarantined.kind === "link") {
+      // symlink creation is likewise exclusive when the destination appears in
+      // the rollback window. Preserve the exact link target we quarantined.
+      await fs.symlink(await fs.readlink(quarantine), destination);
+    } else {
+      return false;
+    }
+    await fs.unlink(quarantine);
+    await fs.rmdir(path.dirname(quarantine)).catch(() => undefined);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function pinnedDirectoryAuthorityStillMatches(
+  authority: PinnedDirectoryAuthority,
+  confinedRoot: string,
+): Promise<boolean> {
+  const current = await capturePinnedDirectoryAuthority(
+    authority.directory,
+    confinedRoot,
+  ).catch(() => null);
+  return (
+    current?.identity === authority.identity &&
+    path.resolve(current.canonical) === path.resolve(authority.canonical)
+  );
+}
+
+async function restoreAcceptedIntegrationPath(
+  authority: PinnedDirectoryAuthority,
+  confinedRoot: string,
+  name: string,
+  expected: IntegrationPathSnapshot,
+): Promise<boolean> {
+  if (!(await pinnedDirectoryAuthorityStillMatches(authority, confinedRoot)))
+    return false;
+  try {
+    if (expected.kind === "file" && expected.bytes) {
+      await runPinnedDirectoryMutation(authority, {
+        op: "write-file",
+        name,
+        mode: "exclusive",
+        bytesBase64: expected.bytes.toString("base64"),
+      });
+    } else if (expected.kind === "link" && expected.linkTarget !== undefined) {
+      await runPinnedDirectoryMutation(authority, {
+        op: "symlink",
+        name,
+        target: expected.linkTarget,
+        type: process.platform === "win32" ? "file" : "file",
+      });
+    } else {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function integrationPathIsWithin(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === "" ||
+    (!relative.startsWith(`..${path.sep}`) &&
+      relative !== ".." &&
+      !path.isAbsolute(relative))
+  );
+}
+
+async function ensureIntegrationDeleteQuarantineRoot(repoRoot: string): Promise<string> {
+  const canonicalRepo = await fs.realpath(repoRoot);
+  let current = repoRoot;
+  for (const segment of [".sol-luna", "integration-delete"]) {
+    current = path.join(current, segment);
+    const existing = await fs.lstat(current).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    if (existing && (existing.isSymbolicLink() || !existing.isDirectory())) {
+      throw new Error(`Refusing redirected integration quarantine path: ${current}.`);
+    }
+    if (!existing) await fs.mkdir(current);
+    const created = await fs.lstat(current);
+    if (created.isSymbolicLink() || !created.isDirectory()) {
+      throw new Error(`Refusing redirected integration quarantine path: ${current}.`);
+    }
+    const canonical = await fs.realpath(current);
+    if (!integrationPathIsWithin(canonicalRepo, canonical)) {
+      throw new Error(
+        `Integration quarantine path resolves outside its repository: ${current}.`,
+      );
+    }
+  }
+  return current;
+}
+
+interface PinnedDeletionResult {
+  status: "applied" | "blocked" | "cancelled";
+  authoritativeMutation: boolean;
+  restored: boolean;
+  warning?: string;
+  reason?: "source-drift" | "workspace-drift";
+}
+
+async function performPinnedIntegrationDeletion(options: {
+  repoRoot: string;
+  workspace: string;
+  destination: string;
+  source: string;
+  expectedDestination: IntegrationPathSnapshot;
+  expectedSourceSignature: string;
+  signal?: AbortSignal;
+  beforeDelete?: (phase: "validated" | "moved") => void | Promise<void>;
+  failQuarantineCleanup?: boolean;
+}): Promise<PinnedDeletionResult> {
+  const {
+    repoRoot,
+    workspace,
+    destination,
+    source,
+    expectedDestination,
+    expectedSourceSignature,
+    signal,
+    beforeDelete,
+    failQuarantineCleanup,
+  } = options;
+  if (
+    (expectedDestination.kind !== "file" || expectedDestination.bytes === null) &&
+    (expectedDestination.kind !== "link" || expectedDestination.linkTarget === undefined)
+  ) {
+    return {
+      status: "blocked",
+      authoritativeMutation: false,
+      restored: false,
+      warning: "the accepted deletion target is not a stable file or symbolic link",
+      reason: "workspace-drift",
+    };
+  }
+
+  const quarantineRoot = await ensureIntegrationDeleteQuarantineRoot(repoRoot);
+  const quarantineAuthority = await capturePinnedDirectoryAuthority(
+    quarantineRoot,
+    repoRoot,
+  );
+  const quarantineName = `delete-${randomBytes(24).toString("hex")}`;
+  const backupResult =
+    expectedDestination.kind === "file"
+      ? await runPinnedDirectoryMutation(quarantineAuthority, {
+          op: "write-file",
+          name: quarantineName,
+          bytesBase64: expectedDestination.bytes!.toString("base64"),
+          mode: "exclusive",
+        })
+      : await runPinnedDirectoryMutation(quarantineAuthority, {
+          op: "symlink",
+          name: quarantineName,
+          target: expectedDestination.linkTarget!,
+          type: "file",
+        });
+
+  const cleanupBackup = async (injectFailure = false): Promise<boolean> => {
+    if (!backupResult.snapshot) return false;
+    try {
+      await runPinnedDirectoryMutation(quarantineAuthority, {
+        op: "unlink",
+        name: quarantineName,
+        expectedIdentity: backupResult.snapshot.identity ?? undefined,
+        expectedSignature: backupResult.snapshot.signature,
+        testFailBeforeUnlink: injectFailure,
+      });
+      const rootStat = await fs.lstat(quarantineRoot).catch(() => null);
+      if (rootStat?.isDirectory() && !rootStat.isSymbolicLink()) {
+        const rootParent = path.dirname(quarantineRoot);
+        const rootParentAuthority = await capturePinnedDirectoryAuthority(
+          rootParent,
+          repoRoot,
+        ).catch(() => null);
+        if (rootParentAuthority) {
+          await runPinnedDirectoryMutation(rootParentAuthority, {
+            op: "rmdir",
+            name: path.basename(quarantineRoot),
+            expectedIdentity: integrationStatIdentity(rootStat),
+          }).catch(() => undefined);
+        }
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const destinationParent = path.dirname(destination);
+  const destinationName = path.basename(destination);
+  const destinationParentAuthority = await capturePinnedDirectoryAuthority(
+    destinationParent,
+    workspace,
+  );
+  const tombstoneName = `.sol-luna-delete-${randomBytes(24).toString("hex")}.tmp`;
+
+  let moved:
+    Awaited<ReturnType<typeof runPinnedDirectoryMutation>>["snapshot"] | undefined;
+  try {
+    const result = await runPinnedDirectoryMutation(
+      destinationParentAuthority,
+      {
+        op: "rename-verified",
+        sourceName: destinationName,
+        destinationName: tombstoneName,
+        expectedIdentity: expectedDestination.identity ?? undefined,
+        expectedSignature: expectedDestination.signature,
+      },
+      {
+        beforeExecute: async () => {
+          await beforeDelete?.("validated");
+          if (signal?.aborted) {
+            const error = new Error(
+              "Integration deletion was cancelled before namespace move.",
+            );
+            error.name = "AbortError";
+            throw error;
+          }
+        },
+      },
+    );
+    moved = result.snapshot;
+  } catch (error) {
+    await cleanupBackup();
+    return {
+      status: signal?.aborted ? "cancelled" : "blocked",
+      authoritativeMutation:
+        error instanceof PinnedDirectoryMutationError ? error.mutated : false,
+      restored: false,
+      warning: (error as Error).message,
+      reason: "workspace-drift",
+    };
+  }
+
+  const restoreMoved = async (expected: NonNullable<typeof moved>): Promise<boolean> => {
+    if (
+      !(await pinnedDirectoryAuthorityStillMatches(destinationParentAuthority, workspace))
+    ) {
+      return false;
+    }
+    try {
+      await runPinnedDirectoryMutation(destinationParentAuthority, {
+        op: "rename-verified",
+        sourceName: tombstoneName,
+        destinationName,
+        expectedIdentity: expected.identity ?? undefined,
+        expectedSignature: expected.signature,
+      });
+      await cleanupBackup();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  if (
+    !moved ||
+    moved.signature !== expectedDestination.signature ||
+    moved.identity !== expectedDestination.identity
+  ) {
+    const restored = moved ? await restoreMoved(moved) : false;
+    return {
+      status: "blocked",
+      authoritativeMutation: !restored,
+      restored,
+      warning: restored
+        ? "the deletion target changed during the pinned namespace move; the raced entry was restored"
+        : "the deletion target changed during the pinned namespace move; recoverable quarantine state was retained",
+      reason: "workspace-drift",
+    };
+  }
+
+  await beforeDelete?.("moved");
+  const parentStillAuthoritative = await pinnedDirectoryAuthorityStillMatches(
+    destinationParentAuthority,
+    workspace,
+  );
+  const boundarySource = await snapshotIntegrationPath(source);
+  const boundaryDestination = parentStillAuthoritative
+    ? await snapshotIntegrationPath(destination)
+    : null;
+  const sourceDrifted =
+    boundarySource.kind !== "missing" ||
+    boundarySource.signature !== expectedSourceSignature;
+  const destinationDrifted =
+    !parentStillAuthoritative || boundaryDestination?.kind !== "missing";
+  if (signal?.aborted || sourceDrifted || destinationDrifted) {
+    const restored = await restoreMoved(moved);
+    return {
+      status: signal?.aborted ? "cancelled" : "blocked",
+      authoritativeMutation: !restored,
+      restored,
+      warning: signal?.aborted
+        ? restored
+          ? "cancellation was observed after the deletion boundary and the namespace move was rolled back safely"
+          : "cancellation was observed after the deletion boundary; rollback could not safely replace newer destination state"
+        : restored
+          ? `${sourceDrifted ? "the deletion source" : "the authoritative destination"} changed at the deletion boundary; the namespace move was rolled back safely`
+          : `${sourceDrifted ? "the deletion source" : "the authoritative destination"} changed at the deletion boundary; recoverable quarantine state was retained`,
+      reason: sourceDrifted ? "source-drift" : "workspace-drift",
+    };
+  }
+
+  try {
+    await runPinnedDirectoryMutation(destinationParentAuthority, {
+      op: "unlink",
+      name: tombstoneName,
+      expectedIdentity: moved.identity ?? undefined,
+      expectedSignature: moved.signature,
+    });
+  } catch (error) {
+    const mutated = error instanceof PinnedDirectoryMutationError && error.mutated;
+    const restored = mutated
+      ? await restoreAcceptedIntegrationPath(
+          destinationParentAuthority,
+          workspace,
+          destinationName,
+          expectedDestination,
+        )
+      : await restoreMoved(moved);
+    return {
+      status: "blocked",
+      authoritativeMutation: !restored,
+      restored,
+      warning: `pinned deletion cleanup failed (${(error as Error).message})`,
+      reason: "workspace-drift",
+    };
+  }
+
+  const quarantineCleaned = await cleanupBackup(failQuarantineCleanup);
+  if (!quarantineCleaned) {
+    const restored = await restoreAcceptedIntegrationPath(
+      destinationParentAuthority,
+      workspace,
+      destinationName,
+      expectedDestination,
+    );
+    return {
+      status: "blocked",
+      authoritativeMutation: !restored,
+      restored,
+      warning: "pinned quarantine cleanup failed after the authoritative deletion",
+      reason: "workspace-drift",
+    };
+  }
+
+  return {
+    status: "applied",
+    authoritativeMutation: true,
+    restored: false,
+  };
+}
+
+async function summarizeWorktreeEvidence(
+  changes: {
+    files: Array<{ path: string; status: string }>;
+    diff: string;
+  },
+  workingDirectory: string,
+): Promise<{ digest: string; pathSignatures: Map<string, string> }> {
+  const pathSignatures: Array<[string, string]> = [];
+  for (const file of changes.files.filter((entry) => entry.status !== "C-source")) {
+    const target = path.join(workingDirectory, ...file.path.split("/"));
+    pathSignatures.push([file.path, (await snapshotIntegrationPath(target)).signature]);
+  }
+  const digest = createHash("sha256")
+    .update(
+      JSON.stringify({
+        files: [...changes.files].sort(
+          (a, b) => a.path.localeCompare(b.path) || a.status.localeCompare(b.status),
+        ),
+        diff: changes.diff,
+        pathSignatures,
+      }),
+    )
+    .digest("hex");
+  return { digest, pathSignatures: new Map(pathSignatures) };
+}
+
+async function digestWorktreeEvidence(
+  changes: {
+    files: Array<{ path: string; status: string }>;
+    diff: string;
+  },
+  workingDirectory: string,
+): Promise<string> {
+  return (await summarizeWorktreeEvidence(changes, workingDirectory)).digest;
+}
 const truncateDiff = (diff: string): string =>
   diff.length <= MAX_DIFF_CHARS
     ? diff
@@ -2392,102 +3386,751 @@ async function integrateWorktrees(
   tasks: RunningTask[],
   workspace: string,
   emit: EventEmitter,
+  signal?: AbortSignal,
+  beforeWrite?: (context: {
+    batchId: string;
+    taskId: string;
+    file: string;
+    appliedFiles: number;
+  }) => void | Promise<void>,
+  beforeDelete?: (context: {
+    batchId: string;
+    taskId: string;
+    file: string;
+    appliedFiles: number;
+    phase: "validated" | "moved";
+  }) => void | Promise<void>,
+  beforeParentCreate?: (context: {
+    batchId: string;
+    taskId: string;
+    file: string;
+    parent: string;
+    candidate: string;
+    segment: string;
+    appliedFiles: number;
+  }) => void | Promise<void>,
+  pinnedWriteTest?: {
+    maxWriteBytes?: number;
+    failAfterTruncate?: boolean;
+    failAfterBytes?: number;
+  },
+  pinnedDeleteTest?: {
+    failQuarantineCleanup?: boolean;
+  },
 ): Promise<{ fileCount: number; warnings: string[] }> {
   const warnings: string[] = [];
-  let fileCount = 0;
+  if (signal?.aborted) {
+    warnings.push(
+      "Integration was refused because the batch was cancelled before any write.",
+    );
+    return { fileCount: 0, warnings };
+  }
+  const owner = tasks.find(
+    (task) => task.worktree?.integrationAuthority && task.worktree.integrationBaseline,
+  )?.worktree;
+  if (!owner?.integrationAuthority || !owner.integrationBaseline) {
+    warnings.push(
+      "Integration was refused because the pre-worker authoritative workspace baseline is unavailable.",
+    );
+    return { fileCount: 0, warnings };
+  }
 
-  const isProtectedControlPath = picomatch([...PROTECTED_CONTROL_PATHS], {
-    dot: true,
-    nocase: process.platform === "win32" || process.platform === "darwin",
-  });
+  const conflicts = (left: string, right: string): boolean =>
+    left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+  const plannedPaths = tasks.flatMap((task) => task.result.changedFiles);
 
-  for (const task of tasks) {
-    if (!task.worktree) continue;
-    let applied = 0;
-
-    for (const file of task.result.changedFiles) {
-      // Unreachable in normal flow: `changedFiles` is a subset of the paths
-      // `findScopeViolations` already judged, so a protected path here would
-      // have failed the task and excluded it from `tasks` before this ran.
-      // Kept anyway because this loop is the actual write into the operator's
-      // tree, and that write is worth being independently unable to touch
-      // `.git` or `.sol-luna` no matter how it was reached.
-      if (isProtectedControlPath(file)) {
+  return await withWorktreeMetadataAuthority(
+    owner.integrationAuthority.repoRoot,
+    async (assertLeaseHealthy) => {
+      if (signal?.aborted) {
         warnings.push(
-          `Refused to integrate ${file} from ${task.taskId}: ` +
-            `${PROTECTED_CONTROL_VIOLATION} is never copied into the workspace.`,
+          "Integration was refused because the batch was cancelled before any write.",
         );
-        emit({
-          type: "integration.blocked",
-          batchId,
-          taskId: task.taskId,
-          reason: "protected-control-path",
-        });
-        continue;
+        return { fileCount: 0, warnings };
       }
 
-      const source = path.join(task.worktree.path, ...file.split("/"));
-      const destination = path.join(workspace, ...file.split("/"));
+      assertLeaseHealthy();
+      await assertGitEvidenceAuthority(owner.integrationAuthority!);
+      const current = await snapshotTrustedWorkspaceEvidence(
+        owner.integrationAuthority!,
+        workspace,
+        WORKTREE_LINK_DIRS,
+      );
+      const drift = changedTrustedWorkspacePaths(owner.integrationBaseline!, current);
+      const conflictingDrift = drift.filter((changed) =>
+        plannedPaths.some((planned) => conflicts(changed, planned)),
+      );
+      if (conflictingDrift.length > 0) {
+        const detail =
+          `Integration was refused because the authoritative workspace changed after ` +
+          `parallel admission at: ${conflictingDrift.slice(0, 10).join(", ")}` +
+          (conflictingDrift.length > 10 ? ", ..." : "");
+        warnings.push(detail);
+        for (const task of tasks) {
+          if (
+            task.result.changedFiles.some((file) =>
+              conflictingDrift.some((changed) => conflicts(changed, file)),
+            )
+          ) {
+            emit({
+              type: "integration.blocked",
+              batchId,
+              taskId: task.taskId,
+              reason: "workspace-drift",
+            });
+          }
+        }
+        return { fileCount: 0, warnings };
+      }
 
-      try {
-        const resolvedDestination = defaultRealPathResolver(destination);
-        const destinationScopeViolations = findScopeViolations(
-          [resolvedDestination],
-          task.input.allowedFiles,
-          task.input.forbiddenFiles,
-          workspace,
-        );
-        if (destinationScopeViolations.length > 0) {
+      // Re-read every isolated worktree while integration authority is held and
+      // retain the exact per-path signatures that contributed to the accepted
+      // digest. The write boundary compares against these signatures again and
+      // writes the exact bytes from that final comparison instead of re-opening
+      // the source through fs.copyFile.
+      const acceptedSourceSignatures = new Map<string, Map<string, string>>();
+      for (const task of tasks) {
+        if (!task.worktree || !task.worktreeEvidenceDigest) {
           warnings.push(
-            `Refused to integrate ${file} from ${task.taskId}: the destination resolves ` +
-              `outside its authorised workspace scope (${destinationScopeViolations.join("; ")}).`,
+            `Integration was refused for ${task.taskId}: stable worktree evidence is unavailable.`,
           );
           emit({
             type: "integration.blocked",
             batchId,
             taskId: task.taskId,
-            reason: "scope-violation",
+            reason: "source-drift",
           });
-          continue;
+          return { fileCount: 0, warnings };
         }
-        const stat = await fs.lstat(source).catch(() => null);
-        if (!stat) {
-          // The worker deleted it; mirror that.
-          await fs.rm(resolvedDestination, { force: true });
-          applied += 1;
-          continue;
+        const fresh = await readWorktreeOutcome(task.worktree);
+        const summary = fresh.error
+          ? null
+          : await summarizeWorktreeEvidence(
+              fresh.changes,
+              task.worktree.workingDirectory ?? task.worktree.path,
+            );
+        if (!summary || summary.digest !== task.worktreeEvidenceDigest) {
+          warnings.push(
+            `Integration was refused for ${task.taskId}: its isolated worktree changed after evidence collection.`,
+          );
+          emit({
+            type: "integration.blocked",
+            batchId,
+            taskId: task.taskId,
+            reason: "source-drift",
+          });
+          return { fileCount: 0, warnings };
         }
-        if (stat.isDirectory()) continue;
-
-        await fs.mkdir(path.dirname(resolvedDestination), { recursive: true });
-        await fs.copyFile(source, resolvedDestination);
-        applied += 1;
-      } catch (error) {
-        warnings.push(
-          `Could not integrate ${file} from ${task.taskId}: ${(error as Error).message}`,
-        );
+        acceptedSourceSignatures.set(task.taskId, summary.pathSignatures);
       }
-    }
 
-    fileCount += applied;
-    if (applied < task.result.changedFiles.length) {
-      emit({
-        type: applied > 0 ? "integration.partial" : "integration.failed",
-        batchId,
-        taskId: task.taskId,
-        attemptedFiles: task.result.changedFiles.length,
-        appliedFiles: applied,
+      if (signal?.aborted) {
+        warnings.push(
+          "Integration was refused because the batch was cancelled before any write.",
+        );
+        return { fileCount: 0, warnings };
+      }
+
+      let fileCount = 0;
+      let stopIntegration = false;
+      const isProtectedControlPath = picomatch([...PROTECTED_CONTROL_PATHS], {
+        dot: true,
+        nocase: process.platform === "win32" || process.platform === "darwin",
       });
-    }
-    emit({
-      type: "integration.applied",
-      batchId,
-      taskId: task.taskId,
-      fileCount: applied,
-    });
-  }
+      const cancellationWarning = (
+        taskId: string,
+        file: string,
+        appliedFiles: number,
+      ): string =>
+        appliedFiles === 0
+          ? "Integration was refused because the batch was cancelled before any write."
+          : `Integration stopped after copying ${appliedFiles} file(s); cancellation was observed before writing ${file} from ${taskId}.`;
 
-  return { fileCount, warnings };
+      taskLoop: for (const task of tasks) {
+        if (!task.worktree) continue;
+        let applied = 0;
+        const sourceRoot = task.worktree.workingDirectory ?? task.worktree.path;
+        const canonicalSourceRoot = defaultRealPathResolver(sourceRoot);
+        const sourceSignatures = acceptedSourceSignatures.get(task.taskId);
+
+        for (const file of task.result.changedFiles) {
+          assertLeaseHealthy();
+          const appliedFiles = fileCount + applied;
+          if (signal?.aborted) {
+            warnings.push(cancellationWarning(task.taskId, file, appliedFiles));
+            stopIntegration = true;
+            break;
+          }
+          // Unreachable in normal flow: `changedFiles` is a subset of the paths
+          // `findScopeViolations` already judged. Keep an independent write gate
+          // anyway because this is the boundary that mutates operator-owned bytes.
+          if (isProtectedControlPath(file)) {
+            warnings.push(
+              `Refused to integrate ${file} from ${task.taskId}: ` +
+                `${PROTECTED_CONTROL_VIOLATION} is never copied into the workspace.`,
+            );
+            emit({
+              type: "integration.blocked",
+              batchId,
+              taskId: task.taskId,
+              reason: "protected-control-path",
+            });
+            continue;
+          }
+
+          const source = path.join(sourceRoot, ...file.split("/"));
+          const destination = path.join(workspace, ...file.split("/"));
+          let authoritativeMutation = false;
+          let mutationCounted = false;
+          let rollbackAuthoritativeMutation: (() => Promise<boolean>) | null = null;
+          const countAuthoritativeMutation = (): void => {
+            if (mutationCounted) return;
+            applied += 1;
+            mutationCounted = true;
+          };
+
+          try {
+            const expectedSourceSignature = sourceSignatures?.get(file);
+            if (!expectedSourceSignature) {
+              warnings.push(
+                `Refused to integrate ${file} from ${task.taskId}: accepted source evidence is unavailable at the write boundary.`,
+              );
+              emit({
+                type: "integration.blocked",
+                batchId,
+                taskId: task.taskId,
+                reason: "source-drift",
+              });
+              stopIntegration = true;
+              break;
+            }
+
+            // This state has already been proven equivalent to the admission
+            // baseline by the global drift check above. Capture its exact path
+            // identity/content now so a deterministic or external mutation in
+            // the validation-to-write window cannot be overwritten invisibly.
+            const validatedDestination = defaultRealPathResolver(destination);
+            const destinationScopeViolations = findScopeViolations(
+              [validatedDestination],
+              task.input.allowedFiles,
+              task.input.forbiddenFiles,
+              workspace,
+            );
+            if (destinationScopeViolations.length > 0) {
+              warnings.push(
+                `Refused to integrate ${file} from ${task.taskId}: the destination resolves ` +
+                  `outside its authorised workspace scope (${destinationScopeViolations.join("; ")}).`,
+              );
+              emit({
+                type: "integration.blocked",
+                batchId,
+                taskId: task.taskId,
+                reason: "scope-violation",
+              });
+              continue;
+            }
+            const expectedDestination =
+              await snapshotIntegrationPath(validatedDestination);
+
+            await beforeWrite?.({
+              batchId,
+              taskId: task.taskId,
+              file,
+              appliedFiles,
+            });
+            if (signal?.aborted) {
+              warnings.push(cancellationWarning(task.taskId, file, appliedFiles));
+              stopIntegration = true;
+              break;
+            }
+
+            const resolvedDestination = defaultRealPathResolver(destination);
+            const finalDestinationScopeViolations = findScopeViolations(
+              [resolvedDestination],
+              task.input.allowedFiles,
+              task.input.forbiddenFiles,
+              workspace,
+            );
+            const currentDestination = await snapshotIntegrationPath(resolvedDestination);
+            if (
+              finalDestinationScopeViolations.length > 0 ||
+              path.resolve(resolvedDestination) !== path.resolve(validatedDestination) ||
+              currentDestination.signature !== expectedDestination.signature
+            ) {
+              warnings.push(
+                `Refused to integrate ${file} from ${task.taskId}: the authoritative destination changed after integration validation.`,
+              );
+              emit({
+                type: "integration.blocked",
+                batchId,
+                taskId: task.taskId,
+                reason: "workspace-drift",
+              });
+              stopIntegration = true;
+              break;
+            }
+
+            const resolvedSource = defaultRealPathResolver(source);
+            const sourceRelative = path.relative(canonicalSourceRoot, resolvedSource);
+            const currentSource = await snapshotIntegrationPath(source);
+            if (
+              sourceRelative === ".." ||
+              sourceRelative.startsWith(`..${path.sep}`) ||
+              path.isAbsolute(sourceRelative) ||
+              currentSource.signature !== expectedSourceSignature
+            ) {
+              warnings.push(
+                `Refused to integrate ${file} from ${task.taskId}: its source changed after integration validation.`,
+              );
+              emit({
+                type: "integration.blocked",
+                batchId,
+                taskId: task.taskId,
+                reason: "source-drift",
+              });
+              stopIntegration = true;
+              break;
+            }
+            if (currentSource.kind !== "missing" && currentSource.kind !== "file") {
+              warnings.push(
+                `Refused to integrate ${file} from ${task.taskId}: source is not a stable regular file.`,
+              );
+              emit({
+                type: "integration.blocked",
+                batchId,
+                taskId: task.taskId,
+                reason: "source-drift",
+              });
+              stopIntegration = true;
+              break;
+            }
+
+            assertLeaseHealthy();
+            if (signal?.aborted) {
+              warnings.push(cancellationWarning(task.taskId, file, appliedFiles));
+              stopIntegration = true;
+              break;
+            }
+
+            if (currentSource.kind === "missing") {
+              // Deletion cannot safely use unlink(destination): even a final
+              // snapshot leaves a path race where an operator replacement can
+              // land before unlink resolves that name. Move the destination to
+              // a private quarantine name first, then prove the moved object is
+              // exactly the accepted destination before unlinking that object.
+              // A race therefore moves recoverable bytes instead of deleting
+              // them, and cancellation can still roll the namespace move back.
+              let quarantineRoot: string;
+              try {
+                quarantineRoot = await ensureIntegrationDeleteQuarantineRoot(
+                  owner.integrationAuthority!.repoRoot,
+                );
+              } catch (error) {
+                warnings.push(
+                  `Refused to integrate ${file} from ${task.taskId}: integration deletion quarantine is not trustworthy (${(error as Error).message}).`,
+                );
+                emit({
+                  type: "integration.blocked",
+                  batchId,
+                  taskId: task.taskId,
+                  reason: "workspace-drift",
+                });
+                stopIntegration = true;
+                break;
+              }
+              const quarantine = path.join(
+                quarantineRoot,
+                `${batchId}-${task.taskId}-${randomBytes(24).toString("hex")}`,
+              );
+              const finalDestination = defaultRealPathResolver(destination);
+              const finalSnapshot = await snapshotIntegrationPath(finalDestination);
+              const finalSourceSnapshot = await snapshotIntegrationPath(source);
+              if (
+                path.resolve(finalDestination) !== path.resolve(validatedDestination) ||
+                finalSnapshot.signature !== expectedDestination.signature ||
+                finalSourceSnapshot.kind !== "missing" ||
+                finalSourceSnapshot.signature !== expectedSourceSignature
+              ) {
+                const sourceDrift =
+                  finalSourceSnapshot.kind !== "missing" ||
+                  finalSourceSnapshot.signature !== expectedSourceSignature;
+                warnings.push(
+                  sourceDrift
+                    ? `Refused to integrate ${file} from ${task.taskId}: its deletion source changed at the write boundary.`
+                    : `Refused to integrate ${file} from ${task.taskId}: the authoritative destination changed at the write boundary.`,
+                );
+                emit({
+                  type: "integration.blocked",
+                  batchId,
+                  taskId: task.taskId,
+                  reason: sourceDrift ? "source-drift" : "workspace-drift",
+                });
+                stopIntegration = true;
+                break;
+              }
+
+              await beforeDelete?.({
+                batchId,
+                taskId: task.taskId,
+                file,
+                appliedFiles,
+                phase: "validated",
+              });
+              if (signal?.aborted) {
+                warnings.push(cancellationWarning(task.taskId, file, appliedFiles));
+                stopIntegration = true;
+                break;
+              }
+
+              try {
+                await fs.rename(finalDestination, quarantine);
+              } catch (error) {
+                warnings.push(
+                  `Refused to integrate ${file} from ${task.taskId}: the authoritative destination changed while entering the deletion boundary (${(error as Error).message}).`,
+                );
+                emit({
+                  type: "integration.blocked",
+                  batchId,
+                  taskId: task.taskId,
+                  reason: "workspace-drift",
+                });
+                stopIntegration = true;
+                break;
+              }
+              authoritativeMutation = true;
+              rollbackAuthoritativeMutation = async () => {
+                const rollbackSnapshot = await snapshotIntegrationPath(quarantine);
+                if (rollbackSnapshot.signature !== expectedDestination.signature)
+                  return false;
+                return restoreQuarantinedIntegrationPath(
+                  quarantine,
+                  destination,
+                  rollbackSnapshot,
+                );
+              };
+
+              await beforeDelete?.({
+                batchId,
+                taskId: task.taskId,
+                file,
+                appliedFiles,
+                phase: "moved",
+              });
+
+              const quarantined = await snapshotIntegrationPath(quarantine);
+              const boundarySource = await snapshotIntegrationPath(source);
+              const boundaryDestination = await snapshotIntegrationPath(destination);
+              const destinationDrifted =
+                quarantined.signature !== expectedDestination.signature ||
+                boundaryDestination.kind !== "missing";
+              const sourceDrifted =
+                boundarySource.kind !== "missing" ||
+                boundarySource.signature !== expectedSourceSignature;
+
+              if (destinationDrifted || sourceDrifted || signal?.aborted) {
+                const restored = await restoreQuarantinedIntegrationPath(
+                  quarantine,
+                  destination,
+                  quarantined,
+                );
+                if (!restored) {
+                  // The destination was already moved out of the authoritative
+                  // namespace. Preserve the quarantined bytes and count that
+                  // mutation so partial reporting can never claim zero writes.
+                  countAuthoritativeMutation();
+                } else {
+                  authoritativeMutation = false;
+                  rollbackAuthoritativeMutation = null;
+                }
+
+                if (signal?.aborted) {
+                  warnings.push(
+                    restored
+                      ? cancellationWarning(task.taskId, file, appliedFiles)
+                      : `Integration stopped after applying ${appliedFiles + 1} file(s); cancellation was observed after the deletion boundary for ${file} from ${task.taskId}, and rollback could not safely replace newer destination state.`,
+                  );
+                } else {
+                  warnings.push(
+                    `Refused to integrate ${file} from ${task.taskId}: ${
+                      sourceDrifted
+                        ? "its source changed at the deletion boundary"
+                        : "the authoritative destination changed at the deletion boundary"
+                    }.${
+                      restored
+                        ? " The raced destination state was restored."
+                        : " The raced bytes were preserved in orchestrator quarantine because newer destination state prevented safe rollback."
+                    }`,
+                  );
+                  emit({
+                    type: "integration.blocked",
+                    batchId,
+                    taskId: task.taskId,
+                    reason: sourceDrifted ? "source-drift" : "workspace-drift",
+                  });
+                }
+                stopIntegration = true;
+                break;
+              }
+
+              // The random quarantine name is the only name we unlink. It holds
+              // the exact object proven above, so a later operator replacement at
+              // the authoritative path is never the object this unlink targets.
+              const unlinkSource = await snapshotIntegrationPath(source);
+              const unlinkTarget = await snapshotIntegrationPath(quarantine);
+              if (
+                unlinkSource.kind !== "missing" ||
+                unlinkSource.signature !== expectedSourceSignature ||
+                unlinkTarget.signature !== expectedDestination.signature
+              ) {
+                const restored = await restoreQuarantinedIntegrationPath(
+                  quarantine,
+                  destination,
+                  unlinkTarget,
+                );
+                if (!restored) countAuthoritativeMutation();
+                else {
+                  authoritativeMutation = false;
+                  rollbackAuthoritativeMutation = null;
+                }
+                warnings.push(
+                  `Refused to integrate ${file} from ${task.taskId}: accepted deletion evidence changed at the unlink boundary.${
+                    restored
+                      ? " The authoritative destination was restored."
+                      : " The raced bytes were preserved in orchestrator quarantine because rollback could not safely replace newer destination state."
+                  }`,
+                );
+                emit({
+                  type: "integration.blocked",
+                  batchId,
+                  taskId: task.taskId,
+                  reason:
+                    unlinkSource.kind !== "missing" ||
+                    unlinkSource.signature !== expectedSourceSignature
+                      ? "source-drift"
+                      : "workspace-drift",
+                });
+                stopIntegration = true;
+                break;
+              }
+              await fs.unlink(quarantine);
+              await fs.rmdir(quarantineRoot).catch(() => undefined);
+              countAuthoritativeMutation();
+              rollbackAuthoritativeMutation = null;
+            } else {
+              try {
+                await assertConfinedDirectoryChain(
+                  workspace,
+                  path.dirname(resolvedDestination),
+                );
+              } catch (error) {
+                warnings.push(
+                  `Refused to integrate ${file} from ${task.taskId}: destination parent ancestry is not an existing confined directory (${(error as Error).message}).`,
+                );
+                emit({
+                  type: "integration.blocked",
+                  batchId,
+                  taskId: task.taskId,
+                  reason: "workspace-drift",
+                });
+                stopIntegration = true;
+                break;
+              }
+              const finalDestination = defaultRealPathResolver(destination);
+              const finalSnapshot = await snapshotIntegrationPath(finalDestination);
+              if (
+                path.resolve(finalDestination) !== path.resolve(validatedDestination) ||
+                finalSnapshot.signature !== expectedDestination.signature
+              ) {
+                warnings.push(
+                  `Refused to integrate ${file} from ${task.taskId}: the authoritative destination changed at the write boundary.`,
+                );
+                emit({
+                  type: "integration.blocked",
+                  batchId,
+                  taskId: task.taskId,
+                  reason: "workspace-drift",
+                });
+                stopIntegration = true;
+                break;
+              }
+              if (signal?.aborted) {
+                warnings.push(cancellationWarning(task.taskId, file, appliedFiles));
+                stopIntegration = true;
+                break;
+              }
+              if (expectedDestination.kind === "missing") {
+                try {
+                  const destinationParent = path.dirname(finalDestination);
+                  const destinationParentAuthority =
+                    await capturePinnedDirectoryAuthority(destinationParent, workspace);
+                  const result = await runPinnedDirectoryMutation(
+                    destinationParentAuthority,
+                    {
+                      op: "write-file",
+                      name: path.basename(finalDestination),
+                      bytesBase64: currentSource.bytes!.toString("base64"),
+                      mode: "exclusive",
+                      testMaxWriteBytes: pinnedWriteTest?.maxWriteBytes,
+                      testFailAfterBytes: pinnedWriteTest?.failAfterBytes,
+                    },
+                  );
+                  authoritativeMutation = result.mutated;
+                  const currentParentAuthority = await capturePinnedDirectoryAuthority(
+                    destinationParent,
+                    workspace,
+                  ).catch(() => null);
+                  const parentStillAuthoritative =
+                    currentParentAuthority?.identity ===
+                      destinationParentAuthority.identity &&
+                    path.resolve(currentParentAuthority.canonical) ===
+                      path.resolve(destinationParentAuthority.canonical);
+                  if (
+                    !parentStillAuthoritative ||
+                    result.snapshot?.kind !== "file" ||
+                    result.snapshot.signature !==
+                      integrationFileSignature(currentSource.bytes!)
+                  ) {
+                    countAuthoritativeMutation();
+                    warnings.push(
+                      `Integration of ${file} from ${task.taskId} did not remain authoritative at the pinned destination write boundary.`,
+                    );
+                    emit({
+                      type: "integration.blocked",
+                      batchId,
+                      taskId: task.taskId,
+                      reason: "workspace-drift",
+                    });
+                    stopIntegration = true;
+                    break;
+                  }
+                  countAuthoritativeMutation();
+                } catch (error) {
+                  if (error instanceof PinnedDirectoryMutationError && error.mutated) {
+                    authoritativeMutation = true;
+                  }
+                  throw error;
+                }
+              } else if (expectedDestination.kind === "file") {
+                try {
+                  const destinationParent = path.dirname(finalDestination);
+                  const destinationParentAuthority =
+                    await capturePinnedDirectoryAuthority(destinationParent, workspace);
+                  const result = await runPinnedDirectoryMutation(
+                    destinationParentAuthority,
+                    {
+                      op: "write-file",
+                      name: path.basename(finalDestination),
+                      bytesBase64: currentSource.bytes!.toString("base64"),
+                      mode: "replace",
+                      expectedIdentity: expectedDestination.identity ?? undefined,
+                      expectedSignature: expectedDestination.signature,
+                      testMaxWriteBytes: pinnedWriteTest?.maxWriteBytes,
+                      testFailAfterTruncate: pinnedWriteTest?.failAfterTruncate,
+                      testFailAfterBytes: pinnedWriteTest?.failAfterBytes,
+                    },
+                  );
+                  authoritativeMutation = result.mutated;
+                  const currentParentAuthority = await capturePinnedDirectoryAuthority(
+                    destinationParent,
+                    workspace,
+                  ).catch(() => null);
+                  const parentStillAuthoritative =
+                    currentParentAuthority?.identity ===
+                      destinationParentAuthority.identity &&
+                    path.resolve(currentParentAuthority.canonical) ===
+                      path.resolve(destinationParentAuthority.canonical);
+                  if (
+                    !parentStillAuthoritative ||
+                    result.snapshot?.kind !== "file" ||
+                    result.snapshot.signature !==
+                      integrationFileSignature(currentSource.bytes!)
+                  ) {
+                    countAuthoritativeMutation();
+                    warnings.push(
+                      `Integration of ${file} from ${task.taskId} did not remain authoritative at the pinned destination write boundary.`,
+                    );
+                    emit({
+                      type: "integration.blocked",
+                      batchId,
+                      taskId: task.taskId,
+                      reason: "workspace-drift",
+                    });
+                    stopIntegration = true;
+                    break;
+                  }
+                  countAuthoritativeMutation();
+                } catch (error) {
+                  if (error instanceof PinnedDirectoryMutationError && error.mutated) {
+                    authoritativeMutation = true;
+                  }
+                  throw error;
+                }
+              } else {
+                warnings.push(
+                  `Refused to integrate ${file} from ${task.taskId}: the authoritative destination is not a stable regular file.`,
+                );
+                emit({
+                  type: "integration.blocked",
+                  batchId,
+                  taskId: task.taskId,
+                  reason: "workspace-drift",
+                });
+                stopIntegration = true;
+                break;
+              }
+            }
+          } catch (error) {
+            let restored = false;
+            if (authoritativeMutation && rollbackAuthoritativeMutation) {
+              try {
+                restored = await rollbackAuthoritativeMutation();
+              } catch {
+                restored = false;
+              }
+            }
+            if (authoritativeMutation && !restored) countAuthoritativeMutation();
+            if (authoritativeMutation) {
+              warnings.push(
+                `Could not integrate ${file} from ${task.taskId} after an authoritative mutation: ${(error as Error).message}. ` +
+                  (restored
+                    ? "The mutation was rolled back safely; integration stopped."
+                    : "The mutation is counted as applied because rollback could not be proven safe; integration stopped."),
+              );
+              stopIntegration = true;
+              break;
+            }
+            warnings.push(
+              `Could not integrate ${file} from ${task.taskId}: ${(error as Error).message}`,
+            );
+          }
+        }
+
+        fileCount += applied;
+        if (applied < task.result.changedFiles.length || stopIntegration) {
+          emit({
+            type: applied > 0 ? "integration.partial" : "integration.failed",
+            batchId,
+            taskId: task.taskId,
+            attemptedFiles: task.result.changedFiles.length,
+            appliedFiles: applied,
+          });
+        }
+        emit({
+          type: "integration.applied",
+          batchId,
+          taskId: task.taskId,
+          fileCount: applied,
+        });
+        if (stopIntegration) break taskLoop;
+      }
+
+      return { fileCount, warnings };
+    },
+    // Cancellation is checked explicitly at every pre-write boundary above.
+    // Do not wire it into the metadata lease itself: an AbortError after an
+    // earlier file applied would erase the truthful partial-write count.
+    undefined,
+  );
 }
 
 function isCleanTask(task: RunningTask): boolean {

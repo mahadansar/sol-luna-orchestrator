@@ -10,6 +10,7 @@ import {
   keepWorktreesInvalid,
   MAX_BATCH_SIZE,
   parseAllowedModels,
+  parseAllowedWorkspaceRoots,
   parseAllowedEfforts,
   parseExecutorOrder,
   parseKeepWorktrees,
@@ -24,6 +25,7 @@ import {
   type VerifyMode,
   type WorkerSandboxMode,
 } from "../config.js";
+import path from "node:path";
 import {
   buildComputePolicy,
   executorOrderDeclaredButUnusable,
@@ -206,6 +208,9 @@ export function resolveRegisteredServerConfig(
       configuredEnv(configText, "SOL_LUNA_EXECUTOR_ORDER"),
     ),
   };
+  const allowedRoots = parseAllowedWorkspaceRoots(
+    configuredEnv(configText, "SOL_LUNA_ALLOWED_ROOTS"),
+  );
 
   return {
     workerModel,
@@ -218,7 +223,7 @@ export function resolveRegisteredServerConfig(
     workerNetworkAccess: configuredEnv(configText, "LUNA_NETWORK_ACCESS") === "1",
     keepWorktrees,
     allowDirtyWorktreeBase: configuredEnv(configText, "SOL_LUNA_ALLOW_DIRTY") === "1",
-    allowedRoots: configuredEnv(configText, "SOL_LUNA_ALLOWED_ROOTS"),
+    allowedRoots: allowedRoots.length > 0 ? allowedRoots.join(path.delimiter) : null,
     recursionDisableTarget:
       configuredEnv(configText, "SOL_LUNA_SERVER_NAME") ??
       DEFAULT_ORCHESTRATOR_SERVER_NAME,

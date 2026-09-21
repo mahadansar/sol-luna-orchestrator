@@ -35,6 +35,7 @@ import type { SeamCandidate } from "./seam-plan.js";
 import type { OrchestratorEvent } from "./events.js";
 import { recordEvent, refuseSingleDelegation } from "./server.js";
 import { runBatch } from "./batch.js";
+import { runGit } from "./git.js";
 import {
   delegateTaskInputSchema,
   type DelegateTaskOutput,
@@ -392,105 +393,125 @@ test("adaptive routing - telemetry consistency in server and batch execution", a
   const emit = (event: OrchestratorEvent): void => {
     events.push(event);
   };
-
-  // 1. Single delegation refuseSingleDelegation emits shape and selection fields
-  refuseSingleDelegation(
-    {
-      seams: ["s1"],
-      seamSize: "substantial",
-      sharedState: "none",
-      coreOverlap: "disjoint",
-      integration: "mechanical",
-      verification: "per-seam",
-    },
-    "batch-single-1",
-    emit,
-    ORDERED_POLICY,
+  const repo = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-routing-telemetry-")),
   );
 
-  const singleDeclared = events.find(
-    (e) => e.type === "routing.declared" && e.batchId === "batch-single-1",
-  );
-  assert.ok(singleDeclared && singleDeclared.type === "routing.declared");
-  assert.equal(singleDeclared.declaration, "attached");
-  assert.equal(singleDeclared.route, "delegation-plausible");
-  assert.equal(singleDeclared.recommendedMechanism, "delegate_task");
-  assert.equal(singleDeclared.recommendedWorkerCount, 1);
-  assert.equal(singleDeclared.selectedModel, "gpt-5.6-luna");
-  assert.equal(singleDeclared.selectedEffort, "high");
-  assert.equal(singleDeclared.selectionReason, "conservative-baseline");
+  const git = async (args: string[]): Promise<void> => {
+    const result = await runGit(args, repo);
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+  };
 
-  // 2. Batch delegation emits shape and selection fields
-  events.length = 0;
-  await runBatch(
-    [
-      delegateTaskInputSchema.parse({
-        objective: "Task 1: Implement the first independent seam thoroughly.",
-        effort: "medium",
-        effortReason: "Standard task complexity requiring moderate reasoning.",
-        acceptanceCriteria: ["AC1 passed"],
-        verificationCommands: [],
-        allowedFiles: ["src/a.ts"],
-      }),
-      delegateTaskInputSchema.parse({
-        objective: "Task 2: Implement the second independent seam thoroughly.",
-        effort: "medium",
-        effortReason: "Standard task complexity requiring moderate reasoning.",
-        acceptanceCriteria: ["AC2 passed"],
-        verificationCommands: [],
-        allowedFiles: ["src/b.ts"],
-      }),
-    ],
-    {
-      mode: "parallel",
-      workingDirectory: process.cwd(),
-      routingPreflight: {
-        seams: ["s1", "s2"],
+  await git(["init"]);
+  await git(["config", "user.email", "test@example.invalid"]);
+  await git(["config", "user.name", "Orchestrator Test"]);
+  await git(["config", "commit.gpgsign", "false"]);
+  fs.writeFileSync(path.join(repo, "README.md"), "# routing fixture\n", "utf8");
+  await git(["add", "."]);
+  await git(["commit", "-m", "initial"]);
+
+  try {
+    // 1. Single delegation refuseSingleDelegation emits shape and selection fields
+    refuseSingleDelegation(
+      {
+        seams: ["s1"],
         seamSize: "substantial",
         sharedState: "none",
         coreOverlap: "disjoint",
         integration: "mechanical",
         verification: "per-seam",
       },
-      computePolicy: ORDERED_POLICY,
-      eventEmitter: emit,
-      executor: async (taskInput) => ({
-        changeIntent: "required",
-        verdict: "PASS",
-        workerClaimedStatus: "PASS",
-        workerClaimedFailureCauses: [],
-        trustworthy: true,
-        workerThreadId: "thread-x",
-        continuationReference: null,
-        model: "gpt-5.6-luna",
-        effort: taskInput.effort,
-        effortReason: "test",
-        attempt: 1,
-        summary: "did the work",
-        notes: "",
-        followUps: [],
-        filesChanged: [],
-        verification: [],
-        verificationMode: "allowlist",
-        scopeViolations: [],
-        discrepancies: [],
-        reviewChecklist: [],
-        escalationAdvice: null,
-        durationSeconds: 1,
-        usage: null,
-        errors: [],
-      }),
-    },
-  );
+      "batch-single-1",
+      emit,
+      ORDERED_POLICY,
+    );
 
-  const batchDeclared = events.find((e) => e.type === "routing.declared");
-  assert.ok(batchDeclared && batchDeclared.type === "routing.declared");
-  assert.equal(batchDeclared.declaration, "attached");
-  assert.equal(batchDeclared.recommendedMechanism, "delegate_tasks_parallel");
-  assert.equal(batchDeclared.recommendedWorkerCount, 2);
-  assert.equal(batchDeclared.selectedModel, "gpt-5.6-luna");
-  assert.equal(batchDeclared.selectedEffort, "high");
-  assert.equal(batchDeclared.selectionReason, "conservative-baseline");
+    const singleDeclared = events.find(
+      (e) => e.type === "routing.declared" && e.batchId === "batch-single-1",
+    );
+    assert.ok(singleDeclared && singleDeclared.type === "routing.declared");
+    assert.equal(singleDeclared.declaration, "attached");
+    assert.equal(singleDeclared.route, "delegation-plausible");
+    assert.equal(singleDeclared.recommendedMechanism, "delegate_task");
+    assert.equal(singleDeclared.recommendedWorkerCount, 1);
+    assert.equal(singleDeclared.selectedModel, "gpt-5.6-luna");
+    assert.equal(singleDeclared.selectedEffort, "high");
+    assert.equal(singleDeclared.selectionReason, "conservative-baseline");
+
+    // 2. Batch delegation emits shape and selection fields
+    events.length = 0;
+    await runBatch(
+      [
+        delegateTaskInputSchema.parse({
+          objective: "Task 1: Implement the first independent seam thoroughly.",
+          effort: "medium",
+          effortReason: "Standard task complexity requiring moderate reasoning.",
+          acceptanceCriteria: ["AC1 passed"],
+          verificationCommands: [],
+          allowedFiles: ["src/a.ts"],
+        }),
+        delegateTaskInputSchema.parse({
+          objective: "Task 2: Implement the second independent seam thoroughly.",
+          effort: "medium",
+          effortReason: "Standard task complexity requiring moderate reasoning.",
+          acceptanceCriteria: ["AC2 passed"],
+          verificationCommands: [],
+          allowedFiles: ["src/b.ts"],
+        }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        routingPreflight: {
+          seams: ["s1", "s2"],
+          seamSize: "substantial",
+          sharedState: "none",
+          coreOverlap: "disjoint",
+          integration: "mechanical",
+          verification: "per-seam",
+        },
+        computePolicy: ORDERED_POLICY,
+        eventEmitter: emit,
+        executor: async (taskInput) => ({
+          changeIntent: "required",
+          verdict: "PASS",
+          workerClaimedStatus: "PASS",
+          workerClaimedFailureCauses: [],
+          trustworthy: true,
+          workerThreadId: "thread-x",
+          continuationReference: null,
+          model: "gpt-5.6-luna",
+          effort: taskInput.effort,
+          effortReason: "test",
+          attempt: 1,
+          summary: "did the work",
+          notes: "",
+          followUps: [],
+          filesChanged: [],
+          verification: [],
+          verificationMode: "allowlist",
+          scopeViolations: [],
+          discrepancies: [],
+          reviewChecklist: [],
+          escalationAdvice: null,
+          durationSeconds: 1,
+          usage: null,
+          errors: [],
+        }),
+      },
+    );
+
+    const batchDeclared = events.find((e) => e.type === "routing.declared");
+    assert.ok(batchDeclared && batchDeclared.type === "routing.declared");
+    assert.equal(batchDeclared.declaration, "attached");
+    assert.equal(batchDeclared.recommendedMechanism, "delegate_tasks_parallel");
+    assert.equal(batchDeclared.recommendedWorkerCount, 2);
+    assert.equal(batchDeclared.selectedModel, "gpt-5.6-luna");
+    assert.equal(batchDeclared.selectedEffort, "high");
+    assert.equal(batchDeclared.selectionReason, "conservative-baseline");
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
 });
 
 test("adaptive routing - no artificial seam or model hierarchy inferred", () => {

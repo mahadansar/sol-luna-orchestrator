@@ -31,18 +31,24 @@ import {
   describeEventsSource,
   resolveEventsPath,
 } from "./cli/events-path.js";
-import { serverEnvTable } from "./cli/settings.js";
+import { serverEnvTable, serverTable } from "./cli/settings.js";
 import { resolveRegisteredServerConfig } from "./cli/server-config.js";
 import { fromTomlValue, readKey, toTomlValue, upsertKey } from "./cli/toml-edit.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.join(HERE, "cli.js");
+const TEST_CONFIG_ROOT = path.join(
+  path.parse(process.cwd()).root,
+  "home",
+  "you",
+  ".codex",
+);
 
 const INPUT = {
   command: "/usr/bin/node",
   serverEntry: "/opt/sol-luna/dist/server.js",
-  logPath: "/home/you/.codex/sol-luna-orchestrator.log",
-  eventsPath: "/home/you/.codex/sol-luna-orchestrator.events.jsonl",
+  logPath: path.join(TEST_CONFIG_ROOT, "sol-luna-orchestrator.log"),
+  eventsPath: path.join(TEST_CONFIG_ROOT, "sol-luna-orchestrator.events.jsonl"),
   forceLogPath: false,
   forceEventsPath: false,
 };
@@ -94,9 +100,26 @@ test("registered configuration preserves explicit empty strings without converti
   assert.equal(resolved.maxParallel, 1);
   assert.equal(resolved.recursionDisableTarget, "");
   assert.equal(resolved.verificationMode, "allowlist");
-  assert.equal(resolved.allowedRoots, "");
+  assert.equal(resolved.allowedRoots, null);
   assert.deepEqual(resolved.computePolicy.allowedModels, [""]);
   assert.equal(resolved.computePolicy.maxConcurrency, 1);
+});
+
+test("registered allowed roots use the runtime path-list parser", () => {
+  let config = REALISTIC;
+  config = upsertKey(
+    config,
+    serverEnvTable(),
+    "SOL_LUNA_ALLOWED_ROOTS",
+    `  root-one  ${path.delimiter} ${path.delimiter} root-two `,
+  );
+  assert.equal(
+    resolveRegisteredServerConfig(config).allowedRoots,
+    `root-one${path.delimiter}root-two`,
+  );
+
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_ALLOWED_ROOTS", path.delimiter);
+  assert.equal(resolveRegisteredServerConfig(config).allowedRoots, null);
 });
 
 test("registered configuration reports runtime corrections and effective operational settings", () => {
@@ -181,17 +204,18 @@ test("the default event path sits under the Codex home, not the project", () => 
 
 test("a process override beats the configured value", () => {
   const configured = applyInitConfig("", INPUT);
+  const override = path.join(path.parse(process.cwd()).root, "tmp", "override.jsonl");
   const resolved = resolveEventsPath(configured, {
-    SOL_LUNA_EVENTS: "/tmp/override.jsonl",
+    SOL_LUNA_EVENTS: override,
   });
-  assert.equal(resolved.path, "/tmp/override.jsonl");
+  assert.equal(resolved.path, path.normalize(override));
   assert.equal(resolved.source, "override");
 });
 
 test("without a process override the configured value is used", () => {
   const configured = applyInitConfig("", INPUT);
   const resolved = resolveEventsPath(configured, {});
-  assert.equal(resolved.path, INPUT.eventsPath);
+  assert.equal(resolved.path, path.normalize(INPUT.eventsPath));
   assert.equal(resolved.source, "configured");
 });
 
@@ -201,11 +225,38 @@ test("an unconfigured install resolves to nothing rather than a guess", () => {
   assert.equal(resolved.source, "unconfigured");
 });
 
-test("an empty environment variable counts as unset", () => {
+test("an explicit whitespace event override is rejected instead of changing runtime identity", () => {
   const resolved = resolveEventsPath(V060, { SOL_LUNA_EVENTS: "   " });
   assert.equal(resolved.path, null);
-  assert.equal(resolved.source, "unconfigured");
+  assert.equal(resolved.source, "override");
+  assert.match(resolved.error ?? "", /absolute path/i);
 });
+
+test("a relative configured event path is rejected rather than resolved against CLI cwd", () => {
+  const configured = applyInitConfig("", {
+    ...INPUT,
+    eventsPath: "relative/events.jsonl",
+  });
+  const resolved = resolveEventsPath(configured, {});
+  assert.equal(resolved.path, null);
+  assert.equal(resolved.source, "configured");
+  assert.match(resolved.error ?? "", /absolute path/i);
+});
+
+test(
+  "a Windows root-relative event path is rejected because its drive depends on process cwd",
+  { skip: process.platform !== "win32" },
+  () => {
+    const configured = applyInitConfig("", {
+      ...INPUT,
+      eventsPath: "\\telemetry\\events.jsonl",
+    });
+    const resolved = resolveEventsPath(configured, {});
+    assert.equal(resolved.path, null);
+    assert.equal(resolved.source, "configured");
+    assert.match(resolved.error ?? "", /absolute path/i);
+  },
+);
 
 test("each source is described for humans", () => {
   assert.match(describeEventsSource("override"), /override/i);
@@ -247,6 +298,16 @@ test("a fresh init applied twice is byte-identical", () => {
   const once = applyInitConfig(REALISTIC, INPUT);
   const twice = applyInitConfig(once, INPUT);
   assert.equal(twice, once);
+});
+
+test("plain init repairs an explicitly disabled registration and stays idempotent", () => {
+  const configured = applyInitConfig(REALISTIC, INPUT);
+  const disabled = upsertKey(configured, serverTable(), "enabled", false);
+  assert.equal(readKey(disabled, serverTable(), "enabled"), "false");
+
+  const repaired = applyInitConfig(disabled, INPUT);
+  assert.equal(readKey(repaired, serverTable(), "enabled"), "true");
+  assert.equal(applyInitConfig(repaired, INPUT), repaired);
 });
 
 // --- Codex discovery hint lifecycle ----------------------------------------
@@ -510,19 +571,29 @@ test("a Windows path round-trips through the config", () => {
   const after = applyInitConfig("", { ...INPUT, eventsPath: windows });
   assert.match(after, /SOL_LUNA_EVENTS = "C:\\\\Users\\\\me/, "must be escaped in TOML");
   assert.equal(eventsOf(after), windows, "and must decode back to the original");
-  assert.equal(resolveEventsPath(after, {}).path, windows);
+  const resolved = resolveEventsPath(after, {});
+  if (process.platform === "win32") assert.equal(resolved.path, windows);
+  else assert.match(resolved.error ?? "", /absolute path/i);
 });
 
 test("a path containing spaces survives", () => {
-  const spaced = "/home/my user/Application Data/events.jsonl";
+  const spaced = path.join(
+    path.parse(process.cwd()).root,
+    "home",
+    "my user",
+    "Application Data",
+    "events.jsonl",
+  );
   const after = applyInitConfig("", { ...INPUT, eventsPath: spaced });
-  assert.equal(resolveEventsPath(after, {}).path, spaced);
+  assert.equal(resolveEventsPath(after, {}).path, path.normalize(spaced));
 });
 
 test("a TOML literal string is read without escape decoding", () => {
   // Single quotes are the recommended way to write a Windows path by hand.
   const text = `[mcp_servers.sol-luna-orchestrator.env]\nSOL_LUNA_EVENTS = 'D:\\raw\\events.jsonl'\n`;
-  assert.equal(resolveEventsPath(text, {}).path, "D:\\raw\\events.jsonl");
+  const resolved = resolveEventsPath(text, {});
+  if (process.platform === "win32") assert.equal(resolved.path, "D:\\raw\\events.jsonl");
+  else assert.match(resolved.error ?? "", /absolute path/i);
 });
 
 test("the value written is exactly what toTomlValue produces", () => {
@@ -602,6 +673,18 @@ test("a configured but not yet created file is empty activity, not an error", as
   assert.equal(result.code, 0);
   const snapshot = JSON.parse(result.stdout) as { batchId: string | null };
   assert.equal(snapshot.batchId, null);
+});
+
+test("activity refuses a configured directory instead of reporting empty history", async () => {
+  const { home } = configuredHome();
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-events-dir-"));
+  const result = await runCli(["activity", "--json"], {
+    CODEX_HOME: home,
+    SOL_LUNA_EVENTS: directory,
+  });
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /not a regular file/i);
+  assert.equal(result.stdout.trim(), "");
 });
 
 test("activity reads real events from the configured path", async () => {
@@ -699,11 +782,65 @@ test("status reports the configured path rather than this shell's environment", 
   );
 });
 
+test("status reports an invalid registered diagnostic log without a shell override masking it", async () => {
+  const { home } = configuredHome();
+  const configPath = path.join(home, "config.toml");
+  let config = fs.readFileSync(configPath, "utf8");
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_LOG", "relative.log");
+  fs.writeFileSync(configPath, config, "utf8");
+  const shellLog = path.join(path.parse(process.cwd()).root, "tmp", "shell-only.log");
+
+  const human = await runCli(["status"], { CODEX_HOME: home, SOL_LUNA_LOG: shellLog });
+  assert.equal(human.code, 0);
+  assert.match(human.stdout, /Diagnostic log:\s+invalid/i);
+  assert.match(human.stdout, /SOL_LUNA_LOG must be a non-empty absolute path/);
+  assert.doesNotMatch(
+    human.stdout,
+    new RegExp(shellLog.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+  );
+
+  const json = await runCli(["status", "--json"], {
+    CODEX_HOME: home,
+    SOL_LUNA_LOG: shellLog,
+  });
+  assert.equal(json.code, 0);
+  const status = JSON.parse(json.stdout) as {
+    diagnosticLog: { path: string | null; source: string; error: string | null };
+  };
+  assert.equal(status.diagnosticLog.path, null);
+  assert.equal(status.diagnosticLog.source, "configured");
+  assert.match(status.diagnosticLog.error ?? "", /non-empty absolute path/);
+});
+
+test("status reports a valid custom registered diagnostic log in human and JSON output", async () => {
+  const { home } = configuredHome();
+  const configPath = path.join(home, "config.toml");
+  const customLog = path.join(home, "custom-diagnostic.log");
+  let config = fs.readFileSync(configPath, "utf8");
+  config = upsertKey(config, serverEnvTable(), "SOL_LUNA_LOG", customLog);
+  fs.writeFileSync(configPath, config, "utf8");
+
+  const human = await runCli(["status"], { CODEX_HOME: home });
+  assert.equal(human.code, 0);
+  assert.ok(human.stdout.includes(customLog));
+  assert.match(human.stdout, /Diagnostic log:.*registered config/);
+
+  const json = await runCli(["status", "--json"], { CODEX_HOME: home });
+  assert.equal(json.code, 0);
+  const status = JSON.parse(json.stdout) as {
+    diagnosticLog: { path: string | null; source: string; error: string | null };
+  };
+  assert.equal(status.diagnosticLog.path, path.normalize(customLog));
+  assert.equal(status.diagnosticLog.source, "configured");
+  assert.equal(status.diagnosticLog.error, null);
+});
+
 test("status marks an override as an override", async () => {
   const { home } = configuredHome();
+  const override = path.join(path.parse(process.cwd()).root, "tmp", "from-env.jsonl");
   const result = await runCli(["status"], {
     CODEX_HOME: home,
-    SOL_LUNA_EVENTS: "/tmp/from-env.jsonl",
+    SOL_LUNA_EVENTS: override,
   });
   assert.match(result.stdout, /from-env\.jsonl/);
   assert.match(result.stdout, /override/i);
@@ -755,6 +892,7 @@ test("status --json exposes registration identity, effective policy, and correct
     registration: {
       command: string | null;
       args: string | null;
+      enabled: boolean | null;
       matchesCurrentInstall: boolean;
     };
     runtime: {
@@ -772,6 +910,7 @@ test("status --json exposes registration identity, effective policy, and correct
   assert.ok(status.currentInstall.serverEntry.endsWith("server.js"));
   assert.ok(status.registration.command);
   assert.ok(status.registration.args);
+  assert.equal(status.registration.enabled, true);
   assert.equal(status.runtime.maxConcurrency, 8);
   assert.equal(status.runtime.maxWorkersPerBatch, 5);
   assert.equal(status.runtime.workerTimeoutSeconds, 45);
@@ -784,6 +923,30 @@ test("status --json exposes registration identity, effective policy, and correct
       (diagnostic) => diagnostic.key === "SOL_LUNA_MAX_PARALLEL",
     ),
   );
+});
+
+test("status exposes an explicitly disabled registration in human and JSON output", async () => {
+  const { home } = configuredHome();
+  const configPath = path.join(home, "config.toml");
+  const disabled = upsertKey(
+    fs.readFileSync(configPath, "utf8"),
+    serverTable(),
+    "enabled",
+    false,
+  );
+  fs.writeFileSync(configPath, disabled, "utf8");
+
+  const human = await runCli(["status"], { CODEX_HOME: home });
+  assert.equal(human.code, 0);
+  assert.match(human.stdout, /Registered enabled:\s+no\s+\(run init to reconcile\)/);
+
+  const json = await runCli(["status", "--json"], { CODEX_HOME: home });
+  assert.equal(json.code, 0);
+  const status = JSON.parse(json.stdout) as {
+    registration: { enabled: boolean | null; matchesCurrentInstall: boolean };
+  };
+  assert.equal(status.registration.enabled, false);
+  assert.equal(status.registration.matchesCurrentInstall, false);
 });
 
 test("status says how to fix an unconfigured install", async () => {
@@ -803,6 +966,21 @@ test("doctor reports activity configuration, and agrees with init", async () => 
   assert.ok(check, "doctor must check the key init writes");
   assert.equal(check.status, "ok");
   assert.ok(check.detail?.includes(events));
+});
+
+test("doctor diagnoses the registered activity path instead of a shell override", async () => {
+  const { home, events } = configuredHome();
+  const override = path.join(path.parse(process.cwd()).root, "tmp", "doctor-shell.jsonl");
+  const result = await runCli(["doctor", "--json"], {
+    CODEX_HOME: home,
+    SOL_LUNA_EVENTS: override,
+  });
+  const report = JSON.parse(result.stdout) as {
+    checks: Array<{ name: string; detail?: string }>;
+  };
+  const check = report.checks.find((entry) => entry.name === "Activity log configured");
+  assert.ok(check?.detail?.includes(events));
+  assert.ok(!check?.detail?.includes(override));
 });
 
 test("doctor reports registered policy and verifies the recursion disable target", async () => {

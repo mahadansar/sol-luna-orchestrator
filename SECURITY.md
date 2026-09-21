@@ -230,20 +230,65 @@ the first generation, the acquirer revalidates the live same-owner reservation
 and its owner marker; stale publishers fail with owner-specific rollback and
 cannot remove a replacement artifact or reservation.
 
-`SOL_LUNA_WORKTREE_LINK` (default `node_modules`) links directories from your
-repository into each worktree — a junction on Windows, a directory symlink
-elsewhere. Anything linked is **shared, not copied**: a worker writing through
-that link writes into your real directory. Link entries are normalized as
-repository-relative paths before setup and cleanup; absolute, drive-qualified,
-traversal, and dot-segment entries are rejected so a configured link cannot
-escape either workspace root. Evidence filtering matches the exact normalized
-link path, including nested links, instead of hiding sibling worker edits.
+`SOL_LUNA_WORKTREE_LINK` keeps its historical name for compatibility, but
+production parallel worktrees no longer create writable links back into the
+operator workspace. The configured directories (default `node_modules`) are
+copied into a **private per-worktree snapshot** before delegated execution. A
+worker may mutate that copy, but cannot thereby alter the authoritative
+dependency tree or inject code that a later parent-side verification command
+will execute. Snapshot entries are normalized as repository-relative paths;
+absolute, drive-qualified, traversal, and dot-segment entries are rejected.
+Source and destination ancestry are canonically confined, and a symlink/junction
+inside a selected dependency tree must resolve inside that tree or the snapshot
+is refused without traversing the external target. Only directories actually
+provisioned by setup are excluded from ordinary change evidence.
 
-Worktrees are created, removed and pruned one at a time, including across MCP
-server processes sharing a repository. `git worktree add` walks metadata shared
-by the whole repository, so concurrent creation could corrupt another worker's
-registration. Serializing those operations does not affect the workers
-themselves, which still run concurrently once their workspaces exist.
+Before verification, the orchestrator fingerprints each private dependency
+snapshot. If delegated execution changes those bytes, authoritative verification
+is refused rather than executing worker-authored dependency code. The main
+workspace copy is never the worker's dependency write target.
+
+Final worktree deletion does not delegate recursive filesystem removal to Git.
+On Windows, `git worktree remove --force` can traverse an arbitrary junction left
+inside the worktree and delete its external target. Cleanup therefore removes the
+worktree tree with Node filesystem semantics, which unlink directory links rather
+than traversing them, and then asks Git only to prune the now-stale administrative
+record. The same safe removal path is used by stale-worktree reclamation. Retained
+continuation evidence also carries the original authoritative workspace through
+reconciliation, so a nested requested workspace validates dependency links
+against the same source root used when those links were created.
+
+Worktrees are created, removed, integrated and pruned under one authority keyed
+by the repository's canonical **common Git directory**, including across MCP
+server processes and linked-worktree roots. `git worktree add` and integration
+both touch state shared by the whole repository, so per-working-directory locks
+are insufficient. Serializing metadata/integration operations does not affect
+the workers themselves, which still run concurrently once their workspaces
+exist.
+
+Evidence-bearing top-level operations also hold a longer-lived repository
+operation authority keyed by that same canonical common-Git identity. Direct
+delegation, sequential/shared-workspace execution, and shared continuations are
+therefore serialized against the complete parallel worktree/continuation-lease
+lifecycle that can mutate parent-owned `.sol-luna` control state. This prevents a
+concurrent parent lease refresh/release from being misattributed as a worker
+change without hiding `.sol-luna` from independent evidence. The operation lease
+is distinct from the short worktree-metadata lease and is always acquired first,
+so worktree add/remove/integration can safely take the metadata authority beneath
+it. Asynchronous continuation-expiry lease release reacquires the repository
+operation authority before touching parent control state. Before terminal
+success, the owner is revalidated against the persistent operation lease; lost
+or replaced ownership fails closed even if periodic renewal had not yet noticed
+it. Repositories with different canonical common-Git identities do not share
+this operation authority. Repository-operation and metadata lease state under
+the common Git directory is also pinned as an in-memory filesystem identity:
+the orchestrator revalidates the lease namespace, continuation-lease directory,
+and exact lease artifact before refresh/release, refuses coexisting live owners,
+and fails closed when live generations disappear or unexpected bytes prevent an
+exact-owner release. Replaying an old plaintext owner token into a replacement
+artifact therefore cannot restore stale authority, and symlink/junction or
+post-acquisition ancestor redirection of the common-Git lease namespace is
+refused rather than followed.
 Metadata-lease renewal is fail-closed: its first refresh failure becomes visible
 to the owning operation, which refuses to begin another Git metadata command.
 Every command begins only after checking that the last published horizon still
@@ -254,7 +299,103 @@ so renewal loss cannot create a mid-turn pruning window and is still surfaced
 when maintenance stops. Teardown releases process-local ownership in a `finally`
 path even when renewal or cleanup fails; any retained filesystem state remains
 protected only by its real bounded persistent horizon and becomes pruneable
-after expiry.
+after expiry. Renewal timers stay referenced while healthy so a caller awaiting
+lease health cannot be stranded by an otherwise-empty event loop, but an owning
+batch's abort signal stops its renewal timer immediately. That preserves the
+already-published bounded lease horizon without letting a cancellation-ignoring
+operation keep process shutdown alive indefinitely through the renewal interval.
+
+The repository-owned `.sol-luna` runtime path is also an authority boundary.
+Before creating, pruning, cleaning, or quarantining an integration deletion, the
+runtime rejects symlink, junction, non-directory, or canonical ancestry that
+would redirect `.sol-luna/worktrees`, continuation-lease state, or
+`.sol-luna/integration-delete` outside the repository.
+
+### Trusted Git and filesystem evidence
+
+Delegated Git commands do not receive the operator repository's writable Git
+metadata as their default authority. Before execution, the orchestrator pins the
+repository root, base commit, worktree Git identity, canonical common Git
+directory, and fingerprints of common/worktree control surfaces. Delegated and
+trusted-evidence Git then run against a temporary private Git directory with:
+
+- the full pinned base tree in a private index;
+- object reads through an alternate to the real object database;
+- private config, refs, replace refs, index flags, and object writes;
+- system/global Git config and attributes disabled for that invocation; and
+- `GIT_NO_REPLACE_OBJECTS=1`.
+
+This prevents a worker commit, staged/index trick, replace ref, or
+repository-configured clean/process filter from redefining the evidence scan.
+Changes to real common Git config/refs/hooks/info or worktree control metadata
+after admission invalidate the pinned authority and fail closed. Real absorbed
+and nested submodule control under `.git/modules/**` is authority-bearing too:
+config, HEAD, refs, hooks, info, index and their lock/control state are
+fingerprinted, and redirected module containers or control paths are refused.
+Submodule object databases are intentionally excluded from this mutable-control
+fingerprint. Git subprocess stdout and stderr are independently bounded, so
+evidence collection cannot be turned into unbounded parent-process buffering.
+
+Trusted Git evidence uses a fresh private index, compares against the immutable
+admission commit, includes untracked files, and separately enumerates ignored
+untracked paths. Every gitlink is pinned from that trusted index before delegated
+execution. Initialized gitlinks recurse into an independently pinned child Git
+authority and worktree identity without following redirected path components;
+tracked, untracked, and ignored child effects are reported with their
+superproject-relative paths even when committed `.gitmodules` configuration uses
+`ignore = all`. Gitlinks that are uninitialized at admission are pinned as either
+missing or an exact empty-directory identity; later population, replacement,
+non-directory state, or symlink/junction redirection invalidates authority before
+trusted evidence or final-verifier success can be accepted. For intentionally
+non-Git single/sequential workspaces, the
+runtime instead takes a non-traversing content-hashed filesystem snapshot before
+and after execution. Shared-workspace continuations repeat the same independent
+pre/post evidence step. An SDK/model omission therefore cannot hide an
+out-of-scope shell-created file merely because no `file_change` event was
+reported.
+
+Verification is not assumed to be side-effect free. Private dependency snapshots
+inside isolated parallel worktrees are fingerprinted again after the complete
+worker-plus-verification turn and before retained continuation authority can be
+issued. Final integrated verification is enclosed by a fresh trusted
+Git/filesystem snapshot plus the authoritative dependency fingerprint; a passing
+check that mutates workspace bytes, ignored/protected control state, Git
+authority, or dependencies forces supervisor review instead of publishing
+`verified-complete`.
+
+Parallel integration is not a blind copy. While holding the common-Git
+authority, the runtime revalidates the pinned repository, compares the current
+authoritative workspace with the pre-worker baseline, and refuses conflicting
+operator or peer-batch drift. Each isolated worktree is re-read and compared
+with its sealed evidence digest immediately before integration. At the actual
+write boundary, a copied file is bound to the exact accepted source bytes plus
+the revalidated destination identity/content rather than a stale pathname
+snapshot. A proven deletion first renames that exact destination into the
+confined `.sol-luna/integration-delete` quarantine, rechecks both the source and
+quarantined destination, and only then unlinks the random quarantine name. A
+raced or cancelled deletion is restored when that is still safe; otherwise the
+quarantined bytes are preserved for review rather than deleting newer
+authoritative state.
+
+Cancellation observed before the first authoritative integration write performs
+no authoritative write. If cancellation is observed after earlier writes, no
+further write begins and the result truthfully reports those already-applied paths.
+Authoritative integration and private dependency provisioning never create a
+missing destination parent through a pathname boundary. Node does not expose a
+cross-platform directory-handle-relative mkdir primitive, so every required parent
+segment must already exist as a real, canonically confined directory. Missing,
+replaced, non-directory, or symlink/junction ancestry is refused before the file or
+snapshot mutation begins, eliminating the final identity-check-to-mkdir escape
+window instead of trying to repair an out-of-workspace namespace mutation later.
+Exclusive new-file creation, existing-file truncation, and the deletion namespace
+move are themselves authoritative mutation boundaries: short writes are retried
+until every accepted byte is written, and an unexpected later
+write/sync/snapshot/unlink failure either proves a safe rollback or counts that
+path as applied before integration stops. A deletion whose namespace move cannot
+be safely rolled back likewise counts as applied and preserves its quarantined
+bytes. These checks make concurrent
+batches, cancellation, and late operator/source edits fail closed instead of
+last-writer-wins or falsely reporting a zero-write outcome.
 
 ### Bounded parallel recovery
 
@@ -301,11 +442,15 @@ Both `hdf_*` next-action references and `ctr_*` continuation references have
 an atomic `ready -> reserved -> consumed` lifecycle. Admission reserves them
 before gates that may still refuse the call, so a concurrent consumer cannot
 also execute. A refusal or cancellation before execution releases the
-reservation with its original expiry; release after that expiry retires it
-instead of restoring authority, and entry into worker execution commits
-consumption. Release never grants a new TTL or reconstructs a capability. A
-reserved continuation also keeps its lifecycle context and retained-worktree
-ownership until the reservation is either committed or released.
+reservation with its original expiry when the authority it protects is still
+intact; release after that expiry retires it instead of restoring authority, and
+entry into worker execution commits consumption. A retained-worktree
+continuation is stricter: if persistent owner-token protection has already been
+lost, setup fails closed and consumes the continuation instead of reissuing a
+reference to a worktree another process may reclaim. Release never grants a new
+TTL or reconstructs a capability. A reserved continuation also keeps its
+lifecycle context and retained-worktree ownership until the reservation is
+either committed or safely released.
 
 Cross-session handoff artifacts are different: they are portable, caller-held
 historical context and are never bearer capabilities or authenticated runtime

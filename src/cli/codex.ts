@@ -131,10 +131,13 @@ export function parseRegisteredServerResult(
   result: CommandResult,
 ): RegisteredServer {
   if (result.code !== 0) {
+    const detail = result.stderr.trim() || result.stdout.trim();
+    if (/No MCP server named .+ found/i.test(detail)) {
+      return { registered: false };
+    }
     return {
       registered: false,
-      inspectionError:
-        result.stderr.trim() || result.stdout.trim() || `codex mcp get ${name} failed`,
+      inspectionError: detail || `codex mcp get ${name} failed`,
     };
   }
 

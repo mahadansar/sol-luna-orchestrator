@@ -1,4 +1,5 @@
 import path from "node:path";
+import { absoluteOptionalPathInvalid, parseAbsoluteOptionalPath } from "../config.js";
 import { codexHome } from "./paths.js";
 import { serverEnvTable } from "./settings.js";
 import { fromTomlValue, readKey } from "./toml-edit.js";
@@ -32,13 +33,8 @@ export interface EventsPathResolution {
   /** Absolute path to the JSONL event file, or null when nothing is set up. */
   path: string | null;
   source: EventsPathSource;
+  error?: string;
 }
-
-/** Environment variables are strings; an empty one means "not set", not "". */
-const trimmed = (value: string | undefined): string | null => {
-  const text = value?.trim();
-  return text ? text : null;
-};
 
 /**
  * Where `init` puts the event log by default.
@@ -61,13 +57,30 @@ export function resolveEventsPath(
   configText: string,
   env: NodeJS.ProcessEnv = process.env,
 ): EventsPathResolution {
-  const override = trimmed(env.SOL_LUNA_EVENTS);
-  if (override) return { path: override, source: "override" };
+  if (env.SOL_LUNA_EVENTS !== undefined) {
+    const override = parseAbsoluteOptionalPath(env.SOL_LUNA_EVENTS);
+    if (override) return { path: override, source: "override" };
+    if (absoluteOptionalPathInvalid(env.SOL_LUNA_EVENTS)) {
+      return {
+        path: null,
+        source: "override",
+        error: "SOL_LUNA_EVENTS must be a non-empty absolute path",
+      };
+    }
+  }
 
-  const configured = trimmed(
-    fromTomlValue(readKey(configText, serverEnvTable(), "SOL_LUNA_EVENTS")) ?? undefined,
+  const rawConfigured = fromTomlValue(
+    readKey(configText, serverEnvTable(), "SOL_LUNA_EVENTS"),
   );
-  if (configured) return { path: configured, source: "configured" };
+  if (rawConfigured !== null) {
+    const configured = parseAbsoluteOptionalPath(rawConfigured);
+    if (configured) return { path: configured, source: "configured" };
+    return {
+      path: null,
+      source: "configured",
+      error: "Configured SOL_LUNA_EVENTS must be a non-empty absolute path",
+    };
+  }
 
   return { path: null, source: "unconfigured" };
 }

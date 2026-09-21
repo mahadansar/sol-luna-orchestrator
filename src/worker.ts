@@ -64,6 +64,7 @@ import {
   verificationPolicy,
   type VerificationRun,
 } from "./verify.js";
+import { createIsolatedWorkerGitEnvironment, type GitEvidenceAuthority } from "./git.js";
 
 /**
  * Global cap on concurrently running workers.
@@ -192,6 +193,7 @@ async function runWorkerThread(
     customPrompt?: string;
     outputSchema?: object;
     sandboxMode?: ThreadOptions["sandboxMode"];
+    envOverrides?: Record<string, string>;
   } = {},
 ): Promise<ObservedRun> {
   const observed: ObservedRun = {
@@ -221,6 +223,7 @@ async function runWorkerThread(
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined) workerEnv[key] = value;
   }
+  Object.assign(workerEnv, options.envOverrides ?? {});
   workerEnv[WORKER_MARKER_ENV] = "1";
 
   const threadOptions: ThreadOptions = {
@@ -1092,6 +1095,10 @@ export interface ExecuteOptions {
   logicalAttempt?: number;
   role?: AttemptRole;
   predecessorExecutionId?: string | null;
+  /** Git identity captured before delegated execution; worker Git gets isolated metadata. */
+  gitEvidenceAuthority?: GitEvidenceAuthority | null;
+  /** Fail-closed trust guard run after the worker exits but before verification. */
+  beforeVerification?: () => Promise<void>;
   /** Test seam for the worker lifecycle; production creates the SDK client. */
   codex?: WorkerCodex;
   /** Manual continuation disables this even when the original contract opted in. */
@@ -1110,6 +1117,8 @@ export interface DelegateHooks {
   onRepairComplete?: ExecuteOptions["onRepairComplete"];
   onAttemptStart?: ExecuteOptions["onAttemptStart"];
   onAttemptComplete?: ExecuteOptions["onAttemptComplete"];
+  gitEvidenceAuthority?: GitEvidenceAuthority | null;
+  beforeVerification?: ExecuteOptions["beforeVerification"];
 }
 
 /**
@@ -1157,18 +1166,24 @@ async function executeTaskTurn(
   options.onAttemptStart?.(startEvidence);
 
   const workerStartedTick = performance.now();
-  const observed = await runWorkerThread(
-    input,
-    workingDirectory,
-    timeoutSeconds,
-    signal,
-    {
+  const isolatedGit = options.gitEvidenceAuthority
+    ? await createIsolatedWorkerGitEnvironment(
+        options.gitEvidenceAuthority,
+        workingDirectory,
+      )
+    : null;
+  let observed: ObservedRun;
+  try {
+    observed = await runWorkerThread(input, workingDirectory, timeoutSeconds, signal, {
       resumeThreadId: options.resumeThreadId,
       continuationInstruction: options.continuationInstruction,
       codex: options.codex,
       model,
-    },
-  );
+      envOverrides: isolatedGit?.env,
+    });
+  } finally {
+    await isolatedGit?.cleanup().catch(() => undefined);
+  }
   const workerElapsedMs = Math.max(0, performance.now() - workerStartedTick);
 
   // Re-run the checks ourselves, after the worker has exited, so a PASS is
@@ -1208,6 +1223,7 @@ async function executeTaskTurn(
       role,
     });
     try {
+      await options.beforeVerification?.();
       orchestratorRuns = await runVerifications(
         input.verificationCommands,
         workingDirectory,
@@ -2029,6 +2045,8 @@ export async function delegateToLuna(
       workingDirectory,
       model,
       signal,
+      gitEvidenceAuthority: hooks?.gitEvidenceAuthority,
+      beforeVerification: hooks?.beforeVerification,
       logicalAttempt: logicalAttempt ?? input.previousAttempts.length + 1,
       predecessorExecutionId: predecessorExecutionId ?? null,
       onVerificationStart: hooks?.onVerificationStart,
@@ -2070,6 +2088,8 @@ export async function continueToLuna(
       workingDirectory,
       model: options.model ?? LUNA_MODEL,
       signal: options.signal,
+      gitEvidenceAuthority: options.hooks?.gitEvidenceAuthority,
+      beforeVerification: options.hooks?.beforeVerification,
       onVerificationStart: options.hooks?.onVerificationStart,
       onAttemptStart: options.hooks?.onAttemptStart,
       onAttemptComplete: options.hooks?.onAttemptComplete,

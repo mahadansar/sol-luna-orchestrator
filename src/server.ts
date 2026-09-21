@@ -9,9 +9,12 @@ import {
   ALLOWED_EFFORTS,
   ALLOWED_EFFORTS_INVALID,
   DEFAULT_EFFORT,
+  DIAGNOSTIC_LOG_FILE,
+  DIAGNOSTIC_LOG_FILE_INVALID,
   DEFAULT_TIMEOUT_SECONDS,
   DEFAULT_TIMEOUT_SECONDS_INVALID,
   EVENTS_FILE,
+  EVENTS_FILE_INVALID,
   IS_WORKER_PROCESS,
   LUNA_MODEL,
   MAX_BATCH_SIZE,
@@ -30,6 +33,7 @@ import {
   VERIFY_TIMEOUT_SECONDS_INVALID,
   WORKTREE_DIR,
   WORKTREE_LINK_CONFIG,
+  WORKTREE_LINK_DIRS,
   WORKER_MARKER_ENV,
 } from "./config.js";
 import {
@@ -66,8 +70,19 @@ import {
   reconcileParallelWorktreeEvidence,
   resultWasCancelled,
 } from "./worker.js";
-import { collectWorktreeChanges, type WorktreeChanges } from "./git.js";
-import { WorkspaceError } from "./workspace.js";
+import {
+  assertGitEvidenceAuthority,
+  captureGitEvidenceAuthority,
+  changedTrustedWorkspacePaths,
+  collectTrustedWorktreeChanges,
+  collectWorktreeChanges,
+  listTrustedIgnoredFiles,
+  snapshotFilesystemWorkspaceEvidence,
+  snapshotTrustedWorkspaceEvidence,
+  type GitEvidenceAuthority,
+  type WorktreeChanges,
+} from "./git.js";
+import { resolveWorkspace, WorkspaceError } from "./workspace.js";
 import { ShutdownCoordinator } from "./shutdown.js";
 import {
   activityFailureReason,
@@ -102,10 +117,18 @@ import {
   renderRoutingPreflight,
 } from "./routing.js";
 import {
+  acquireRepositoryOperationAuthority,
+  assertSharedDirectoryFingerprint,
+  forceStopRepositoryOperationRenewals,
+  captureSharedDirectoryFingerprint,
   filterOrchestratorOwnedSharedLinks,
+  projectWorktreeChangesToWorkspace,
   refreshWorktreeLease,
   releaseWorktreeLease,
+  releaseWorktreeLeaseWithOperationAuthority,
+  WorktreeLeaseOwnershipError,
   WORKTREE_LEASE_GRACE_MS,
+  type RepositoryOperationAuthority,
   type WorktreeLease,
 } from "./worktree.js";
 import { ContextLifecycleStore } from "./context.js";
@@ -123,7 +146,7 @@ import {
  * diagnostics to a file. That log is the only way to tell "Codex never started
  * the server" apart from "the server started but the model ignored the tool".
  */
-const LOG_FILE = process.env.SOL_LUNA_LOG;
+const LOG_FILE = DIAGNOSTIC_LOG_FILE;
 
 const manifest = JSON.parse(
   readFileSync(
@@ -143,7 +166,7 @@ const continuationStore = new ContinuationStore({
   // an unusable reference from reserving a worktree identity - and blocking
   // `pruneStaleWorktrees` - until the lease own unrelated filesystem TTL runs
   // out. Consumed references are not touched: their turn owns the lease.
-  releaseLease: (lease) => releaseWorktreeLease(lease),
+  releaseLease: (lease) => releaseWorktreeLeaseWithOperationAuthority(lease),
 });
 const handoffStore = new HandoffStore();
 
@@ -229,6 +252,7 @@ const serverLifecycle = new ShutdownCoordinator();
 serverLifecycle.registerCleanup(() => continuationStore.dispose());
 serverLifecycle.registerCleanup(() => handoffStore.dispose());
 serverLifecycle.registerCleanup(() => contextRegistry.dispose());
+serverLifecycle.registerForcedCleanup(() => forceStopRepositoryOperationRenewals());
 
 export const shutdownServerRuntime = (timeoutMs?: number) =>
   serverLifecycle.shutdown(timeoutMs);
@@ -242,6 +266,7 @@ function registerContinuation(
   store: ContinuationStore = continuationStore,
   contextKey: string | null = null,
   authoritativeWorkspace: string = workingDirectory,
+  gitEvidenceAuthority: GitEvidenceAuthority | null = null,
 ): string | null {
   if (!result.workerThreadId) {
     result.continuationState = {
@@ -271,6 +296,7 @@ function registerContinuation(
     result.model,
     contextKey,
     authoritativeWorkspace,
+    gitEvidenceAuthority,
   );
   result.continuationState = {
     status: "issued",
@@ -305,23 +331,51 @@ export async function reconcileRetainedContinuationEvidence(
   collect: (
     workingDirectory: string,
   ) => Promise<WorktreeChanges> = collectWorktreeChanges,
+  sharedLinkRoot?: string,
+  gitEvidenceAuthority?: GitEvidenceAuthority | null,
 ): Promise<DelegateTaskOutput> {
   try {
-    const changes = await collect(workingDirectory);
-    const repoRoot = path.resolve(
-      workingDirectory,
-      ...Array.from({ length: WORKTREE_DIR.split("/").length + 1 }, () => ".."),
-    );
+    const repoRoot = gitEvidenceAuthority
+      ? gitEvidenceAuthority.repoRoot
+      : path.resolve(
+          workingDirectory,
+          ...Array.from({ length: WORKTREE_DIR.split("/").length + 1 }, () => ".."),
+        );
+    let rawChanges: WorktreeChanges;
+    if (gitEvidenceAuthority) {
+      const trusted = await collectTrustedWorktreeChanges(gitEvidenceAuthority);
+      const workspacePrefix = path.relative(
+        gitEvidenceAuthority.repoRoot,
+        workingDirectory,
+      );
+      const ignored = await listTrustedIgnoredFiles(
+        gitEvidenceAuthority,
+        WORKTREE_LINK_DIRS.map((dir) => path.join(workspacePrefix, ...dir.split("/"))),
+      );
+      rawChanges = {
+        ...trusted,
+        files: [
+          ...trusted.files,
+          ...ignored.map((file) => ({ path: file, status: "I" })),
+        ],
+      };
+    } else {
+      rawChanges = await collect(workingDirectory);
+    }
+    const changes = gitEvidenceAuthority
+      ? projectWorktreeChangesToWorkspace(repoRoot, workingDirectory, rawChanges)
+      : rawChanges;
     const files = await filterOrchestratorOwnedSharedLinks(
-      repoRoot,
+      sharedLinkRoot ?? repoRoot,
       workingDirectory,
       changes.files,
     );
+    const mutations = files.filter((file) => file.status !== "C-source");
     return reconcileParallelWorktreeEvidence(
       input,
       result,
       workingDirectory,
-      files.map((file) => ({ path: file.path, kind: file.status })),
+      mutations.map((file) => ({ path: file.path, kind: file.status })),
     );
   } catch (error) {
     return reconcileParallelWorktreeEvidence(
@@ -1045,6 +1099,8 @@ export interface ConfigurationCorrectionWarningState {
   maxBatchSize: number;
   worktreeLinkInvalid: boolean;
   worktreeLinkDirs: readonly string[];
+  eventsFileInvalid: boolean;
+  diagnosticLogFileInvalid: boolean;
 }
 
 /** Privacy-safe startup diagnostics for operator values the runtime corrected. */
@@ -1060,6 +1116,8 @@ export function configurationCorrectionWarnings(
     maxBatchSize: MAX_BATCH_SIZE,
     worktreeLinkInvalid: WORKTREE_LINK_CONFIG.invalid.length > 0,
     worktreeLinkDirs: WORKTREE_LINK_CONFIG.dirs,
+    eventsFileInvalid: EVENTS_FILE_INVALID,
+    diagnosticLogFileInvalid: DIAGNOSTIC_LOG_FILE_INVALID,
   },
 ): string[] {
   const warnings: string[] = [];
@@ -1087,6 +1145,16 @@ export function configurationCorrectionWarnings(
         `Effective shared link paths: ${state.worktreeLinkDirs.join(", ") || "none"}.`,
     );
   }
+  if (state.eventsFileInvalid) {
+    warnings.push(
+      "WARNING: SOL_LUNA_EVENTS is not a non-empty absolute path. Activity file emission is disabled.",
+    );
+  }
+  if (state.diagnosticLogFileInvalid) {
+    warnings.push(
+      "WARNING: SOL_LUNA_LOG is not a non-empty absolute path. Diagnostic file logging is disabled.",
+    );
+  }
   return warnings;
 }
 
@@ -1109,6 +1177,7 @@ export interface DelegateTaskHandlerDependencies {
   record: typeof recordEvent;
   render: typeof renderResult;
   makeBatchId: () => string;
+  operationAuthorityAcquirer: typeof acquireRepositoryOperationAuthority;
 }
 
 export async function handleDelegateTask(
@@ -1128,6 +1197,7 @@ export async function handleDelegateTask(
     record: recordEvent,
     render: renderResult,
     makeBatchId: makeSingleBatchId,
+    operationAuthorityAcquirer: acquireRepositoryOperationAuthority,
     ...overrides,
     emit: isolateEventEmitter(overrides.emit ?? emitEvent),
   };
@@ -1157,6 +1227,26 @@ export async function handleDelegateTask(
     handoffReservation?.release();
     handoffReservation = null;
     dependencies.emit({ type: "batch.rejected", batchId, reason: message });
+    return {
+      content: [{ type: "text" as const, text: message }],
+      isError: true,
+    };
+  };
+  /** Cancel before worker entry: no earned authority was spent and nothing ran. */
+  const cancelBeforeExecution = (
+    message = "Delegation cancelled before worker start.",
+  ): {
+    content: Array<{ type: "text"; text: string }>;
+    isError: true;
+  } => {
+    handoffReservation?.release();
+    handoffReservation = null;
+    dependencies.emit({
+      type: "batch.cancelled",
+      batchId,
+      reason: "cancelled before worker start",
+    });
+    log(`delegate_task cancelled: ${message}`);
     return {
       content: [{ type: "text" as const, text: message }],
       isError: true,
@@ -1315,15 +1405,77 @@ export async function handleDelegateTask(
     attempt: logicalAttempt,
   });
 
-  const lifecycleStore =
-    dependencies.contextStore ?? dependencies.contextRegistry.getOrCreate(contextKey);
+  // Pin the authoritative workspace before spending any earned handoff. This
+  // gives single-task delegation the same shell-side-effect evidence and Git
+  // control authority as sequential/parallel batches instead of trusting only
+  // Codex file_change items.
+  let authoritativeWorkspace: string;
+  let operationAuthority: RepositoryOperationAuthority | null = null;
+  let gitEvidenceAuthority: GitEvidenceAuthority | null = null;
+  let beforeWorkspaceEvidence: ReadonlyMap<string, string> | null = null;
+  let sharedDependencyBaseline: Awaited<
+    ReturnType<typeof captureSharedDirectoryFingerprint>
+  > | null = null;
+  try {
+    authoritativeWorkspace = resolveWorkspace(task.workingDirectory);
+    operationAuthority = await dependencies.operationAuthorityAcquirer(
+      authoritativeWorkspace,
+      signal,
+    );
+    if (signal?.aborted) {
+      await operationAuthority?.release().catch(() => undefined);
+      operationAuthority = null;
+      return cancelBeforeExecution();
+    }
+    operationAuthority?.assertHealthy();
+    gitEvidenceAuthority = await captureGitEvidenceAuthority(authoritativeWorkspace);
+    if (gitEvidenceAuthority) {
+      beforeWorkspaceEvidence = await snapshotTrustedWorkspaceEvidence(
+        gitEvidenceAuthority,
+        authoritativeWorkspace,
+        WORKTREE_LINK_DIRS,
+      );
+    } else {
+      beforeWorkspaceEvidence =
+        await snapshotFilesystemWorkspaceEvidence(authoritativeWorkspace);
+    }
+    sharedDependencyBaseline =
+      await captureSharedDirectoryFingerprint(authoritativeWorkspace);
+  } catch (error) {
+    if (operationAuthority) {
+      await operationAuthority.release().catch(() => undefined);
+      operationAuthority = null;
+    }
+    if (signal?.aborted && (error as Error).name === "AbortError") {
+      return cancelBeforeExecution();
+    }
+    return refuseBeforeExecution(
+      `Could not establish authoritative workspace evidence before execution: ${(error as Error).message}`,
+    );
+  }
+
+  let lifecycleStore: ContextLifecycleStore;
   const persistedContextKey = dependencies.contextStore ? null : contextKey;
-  const releaseExecutionLease = lifecycleStore.acquireExecutionLease();
+  let releaseExecutionLease: (() => void) | null = null;
+  try {
+    lifecycleStore =
+      dependencies.contextStore ?? dependencies.contextRegistry.getOrCreate(contextKey);
+    releaseExecutionLease = lifecycleStore.acquireExecutionLease();
+  } catch (error) {
+    if (operationAuthority) {
+      await operationAuthority.release().catch(() => undefined);
+      operationAuthority = null;
+    }
+    return refuseBeforeExecution(
+      "Could not establish lifecycle authority before execution: " +
+        (error as Error).message,
+    );
+  }
   let executionLeaseActive = true;
   const releaseExecution = (): void => {
     if (!executionLeaseActive) return;
     executionLeaseActive = false;
-    releaseExecutionLease();
+    releaseExecutionLease?.();
   };
 
   // Every pre-execution gate has passed and the executor is about to be handed
@@ -1343,10 +1495,19 @@ export async function handleDelegateTask(
   }
 
   try {
-    const result = await dependencies.delegateToLuna(
+    let result = await dependencies.delegateToLuna(
       task,
       signal,
       {
+        gitEvidenceAuthority,
+        beforeVerification: async () => {
+          operationAuthority?.assertHealthy();
+          if (gitEvidenceAuthority)
+            await assertGitEvidenceAuthority(gitEvidenceAuthority);
+          if (sharedDependencyBaseline) {
+            await assertSharedDirectoryFingerprint(sharedDependencyBaseline);
+          }
+        },
         onStarted: (workingDirectory) => {
           workerStarted = true;
           workerDirectory = workingDirectory;
@@ -1398,6 +1559,54 @@ export async function handleDelegateTask(
       predecessorExecutionId,
       logicalAttempt,
     );
+
+    if (beforeWorkspaceEvidence) {
+      try {
+        operationAuthority?.assertHealthy();
+        const afterWorkspaceEvidence = gitEvidenceAuthority
+          ? await snapshotTrustedWorkspaceEvidence(
+              gitEvidenceAuthority,
+              authoritativeWorkspace,
+              WORKTREE_LINK_DIRS,
+            )
+          : await snapshotFilesystemWorkspaceEvidence(authoritativeWorkspace);
+        const changes = changedTrustedWorkspacePaths(
+          beforeWorkspaceEvidence,
+          afterWorkspaceEvidence,
+        ).map((file) => ({ path: file, kind: "single-git" }));
+        result = reconcileParallelWorktreeEvidence(
+          task,
+          result,
+          authoritativeWorkspace,
+          changes,
+        );
+      } catch (error) {
+        result = reconcileParallelWorktreeEvidence(
+          task,
+          result,
+          authoritativeWorkspace,
+          [],
+          `Single-task evidence scan failed: ${(error as Error).message}`,
+        );
+      }
+    }
+    if (sharedDependencyBaseline) {
+      try {
+        operationAuthority?.assertHealthy();
+        await assertSharedDirectoryFingerprint(sharedDependencyBaseline);
+      } catch (error) {
+        const detail = `Single-task dependency evidence failed: ${(error as Error).message}`;
+        result.verdict = "FAILED";
+        result.trustworthy = false;
+        if (!result.errors.includes(detail)) result.errors.push(detail);
+        if (!result.discrepancies.includes(detail)) result.discrepancies.push(detail);
+      }
+    }
+    if (operationAuthority) {
+      operationAuthority.assertHealthy();
+      await operationAuthority.release();
+      operationAuthority = null;
+    }
     if (workerDirectory) {
       try {
         result.continuationReference = registerContinuation(
@@ -1561,6 +1770,16 @@ export async function handleDelegateTask(
     // reached the executor; this only catches a throw between the last gate
     // and that commit, where nothing authoritative started.
     handoffReservation?.release();
+    if (operationAuthority) {
+      await operationAuthority
+        .release()
+        .catch((error) =>
+          log(
+            `repository operation authority cleanup failed: ${(error as Error).message}`,
+          ),
+        );
+      operationAuthority = null;
+    }
     releaseExecution();
     if (persistedContextKey) {
       try {
@@ -1601,6 +1820,7 @@ export interface ContinuationHandlerDependencies {
   record: typeof recordEvent;
   render: typeof renderResult;
   makeBatchId: () => string;
+  operationAuthorityAcquirer: typeof acquireRepositoryOperationAuthority;
 }
 
 /** Internal dependency seam for deterministic continuation lifecycle tests. */
@@ -1624,6 +1844,7 @@ export async function handleContinueTask(
     record: recordEvent,
     render: renderResult,
     makeBatchId: makeSingleBatchId,
+    operationAuthorityAcquirer: acquireRepositoryOperationAuthority,
     ...overrides,
     emit: isolateEventEmitter(overrides.emit ?? emitEvent),
   };
@@ -1653,8 +1874,63 @@ export async function handleContinueTask(
     releaseExecutionLease();
   };
   const timeoutSeconds = entry.input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS;
+  let operationAuthority: RepositoryOperationAuthority | null = null;
+  const cancelBeforeWorkerStart = async (): Promise<{
+    content: Array<{ type: "text"; text: string }>;
+    isError: true;
+  }> => {
+    reservation.release();
+    const message = "Continuation cancelled before worker start.";
+    dependencies.emit({
+      type: "batch.cancelled",
+      batchId,
+      reason: "cancelled before worker start",
+    });
+    log(`continue_task cancelled: ${message}`);
+    releaseExecution();
+    if (persistedContextKey) {
+      dependencies.contextRegistry.releaseIfUnreferenced(persistedContextKey);
+    }
+    if (operationAuthority) {
+      const authority = operationAuthority;
+      operationAuthority = null;
+      await authority.release().catch(() => undefined);
+    }
+    return {
+      content: [{ type: "text" as const, text: message }],
+      isError: true,
+    };
+  };
+
+  // Cancellation before any repository-operation authority is acquired is
+  // non-authoritative: no worker, evidence scan, lease refresh, or parent
+  // repository mutation should occur merely to report that the turn never ran.
+  if (signal?.aborted) return cancelBeforeWorkerStart();
+  try {
+    operationAuthority = await dependencies.operationAuthorityAcquirer(
+      entry.authoritativeWorkspace,
+      signal,
+    );
+    operationAuthority?.assertHealthy();
+  } catch (error) {
+    if (signal?.aborted && (error as Error).name === "AbortError") {
+      return cancelBeforeWorkerStart();
+    }
+    reservation.release();
+    const message = `Continuation could not acquire repository operation authority: ${(error as Error).message}`;
+    releaseExecution();
+    if (persistedContextKey) {
+      dependencies.contextRegistry.releaseIfUnreferenced(persistedContextKey);
+    }
+    return {
+      content: [{ type: "text" as const, text: message }],
+      isError: true,
+    };
+  }
+  if (signal?.aborted) return cancelBeforeWorkerStart();
   if (entry.worktreeLease) {
     try {
+      operationAuthority?.assertHealthy();
       await dependencies.refreshLease(
         entry.worktreeLease,
         Date.now() + timeoutSeconds * 1000 + WORKTREE_LEASE_GRACE_MS,
@@ -1664,10 +1940,18 @@ export async function handleContinueTask(
       const message =
         `Continuation could not start because its retained worktree lease ` +
         `could not be refreshed: ${(error as Error).message}`;
-      // No executor has received the contract yet. Restore the exact original
-      // capability rather than spending it on a setup failure; its original TTL
-      // is retained by the reservation and its worktree remains protected.
-      reservation.release();
+      if (error instanceof WorktreeLeaseOwnershipError) {
+        // Persistent ownership is already gone, so another server may reclaim
+        // this retained worktree. Spend the continuation rather than restoring
+        // authority that no longer has cross-process workspace protection.
+        reservation.commit();
+        dependencies.store.release(request.continuationReference);
+      } else {
+        // A transient refresh failure leaves the previously published lease in
+        // place. No executor received the contract, so restore the original
+        // capability for the remainder of its original TTL.
+        reservation.release();
+      }
       log(`continue_task rejected: ${message}`);
       recordLifecycleTurn("continuation setup failure", () =>
         lifecycleStore.recordRuntimeFailure({
@@ -1690,6 +1974,10 @@ export async function handleContinueTask(
       if (persistedContextKey) {
         dependencies.contextRegistry.releaseIfUnreferenced(persistedContextKey);
       }
+      if (operationAuthority) {
+        await operationAuthority.release().catch(() => undefined);
+        operationAuthority = null;
+      }
       return {
         content: [{ type: "text" as const, text: message }],
         isError: true,
@@ -1697,22 +1985,7 @@ export async function handleContinueTask(
     }
   }
   if (signal?.aborted) {
-    reservation.release();
-    const message = "Continuation cancelled before worker start.";
-    dependencies.emit({
-      type: "batch.cancelled",
-      batchId,
-      reason: "cancelled before worker start",
-    });
-    log(`continue_task cancelled: ${message}`);
-    releaseExecution();
-    if (persistedContextKey) {
-      dependencies.contextRegistry.releaseIfUnreferenced(persistedContextKey);
-    }
-    return {
-      content: [{ type: "text" as const, text: message }],
-      isError: true,
-    };
+    return cancelBeforeWorkerStart();
   }
   const startedAt = Date.now();
   let workerStarted = false;
@@ -1741,6 +2014,55 @@ export async function handleContinueTask(
     attempt: entry.logicalAttempt,
   });
 
+  let continuationGitAuthority = entry.gitEvidenceAuthority;
+  let continuationWorkspaceBaseline: ReadonlyMap<string, string> | null = null;
+  let continuationSharedBaseline: Awaited<
+    ReturnType<typeof captureSharedDirectoryFingerprint>
+  > | null = null;
+  try {
+    operationAuthority?.assertHealthy();
+    continuationGitAuthority ??= await captureGitEvidenceAuthority(
+      entry.workingDirectory,
+    );
+    if (continuationGitAuthority) {
+      await assertGitEvidenceAuthority(continuationGitAuthority);
+    }
+    if (!entry.reconcileFinalGit) {
+      continuationWorkspaceBaseline = continuationGitAuthority
+        ? await snapshotTrustedWorkspaceEvidence(
+            continuationGitAuthority,
+            entry.workingDirectory,
+            WORKTREE_LINK_DIRS,
+          )
+        : await snapshotFilesystemWorkspaceEvidence(entry.workingDirectory);
+    }
+    if (!entry.reconcileFinalGit || entry.input.verificationCommands.length > 0) {
+      continuationSharedBaseline = await captureSharedDirectoryFingerprint(
+        entry.workingDirectory,
+      );
+    }
+  } catch (error) {
+    const message = `Continuation trust setup failed before worker start: ${(error as Error).message}`;
+    if (entry.reconcileFinalGit && entry.gitEvidenceAuthority) {
+      reservation.commit();
+      dependencies.store.release(request.continuationReference);
+    } else {
+      reservation.release();
+    }
+    releaseExecution();
+    if (persistedContextKey) {
+      dependencies.contextRegistry.releaseIfUnreferenced(persistedContextKey);
+    }
+    if (operationAuthority) {
+      await operationAuthority.release().catch(() => undefined);
+      operationAuthority = null;
+    }
+    return {
+      content: [{ type: "text" as const, text: message }],
+      isError: true,
+    };
+  }
+
   // Every pre-execution gate has passed. Spending the reservation immediately
   // before entering the executor keeps single-use authority aligned with actual
   // execution: any outcome from this point consumes the continuation.
@@ -1752,6 +2074,16 @@ export async function handleContinueTask(
       instruction: request.instruction,
       signal,
       hooks: {
+        gitEvidenceAuthority: continuationGitAuthority,
+        beforeVerification: async () => {
+          operationAuthority?.assertHealthy();
+          if (continuationGitAuthority) {
+            await assertGitEvidenceAuthority(continuationGitAuthority);
+          }
+          if (continuationSharedBaseline) {
+            await assertSharedDirectoryFingerprint(continuationSharedBaseline);
+          }
+        },
         onStarted: (workingDirectory) => {
           workerStarted = true;
           dependencies.emit({
@@ -1785,10 +2117,14 @@ export async function handleContinueTask(
     });
     if (entry.reconcileFinalGit) {
       try {
+        operationAuthority?.assertHealthy();
         result = await dependencies.reconcile(
           entry.input,
           result,
           entry.workingDirectory,
+          undefined,
+          entry.authoritativeWorkspace,
+          entry.gitEvidenceAuthority,
         );
       } catch (error) {
         const detail = `Continuation evidence reconciliation failed after execution: ${(error as Error).message}`;
@@ -1797,9 +2133,49 @@ export async function handleContinueTask(
         result.errors.push(detail);
         result.discrepancies.push(detail);
       }
+    } else if (continuationWorkspaceBaseline) {
+      try {
+        operationAuthority?.assertHealthy();
+        const afterWorkspaceEvidence = continuationGitAuthority
+          ? await snapshotTrustedWorkspaceEvidence(
+              continuationGitAuthority,
+              entry.workingDirectory,
+              WORKTREE_LINK_DIRS,
+            )
+          : await snapshotFilesystemWorkspaceEvidence(entry.workingDirectory);
+        const changes = changedTrustedWorkspacePaths(
+          continuationWorkspaceBaseline,
+          afterWorkspaceEvidence,
+        ).map((file) => ({ path: file, kind: "continuation-workspace" }));
+        result = reconcileParallelWorktreeEvidence(
+          entry.input,
+          result,
+          entry.workingDirectory,
+          changes,
+        );
+      } catch (error) {
+        const detail = `Continuation workspace evidence scan failed: ${(error as Error).message}`;
+        result.verdict = "FAILED";
+        result.trustworthy = false;
+        result.errors.push(detail);
+        result.discrepancies.push(detail);
+      }
+    }
+    if (!entry.reconcileFinalGit && continuationSharedBaseline) {
+      try {
+        operationAuthority?.assertHealthy();
+        await assertSharedDirectoryFingerprint(continuationSharedBaseline);
+      } catch (error) {
+        const detail = `Continuation dependency evidence failed: ${(error as Error).message}`;
+        result.verdict = "FAILED";
+        result.trustworthy = false;
+        if (!result.errors.includes(detail)) result.errors.push(detail);
+        if (!result.discrepancies.includes(detail)) result.discrepancies.push(detail);
+      }
     }
     if (entry.worktreeLease) {
       try {
+        operationAuthority?.assertHealthy();
         await dependencies.releaseLease(entry.worktreeLease);
       } catch (error) {
         const detail = `Continuation worktree lease cleanup failed after execution: ${(error as Error).message}`;
@@ -1809,6 +2185,11 @@ export async function handleContinueTask(
       } finally {
         worktreeLeaseFinalized = true;
       }
+    }
+    if (operationAuthority) {
+      operationAuthority.assertHealthy();
+      await operationAuthority.release();
+      operationAuthority = null;
     }
     result.continuationReference = null;
     result.continuationState = {
@@ -1976,6 +2357,16 @@ export async function handleContinueTask(
         log(`Continuation worktree lease cleanup failed: ${(error as Error).message}`);
       }
     }
+    if (operationAuthority) {
+      await operationAuthority
+        .release()
+        .catch((error) =>
+          log(
+            `repository operation authority cleanup failed: ${(error as Error).message}`,
+          ),
+        );
+      operationAuthority = null;
+    }
     if (persistedContextKey) {
       try {
         dependencies.contextRegistry.releaseIfUnreferenced(persistedContextKey);
@@ -2107,7 +2498,15 @@ export async function handleDelegateTasks(
       automaticRecovery: batch.automaticRecovery,
       signal,
       batchId: contextKey,
-      continuationRegistrar: (input, res, cwd, reconcile, lease, authoritativeCwd) =>
+      continuationRegistrar: (
+        input,
+        res,
+        cwd,
+        reconcile,
+        lease,
+        authoritativeCwd,
+        gitEvidenceAuthority,
+      ) =>
         registerContinuation(
           input,
           res,
@@ -2117,6 +2516,7 @@ export async function handleDelegateTasks(
           dependencies.continuationStore,
           persistedContextKey,
           authoritativeCwd ?? cwd,
+          gitEvidenceAuthority,
         ),
       handoffStore: dependencies.handoffStore,
       handoffContextKey: persistedContextKey,

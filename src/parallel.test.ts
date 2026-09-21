@@ -9,14 +9,16 @@
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { readdirSync } from "node:fs";
+import { readdirSync, writeFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
+  ContextLifecycleRegistry,
   handleContinueTask,
+  handleDelegateTask,
   refuseSingleDelegation,
   renderBatch,
   routingAdvisoryLine,
@@ -45,7 +47,7 @@ import {
   type RoutingPreflightInput,
   type WorkerReport,
 } from "./contract.js";
-import { collectWorktreeChanges, runGit } from "./git.js";
+import { captureGitEvidenceAuthority, collectWorktreeChanges, runGit } from "./git.js";
 import {
   expandGlob,
   findIntegrationConflicts,
@@ -53,6 +55,7 @@ import {
   scopesOverlap,
 } from "./overlap.js";
 import {
+  acquireRepositoryOperationAuthority,
   cleanupWorktree,
   createTaskWorktree,
   continuationLeasePath,
@@ -65,10 +68,12 @@ import {
   shouldRetainWorktree,
   sweepExpiredWorktreeLeases,
   WORKTREE_LEASE_GRACE_MS,
+  WorktreeLeaseOwnershipError,
   WorktreeLeaseRenewalError,
   WorktreeLeaseStore,
   worktreeMetadataQueue,
   WorktreeUnavailableError,
+  type RepositoryOperationAuthority,
 } from "./worktree.js";
 import { executeTask, workerSlots, type WorkerCodex } from "./worker.js";
 import type { ThreadEvent } from "@openai/codex-sdk";
@@ -524,6 +529,30 @@ test("the dirty-tree guard can be overridden deliberately", async () => {
   }
 });
 
+test("parallel dirty-base warnings distinguish accepted in-scope overwrite risk", async () => {
+  const repo = await makeRepo();
+  try {
+    await fs.writeFile(path.join(repo, "src", "base.txt"), "locally edited\n", "utf8");
+    const result = await runProductionBatch([makeTask({ allowedFiles: ["src/**"] })], {
+      mode: "parallel",
+      batchId: "bdirty-warning",
+      workingDirectory: repo,
+      integrate: false,
+      keepWorktrees: "never",
+      allowDirtyWorktreeBase: true,
+      executor: fakeExecutor({}),
+    });
+    assert.match(result.warnings.join("\n"), /accepted 1 uncommitted in-scope path/i);
+    assert.match(result.warnings.join("\n"), /can overwrite/i);
+    assert.doesNotMatch(
+      result.warnings.join("\n"),
+      /1 uncommitted path\(s\) outside the active task scopes/i,
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
 test("a worktree is created, isolated, and removed again", async () => {
   const repo = await makeRepo();
   try {
@@ -677,7 +706,7 @@ test("cleanup failure after authoritative PASS preserves evidence and releases o
   }
 });
 
-test("dependency directories are linked in, and unlinking never eats the original", async () => {
+test("dependency directories are privately snapshotted and cleanup never eats the original", async () => {
   const repo = await makeRepo();
   try {
     const modules = path.join(repo, "node_modules", "left-pad");
@@ -687,26 +716,18 @@ test("dependency directories are linked in, and unlinking never eats the origina
     const base = await prepareWorktreeBase(repo, [["src/**"]]);
     const worktree = await createTaskWorktree(base, "t1-link", repo);
 
-    const linked = path.join(worktree.path, "node_modules", "left-pad", "index.js");
-    const linkStat = await fs.stat(linked).catch(() => null);
-
-    if (!linkStat) {
-      // Some environments forbid links entirely; the warning must say so.
-      assert.ok(
-        worktree.warnings.some((warning) => /Could not link/.test(warning)),
-        "a failure to link must be reported, not silent",
-      );
-    } else {
-      if (process.platform !== "win32") {
-        const linkedRoot = path.join(worktree.path, "node_modules");
-        assert.equal((await fs.lstat(linkedRoot)).isSymbolicLink(), true);
-        assert.equal(
-          await fs.realpath(linkedRoot),
-          await fs.realpath(path.join(repo, "node_modules")),
-        );
-      }
-      assert.equal(await fs.readFile(linked, "utf8"), "module.exports=1;\n");
-    }
+    const copied = path.join(worktree.path, "node_modules", "left-pad", "index.js");
+    assert.equal(await fs.readFile(copied, "utf8"), "module.exports=1;\n");
+    assert.equal(
+      (await fs.lstat(path.join(worktree.path, "node_modules"))).isSymbolicLink(),
+      false,
+    );
+    await fs.writeFile(copied, "module.exports=2;\n", "utf8");
+    assert.equal(
+      await fs.readFile(path.join(modules, "index.js"), "utf8"),
+      "module.exports=1;\n",
+      "a delegated dependency edit must stay inside the isolated snapshot",
+    );
 
     await cleanupWorktree(worktree, "evidence-failure", "never");
 
@@ -714,6 +735,79 @@ test("dependency directories are linked in, and unlinking never eats the origina
     assert.equal(
       await fs.readFile(path.join(modules, "index.js"), "utf8"),
       "module.exports=1;\n",
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel verification cannot poison a retained dependency snapshot continuation", async () => {
+  const repo = await makeRepo();
+  const dependency = path.join(repo, "node_modules", "fixture-package", "index.js");
+  let continuationCalls = 0;
+  try {
+    await fs.mkdir(path.dirname(dependency), { recursive: true });
+    await fs.writeFile(dependency, "module.exports = 'operator';\n", "utf8");
+    const command = "node --test test/dependency.test.js";
+    const result = await runProductionBatch(
+      [
+        makeTask({
+          allowedFiles: ["src/**"],
+          verificationCommands: [command],
+        }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        integrate: false,
+        keepWorktrees: "always",
+        eventEmitter: () => undefined,
+        continuationRegistrar: async () => {
+          continuationCalls += 1;
+          return "continuation-should-not-be-issued";
+        },
+        executor: async (input, options) => {
+          await options.beforeVerification?.();
+          const privateDependency = path.join(
+            options.workingDirectory,
+            "node_modules",
+            "fixture-package",
+            "index.js",
+          );
+          await fs.writeFile(
+            privateDependency,
+            "module.exports = 'verifier-poison';\n",
+            "utf8",
+          );
+          return makeOutput({
+            effort: input.effort,
+            verification: [
+              {
+                command,
+                source: "orchestrator",
+                execution: "argv",
+                exitCode: 0,
+                passed: true,
+                output: "verification passed after mutating its dependency snapshot",
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(result.tasks[0]?.result?.verdict, "FAILED", describeBatch(result));
+    assert.equal(result.tasks[0]?.result?.trustworthy, false, describeBatch(result));
+    assert.match(
+      result.tasks[0]?.warnings.join("\n") ?? "",
+      /Post-verification dependency evidence failed.*shared dependency state changed/i,
+      describeBatch(result),
+    );
+    assert.equal(continuationCalls, 0, describeBatch(result));
+    assert.equal(
+      result.tasks[0]?.result?.continuationReference,
+      null,
+      describeBatch(result),
     );
   } finally {
     await cleanupRepo(repo);
@@ -1148,7 +1242,6 @@ test("a live retained continuation worktree cannot be reused by a replayed batch
     );
     assert.equal((await fs.stat(worktree.path)).isDirectory(), true);
   } finally {
-    if (worktree.lease) await releaseWorktreeLease(worktree.lease);
     await cleanupWorktree(worktree, "success", "never");
     await cleanupRepo(repo);
   }
@@ -1202,9 +1295,13 @@ test("lease acquire and refresh publication are conservatively atomic to readers
         await refreshGate;
       },
     });
-    now += 100;
+    // Start the refresh while the old generation is still live, then advance
+    // the clock across its expiry while the complete next-generation temp
+    // record is paused before publication.
+    now += 99;
     const refreshing = refresher.refresh(lease, now + 1_000, "executing-continuation");
     await refreshStarted;
+    now += 1;
     assert.equal(
       await reader.isProtected(worktreePath),
       true,
@@ -1263,6 +1360,50 @@ test("an acquisition crash before first generation expires and releases the meta
   }
 });
 
+test("transient stale-reservation rename contention retries without weakening ownership", async () => {
+  const repo = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-lease-retire-race-"));
+  const metadataPath = path.join(repo, ".sol-luna", "worktrees", ".metadata");
+  const artifact = continuationLeasePath(metadataPath);
+  const reservation = `${artifact}.acquire`;
+  const now = 1_000;
+  let retireAttempts = 0;
+  const leases = new WorktreeLeaseStore({
+    now: () => now,
+    tokenFactory: () => "owner-after-transient-retire-race",
+    beforeRetire: async (target) => {
+      if (target !== reservation || retireAttempts > 0) return;
+      retireAttempts += 1;
+      const error = new Error(
+        "simulated Windows sharing violation",
+      ) as NodeJS.ErrnoException;
+      error.code = "EPERM";
+      throw error;
+    },
+  });
+
+  try {
+    await fs.mkdir(path.dirname(reservation), { recursive: true });
+    await fs.writeFile(
+      reservation,
+      JSON.stringify({
+        version: 1,
+        ownerToken: "expired-owner",
+        phase: "metadata",
+        expiresAt: now - 1,
+      }),
+      "utf8",
+    );
+
+    const lease = await leases.acquire(metadataPath, now + 1_000, "metadata");
+    assert.equal(retireAttempts, 1);
+    assert.equal(await leases.isProtected(metadataPath), true);
+    assert.notEqual(lease.ownerToken, "expired-owner");
+    await leases.release(lease);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
 test("a stale acquirer cannot publish into a replacement artifact", async (t) => {
   for (const identity of ["reclaimed-task", ".metadata"]) {
     await t.test(identity, async () => {
@@ -1308,25 +1449,52 @@ test("a stale acquirer cannot publish into a replacement artifact", async (t) =>
 
       try {
         const stale = acquirerA.acquire(worktreePath, now + 100, "metadata");
+        // Observe every in-flight acquisition from creation. A faster
+        // fail-closed path must never leave an intentionally raced promise to
+        // surface as test-runner asynchronous activity after the subtest exits.
+        const staleObserved = stale.then(
+          () => ({ ok: true as const, error: null }),
+          (error: unknown) => ({ ok: false as const, error: error as Error }),
+        );
         await aCreatedPromise;
         now += 100;
         const swept = await sweepExpiredWorktreeLeases(repo, now);
         assert.deepEqual(swept, identity === ".metadata" ? [] : [worktreePath]);
 
         const replacement = acquirerB.acquire(worktreePath, now + 1_000, "metadata");
+        const replacementObserved = replacement.then(
+          (lease) => ({ ok: true as const, lease, error: null }),
+          (error: unknown) => ({
+            ok: false as const,
+            lease: null,
+            error: error as Error,
+          }),
+        );
         await bCreatedPromise;
         assert.equal(await acquirerB.isProtected(worktreePath), true);
         assert.ok(await fs.stat(artifact).catch(() => null));
         assert.ok(await fs.stat(reservation).catch(() => null));
 
         resumeA();
-        await assert.rejects(stale, /changed ownership before publication/i);
+        const staleOutcome = await staleObserved;
+        assert.equal(staleOutcome.ok, false);
+        assert.match(
+          staleOutcome.error?.message ?? "",
+          /(?:changed ownership before publication|changed identity after acquisition)/i,
+        );
         assert.equal(await acquirerB.isProtected(worktreePath), true);
         assert.ok(await fs.stat(artifact).catch(() => null));
         assert.ok(await fs.stat(reservation).catch(() => null));
 
         resumeB();
-        const replacementLease = await replacement;
+        const replacementOutcome = await replacementObserved;
+        assert.equal(
+          replacementOutcome.ok,
+          true,
+          replacementOutcome.error?.message ?? "replacement acquisition failed",
+        );
+        assert.ok(replacementOutcome.lease);
+        const replacementLease = replacementOutcome.lease;
         assert.equal(await acquirerB.isProtected(worktreePath), true);
         assert.equal(
           (await fs.readdir(artifact)).filter((name) => name.endsWith(".json")).length,
@@ -1339,6 +1507,26 @@ test("a stale acquirer cannot publish into a replacement artifact", async (t) =>
         await cleanupRepo(repo);
       }
     });
+  }
+});
+
+test("lease refresh distinguishes persistent owner loss from a transient publication failure", async () => {
+  const repo = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-lease-owner-loss-"));
+  const artifact = path.join(repo, ".sol-luna", "continuation-leases", "owner.lease");
+  const leases = new WorktreeLeaseStore({ tokenFactory: () => "owner-loss" });
+  try {
+    const lease = await leases.acquire(
+      artifact,
+      Date.now() + 60_000,
+      "retained-continuation",
+    );
+    await leases.release(lease);
+    await assert.rejects(
+      leases.refresh(lease, Date.now() + 120_000, "executing-continuation"),
+      WorktreeLeaseOwnershipError,
+    );
+  } finally {
+    await fs.rm(repo, { recursive: true, force: true });
   }
 });
 
@@ -1420,6 +1608,7 @@ test("batch renewal failure releases local ownership but preserves the bounded l
         leaseMaintainer: () => ({
           assertHealthy: () => undefined,
           whenUnhealthy: Promise.resolve(renewalError),
+          forceStop: () => undefined,
           stop: async () => {
             throw renewalError;
           },
@@ -2207,6 +2396,7 @@ test("a cancelled batch starts nothing and leaves no worktrees behind", async ()
     controller.abort();
 
     let started = false;
+    let operationAuthorityAcquisitions = 0;
     const result = await runBatch(
       [
         makeTask({
@@ -2222,6 +2412,12 @@ test("a cancelled batch starts nothing and leaves no worktrees behind", async ()
         mode: "parallel",
         workingDirectory: repo,
         signal: controller.signal,
+        operationAuthorityAcquirer: async () => {
+          operationAuthorityAcquisitions += 1;
+          throw new Error(
+            "operation authority must not be acquired for an already-cancelled batch",
+          );
+        },
         executor: async () => {
           started = true;
           return makeOutput();
@@ -2230,6 +2426,7 @@ test("a cancelled batch starts nothing and leaves no worktrees behind", async ()
     );
 
     assert.equal(started, false);
+    assert.equal(operationAuthorityAcquisitions, 0);
     assert.ok(result.tasks.every((task) => task.state === "cancelled"));
 
     const worktreeRoot = path.join(repo, ".sol-luna", "worktrees");
@@ -2245,6 +2442,7 @@ test("an already-running parallel worker cancels while its sibling completes", a
   const controller = new AbortController();
   const events: Array<Record<string, unknown>> = [];
   let retainedPath: string | null = null;
+  let completedRetainedPath: string | null = null;
   let started = 0;
   let active = 0;
   let abortObserved = false;
@@ -2375,6 +2573,7 @@ test("an already-running parallel worker cancels while its sibling completes", a
 
     const completed = result.tasks[0]!;
     const cancelled = result.tasks[1]!;
+    completedRetainedPath = completed.worktreePath;
     retainedPath = cancelled.worktreePath;
     assert.equal(abortObserved, true);
     assert.equal(active, 0, "no controlled worker may remain active");
@@ -2400,9 +2599,19 @@ test("an already-running parallel worker cancels while its sibling completes", a
     assert.deepEqual(cancelled.changedFiles, []);
     assert.equal(result.passed, 1, describeBatch(result));
     assert.equal(result.failed, 1, describeBatch(result));
-    assert.equal(result.integrated, true, describeBatch(result));
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(
+      result.warnings.join("\n"),
+      /cancelled before any write/i,
+      describeBatch(result),
+    );
+    await assert.rejects(fs.stat(path.join(repo, "src", "complete", "value.ts")));
+    assert.ok(completedRetainedPath, describeBatch(result));
     assert.equal(
-      await fs.readFile(path.join(repo, "src", "complete", "value.ts"), "utf8"),
+      await fs.readFile(
+        path.join(completedRetainedPath!, "src", "complete", "value.ts"),
+        "utf8",
+      ),
       "export const completed = true;\n",
     );
 
@@ -2422,14 +2631,9 @@ test("an already-running parallel worker cancels while its sibling completes", a
     );
     assert.equal(events.filter((event) => event.type === "batch.cancelled").length, 1);
     assert.equal(events.filter((event) => event.type === "batch.completed").length, 0);
-    assert.ok(
-      events.some(
-        (event) =>
-          event.type === "integration.applied" &&
-          event.taskId === "t1" &&
-          event.fileCount === 1,
-      ),
-      JSON.stringify(events),
+    assert.equal(
+      events.some((event) => event.type === "integration.applied"),
+      false,
     );
     assert.ok(retainedPath, describeBatch(result));
     assert.ok(await fs.stat(retainedPath!).catch(() => null));
@@ -2438,6 +2642,13 @@ test("an already-running parallel worker cancels while its sibling completes", a
       null,
     );
   } finally {
+    if (completedRetainedPath) {
+      await cleanupWorktree(
+        { taskId: "t1", path: completedRetainedPath, repoRoot: repo, warnings: [] },
+        "success",
+        "never",
+      ).catch(() => undefined);
+    }
     if (retainedPath) {
       await cleanupWorktree(
         { taskId: "t2", path: retainedPath, repoRoot: repo, warnings: [] },
@@ -2494,7 +2705,16 @@ test("sequential cancellation removes a task queued for a worker slot", async ()
   );
   const controller = new AbortController();
   let calls = 0;
+  const originalAcquire = workerSlots.acquire;
+  let markWorkerSlotAttempted!: () => void;
+  const workerSlotAttempted = new Promise<void>((resolve) => {
+    markWorkerSlotAttempted = resolve;
+  });
   try {
+    workerSlots.acquire = async (signal) => {
+      markWorkerSlotAttempted();
+      return originalAcquire.call(workerSlots, signal);
+    };
     const pending = runBatch([makeTask()], {
       mode: "sequential",
       workingDirectory: repo,
@@ -2504,13 +2724,14 @@ test("sequential cancellation removes a task queued for a worker slot", async ()
         return makeOutput();
       },
     });
-    await new Promise((resolve) => setImmediate(resolve));
+    await workerSlotAttempted;
     controller.abort();
     const result = await pending;
 
     assert.equal(calls, 0, describeBatch(result));
     assert.equal(result.tasks[0]?.state, "cancelled", describeBatch(result));
   } finally {
+    workerSlots.acquire = originalAcquire;
     for (const release of releases) release();
     await cleanupRepo(repo);
   }
@@ -2542,6 +2763,14 @@ test("sequential evidence-scan failure cannot overwrite authoritative cancellati
     assert.equal(events.filter((event) => event.type === "worker.cancelled").length, 1);
     assert.equal(events.filter((event) => event.type === "batch.cancelled").length, 1);
     assert.equal(events.filter((event) => event.type === "batch.completed").length, 0);
+    assert.ok(
+      result.warnings.some((warning) =>
+        /repository operation authority final release failed after cancellation/i.test(
+          warning,
+        ),
+      ),
+      describeBatch(result),
+    );
   } finally {
     await fs
       .rename(path.join(repo, ".git.fixture"), path.join(repo, ".git"))
@@ -2705,6 +2934,89 @@ test("sequential mode needs no git repository at all", async () => {
       },
     );
     assert.equal(result.passed, 1);
+  } finally {
+    await cleanupRepo(real);
+  }
+});
+
+test("non-git sequential evidence catches an unreported out-of-scope shell side effect", async () => {
+  const plain = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-nogit-evidence-"));
+  const real = await fs.realpath(plain);
+  try {
+    const result = await runBatch(
+      [
+        makeTask({
+          objective: "Write only inside allowed.",
+          allowedFiles: ["allowed/**"],
+        }),
+      ],
+      {
+        mode: "sequential",
+        workingDirectory: real,
+        executor: async (input) => {
+          await fs.writeFile(path.join(real, "outside.txt"), "unreported\n", "utf8");
+          return makeOutput({ effort: input.effort, filesChanged: [] });
+        },
+      },
+    );
+    assert.equal(result.tasks[0]?.result?.verdict, "FAILED", describeBatch(result));
+    assert.equal(result.tasks[0]?.result?.trustworthy, false, describeBatch(result));
+    assert.ok(
+      result.tasks[0]?.result?.scopeViolations.some((item) =>
+        /outside\.txt.*outside allowedFiles/i.test(item),
+      ),
+      describeBatch(result),
+    );
+  } finally {
+    await cleanupRepo(real);
+  }
+});
+
+test("sequential no-verification dependency mutation is reconciled before completion telemetry", async () => {
+  const plain = await fs.mkdtemp(
+    path.join(os.tmpdir(), "sol-luna-sequential-dependency-evidence-"),
+  );
+  const real = await fs.realpath(plain);
+  const dependency = path.join(real, "node_modules", "fixture-package", "index.js");
+  const events: Array<Record<string, unknown>> = [];
+  await fs.mkdir(path.dirname(dependency), { recursive: true });
+  await fs.writeFile(dependency, "module.exports = 'operator';\n", "utf8");
+  try {
+    const result = await runProductionBatch(
+      [
+        makeTask({
+          objective: "Do not modify the operator dependency tree.",
+          allowedFiles: ["allowed/**"],
+          changeIntent: "optional",
+          verificationCommands: [],
+        }),
+      ],
+      {
+        mode: "sequential",
+        workingDirectory: real,
+        eventEmitter: (event) => events.push(event),
+        executor: async (input) => {
+          await fs.writeFile(dependency, "module.exports = 'worker';\n", "utf8");
+          return makeOutput({
+            effort: input.effort,
+            changeIntent: input.changeIntent,
+            filesChanged: [],
+          });
+        },
+      },
+    );
+
+    const task = result.tasks[0]!;
+    assert.equal(task.result?.verdict, "FAILED", describeBatch(result));
+    assert.equal(task.result?.trustworthy, false, describeBatch(result));
+    assert.match(
+      [...(task.result?.errors ?? []), ...(task.result?.discrepancies ?? [])].join("\n"),
+      /dependency evidence.*shared dependency state changed/i,
+      describeBatch(result),
+    );
+    const completions = events.filter((event) => event.type === "worker.completed");
+    assert.equal(completions.length, 1, JSON.stringify(events));
+    assert.equal(completions[0]?.verdict, "FAILED", JSON.stringify(completions));
   } finally {
     await cleanupRepo(real);
   }
@@ -2896,6 +3208,48 @@ test("parallel git evidence is reconciled into the nested result before integrat
     const completed = events.filter((event) => event.type === "worker.completed");
     assert.equal(completed.length, 2);
     assert.ok(completed.every((event) => event.changedFiles === 1));
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel execution and integration preserve a nested requested workspace identity", async () => {
+  const repo = await makeRepo();
+  const nested = path.join(repo, "packages", "app");
+  try {
+    await fs.mkdir(path.join(nested, "src"), { recursive: true });
+    await fs.writeFile(path.join(nested, "src", "base.ts"), "export const base = 1;\n");
+    await runGit(["add", "."], repo);
+    await runGit(["commit", "-m", "nested app"], repo);
+
+    const result = await runProductionBatch([makeTask({ allowedFiles: ["src/**"] })], {
+      mode: "parallel",
+      batchId: "bnested-integration",
+      workingDirectory: nested,
+      keepWorktrees: "never",
+      executor: async (input, options) => {
+        assert.match(
+          options.workingDirectory.replaceAll("\\", "/"),
+          /\.sol-luna\/worktrees\/bnested-integration-t1\/packages\/app$/,
+        );
+        await fs.writeFile(
+          path.join(options.workingDirectory, "src", "nested.ts"),
+          "export const nested = true;\n",
+        );
+        return makeOutput({
+          effort: input.effort,
+          filesChanged: [],
+        });
+      },
+    });
+
+    assert.equal(result.integrated, true, describeBatch(result));
+    assert.equal(
+      await fs.readFile(path.join(nested, "src", "nested.ts"), "utf8"),
+      "export const nested = true;\n",
+    );
+    await assert.rejects(fs.stat(path.join(repo, "src", "nested.ts")));
+    assert.deepEqual(result.tasks[0]?.changedFiles, ["src/nested.ts"]);
   } finally {
     await cleanupRepo(repo);
   }
@@ -3232,6 +3586,51 @@ test("parallel worker-process failures get one fresh retry in the same worktree"
       "automatic-recovery",
     );
     assert.equal(result.passed, 1);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel recovery refuses a second worker turn after lease health is lost", async () => {
+  const repo = await makeRepo();
+  let calls = 0;
+  const renewalError = new WorktreeLeaseRenewalError(
+    "fixture recovery lease health lost",
+    undefined,
+  );
+  try {
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/recovery-lease/**"] })],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        leaseMaintainer: () => ({
+          assertHealthy: () => {
+            throw renewalError;
+          },
+          whenUnhealthy: Promise.resolve(renewalError),
+          forceStop: () => undefined,
+          stop: async () => undefined,
+        }),
+        executor: async () => {
+          calls += 1;
+          throw new Error("Codex Exec exited with code 1");
+        },
+      },
+    );
+    const task = result.tasks[0]!;
+    assert.equal(calls, 1, describeBatch(result));
+    assert.equal(task.recovery?.attempted, false, describeBatch(result));
+    assert.equal(
+      task.recovery?.classification,
+      "security-or-trust-boundary",
+      describeBatch(result),
+    );
+    assert.match(
+      task.recovery?.evidence ?? "",
+      /persistent worktree protection.*fixture recovery lease health lost/i,
+    );
   } finally {
     await cleanupRepo(repo);
   }
@@ -3809,6 +4208,1100 @@ test("parallel integration refuses a destination redirected outside the workspac
   }
 });
 
+test("concurrent same-repo parallel batches serialize their authoritative windows", async () => {
+  const repo = await makeRepo();
+  let active = 0;
+  let peak = 0;
+  let releaseFirst!: () => void;
+  let markFirstEntered!: () => void;
+  let secondWorkerEntered = false;
+  const firstGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  const firstEntered = new Promise<void>((resolve) => {
+    markFirstEntered = resolve;
+  });
+
+  const run = (batchId: string, value: string) =>
+    runProductionBatch([makeTask({ allowedFiles: ["src/race.txt"] })], {
+      mode: "parallel",
+      batchId,
+      workingDirectory: repo,
+      keepWorktrees: "never",
+      executor: async (input, options) => {
+        active += 1;
+        peak = Math.max(peak, active);
+        try {
+          if (batchId === "bintegration-race-a") {
+            markFirstEntered();
+            await firstGate;
+          } else {
+            secondWorkerEntered = true;
+          }
+          await fs.writeFile(
+            path.join(options.workingDirectory, "src", "race.txt"),
+            value,
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              { path: "src/race.txt", kind: "modify", why: "race", observed: true },
+            ],
+          });
+        } finally {
+          active -= 1;
+        }
+      },
+    });
+
+  try {
+    const first = run("bintegration-race-a", "first\n");
+    await firstEntered;
+    const second = run("bintegration-race-b", "second\n").then(
+      (result) => ({ status: "fulfilled" as const, result }),
+      (error: unknown) => ({ status: "rejected" as const, error }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(
+      active,
+      1,
+      "the second same-repo batch must still be outside its worker window",
+    );
+    assert.equal(secondWorkerEntered, false);
+    releaseFirst();
+    const firstResult = await first;
+    const secondResult = await second;
+    assert.equal(peak, 1, "same-repository operation windows must never overlap");
+    assert.equal(firstResult.integrated, true, describeBatch(firstResult));
+    assert.equal(secondResult.status, "rejected");
+    if (secondResult.status !== "rejected") assert.fail("second batch unexpectedly ran");
+    assert.ok(secondResult.error instanceof BatchRejectedError);
+    assert.match(
+      (secondResult.error as Error).message,
+      /uncommitted changes inside the file scopes.*src\/race\.txt/i,
+    );
+    assert.equal(
+      secondWorkerEntered,
+      false,
+      "dirty-base refusal must happen before worker entry",
+    );
+    assert.equal(
+      await fs.readFile(path.join(repo, "src", "race.txt"), "utf8"),
+      "first\n",
+    );
+  } finally {
+    releaseFirst();
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel integration refuses authoritative destination drift after admission", async () => {
+  const repo = await makeRepo();
+  try {
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/drift.txt"] })],
+      {
+        mode: "parallel",
+        batchId: "bintegration-drift",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        executor: async (input, options) => {
+          await fs.writeFile(
+            path.join(options.workingDirectory, "src", "drift.txt"),
+            "worker\n",
+          );
+          await fs.writeFile(path.join(repo, "src", "drift.txt"), "operator\n");
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              { path: "src/drift.txt", kind: "modify", why: "test", observed: true },
+            ],
+          });
+        },
+      },
+    );
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(
+      result.warnings.join("\n"),
+      /workspace changed after parallel admission/i,
+    );
+    assert.equal(
+      await fs.readFile(path.join(repo, "src", "drift.txt"), "utf8"),
+      "operator\n",
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel integration rejects a worktree source changed after evidence collection", async () => {
+  const repo = await makeRepo();
+  const batchId = "bintegration-source-drift";
+  try {
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/source-drift.txt"] })],
+      {
+        mode: "parallel",
+        batchId,
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        eventEmitter: (event) => {
+          if (event.type !== "worker.completed" || event.taskId !== "t1") return;
+          writeFileSync(
+            path.join(
+              repo,
+              ".sol-luna",
+              "worktrees",
+              `${batchId}-t1`,
+              "src",
+              "source-drift.txt",
+            ),
+            "changed-after-evidence\n",
+          );
+        },
+        executor: async (input, options) => {
+          await fs.writeFile(
+            path.join(options.workingDirectory, "src", "source-drift.txt"),
+            "accepted-evidence\n",
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/source-drift.txt",
+                kind: "modify",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(result.warnings.join("\n"), /changed after evidence collection/i);
+    await assert.rejects(fs.stat(path.join(repo, "src", "source-drift.txt")));
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel integration binds destination state at the final write boundary", async () => {
+  const repo = await makeRepo();
+  const events: Array<Record<string, unknown>> = [];
+  let seamCalls = 0;
+  try {
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/write-boundary-destination.txt"] })],
+      {
+        mode: "parallel",
+        batchId: "bintegration-destination-boundary",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        eventEmitter: (event) => events.push(event),
+        integrationBeforeWrite: async ({ file }) => {
+          if (file !== "src/write-boundary-destination.txt") return;
+          seamCalls += 1;
+          await fs.writeFile(
+            path.join(repo, "src", "write-boundary-destination.txt"),
+            "operator-after-validation\n",
+          );
+        },
+        executor: async (input, options) => {
+          await fs.writeFile(
+            path.join(options.workingDirectory, "src", "write-boundary-destination.txt"),
+            "worker-accepted-evidence\n",
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/write-boundary-destination.txt",
+                kind: "modify",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(seamCalls, 1);
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(
+      result.warnings.join("\n"),
+      /destination changed after integration validation/i,
+    );
+    assert.equal(
+      await fs.readFile(path.join(repo, "src", "write-boundary-destination.txt"), "utf8"),
+      "operator-after-validation\n",
+    );
+    assert.ok(
+      events.some(
+        (event) =>
+          event.type === "integration.blocked" && event.reason === "workspace-drift",
+      ),
+      JSON.stringify(events),
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel integration binds copied source bytes at the final write boundary", async () => {
+  const repo = await makeRepo();
+  const batchId = "bintegration-source-boundary";
+  let seamCalls = 0;
+  try {
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/write-boundary-source.txt"] })],
+      {
+        mode: "parallel",
+        batchId,
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        integrationBeforeWrite: async ({ file }) => {
+          if (file !== "src/write-boundary-source.txt") return;
+          seamCalls += 1;
+          await fs.writeFile(
+            path.join(
+              repo,
+              ".sol-luna",
+              "worktrees",
+              batchId + "-t1",
+              "src",
+              "write-boundary-source.txt",
+            ),
+            "source-mutated-after-validation\n",
+          );
+        },
+        executor: async (input, options) => {
+          await fs.writeFile(
+            path.join(options.workingDirectory, "src", "write-boundary-source.txt"),
+            "source-accepted-evidence\n",
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/write-boundary-source.txt",
+                kind: "modify",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(seamCalls, 1);
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(
+      result.warnings.join("\n"),
+      /source changed after integration validation/i,
+    );
+    await assert.rejects(fs.stat(path.join(repo, "src", "write-boundary-source.txt")));
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel integration refuses a missing destination parent without mutation", async () => {
+  const repo = await makeRepo();
+  try {
+    const result = await runProductionBatch([makeTask({ allowedFiles: ["fresh/**"] })], {
+      mode: "parallel",
+      batchId: "bintegration-parent-missing",
+      workingDirectory: repo,
+      keepWorktrees: "never",
+      executor: async (input, options) => {
+        const target = path.join(options.workingDirectory, "fresh", "deep", "file.txt");
+        await fs.mkdir(path.dirname(target), { recursive: true });
+        await fs.writeFile(target, "worker\n", "utf8");
+        return makeOutput({
+          effort: input.effort,
+          filesChanged: [
+            {
+              path: "fresh/deep/file.txt",
+              kind: "add",
+              why: "test",
+              observed: true,
+            },
+          ],
+        });
+      },
+    });
+
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(
+      result.warnings.join("\n"),
+      /destination parent ancestry.*confined destination parent is missing/i,
+    );
+    assert.match(result.integrationSummary, /copying 0 file/i);
+    assert.equal(await fs.lstat(path.join(repo, "fresh")).catch(() => null), null);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel integration refuses a raced parent junction before authoritative mutation", async (t) => {
+  const repo = await makeRepo();
+  const outside = `${repo}-outside`;
+  const parent = path.join(repo, "src", "fresh");
+  const savedParent = path.join(repo, "src", "fresh.saved");
+  let linked = false;
+  try {
+    await fs.mkdir(path.join(parent, "deep"), { recursive: true });
+    await fs.writeFile(path.join(parent, "deep", ".keep"), "keep\n", "utf8");
+    await runGit(["add", "src/fresh/deep/.keep"], repo);
+    await runGit(["commit", "-m", "add parent-race fixture"], repo);
+    await fs.mkdir(path.join(outside, "deep"), { recursive: true });
+    await fs.writeFile(path.join(outside, "sentinel.txt"), "keep\n", "utf8");
+
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/fresh/**"] })],
+      {
+        mode: "parallel",
+        batchId: "bintegration-parent-race",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        integrationBeforeWrite: async ({ file }) => {
+          if (file !== "src/fresh/deep/file.txt") return;
+          await fs.rename(parent, savedParent);
+          try {
+            await fs.symlink(
+              outside,
+              parent,
+              process.platform === "win32" ? "junction" : "dir",
+            );
+            linked = true;
+          } catch {
+            t.skip("directory symlink/junction creation is unavailable on this machine");
+          }
+        },
+        executor: async (input, options) => {
+          const target = path.join(
+            options.workingDirectory,
+            "src",
+            "fresh",
+            "deep",
+            "file.txt",
+          );
+          await fs.writeFile(target, "worker\n", "utf8");
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/fresh/deep/file.txt",
+                kind: "add",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    if (!linked) return;
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(
+      result.warnings.join("\n"),
+      /destination changed after integration validation|destination parent ancestry/i,
+    );
+    assert.match(result.integrationSummary, /copying 0 file/i);
+    assert.equal(
+      await fs.lstat(path.join(outside, "deep", "file.txt")).catch(() => null),
+      null,
+    );
+    assert.equal(await fs.readFile(path.join(outside, "sentinel.txt"), "utf8"), "keep\n");
+  } finally {
+    if (linked)
+      await fs.rm(parent, { recursive: true, force: true }).catch(() => undefined);
+    if (await fs.lstat(savedParent).catch(() => null)) {
+      await fs.rename(savedParent, parent).catch(() => undefined);
+    }
+    await cleanupRepo(repo);
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("parallel integration retries short writes until every accepted byte is written", async () => {
+  const repo = await makeRepo();
+  const target = path.join(repo, "src", "short-write.txt");
+  const accepted = "accepted-worker-bytes-that-require-more-than-one-write\n";
+  try {
+    await fs.writeFile(target, "before\n", "utf8");
+    await runGit(["add", "src/short-write.txt"], repo);
+    await runGit(["commit", "-m", "add short-write fixture"], repo);
+
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/short-write.txt"] })],
+      {
+        mode: "parallel",
+        batchId: "bintegration-short-write",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        integrationPinnedWriteTest: { maxWriteBytes: 5 },
+        executor: async (input, options) => {
+          await fs.writeFile(
+            path.join(options.workingDirectory, "src", "short-write.txt"),
+            accepted,
+            "utf8",
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/short-write.txt",
+                kind: "modify",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(result.integrated, true, describeBatch(result));
+    assert.equal(await fs.readFile(target, "utf8"), accepted);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel integration counts and stops after an existing-file write fails post-truncate", async () => {
+  const repo = await makeRepo();
+  const target = path.join(repo, "src", "a-post-truncate-failure.txt");
+  const later = path.join(repo, "src", "z-after-post-truncate-failure.txt");
+  const events: Array<Record<string, unknown>> = [];
+  try {
+    await fs.writeFile(target, "authoritative-before\n", "utf8");
+    await runGit(["add", "src/a-post-truncate-failure.txt"], repo);
+    await runGit(["commit", "-m", "add post-truncate fixture"], repo);
+
+    const result = await runProductionBatch(
+      [
+        makeTask({
+          allowedFiles: [
+            "src/a-post-truncate-failure.txt",
+            "src/z-after-post-truncate-failure.txt",
+          ],
+        }),
+      ],
+      {
+        mode: "parallel",
+        batchId: "bintegration-post-truncate-failure",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        eventEmitter: (event) => events.push(event),
+        integrationPinnedWriteTest: { failAfterTruncate: true },
+        executor: async (input, options) => {
+          await fs.writeFile(
+            path.join(options.workingDirectory, "src", "a-post-truncate-failure.txt"),
+            "worker-replacement\n",
+          );
+          await fs.writeFile(
+            path.join(
+              options.workingDirectory,
+              "src",
+              "z-after-post-truncate-failure.txt",
+            ),
+            "must-not-integrate\n",
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/a-post-truncate-failure.txt",
+                kind: "modify",
+                why: "test",
+                observed: true,
+              },
+              {
+                path: "src/z-after-post-truncate-failure.txt",
+                kind: "add",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(result.integrationSummary, /incomplete after copying 1 file/i);
+    assert.match(
+      result.warnings.join("\n"),
+      /after an authoritative mutation.*injected pinned write failure after truncate.*counted as applied/is,
+    );
+    assert.equal(await fs.readFile(target, "utf8"), "");
+    await assert.rejects(fs.stat(later));
+    assert.deepEqual(
+      events.find((event) => event.type === "integration.partial"),
+      {
+        type: "integration.partial",
+        batchId: "bintegration-post-truncate-failure",
+        taskId: "t1",
+        attemptedFiles: 2,
+        appliedFiles: 1,
+      },
+      JSON.stringify(events),
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel integration counts and stops after a new-file write fails after creation", async () => {
+  const repo = await makeRepo();
+  const target = path.join(repo, "src", "a-post-create-failure.txt");
+  const later = path.join(repo, "src", "z-after-post-create-failure.txt");
+  const events: Array<Record<string, unknown>> = [];
+  try {
+    const result = await runProductionBatch(
+      [
+        makeTask({
+          allowedFiles: [
+            "src/a-post-create-failure.txt",
+            "src/z-after-post-create-failure.txt",
+          ],
+        }),
+      ],
+      {
+        mode: "parallel",
+        batchId: "bintegration-post-create-failure",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        eventEmitter: (event) => events.push(event),
+        integrationPinnedWriteTest: {
+          maxWriteBytes: 8,
+          failAfterBytes: 8,
+        },
+        executor: async (input, options) => {
+          await fs.writeFile(
+            path.join(options.workingDirectory, "src", "a-post-create-failure.txt"),
+            "worker-created-bytes\n",
+          );
+          await fs.writeFile(
+            path.join(options.workingDirectory, "src", "z-after-post-create-failure.txt"),
+            "must-not-integrate\n",
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/a-post-create-failure.txt",
+                kind: "add",
+                why: "test",
+                observed: true,
+              },
+              {
+                path: "src/z-after-post-create-failure.txt",
+                kind: "add",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(result.integrationSummary, /incomplete after copying 1 file/i);
+    assert.match(
+      result.warnings.join("\n"),
+      /after an authoritative mutation.*injected pinned write failure after partial write.*counted as applied/is,
+    );
+    assert.ok(
+      (await fs.readFile(target)).length > 0,
+      "the partial authoritative write must remain visible",
+    );
+    await assert.rejects(fs.stat(later));
+    assert.equal(
+      events.find((event) => event.type === "integration.partial")?.appliedFiles,
+      1,
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel deletion rolls back and stops when quarantine unlink fails after the namespace move", async () => {
+  const repo = await makeRepo();
+  const target = path.join(repo, "src", "a-delete-unlink-failure.txt");
+  const later = path.join(repo, "src", "z-after-delete-unlink-failure.txt");
+  const originalUnlink = fs.unlink;
+  const events: Array<Record<string, unknown>> = [];
+  let injected = false;
+  try {
+    await fs.writeFile(target, "restore-me\n", "utf8");
+    await runGit(["add", "src/a-delete-unlink-failure.txt"], repo);
+    await runGit(["commit", "-m", "add deletion unlink fixture"], repo);
+
+    fs.unlink = (async (...args: Parameters<typeof originalUnlink>) => {
+      const candidate = path.resolve(String(args[0]));
+      if (
+        !injected &&
+        candidate.includes(`${path.sep}.sol-luna${path.sep}integration-delete${path.sep}`)
+      ) {
+        injected = true;
+        throw new Error("injected quarantine unlink failure");
+      }
+      return originalUnlink(...args);
+    }) as typeof fs.unlink;
+
+    const result = await runProductionBatch(
+      [
+        makeTask({
+          allowedFiles: [
+            "src/a-delete-unlink-failure.txt",
+            "src/z-after-delete-unlink-failure.txt",
+          ],
+        }),
+      ],
+      {
+        mode: "parallel",
+        batchId: "bintegration-delete-unlink-failure",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        eventEmitter: (event) => events.push(event),
+        executor: async (input, options) => {
+          await fs.rm(
+            path.join(options.workingDirectory, "src", "a-delete-unlink-failure.txt"),
+            { force: true },
+          );
+          await fs.writeFile(
+            path.join(
+              options.workingDirectory,
+              "src",
+              "z-after-delete-unlink-failure.txt",
+            ),
+            "must-not-integrate\n",
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/a-delete-unlink-failure.txt",
+                kind: "delete",
+                why: "test",
+                observed: true,
+              },
+              {
+                path: "src/z-after-delete-unlink-failure.txt",
+                kind: "add",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(injected, true);
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(result.integrationSummary, /incomplete after copying 0 file/i);
+    assert.match(
+      result.warnings.join("\n"),
+      /after an authoritative mutation.*injected quarantine unlink failure.*rolled back safely/is,
+    );
+    assert.equal(await fs.readFile(target, "utf8"), "restore-me\n");
+    await assert.rejects(fs.stat(later));
+    assert.deepEqual(
+      events.find((event) => event.type === "integration.failed"),
+      {
+        type: "integration.failed",
+        batchId: "bintegration-delete-unlink-failure",
+        taskId: "t1",
+        attemptedFiles: 2,
+        appliedFiles: 0,
+      },
+      JSON.stringify(events),
+    );
+  } finally {
+    fs.unlink = originalUnlink;
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel deletion preserves an operator replacement in the final snapshot-to-unlink window", async () => {
+  const repo = await makeRepo();
+  const target = path.join(repo, "src", "delete-boundary.txt");
+  const events: Array<Record<string, unknown>> = [];
+  let validatedCalls = 0;
+  try {
+    await fs.writeFile(target, "accepted-destination\n", "utf8");
+    await runGit(["add", "src/delete-boundary.txt"], repo);
+    await runGit(["commit", "-m", "add deletion boundary fixture"], repo);
+
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/delete-boundary.txt"] })],
+      {
+        mode: "parallel",
+        batchId: "bintegration-delete-boundary",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        eventEmitter: (event) => events.push(event),
+        integrationBeforeDelete: async ({ file, phase }) => {
+          if (file !== "src/delete-boundary.txt" || phase !== "validated") return;
+          validatedCalls += 1;
+          await fs.rm(target, { force: true });
+          await fs.writeFile(target, "operator-replacement\n", "utf8");
+        },
+        executor: async (input, options) => {
+          await fs.rm(path.join(options.workingDirectory, "src", "delete-boundary.txt"), {
+            force: true,
+          });
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/delete-boundary.txt",
+                kind: "delete",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(validatedCalls, 1);
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(
+      result.warnings.join("\n"),
+      /authoritative destination changed at the deletion boundary/i,
+    );
+    assert.match(result.warnings.join("\n"), /raced destination state was restored/i);
+    assert.equal(await fs.readFile(target, "utf8"), "operator-replacement\n");
+    assert.ok(
+      events.some(
+        (event) =>
+          event.type === "integration.blocked" && event.reason === "workspace-drift",
+      ),
+      JSON.stringify(events),
+    );
+    assert.equal(
+      events.find((event) => event.type === "integration.applied")?.fileCount,
+      0,
+      JSON.stringify(events),
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel proven deletion leaves no quarantine artifact on success", async () => {
+  const repo = await makeRepo();
+  const target = path.join(repo, "src", "delete-success.txt");
+  try {
+    await fs.writeFile(target, "delete-me\n", "utf8");
+    await runGit(["add", "src/delete-success.txt"], repo);
+    await runGit(["commit", "-m", "add successful deletion fixture"], repo);
+
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/delete-success.txt"] })],
+      {
+        mode: "parallel",
+        batchId: "bintegration-delete-success",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        executor: async (input, options) => {
+          await fs.rm(path.join(options.workingDirectory, "src", "delete-success.txt"), {
+            force: true,
+          });
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/delete-success.txt",
+                kind: "delete",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(result.integrated, true, describeBatch(result));
+    await assert.rejects(fs.stat(target));
+    await assert.rejects(fs.stat(path.join(repo, ".sol-luna", "integration-delete")));
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel deletion refuses a redirected quarantine control root", async (t) => {
+  const repo = await makeRepo();
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-delete-quarantine-"));
+  const target = path.join(repo, "src", "delete-quarantine-redirect.txt");
+  const quarantineRoot = path.join(repo, ".sol-luna", "integration-delete");
+  try {
+    await fs.writeFile(target, "keep-me\n", "utf8");
+    await runGit(["add", "src/delete-quarantine-redirect.txt"], repo);
+    await runGit(["commit", "-m", "add redirected quarantine fixture"], repo);
+    await fs.mkdir(path.dirname(quarantineRoot), { recursive: true });
+    try {
+      await fs.symlink(
+        outside,
+        quarantineRoot,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+    } catch {
+      t.skip("directory symlink/junction creation is unavailable on this machine");
+      return;
+    }
+
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/delete-quarantine-redirect.txt"] })],
+      {
+        mode: "parallel",
+        batchId: "bintegration-delete-quarantine-redirect",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        executor: async (input, options) => {
+          await fs.rm(
+            path.join(options.workingDirectory, "src", "delete-quarantine-redirect.txt"),
+            { force: true },
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/delete-quarantine-redirect.txt",
+                kind: "delete",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(
+      result.warnings.join("\n"),
+      /deletion quarantine is not trustworthy.*redirected integration quarantine path/i,
+    );
+    assert.equal(await fs.readFile(target, "utf8"), "keep-me\n");
+    assert.deepEqual(await fs.readdir(outside), []);
+  } finally {
+    await fs.unlink(quarantineRoot).catch(() => undefined);
+    await cleanupRepo(repo);
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("parallel deletion cancellation after the namespace move never reports zero writes when rollback is blocked", async () => {
+  const repo = await makeRepo();
+  const target = path.join(repo, "src", "delete-cancel-boundary.txt");
+  const controller = new AbortController();
+  const events: Array<Record<string, unknown>> = [];
+  let movedCalls = 0;
+  try {
+    await fs.writeFile(target, "accepted-destination\n", "utf8");
+    await runGit(["add", "src/delete-cancel-boundary.txt"], repo);
+    await runGit(["commit", "-m", "add deletion cancellation fixture"], repo);
+
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/delete-cancel-boundary.txt"] })],
+      {
+        mode: "parallel",
+        batchId: "bintegration-delete-cancel-boundary",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        signal: controller.signal,
+        eventEmitter: (event) => events.push(event),
+        integrationBeforeDelete: async ({ file, phase }) => {
+          if (file !== "src/delete-cancel-boundary.txt" || phase !== "moved") return;
+          movedCalls += 1;
+          await fs.writeFile(target, "operator-after-delete-move\n", "utf8");
+          controller.abort();
+        },
+        executor: async (input, options) => {
+          await fs.rm(
+            path.join(options.workingDirectory, "src", "delete-cancel-boundary.txt"),
+            { force: true },
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/delete-cancel-boundary.txt",
+                kind: "delete",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(movedCalls, 1);
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(result.integrationSummary, /incomplete after copying 1 file/i);
+    assert.match(
+      result.warnings.join("\n"),
+      /cancellation was observed after the deletion boundary/i,
+    );
+    assert.doesNotMatch(result.warnings.join("\n"), /cancelled before any write/i);
+    assert.equal(await fs.readFile(target, "utf8"), "operator-after-delete-move\n");
+    assert.deepEqual(
+      events.find((event) => event.type === "integration.applied"),
+      {
+        type: "integration.applied",
+        batchId: "bintegration-delete-cancel-boundary",
+        taskId: "t1",
+        fileCount: 1,
+      },
+      JSON.stringify(events),
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel cancellation after worker evidence refuses integration before the first write", async () => {
+  const repo = await makeRepo();
+  const controller = new AbortController();
+  try {
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/cancel-before-integrate.txt"] })],
+      {
+        mode: "parallel",
+        batchId: "bintegration-cancel",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        signal: controller.signal,
+        eventEmitter: (event) => {
+          if (event.type === "worker.completed" && event.taskId === "t1")
+            controller.abort();
+        },
+        executor: async (input, options) => {
+          await fs.writeFile(
+            path.join(options.workingDirectory, "src", "cancel-before-integrate.txt"),
+            "worker\n",
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/cancel-before-integrate.txt",
+                kind: "modify",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+    assert.equal(result.integrated, false, describeBatch(result));
+    await assert.rejects(fs.stat(path.join(repo, "src", "cancel-before-integrate.txt")));
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel cancellation between copies reports the authoritative partial write", async () => {
+  const repo = await makeRepo();
+  const controller = new AbortController();
+  const events: Array<Record<string, unknown>> = [];
+  try {
+    const result = await runProductionBatch(
+      [
+        makeTask({
+          allowedFiles: ["src/cancel-between-a.txt", "src/cancel-between-b.txt"],
+        }),
+      ],
+      {
+        mode: "parallel",
+        batchId: "bintegration-cancel-between",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        signal: controller.signal,
+        eventEmitter: (event) => events.push(event),
+        integrationBeforeWrite: ({ file, appliedFiles }) => {
+          if (file === "src/cancel-between-b.txt") {
+            assert.equal(
+              appliedFiles,
+              1,
+              "the first authoritative copy must already apply",
+            );
+            controller.abort();
+          }
+        },
+        executor: async (input, options) => {
+          await fs.writeFile(
+            path.join(options.workingDirectory, "src", "cancel-between-a.txt"),
+            "first\n",
+          );
+          await fs.writeFile(
+            path.join(options.workingDirectory, "src", "cancel-between-b.txt"),
+            "second\n",
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/cancel-between-a.txt",
+                kind: "modify",
+                why: "test",
+                observed: true,
+              },
+              {
+                path: "src/cancel-between-b.txt",
+                kind: "modify",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(result.integrationSummary, /incomplete after copying 1 file/i);
+    assert.match(result.warnings.join("\n"), /stopped after copying 1 file/i);
+    assert.doesNotMatch(result.warnings.join("\n"), /cancelled before any write/i);
+    assert.equal(
+      await fs.readFile(path.join(repo, "src", "cancel-between-a.txt"), "utf8"),
+      "first\n",
+    );
+    await assert.rejects(fs.stat(path.join(repo, "src", "cancel-between-b.txt")));
+    assert.deepEqual(
+      events.find((event) => event.type === "integration.partial"),
+      {
+        type: "integration.partial",
+        batchId: "bintegration-cancel-between",
+        taskId: "t1",
+        attemptedFiles: 2,
+        appliedFiles: 1,
+      },
+      JSON.stringify(events),
+    );
+    assert.equal(
+      events.find((event) => event.type === "integration.applied")?.fileCount,
+      1,
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
 test("git evidence drives parallel scope and change-intent verdicts", async () => {
   const repo = await makeRepo();
   try {
@@ -4092,6 +5585,277 @@ test("final workspace verification deduplicates declared checks and closes the b
       events.findIndex((event) => event.type === "integration.verification.completed") <
         events.findIndex((event) => event.type === "batch.completed"),
     );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("final workspace verification cannot hide an ignored protected control mutation", async () => {
+  const repo = await makeRepo();
+  try {
+    const command = "node --test test/final.test.js";
+    const result = await runProductionBatch(
+      [
+        makeTask({
+          allowedFiles: ["src/one/**"],
+          verificationCommands: [command],
+        }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        eventEmitter: () => undefined,
+        executor: fakeExecutor({
+          writes: () => ({ "src/one/mod.ts": "export {};\n" }),
+          output: () => ({
+            verification: [
+              {
+                command,
+                source: "orchestrator" as const,
+                execution: "argv" as const,
+                exitCode: 0,
+                passed: true,
+                output: "scoped pass",
+              },
+            ],
+          }),
+        }),
+        integrationVerifier: async (commands, workingDirectory) => {
+          const control = path.join(
+            workingDirectory,
+            ".sol-luna",
+            "verifier-side-effect",
+          );
+          await fs.mkdir(path.dirname(control), { recursive: true });
+          await fs.writeFile(control, "unexpected\n", "utf8");
+          return commands.map((item) => ({
+            command: item,
+            exitCode: 0,
+            passed: true,
+            output: "final pass",
+            execution: "argv" as const,
+          }));
+        },
+      },
+    );
+
+    assert.equal(result.completionState, "needs-supervisor", describeBatch(result));
+    assert.match(
+      result.warnings.join("\n"),
+      /Final verification evidence changed.*verifier-side-effect/i,
+      describeBatch(result),
+    );
+    assert.equal(result.tasks[0]?.failureDecision?.action, "parent-takeover");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("final workspace verification cannot populate an admitted uninitialized gitlink", async () => {
+  const repo = await makeRepo();
+  const submoduleSource = await makeRepo();
+  try {
+    const added = await runGit(
+      [
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        submoduleSource,
+        "vendor/dependency",
+      ],
+      repo,
+    );
+    assert.equal(added.code, 0, added.stderr || added.stdout);
+    await runGit(["add", ".gitmodules", "vendor/dependency"], repo);
+    const committed = await runGit(["commit", "-m", "add submodule fixture"], repo);
+    assert.equal(committed.code, 0, committed.stderr || committed.stdout);
+    const deinitialized = await runGit(
+      ["submodule", "deinit", "-f", "--", "vendor/dependency"],
+      repo,
+    );
+    assert.equal(deinitialized.code, 0, deinitialized.stderr || deinitialized.stdout);
+
+    const command = "node --test test/final.test.js";
+    const result = await runProductionBatch(
+      [
+        makeTask({
+          allowedFiles: ["src/one/**"],
+          verificationCommands: [command],
+        }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        eventEmitter: () => undefined,
+        executor: fakeExecutor({
+          writes: () => ({ "src/one/mod.ts": "export {};\n" }),
+          output: () => ({
+            verification: [
+              {
+                command,
+                source: "orchestrator" as const,
+                execution: "argv" as const,
+                exitCode: 0,
+                passed: true,
+                output: "scoped pass",
+              },
+            ],
+          }),
+        }),
+        integrationVerifier: async (commands, workingDirectory) => {
+          const injected = path.join(
+            workingDirectory,
+            "vendor",
+            "dependency",
+            "verifier-injected.txt",
+          );
+          await fs.mkdir(path.dirname(injected), { recursive: true });
+          await fs.writeFile(injected, "unexpected\n", "utf8");
+          return commands.map((item) => ({
+            command: item,
+            exitCode: 0,
+            passed: true,
+            output: "final pass",
+            execution: "argv" as const,
+          }));
+        },
+      },
+    );
+
+    assert.equal(result.completionState, "needs-supervisor", describeBatch(result));
+    assert.match(
+      result.warnings.join("\n"),
+      /Final verification evidence changed.*populated uninitialized submodule worktree/i,
+      describeBatch(result),
+    );
+    assert.equal(result.tasks[0]?.failureDecision?.action, "parent-takeover");
+  } finally {
+    await cleanupRepo(repo);
+    await cleanupRepo(submoduleSource);
+  }
+});
+
+test("final workspace verification cannot mutate common Git authority and still complete", async () => {
+  const repo = await makeRepo();
+  try {
+    const command = "node --test test/final.test.js";
+    const result = await runProductionBatch(
+      [
+        makeTask({
+          allowedFiles: ["src/one/**"],
+          verificationCommands: [command],
+        }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        eventEmitter: () => undefined,
+        executor: fakeExecutor({
+          writes: () => ({ "src/one/mod.ts": "export {};\n" }),
+          output: () => ({
+            verification: [
+              {
+                command,
+                source: "orchestrator" as const,
+                execution: "argv" as const,
+                exitCode: 0,
+                passed: true,
+                output: "scoped pass",
+              },
+            ],
+          }),
+        }),
+        integrationVerifier: async (commands, workingDirectory) => {
+          const gitDir = (
+            await runGit(["rev-parse", "--git-common-dir"], workingDirectory)
+          ).stdout.trim();
+          const commonGit = path.isAbsolute(gitDir)
+            ? gitDir
+            : path.resolve(workingDirectory, gitDir);
+          const hook = path.join(commonGit, "hooks", "verifier-side-effect");
+          await fs.mkdir(path.dirname(hook), { recursive: true });
+          await fs.writeFile(hook, "unexpected\n", "utf8");
+          return commands.map((item) => ({
+            command: item,
+            exitCode: 0,
+            passed: true,
+            output: "final pass",
+            execution: "argv" as const,
+          }));
+        },
+      },
+    );
+
+    assert.equal(result.completionState, "needs-supervisor", describeBatch(result));
+    assert.match(
+      result.warnings.join("\n"),
+      /Final verification evidence changed.*Git evidence authority/i,
+      describeBatch(result),
+    );
+    assert.equal(result.tasks[0]?.failureDecision?.action, "parent-takeover");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("final workspace verification cannot mutate operator dependencies and still complete", async () => {
+  const repo = await makeRepo();
+  const dependency = path.join(repo, "node_modules", "fixture-package", "index.js");
+  try {
+    await fs.mkdir(path.dirname(dependency), { recursive: true });
+    await fs.writeFile(dependency, "module.exports = 'operator';\n", "utf8");
+    const command = "node --test test/final.test.js";
+    const result = await runProductionBatch(
+      [
+        makeTask({
+          allowedFiles: ["src/one/**"],
+          verificationCommands: [command],
+        }),
+      ],
+      {
+        mode: "parallel",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        eventEmitter: () => undefined,
+        executor: fakeExecutor({
+          writes: () => ({ "src/one/mod.ts": "export {};\n" }),
+          output: () => ({
+            verification: [
+              {
+                command,
+                source: "orchestrator" as const,
+                execution: "argv" as const,
+                exitCode: 0,
+                passed: true,
+                output: "scoped pass",
+              },
+            ],
+          }),
+        }),
+        integrationVerifier: async (commands) => {
+          await fs.writeFile(dependency, "module.exports = 'verifier';\n", "utf8");
+          return commands.map((item) => ({
+            command: item,
+            exitCode: 0,
+            passed: true,
+            output: "final pass",
+            execution: "argv" as const,
+          }));
+        },
+      },
+    );
+
+    assert.equal(result.completionState, "needs-supervisor", describeBatch(result));
+    assert.match(
+      result.warnings.join("\n"),
+      /Final verification evidence changed.*(?:shared dependency state changed|node_modules\/fixture-package\/index\.js)/i,
+      describeBatch(result),
+    );
+    assert.equal(result.tasks[0]?.failureDecision?.action, "parent-takeover");
   } finally {
     await cleanupRepo(repo);
   }
@@ -5358,6 +7122,689 @@ test("sequential Git evidence catches an out-of-scope edit omitted by the execut
       describeBatch(result),
     );
   } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("same-repo parallel lease churn waits outside a direct evidence window", async () => {
+  const repo = await makeRepo();
+  const handoffs = new HandoffStore();
+  const continuations = new ContinuationStore();
+  const registry = new ContextLifecycleRegistry({
+    handoffStore: handoffs,
+    continuationStore: continuations,
+  });
+  const order: string[] = [];
+  let releaseDirect!: () => void;
+  let markDirectEntered!: () => void;
+  let markParallelAttempted!: () => void;
+  const directGate = new Promise<void>((resolve) => {
+    releaseDirect = resolve;
+  });
+  const directEntered = new Promise<void>((resolve) => {
+    markDirectEntered = resolve;
+  });
+  const parallelAttempted = new Promise<void>((resolve) => {
+    markParallelAttempted = resolve;
+  });
+
+  try {
+    const direct = handleDelegateTask(
+      makeTask({
+        workingDirectory: repo,
+        allowedFiles: ["src/direct.ts"],
+        changeIntent: "optional",
+        resultDetail: "full",
+      }),
+      undefined,
+      {
+        handoffStore: handoffs,
+        continuationStore: continuations,
+        contextRegistry: registry,
+        emit: () => undefined,
+        record: () => undefined,
+        makeBatchId: () => "b_direct_operation_authority",
+        operationAuthorityAcquirer: async (workspace, signal) => {
+          const authority = await acquireRepositoryOperationAuthority(workspace, signal);
+          assert.ok(authority);
+          order.push("direct-acquired");
+          return {
+            ...authority,
+            release: async () => {
+              await authority.release();
+              order.push("direct-released");
+            },
+          } satisfies RepositoryOperationAuthority;
+        },
+        delegateToLuna: async (input, _signal, hooks) => {
+          hooks?.onStarted?.(repo);
+          order.push("direct-worker");
+          markDirectEntered();
+          await directGate;
+          return makeOutput({
+            effort: input.effort,
+            changeIntent: "optional",
+            workerThreadId: null,
+            filesChanged: [],
+          });
+        },
+      },
+    );
+
+    await directEntered;
+    const parallel = runBatch(
+      [
+        makeTask({
+          allowedFiles: ["src/parallel.ts"],
+          changeIntent: "optional",
+        }),
+      ],
+      {
+        mode: "parallel",
+        batchId: "b_parallel_operation_authority",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        operationAuthorityAcquirer: async (workspace, signal) => {
+          order.push("parallel-attempted");
+          markParallelAttempted();
+          const authority = await acquireRepositoryOperationAuthority(workspace, signal);
+          order.push("parallel-acquired");
+          return authority;
+        },
+        executor: async (input) => {
+          order.push("parallel-worker");
+          return makeOutput({
+            effort: input.effort,
+            changeIntent: "optional",
+            filesChanged: [],
+          });
+        },
+      },
+    );
+
+    await parallelAttempted;
+    assert.equal(order.includes("parallel-acquired"), false, order.join(" -> "));
+    releaseDirect();
+    const [directResult, parallelResult] = await Promise.all([direct, parallel]);
+
+    assert.equal(directResult.isError, undefined);
+    assert.equal(directResult.structuredContent?.verdict, "PASS");
+    assert.deepEqual(directResult.structuredContent?.scopeViolations, []);
+    assert.equal(
+      parallelResult.tasks[0]?.result?.verdict,
+      "PASS",
+      describeBatch(parallelResult),
+    );
+    assert.ok(
+      order.indexOf("direct-released") < order.indexOf("parallel-acquired"),
+      order.join(" -> "),
+    );
+    assert.ok(
+      order.indexOf("parallel-acquired") < order.indexOf("parallel-worker"),
+      order.join(" -> "),
+    );
+  } finally {
+    releaseDirect();
+    await cleanupRepo(repo);
+  }
+});
+
+test("same-repo parallel lease churn waits outside a shared continuation evidence window", async () => {
+  const repo = await makeRepo();
+  const handoffs = new HandoffStore();
+  const continuations = new ContinuationStore();
+  const registry = new ContextLifecycleRegistry({
+    handoffStore: handoffs,
+    continuationStore: continuations,
+  });
+  const input = makeTask({
+    workingDirectory: repo,
+    allowedFiles: ["src/shared-continuation.ts"],
+    changeIntent: "optional",
+    resultDetail: "full",
+  });
+  const reference = continuations.issue(input, "thread-shared-operation", repo);
+  const order: string[] = [];
+  let releaseContinuation!: () => void;
+  let markContinuationEntered!: () => void;
+  let markParallelAttempted!: () => void;
+  const continuationGate = new Promise<void>((resolve) => {
+    releaseContinuation = resolve;
+  });
+  const continuationEntered = new Promise<void>((resolve) => {
+    markContinuationEntered = resolve;
+  });
+  const parallelAttempted = new Promise<void>((resolve) => {
+    markParallelAttempted = resolve;
+  });
+
+  try {
+    const continuation = handleContinueTask(
+      { continuationReference: reference, instruction: "continue", resultDetail: "full" },
+      undefined,
+      {
+        store: continuations,
+        handoffStore: handoffs,
+        contextRegistry: registry,
+        emit: () => undefined,
+        record: () => undefined,
+        makeBatchId: () => "b_shared_continuation_operation_authority",
+        operationAuthorityAcquirer: async (workspace, signal) => {
+          const authority = await acquireRepositoryOperationAuthority(workspace, signal);
+          assert.ok(authority);
+          order.push("continuation-acquired");
+          return {
+            ...authority,
+            release: async () => {
+              await authority.release();
+              order.push("continuation-released");
+            },
+          } satisfies RepositoryOperationAuthority;
+        },
+        continueTask: async (_task, options) => {
+          options.hooks?.onStarted?.(repo);
+          order.push("continuation-worker");
+          markContinuationEntered();
+          await continuationGate;
+          return makeOutput({
+            changeIntent: "optional",
+            workerThreadId: "thread-shared-operation",
+            filesChanged: [],
+          });
+        },
+      },
+    );
+
+    await continuationEntered;
+    const parallel = runBatch(
+      [makeTask({ allowedFiles: ["src/parallel-shared.ts"], changeIntent: "optional" })],
+      {
+        mode: "parallel",
+        batchId: "b_parallel_shared_operation_authority",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        operationAuthorityAcquirer: async (workspace, signal) => {
+          order.push("parallel-attempted");
+          markParallelAttempted();
+          const authority = await acquireRepositoryOperationAuthority(workspace, signal);
+          order.push("parallel-acquired");
+          return authority;
+        },
+        executor: async (task) => {
+          order.push("parallel-worker");
+          return makeOutput({
+            effort: task.effort,
+            changeIntent: "optional",
+            filesChanged: [],
+          });
+        },
+      },
+    );
+
+    await parallelAttempted;
+    assert.equal(order.includes("parallel-acquired"), false, order.join(" -> "));
+    releaseContinuation();
+    const [continuationResult, parallelResult] = await Promise.all([
+      continuation,
+      parallel,
+    ]);
+
+    assert.equal(continuationResult.isError, undefined);
+    assert.equal(continuationResult.structuredContent?.verdict, "PASS");
+    assert.deepEqual(continuationResult.structuredContent?.scopeViolations, []);
+    assert.equal(
+      parallelResult.tasks[0]?.result?.verdict,
+      "PASS",
+      describeBatch(parallelResult),
+    );
+    assert.ok(
+      order.indexOf("continuation-released") < order.indexOf("parallel-acquired"),
+      order.join(" -> "),
+    );
+  } finally {
+    releaseContinuation();
+    await cleanupRepo(repo);
+  }
+});
+
+test(
+  "continuation trust-setup failure releases repository operation authority exactly once",
+  { timeout: 5_000 },
+  async () => {
+    const repo = await makeRepo();
+    const handoffs = new HandoffStore();
+    const continuations = new ContinuationStore();
+    const registry = new ContextLifecycleRegistry({
+      handoffStore: handoffs,
+      continuationStore: continuations,
+    });
+    let releaseCount = 0;
+    let secondAuthority: RepositoryOperationAuthority | null = null;
+    try {
+      const gitAuthority = await captureGitEvidenceAuthority(repo);
+      assert.ok(gitAuthority);
+      await fs.appendFile(path.join(repo, ".git", "config"), "\n# trust drift\n", "utf8");
+      const input = makeTask({
+        workingDirectory: repo,
+        allowedFiles: ["src/trust-setup.ts"],
+        changeIntent: "optional",
+      });
+      const reference = continuations.issue(
+        input,
+        "thread-trust-setup",
+        repo,
+        true,
+        null,
+        null,
+        2,
+        "gpt-5.6-luna",
+        null,
+        repo,
+        gitAuthority,
+      );
+
+      const response = await handleContinueTask(
+        { continuationReference: reference, instruction: "continue" },
+        undefined,
+        {
+          store: continuations,
+          handoffStore: handoffs,
+          contextRegistry: registry,
+          emit: () => undefined,
+          record: () => undefined,
+          makeBatchId: () => "b_continuation_trust_setup_release",
+          operationAuthorityAcquirer: async (workspace, signal) => {
+            const authority = await acquireRepositoryOperationAuthority(
+              workspace,
+              signal,
+            );
+            assert.ok(authority);
+            return {
+              ...authority,
+              release: async () => {
+                releaseCount += 1;
+                await authority.release();
+              },
+            } satisfies RepositoryOperationAuthority;
+          },
+          continueTask: async () => {
+            throw new Error("worker must not start after trust setup failure");
+          },
+        },
+      );
+
+      assert.equal(response.isError, true);
+      assert.match(
+        response.content[0]?.text ?? "",
+        /trust setup failed before worker start/i,
+      );
+      assert.equal(releaseCount, 1);
+
+      secondAuthority = await acquireRepositoryOperationAuthority(repo);
+      assert.ok(
+        secondAuthority,
+        "the failed continuation must not strand repository authority",
+      );
+    } finally {
+      await secondAuthority?.release().catch(() => undefined);
+      await cleanupRepo(repo);
+    }
+  },
+);
+
+test("direct Git evidence still fails closed on an unreported protected .sol-luna write", async () => {
+  const repo = await makeRepo();
+  const handoffs = new HandoffStore();
+  const continuations = new ContinuationStore();
+  const registry = new ContextLifecycleRegistry({
+    handoffStore: handoffs,
+    continuationStore: continuations,
+  });
+  try {
+    const response = await handleDelegateTask(
+      makeTask({
+        workingDirectory: repo,
+        allowedFiles: ["src/**"],
+        changeIntent: "optional",
+        resultDetail: "full",
+      }),
+      undefined,
+      {
+        handoffStore: handoffs,
+        continuationStore: continuations,
+        contextRegistry: registry,
+        emit: () => undefined,
+        record: () => undefined,
+        makeBatchId: () => "b_direct_protected_control_evidence",
+        delegateToLuna: async (input, _signal, hooks) => {
+          hooks?.onStarted?.(repo);
+          await fs.mkdir(path.join(repo, ".sol-luna"), { recursive: true });
+          await fs.writeFile(
+            path.join(repo, ".sol-luna", "worker-control.json"),
+            "worker-owned-control\n",
+          );
+          return makeOutput({
+            effort: input.effort,
+            changeIntent: "optional",
+            workerThreadId: null,
+            filesChanged: [],
+          });
+        },
+      },
+    );
+
+    const result = response.structuredContent;
+    assert.ok(result);
+    assert.equal(result.verdict, "FAILED");
+    assert.equal(result.trustworthy, false);
+    assert.ok(
+      result.scopeViolations.some((violation) =>
+        /\.sol-luna\/worker-control\.json.*protected repository or orchestrator control metadata/i.test(
+          violation,
+        ),
+      ),
+      JSON.stringify(result.scopeViolations),
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test(
+  "repository operation authority permits concurrent ownership in different repositories",
+  { timeout: 5_000 },
+  async () => {
+    const firstRepo = await makeRepo();
+    const secondRepo = await makeRepo();
+    let first: RepositoryOperationAuthority | null = null;
+    let second: RepositoryOperationAuthority | null = null;
+    try {
+      first = await acquireRepositoryOperationAuthority(firstRepo);
+      assert.ok(first);
+      second = await acquireRepositoryOperationAuthority(secondRepo);
+      assert.ok(second);
+      assert.notEqual(first.commonGitDir, second.commonGitDir);
+    } finally {
+      await second?.release().catch(() => undefined);
+      await first?.release().catch(() => undefined);
+      await cleanupRepo(firstRepo);
+      await cleanupRepo(secondRepo);
+    }
+  },
+);
+
+test("repository operation release fails closed when persistent ownership disappears", async () => {
+  const repo = await makeRepo();
+  const authority = await acquireRepositoryOperationAuthority(repo);
+  assert.ok(authority);
+  try {
+    const artifact = path.join(
+      authority.commonGitDir,
+      "sol-luna-orchestrator",
+      "continuation-leases",
+      ".repository.lease",
+    );
+    await fs.rm(artifact, { recursive: true, force: true });
+    await assert.rejects(authority.release(), WorktreeLeaseOwnershipError);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("repository operation release fails closed when its live generation records disappear", async () => {
+  const repo = await makeRepo();
+  const authority = await acquireRepositoryOperationAuthority(repo);
+  assert.ok(authority);
+  try {
+    const artifact = path.join(
+      authority.commonGitDir,
+      "sol-luna-orchestrator",
+      "continuation-leases",
+      ".repository.lease",
+    );
+    const generations = (await fs.readdir(artifact)).filter((entry) =>
+      entry.endsWith(".json"),
+    );
+    assert.ok(generations.length > 0);
+    await Promise.all(generations.map((entry) => fs.rm(path.join(artifact, entry))));
+    await assert.rejects(authority.release(), WorktreeLeaseOwnershipError);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("repository operation release fails closed when unexpected lease bytes remain", async () => {
+  const repo = await makeRepo();
+  const authority = await acquireRepositoryOperationAuthority(repo);
+  assert.ok(authority);
+  try {
+    const artifact = path.join(
+      authority.commonGitDir,
+      "sol-luna-orchestrator",
+      "continuation-leases",
+      ".repository.lease",
+    );
+    await fs.writeFile(
+      path.join(artifact, "unexpected-control-byte"),
+      "unexpected\n",
+      "utf8",
+    );
+    await assert.rejects(
+      authority.release(),
+      /could not be removed cleanly during release/i,
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("repository operation owner replay cannot restore authority after artifact replacement", async () => {
+  const repo = await makeRepo();
+  const first = await acquireRepositoryOperationAuthority(repo);
+  assert.ok(first);
+  let second: RepositoryOperationAuthority | null = null;
+  try {
+    const artifact = path.join(
+      first.commonGitDir,
+      "sol-luna-orchestrator",
+      "continuation-leases",
+      ".repository.lease",
+    );
+    const [firstRecord] = await readLeaseRecords(artifact);
+    assert.ok(firstRecord?.ownerToken);
+
+    await fs.rm(artifact, { recursive: true, force: true });
+    second = await acquireRepositoryOperationAuthority(repo);
+    assert.ok(second);
+
+    const replay = path.join(artifact, "replayed-first-owner.json");
+    await fs.writeFile(replay, JSON.stringify(firstRecord), "utf8");
+    await assert.rejects(first.release(), WorktreeLeaseOwnershipError);
+
+    await fs.rm(replay, { force: true });
+    await second.release();
+    second = null;
+  } finally {
+    await second?.release().catch(() => undefined);
+    await cleanupRepo(repo);
+  }
+});
+
+test("repository operation authority refuses a redirected common-Git lease namespace", async (t) => {
+  const repo = await makeRepo();
+  const outside = await fs.mkdtemp(
+    path.join(os.tmpdir(), "sol-luna-common-git-redirect-"),
+  );
+  let controlRoot = "";
+  try {
+    const gitAuthority = await captureGitEvidenceAuthority(repo);
+    assert.ok(gitAuthority);
+    controlRoot = path.join(gitAuthority.commonGitDir, "sol-luna-orchestrator");
+    await fs.rm(controlRoot, { recursive: true, force: true });
+    try {
+      await fs.symlink(
+        outside,
+        controlRoot,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+    } catch {
+      t.skip("directory symlink/junction creation is unavailable on this machine");
+      return;
+    }
+
+    await assert.rejects(
+      acquireRepositoryOperationAuthority(repo),
+      /redirected common-Git orchestrator lease path/i,
+    );
+  } finally {
+    if (controlRoot)
+      await fs.rm(controlRoot, { recursive: true, force: true }).catch(() => undefined);
+    await cleanupRepo(repo);
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("repository operation owner detects a lease-root redirect after acquisition", async (t) => {
+  const repo = await makeRepo();
+  const outside = await fs.mkdtemp(
+    path.join(os.tmpdir(), "sol-luna-live-lease-redirect-"),
+  );
+  const authority = await acquireRepositoryOperationAuthority(repo);
+  assert.ok(authority);
+  const leaseRoot = path.join(
+    authority.commonGitDir,
+    "sol-luna-orchestrator",
+    "continuation-leases",
+  );
+  const moved = path.join(outside, "continuation-leases");
+  let linked = false;
+  try {
+    await fs.rename(leaseRoot, moved);
+    try {
+      await fs.symlink(
+        moved,
+        leaseRoot,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+      linked = true;
+    } catch {
+      t.skip("directory symlink/junction creation is unavailable on this machine");
+      return;
+    }
+
+    await assert.rejects(authority.release(), WorktreeLeaseOwnershipError);
+  } finally {
+    if (linked)
+      await fs.rm(leaseRoot, { recursive: true, force: true }).catch(() => undefined);
+    if (await fs.lstat(moved).catch(() => null)) {
+      await fs.rename(moved, leaseRoot).catch(() => undefined);
+    }
+    await cleanupRepo(repo);
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("repository operation acquisition aborts while the same repo is already owned", async () => {
+  const repo = await makeRepo();
+  const first = await acquireRepositoryOperationAuthority(repo);
+  assert.ok(first);
+  const controller = new AbortController();
+  try {
+    const waiting = acquireRepositoryOperationAuthority(repo, controller.signal);
+    controller.abort();
+    await assert.rejects(waiting, /repository operation was cancelled/i);
+  } finally {
+    await first.release().catch(() => undefined);
+    await cleanupRepo(repo);
+  }
+});
+
+test("batch cancellation while waiting for same-repo operation authority remains non-authoritative", async () => {
+  const repo = await makeRepo();
+  const blocker = await acquireRepositoryOperationAuthority(repo);
+  assert.ok(blocker);
+  const controller = new AbortController();
+  let workerCalls = 0;
+  let markAttempted!: () => void;
+  const attempted = new Promise<void>((resolve) => {
+    markAttempted = resolve;
+  });
+  try {
+    const pending = runBatch([makeTask({ changeIntent: "optional" })], {
+      mode: "sequential",
+      workingDirectory: repo,
+      signal: controller.signal,
+      operationAuthorityAcquirer: async (workspace, signal) => {
+        markAttempted();
+        return acquireRepositoryOperationAuthority(workspace, signal);
+      },
+      executor: async () => {
+        workerCalls += 1;
+        return makeOutput({ changeIntent: "optional" });
+      },
+    });
+
+    await attempted;
+    controller.abort();
+    const result = await pending;
+
+    assert.equal(workerCalls, 0, describeBatch(result));
+    assert.equal(result.tasks[0]?.state, "cancelled", describeBatch(result));
+  } finally {
+    await blocker.release().catch(() => undefined);
+    await cleanupRepo(repo);
+  }
+});
+
+test("continuation cancellation while waiting for same-repo operation authority restores authority", async () => {
+  const repo = await makeRepo();
+  const blocker = await acquireRepositoryOperationAuthority(repo);
+  assert.ok(blocker);
+  const continuations = new ContinuationStore();
+  const registry = new ContextLifecycleRegistry({ continuationStore: continuations });
+  const input = makeTask({
+    workingDirectory: repo,
+    allowedFiles: ["src/continuation-cancel.ts"],
+    changeIntent: "optional",
+  });
+  const reference = continuations.issue(input, "thread-operation-wait-cancel", repo);
+  const controller = new AbortController();
+  let workerCalls = 0;
+  let markAttempted!: () => void;
+  const attempted = new Promise<void>((resolve) => {
+    markAttempted = resolve;
+  });
+  try {
+    const pending = handleContinueTask(
+      { continuationReference: reference, instruction: "do not start" },
+      controller.signal,
+      {
+        store: continuations,
+        contextRegistry: registry,
+        emit: () => undefined,
+        record: () => undefined,
+        makeBatchId: () => "b_continuation_operation_wait_cancel",
+        operationAuthorityAcquirer: async (workspace, signal) => {
+          markAttempted();
+          return acquireRepositoryOperationAuthority(workspace, signal);
+        },
+        continueTask: async () => {
+          workerCalls += 1;
+          return makeOutput({ changeIntent: "optional" });
+        },
+      },
+    );
+
+    await attempted;
+    controller.abort();
+    const response = await pending;
+
+    assert.equal(response.isError, true);
+    assert.match(response.content[0]?.text ?? "", /cancelled before worker start/i);
+    assert.equal(workerCalls, 0);
+    assert.equal(continuations.status(reference), "issued");
+  } finally {
+    await blocker.release().catch(() => undefined);
     await cleanupRepo(repo);
   }
 });

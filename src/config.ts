@@ -69,9 +69,10 @@ export function parseAllowedEfforts(raw: string | null | undefined): readonly Ef
 }
 
 export function allowedEffortsInvalid(raw: string | null | undefined): boolean {
+  if (raw === null || raw === undefined) return false;
   const entries = splitEffortList(raw);
   return (
-    entries.length > 0 &&
+    entries.length === 0 ||
     entries.some((entry) => !(EFFORTS as readonly string[]).includes(entry))
   );
 }
@@ -259,14 +260,41 @@ export const EXTRA_ALLOWED_EXECUTABLES = (process.env.SOL_LUNA_VERIFY_ALLOW ?? "
  */
 export const VERIFY_SCRUB_ENV = process.env.SOL_LUNA_VERIFY_ENV_PASSTHROUGH !== "1";
 
+export function parseAbsoluteOptionalPath(
+  raw: string | null | undefined,
+): string | undefined {
+  const value = raw?.trim();
+  if (!value || !path.isAbsolute(value)) return undefined;
+  if (process.platform === "win32") {
+    // `path.isAbsolute("\\foo")` is true on Windows, but that form still binds
+    // to whichever drive is current in the receiving process. Telemetry paths
+    // are shared between independently launched CLI/server processes, so accept
+    // only drive-qualified or UNC roots that are genuinely CWD-independent.
+    const root = path.parse(value).root;
+    if (root === "\\" || root === "/") return undefined;
+  }
+  return path.normalize(value);
+}
+
+export function absoluteOptionalPathInvalid(raw: string | null | undefined): boolean {
+  if (raw === null || raw === undefined) return false;
+  return parseAbsoluteOptionalPath(raw) === undefined;
+}
+
 /**
  * Optional confinement for `workingDirectory`. When set, delegation is refused
  * outside these roots. Unset means any existing directory is allowed.
  */
-export const ALLOWED_WORKSPACE_ROOTS = (process.env.SOL_LUNA_ALLOWED_ROOTS ?? "")
-  .split(path.delimiter)
-  .map((entry) => entry.trim())
-  .filter(Boolean);
+export function parseAllowedWorkspaceRoots(raw: string | null | undefined): string[] {
+  return (raw ?? "")
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+export const ALLOWED_WORKSPACE_ROOTS = parseAllowedWorkspaceRoots(
+  process.env.SOL_LUNA_ALLOWED_ROOTS,
+);
 
 /**
  * Optional JSONL file recording one line per completed delegation.
@@ -275,7 +303,14 @@ export const ALLOWED_WORKSPACE_ROOTS = (process.env.SOL_LUNA_ALLOWED_ROOTS ?? ""
  * token usage. The benchmark harness reads this; it is also the honest way to
  * see what delegation actually costs you.
  */
-export const EVENTS_FILE = process.env.SOL_LUNA_EVENTS;
+export const EVENTS_FILE = parseAbsoluteOptionalPath(process.env.SOL_LUNA_EVENTS);
+export const EVENTS_FILE_INVALID = absoluteOptionalPathInvalid(
+  process.env.SOL_LUNA_EVENTS,
+);
+export const DIAGNOSTIC_LOG_FILE = parseAbsoluteOptionalPath(process.env.SOL_LUNA_LOG);
+export const DIAGNOSTIC_LOG_FILE_INVALID = absoluteOptionalPathInvalid(
+  process.env.SOL_LUNA_LOG,
+);
 
 /** Hard ceiling, independent of configuration, against runaway spawning. */
 export const MAX_PARALLEL_LIMIT = 8;

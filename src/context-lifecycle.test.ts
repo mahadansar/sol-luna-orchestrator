@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import {
   ContextLifecycleStore,
   calculateContextPressureMetrics,
@@ -98,6 +101,18 @@ function makeMinimalTask(overrides: Partial<DelegateTaskInput> = {}): DelegateTa
   };
 }
 
+function makeCleanReadOnlyTask(
+  overrides: Partial<DelegateTaskInput> = {},
+): DelegateTaskInput {
+  return makeMinimalTask({ changeIntent: "forbidden", ...overrides });
+}
+
+function makeCleanReadOnlyOutput(
+  overrides: Partial<DelegateTaskOutput> = {},
+): DelegateTaskOutput {
+  return makeMinimalOutput({ filesChanged: [], changeIntent: "forbidden", ...overrides });
+}
+
 test("lifecycle - single delegation compaction boundary triggers at post-delegation", async () => {
   const events: OrchestratorEvent[] = [];
   const emit = (event: OrchestratorEvent) => events.push(event);
@@ -114,8 +129,8 @@ test("lifecycle - single delegation compaction boundary triggers at post-delegat
     },
   });
 
-  const task = makeMinimalTask();
-  const output = makeMinimalOutput();
+  const task = makeCleanReadOnlyTask();
+  const output = makeCleanReadOnlyOutput();
 
   const response = await handleDelegateTask(task, undefined, {
     continuationStore,
@@ -665,6 +680,12 @@ test("lifecycle - no caller spoofing: caller cannot forge context state or fake 
 });
 
 test("lifecycle - telemetry privacy: events emit factual metrics and zero secrets or capability tokens", async () => {
+  // This test is about context telemetry redaction/shape, not repository-operation
+  // coordination. Give it a hermetic non-Git workspace so concurrent suites that
+  // intentionally exercise parent-owned repository control metadata cannot make
+  // the privacy assertion depend on unrelated same-repo operation timing.
+  const plain = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-context-privacy-"));
+  const workspace = await fs.realpath(plain);
   const emittedEvents: OrchestratorEvent[] = [];
   const emit = (event: OrchestratorEvent) => emittedEvents.push(event);
   const continuationStore = new ContinuationStore();
@@ -681,37 +702,42 @@ test("lifecycle - telemetry privacy: events emit factual metrics and zero secret
   });
 
   const secretString = "api_key=sk-1234567890abcdef1234567890abcdef";
-  const task = makeMinimalTask({
+  const task = makeCleanReadOnlyTask({
+    workingDirectory: workspace,
     objective: `Connect to backend with secret: ${secretString}`,
   });
-  const output = makeMinimalOutput();
+  const output = makeCleanReadOnlyOutput();
 
-  const res = await handleDelegateTask(task, undefined, {
-    continuationStore,
-    handoffStore,
-    contextStore,
-    delegateToLuna: async () => output,
-    emit,
-    makeBatchId: () => "b_privacy_1",
-  });
+  try {
+    const res = await handleDelegateTask(task, undefined, {
+      continuationStore,
+      handoffStore,
+      contextStore,
+      delegateToLuna: async () => output,
+      emit,
+      makeBatchId: () => "b_privacy_1",
+    });
 
-  assert.equal(res.isError, undefined);
+    assert.equal(res.isError, undefined);
 
-  const contextEvaluated = emittedEvents.find((e) => e.type === "context.evaluated");
-  const contextCompacted = emittedEvents.find((e) => e.type === "context.compacted");
+    const contextEvaluated = emittedEvents.find((e) => e.type === "context.evaluated");
+    const contextCompacted = emittedEvents.find((e) => e.type === "context.compacted");
 
-  assert.ok(contextEvaluated);
-  assert.ok(contextCompacted);
+    assert.ok(contextEvaluated);
+    assert.ok(contextCompacted);
 
-  const jsonEvaluated = JSON.stringify(contextEvaluated);
-  const jsonCompacted = JSON.stringify(contextCompacted);
+    const jsonEvaluated = JSON.stringify(contextEvaluated);
+    const jsonCompacted = JSON.stringify(contextCompacted);
 
-  assert.ok(!jsonEvaluated.includes("sk-1234567890abcdef1234567890abcdef"));
-  assert.ok(!jsonCompacted.includes("sk-1234567890abcdef1234567890abcdef"));
-  assert.ok(!jsonEvaluated.includes("ctr_"));
-  assert.ok(!jsonCompacted.includes("ctr_"));
-  assert.ok(!jsonEvaluated.includes("hdf_"));
-  assert.ok(!jsonCompacted.includes("hdf_"));
+    assert.ok(!jsonEvaluated.includes("sk-1234567890abcdef1234567890abcdef"));
+    assert.ok(!jsonCompacted.includes("sk-1234567890abcdef1234567890abcdef"));
+    assert.ok(!jsonEvaluated.includes("ctr_"));
+    assert.ok(!jsonCompacted.includes("ctr_"));
+    assert.ok(!jsonEvaluated.includes("hdf_"));
+    assert.ok(!jsonCompacted.includes("hdf_"));
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
 });
 
 test("lifecycle - repeated lifecycle progression maintains bounded size and monotonic turn counts", () => {
@@ -876,39 +902,64 @@ test("lifecycle - overlapping handlers cannot clear another execution lease", as
   const handoffStore = new HandoffStore();
   let releaseFirst!: () => void;
   let releaseSecond!: () => void;
+  let markFirstEntered!: () => void;
+  let markSecondEntered!: () => void;
   const firstGate = new Promise<void>((resolve) => {
     releaseFirst = resolve;
   });
   const secondGate = new Promise<void>((resolve) => {
     releaseSecond = resolve;
   });
-
-  const first = handleDelegateTask(makeMinimalTask({ objective: "first" }), undefined, {
-    contextStore,
-    continuationStore,
-    handoffStore,
-    delegateToLuna: async () => {
-      await firstGate;
-      return makeMinimalOutput();
-    },
-    emit: (event) => events.push(event),
-    record: () => {},
-    makeBatchId: () => "b_overlap_first",
+  const firstEntered = new Promise<void>((resolve) => {
+    markFirstEntered = resolve;
   });
-  const second = handleDelegateTask(makeMinimalTask({ objective: "second" }), undefined, {
-    contextStore,
-    continuationStore,
-    handoffStore,
-    delegateToLuna: async () => {
-      await secondGate;
-      return makeMinimalOutput();
-    },
-    emit: (event) => events.push(event),
-    record: () => {},
-    makeBatchId: () => "b_overlap_second",
+  const secondEntered = new Promise<void>((resolve) => {
+    markSecondEntered = resolve;
   });
 
-  await Promise.resolve();
+  const first = handleDelegateTask(
+    makeCleanReadOnlyTask({ objective: "first" }),
+    undefined,
+    {
+      contextStore,
+      continuationStore,
+      handoffStore,
+      delegateToLuna: async () => {
+        markFirstEntered();
+        await firstGate;
+        return makeCleanReadOnlyOutput();
+      },
+      emit: (event) => events.push(event),
+      record: () => {},
+      makeBatchId: () => "b_overlap_first",
+      // This fixture isolates ContextLifecycleStore execution-lease semantics.
+      // Same-repository production handlers are intentionally serialized by the
+      // repository-operation authority and therefore cannot both enter their
+      // workers at once. Bypass only that unrelated production boundary here so
+      // the test can still exercise two overlapping holders of the same context.
+      operationAuthorityAcquirer: async () => null,
+    },
+  );
+  const second = handleDelegateTask(
+    makeCleanReadOnlyTask({ objective: "second" }),
+    undefined,
+    {
+      contextStore,
+      continuationStore,
+      handoffStore,
+      delegateToLuna: async () => {
+        markSecondEntered();
+        await secondGate;
+        return makeCleanReadOnlyOutput();
+      },
+      emit: (event) => events.push(event),
+      record: () => {},
+      makeBatchId: () => "b_overlap_second",
+      operationAuthorityAcquirer: async () => null,
+    },
+  );
+
+  await Promise.all([firstEntered, secondEntered]);
   assert.equal(contextStore.getInFlightCount(), 2);
   releaseFirst();
   await first;
@@ -1030,6 +1081,8 @@ test("lifecycle - continuation restores only its server-owned lineage context", 
 // --- Audit regression: history keeping cannot rewrite a delegation outcome ---
 
 test("a context ingestion failure cannot turn a verified delegation into a tool error", async () => {
+  const plain = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-context-ingestion-"));
+  const workspace = await fs.realpath(plain);
   const emitted: OrchestratorEvent[] = [];
   const store = new ContextLifecycleStore();
   // Context ingestion throws on its own invariants - duplicate turn ids,
@@ -1042,59 +1095,79 @@ test("a context ingestion failure cannot turn a verified delegation into a tool 
     throw new Error("Context turn id already exists: injected");
   };
 
-  const result = await handleDelegateTask(makeMinimalTask(), undefined, {
-    contextStore: store,
-    contextRegistry: new ContextLifecycleRegistry({
-      continuationStore: new ContinuationStore(),
-      handoffStore: new HandoffStore(),
-      emit: (event) => emitted.push(event),
-    }),
-    handoffStore: new HandoffStore(),
-    continuationStore: new ContinuationStore(),
-    emit: (event) => emitted.push(event),
-    record: () => {},
-    delegateToLuna: async (input, _signal, hooks) => {
-      hooks?.onStarted?.(process.cwd());
-      return makeMinimalOutput({ effort: input.effort });
-    },
-  });
+  try {
+    const result = await handleDelegateTask(
+      makeMinimalTask({ workingDirectory: workspace }),
+      undefined,
+      {
+        contextStore: store,
+        contextRegistry: new ContextLifecycleRegistry({
+          continuationStore: new ContinuationStore(),
+          handoffStore: new HandoffStore(),
+          emit: (event) => emitted.push(event),
+        }),
+        handoffStore: new HandoffStore(),
+        continuationStore: new ContinuationStore(),
+        emit: (event) => emitted.push(event),
+        record: () => {},
+        delegateToLuna: async (input, _signal, hooks) => {
+          hooks?.onStarted?.(workspace);
+          return makeMinimalOutput({ effort: input.effort });
+        },
+      },
+    );
 
-  assert.notEqual(result.isError, true);
-  assert.match(result.content[0]!.text, /VERDICT: PASS/);
-  assert.ok(emitted.some((event) => event.type === "worker.completed"));
-  assert.ok(!emitted.some((event) => event.type === "worker.failed"));
-  assert.equal(
-    emitted.filter((event) => event.type === "batch.completed").length,
-    1,
-    "exactly one terminal batch record",
-  );
+    assert.notEqual(result.isError, true);
+    assert.match(result.content[0]!.text, /VERDICT: PASS/);
+    assert.ok(emitted.some((event) => event.type === "worker.completed"));
+    assert.ok(!emitted.some((event) => event.type === "worker.failed"));
+    assert.equal(
+      emitted.filter((event) => event.type === "batch.completed").length,
+      1,
+      "exactly one terminal batch record",
+    );
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
 });
 
 test("throwing telemetry and recording cannot replace authoritative PASS or leak its context lease", async () => {
+  const plain = await fs.mkdtemp(
+    path.join(os.tmpdir(), "sol-luna-context-observability-"),
+  );
+  const workspace = await fs.realpath(plain);
   const store = new ContextLifecycleStore();
-  const result = await handleDelegateTask(makeMinimalTask(), undefined, {
-    contextStore: store,
-    contextRegistry: new ContextLifecycleRegistry({
-      continuationStore: new ContinuationStore(),
-      handoffStore: new HandoffStore(),
-    }),
-    handoffStore: new HandoffStore(),
-    continuationStore: new ContinuationStore(),
-    emit: () => {
-      throw new Error("telemetry unavailable");
-    },
-    record: () => {
-      throw new Error("recording unavailable");
-    },
-    delegateToLuna: async (input, _signal, hooks) => {
-      hooks?.onStarted?.(process.cwd());
-      return makeMinimalOutput({ effort: input.effort });
-    },
-    makeBatchId: () => "b_observability_failure",
-  });
+  try {
+    const result = await handleDelegateTask(
+      makeMinimalTask({ workingDirectory: workspace }),
+      undefined,
+      {
+        contextStore: store,
+        contextRegistry: new ContextLifecycleRegistry({
+          continuationStore: new ContinuationStore(),
+          handoffStore: new HandoffStore(),
+        }),
+        handoffStore: new HandoffStore(),
+        continuationStore: new ContinuationStore(),
+        emit: () => {
+          throw new Error("telemetry unavailable");
+        },
+        record: () => {
+          throw new Error("recording unavailable");
+        },
+        delegateToLuna: async (input, _signal, hooks) => {
+          hooks?.onStarted?.(workspace);
+          return makeMinimalOutput({ effort: input.effort });
+        },
+        makeBatchId: () => "b_observability_failure",
+      },
+    );
 
-  assert.notEqual(result.isError, true);
-  assert.match(result.content[0]!.text, /VERDICT: PASS/);
-  assert.equal(store.getInFlightCount(), 0);
-  assert.equal(store.getAuthoritativeContext()?.turns.length, 1);
+    assert.notEqual(result.isError, true);
+    assert.match(result.content[0]!.text, /VERDICT: PASS/);
+    assert.equal(store.getInFlightCount(), 0);
+    assert.equal(store.getAuthoritativeContext()?.turns.length, 1);
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
 });
