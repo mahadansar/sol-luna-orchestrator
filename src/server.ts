@@ -2042,10 +2042,17 @@ export async function handleContinueTask(
       );
     }
   } catch (error) {
-    const message = `Continuation trust setup failed before worker start: ${(error as Error).message}`;
+    let message = `Continuation trust setup failed before worker start: ${(error as Error).message}`;
     if (entry.reconcileFinalGit && entry.gitEvidenceAuthority) {
       reservation.commit();
       dependencies.store.release(request.continuationReference);
+      if (entry.worktreeLease) {
+        try {
+          await dependencies.releaseLease(entry.worktreeLease);
+        } catch (releaseError) {
+          message += ` Continuation worktree lease cleanup also failed: ${(releaseError as Error).message}`;
+        }
+      }
     } else {
       reservation.release();
     }

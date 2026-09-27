@@ -1809,3 +1809,23 @@ test("shutdown invalidates capability stores and releases retained continuation 
   await coordinator.shutdown(1_000);
   assert.equal(released.length, 1);
 });
+
+test("continuation shutdown attempts every retained lease release even when one fails", async () => {
+  const attempted: string[] = [];
+  const store = new ContinuationStore({
+    releaseLease: async (lease) => {
+      attempted.push(lease.ownerToken);
+      if (attempted.length === 1) throw new Error("first release failed");
+    },
+  });
+  const first = makeLease("/repo/.sol-luna/worktrees/shutdown-first");
+  const second = makeLease("/repo/.sol-luna/worktrees/shutdown-second");
+  store.issue(makeTask(), "thread-first", first.worktreePath, true, first);
+  store.issue(makeTask(), "thread-second", second.worktreePath, true, second);
+
+  await assert.rejects(
+    store.dispose(),
+    /Failed to release 1 retained continuation lease/,
+  );
+  assert.deepEqual(attempted, [first.ownerToken, second.ownerToken]);
+});

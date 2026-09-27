@@ -305,12 +305,29 @@ export class ContinuationStore {
     this.retired.clear();
     if (this.releaseLease) {
       const release = this.releaseLease;
+      const leases: WorktreeLease[] = [];
       for (const record of records) {
         const lease = record.worktreeLease;
         if (!lease) continue;
         record.worktreeLease = null;
+        leases.push(lease);
+      }
+      if (leases.length > 0) {
         this.leaseReleases = this.leaseReleases.then(async () => {
-          await Promise.resolve(release(lease));
+          const failures: unknown[] = [];
+          for (const lease of leases) {
+            try {
+              await Promise.resolve(release(lease));
+            } catch (error) {
+              failures.push(error);
+            }
+          }
+          if (failures.length > 0) {
+            throw new AggregateError(
+              failures,
+              `Failed to release ${failures.length} retained continuation lease(s) during shutdown.`,
+            );
+          }
         });
       }
     }
