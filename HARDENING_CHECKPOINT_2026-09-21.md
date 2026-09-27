@@ -4,6 +4,12 @@ Date: 2026-09-21
 
 Branch: `feature/orchestrator-upgrades-2026-09-21`
 
+Recovery note (2026-09-27): this file is preserved as the historical September 21
+checkpoint. The active recovered branch state, confirmed incomplete production
+seams, and remaining execution plan are maintained in
+[`HARDENING_PLAN.md`](HARDENING_PLAN.md). Where this checkpoint and the later plan
+differ, use the later plan together with current implementation/tests.
+
 This document is a checkpoint/handoff for the current hardening branch. It is
 deliberately **not** a final acceptance or publication claim. The last complete
 `npm run verify` evidence predates the newest filesystem-authority work, so

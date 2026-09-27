@@ -9,15 +9,17 @@ confidence ledger for the repository. The current release baseline is
 
 - **Runtime baseline:** v0.12.0, with package and lockfile versions set to
   `0.12.0`.
-- **Latest full deterministic validation:** `npm run verify` passed on
-  2026-09-21 on the current v0.12.0 hardening tree with no failures and only
-  expected platform-specific skips: 1,187 tests, 1,184 passed, 0 failed, and 3
-  skipped on this Windows run. The gate included typecheck, format, the complete
-  deterministic test suite, the MCP protocol smoke test (`All protocol checks
-passed.`), and `bench:validate` (`All fixtures discriminate correctly.`). The
-  benchmark fixture validator confirmed every starting state fails, every
-  reference solution passes, and every required mutation and
-  immutable-specification check discriminates.
+- **Latest recorded full deterministic validation:** `npm run verify` passed on
+  2026-09-21 with no failures and only expected platform-specific skips: 1,187
+  tests, 1,184 passed, 0 failed, and 3 skipped on that Windows run. The gate
+  included typecheck, format, the complete deterministic test suite, the MCP
+  protocol smoke test and benchmark fixture validation. That run predates
+  filesystem-authority and
+  integration changes included in the later `84dcf12` hardening checkpoint, so it
+  is historical regression evidence rather than fresh exact-tree acceptance for
+  the current unreleased branch. The branch remains pending a new full verifier
+  run after the known hardening gaps in `HARDENING_PLAN.md` are closed, followed by
+  a ledger refresh and verifier rerun on the documented final tree.
 - **Benchmark V3 baseline evidence:** campaign `2026-08-30T04-26-16-817Z`
   completed 36/36 valid runs against the v0.11.0 production baseline at standard
   Codex speed: nine tasks, Solo Medium versus Adaptive Medium, two repetitions,
