@@ -23,7 +23,11 @@ import {
   renderBatch,
   routingAdvisoryLine,
 } from "./server.js";
-import { BatchRejectedError, runBatch as runProductionBatch } from "./batch.js";
+import {
+  BatchRejectedError,
+  encodeDeletionLinkRecoveryMetadata,
+  runBatch as runProductionBatch,
+} from "./batch.js";
 import { CONTINUATION_TTL_MS, ContinuationStore } from "./continuation.js";
 import { HandoffStore } from "./handoff.js";
 import {
@@ -4334,6 +4338,51 @@ test("parallel integration refuses authoritative destination drift after admissi
   }
 });
 
+test("parallel integration case-folds authoritative drift on case-insensitive platforms", async (t) => {
+  if (process.platform !== "win32" && process.platform !== "darwin") {
+    t.skip("case-folded integration paths apply only on Windows and macOS");
+    return;
+  }
+  const repo = await makeRepo();
+  try {
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/CaseRace.ts"] })],
+      {
+        mode: "parallel",
+        batchId: "bintegration-casefold-drift",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        executor: async (input, options) => {
+          await fs.writeFile(
+            path.join(options.workingDirectory, "src", "CaseRace.ts"),
+            "worker\n",
+          );
+          await fs.mkdir(path.join(repo, "SRC"), { recursive: true });
+          await fs.writeFile(path.join(repo, "SRC", "caserace.ts"), "operator\n");
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              { path: "src/CaseRace.ts", kind: "create", why: "test", observed: true },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(
+      result.warnings.join("\n"),
+      /workspace changed after parallel admission/i,
+    );
+    assert.equal(
+      await fs.readFile(path.join(repo, "SRC", "caserace.ts"), "utf8"),
+      "operator\n",
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
 test("parallel integration rejects a worktree source changed after evidence collection", async () => {
   const repo = await makeRepo();
   const batchId = "bintegration-source-drift";
@@ -4587,6 +4636,103 @@ test("parallel cancellation during missing-parent provisioning rolls created anc
     assert.match(result.warnings.join("\n"), /cancelled before any write/i);
     assert.match(result.integrationSummary, /copying 0 file/i);
     assert.equal(await fs.lstat(path.join(repo, "fresh")).catch(() => null), null);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel missing-parent mkdir protocol loss is not counted as a confirmed applied file", async () => {
+  const repo = await makeRepo();
+  const events: Array<Record<string, unknown>> = [];
+  try {
+    const result = await runProductionBatch([makeTask({ allowedFiles: ["fresh/**"] })], {
+      mode: "parallel",
+      batchId: "bintegration-parent-mkdir-protocol-loss",
+      workingDirectory: repo,
+      keepWorktrees: "never",
+      eventEmitter: (event) => events.push(event),
+      integrationPinnedParentTest: { exitBeforeMkdirWithoutResult: true },
+      executor: async (input, options) => {
+        const target = path.join(options.workingDirectory, "fresh", "file.txt");
+        await fs.mkdir(path.dirname(target), { recursive: true });
+        await fs.writeFile(target, "worker\n", "utf8");
+        return makeOutput({
+          effort: input.effort,
+          filesChanged: [
+            {
+              path: "fresh/file.txt",
+              kind: "add",
+              why: "test",
+              observed: true,
+            },
+          ],
+        });
+      },
+    });
+
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(result.integrationSummary, /copying 0 file/i);
+    assert.match(
+      result.warnings.join("\n"),
+      /outcome is unknown.*not included in appliedFiles/is,
+    );
+    assert.equal(await fs.lstat(path.join(repo, "fresh")).catch(() => null), null);
+    assert.equal(
+      events.find((event) => event.type === "integration.failed")?.appliedFiles,
+      0,
+      JSON.stringify(events),
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel unknown parent rollback is not counted as a confirmed applied file", async () => {
+  const repo = await makeRepo();
+  const controller = new AbortController();
+  const events: Array<Record<string, unknown>> = [];
+  try {
+    const result = await runProductionBatch([makeTask({ allowedFiles: ["fresh/**"] })], {
+      mode: "parallel",
+      batchId: "bintegration-parent-rmdir-protocol-loss",
+      workingDirectory: repo,
+      keepWorktrees: "never",
+      signal: controller.signal,
+      eventEmitter: (event) => events.push(event),
+      integrationPinnedParentTest: { exitBeforeRollbackRmdirWithoutResult: true },
+      integrationBeforeParentCreate: ({ segment }) => {
+        if (segment === "fresh") controller.abort();
+      },
+      executor: async (input, options) => {
+        const target = path.join(options.workingDirectory, "fresh", "file.txt");
+        await fs.mkdir(path.dirname(target), { recursive: true });
+        await fs.writeFile(target, "worker\n", "utf8");
+        return makeOutput({
+          effort: input.effort,
+          filesChanged: [
+            {
+              path: "fresh/file.txt",
+              kind: "add",
+              why: "test",
+              observed: true,
+            },
+          ],
+        });
+      },
+    });
+
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(result.integrationSummary, /copying 0 file/i);
+    assert.match(
+      result.warnings.join("\n"),
+      /rollback lost authoritative mutation evidence.*outcome is unknown.*not included in appliedFiles/is,
+    );
+    assert.equal((await fs.lstat(path.join(repo, "fresh"))).isDirectory(), true);
+    assert.equal(
+      events.find((event) => event.type === "integration.failed")?.appliedFiles,
+      0,
+      JSON.stringify(events),
+    );
   } finally {
     await cleanupRepo(repo);
   }
@@ -5027,29 +5173,15 @@ test("parallel integration counts and stops after a new-file write fails after c
   }
 });
 
-test("parallel deletion rolls back and stops when quarantine unlink fails after the namespace move", async () => {
+test("parallel deletion rolls back exactly when pinned tombstone unlink fails", async () => {
   const repo = await makeRepo();
   const target = path.join(repo, "src", "a-delete-unlink-failure.txt");
   const later = path.join(repo, "src", "z-after-delete-unlink-failure.txt");
-  const originalUnlink = fs.unlink;
   const events: Array<Record<string, unknown>> = [];
-  let injected = false;
   try {
     await fs.writeFile(target, "restore-me\n", "utf8");
     await runGit(["add", "src/a-delete-unlink-failure.txt"], repo);
     await runGit(["commit", "-m", "add deletion unlink fixture"], repo);
-
-    fs.unlink = (async (...args: Parameters<typeof originalUnlink>) => {
-      const candidate = path.resolve(String(args[0]));
-      if (
-        !injected &&
-        candidate.includes(`${path.sep}.sol-luna${path.sep}integration-delete${path.sep}`)
-      ) {
-        injected = true;
-        throw new Error("injected quarantine unlink failure");
-      }
-      return originalUnlink(...args);
-    }) as typeof fs.unlink;
 
     const result = await runProductionBatch(
       [
@@ -5066,6 +5198,7 @@ test("parallel deletion rolls back and stops when quarantine unlink fails after 
         workingDirectory: repo,
         keepWorktrees: "never",
         eventEmitter: (event) => events.push(event),
+        integrationPinnedDeleteTest: { failTombstoneCleanup: true },
         executor: async (input, options) => {
           await fs.rm(
             path.join(options.workingDirectory, "src", "a-delete-unlink-failure.txt"),
@@ -5100,12 +5233,11 @@ test("parallel deletion rolls back and stops when quarantine unlink fails after 
       },
     );
 
-    assert.equal(injected, true);
     assert.equal(result.integrated, false, describeBatch(result));
     assert.match(result.integrationSummary, /incomplete after copying 0 file/i);
     assert.match(
       result.warnings.join("\n"),
-      /after an authoritative mutation.*injected quarantine unlink failure.*rolled back safely/is,
+      /pinned tombstone unlink was refused.*injected pinned quarantine cleanup failure.*restored exactly/is,
     );
     assert.equal(await fs.readFile(target, "utf8"), "restore-me\n");
     await assert.rejects(fs.stat(later));
@@ -5121,12 +5253,11 @@ test("parallel deletion rolls back and stops when quarantine unlink fails after 
       JSON.stringify(events),
     );
   } finally {
-    fs.unlink = originalUnlink;
     await cleanupRepo(repo);
   }
 });
 
-test("parallel deletion preserves an operator replacement in the final snapshot-to-unlink window", async () => {
+test("parallel deletion preserves an operator replacement in the validated-to-move window", async () => {
   const repo = await makeRepo();
   const target = path.join(repo, "src", "delete-boundary.txt");
   const events: Array<Record<string, unknown>> = [];
@@ -5173,9 +5304,8 @@ test("parallel deletion preserves an operator replacement in the final snapshot-
     assert.equal(result.integrated, false, describeBatch(result));
     assert.match(
       result.warnings.join("\n"),
-      /authoritative destination changed at the deletion boundary/i,
+      /pinned rename source changed before the namespace move/i,
     );
-    assert.match(result.warnings.join("\n"), /raced destination state was restored/i);
     assert.equal(await fs.readFile(target, "utf8"), "operator-replacement\n");
     assert.ok(
       events.some(
@@ -5188,6 +5318,217 @@ test("parallel deletion preserves an operator replacement in the final snapshot-
       events.find((event) => event.type === "integration.applied")?.fileCount,
       0,
       JSON.stringify(events),
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel deletion refuses source drift before the pinned namespace move", async () => {
+  const repo = await makeRepo();
+  const batchId = "bintegration-delete-source-drift-before-move";
+  const target = path.join(repo, "src", "delete-source-drift-before-move.txt");
+  const events: Array<Record<string, unknown>> = [];
+  let validatedCalls = 0;
+  try {
+    await fs.writeFile(target, "keep-destination\n", "utf8");
+    await runGit(["add", "src/delete-source-drift-before-move.txt"], repo);
+    await runGit(["commit", "-m", "add pre-move source drift fixture"], repo);
+
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/delete-source-drift-before-move.txt"] })],
+      {
+        mode: "parallel",
+        batchId,
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        eventEmitter: (event) => events.push(event),
+        integrationBeforeDelete: async ({ file, phase }) => {
+          if (file !== "src/delete-source-drift-before-move.txt" || phase !== "validated")
+            return;
+          validatedCalls += 1;
+          await fs.writeFile(
+            path.join(
+              repo,
+              ".sol-luna",
+              "worktrees",
+              `${batchId}-t1`,
+              "src",
+              "delete-source-drift-before-move.txt",
+            ),
+            "raced-source\n",
+            "utf8",
+          );
+        },
+        executor: async (input, options) => {
+          await fs.rm(
+            path.join(
+              options.workingDirectory,
+              "src",
+              "delete-source-drift-before-move.txt",
+            ),
+            { force: true },
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/delete-source-drift-before-move.txt",
+                kind: "delete",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(validatedCalls, 1);
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(result.integrationSummary, /copying 0 file/i);
+    assert.match(
+      result.warnings.join("\n"),
+      /deletion source changed before the pinned namespace move/i,
+    );
+    assert.equal(await fs.readFile(target, "utf8"), "keep-destination\n");
+    assert.ok(
+      events.some(
+        (event) =>
+          event.type === "integration.blocked" && event.reason === "source-drift",
+      ),
+      JSON.stringify(events),
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel deletion preserves a replacement that appears at the pinned unlink boundary", async () => {
+  const repo = await makeRepo();
+  const target = path.join(repo, "src", "delete-unlink-replacement.txt");
+  const events: Array<Record<string, unknown>> = [];
+  let unlinkCalls = 0;
+  try {
+    await fs.writeFile(target, "accepted-destination\n", "utf8");
+    await runGit(["add", "src/delete-unlink-replacement.txt"], repo);
+    await runGit(["commit", "-m", "add unlink replacement fixture"], repo);
+
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/delete-unlink-replacement.txt"] })],
+      {
+        mode: "parallel",
+        batchId: "bintegration-delete-unlink-replacement",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        eventEmitter: (event) => events.push(event),
+        integrationBeforeDelete: async ({ file, phase }) => {
+          if (file !== "src/delete-unlink-replacement.txt" || phase !== "unlink") return;
+          unlinkCalls += 1;
+          await fs.writeFile(target, "operator-at-unlink\n", "utf8");
+        },
+        executor: async (input, options) => {
+          await fs.rm(
+            path.join(options.workingDirectory, "src", "delete-unlink-replacement.txt"),
+            { force: true },
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/delete-unlink-replacement.txt",
+                kind: "delete",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(unlinkCalls, 1);
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(result.integrationSummary, /incomplete after copying 1 file/i);
+    assert.match(
+      result.warnings.join("\n"),
+      /authoritative destination changed at the pinned unlink boundary.*exact tombstone rollback was not safe/is,
+    );
+    assert.equal(await fs.readFile(target, "utf8"), "operator-at-unlink\n");
+    assert.equal(
+      events.find((event) => event.type === "integration.partial")?.appliedFiles,
+      1,
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel deletion rolls back exactly when its source drifts at the pinned unlink boundary", async () => {
+  const repo = await makeRepo();
+  const batchId = "bintegration-delete-unlink-source-drift";
+  const target = path.join(repo, "src", "delete-unlink-source-drift.txt");
+  let unlinkCalls = 0;
+  try {
+    await fs.writeFile(target, "restore-exactly\n", "utf8");
+    const before = await fs.lstat(target);
+    const beforeIdentity = `${before.dev}:${before.ino}:${before.birthtimeMs}`;
+    await runGit(["add", "src/delete-unlink-source-drift.txt"], repo);
+    await runGit(["commit", "-m", "add unlink source drift fixture"], repo);
+
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/delete-unlink-source-drift.txt"] })],
+      {
+        mode: "parallel",
+        batchId,
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        integrationBeforeDelete: async ({ file, phase }) => {
+          if (file !== "src/delete-unlink-source-drift.txt" || phase !== "unlink") return;
+          unlinkCalls += 1;
+          const source = path.join(
+            repo,
+            ".sol-luna",
+            "worktrees",
+            `${batchId}-t1`,
+            "src",
+            "delete-unlink-source-drift.txt",
+          );
+          await fs.writeFile(source, "raced-source\n", "utf8");
+        },
+        executor: async (input, options) => {
+          await fs.rm(
+            path.join(options.workingDirectory, "src", "delete-unlink-source-drift.txt"),
+            { force: true },
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/delete-unlink-source-drift.txt",
+                kind: "delete",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(unlinkCalls, 1);
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(result.integrationSummary, /copying 0 file/i);
+    assert.match(
+      result.warnings.join("\n"),
+      /deletion source changed at the pinned unlink boundary.*restored exactly/is,
+    );
+    assert.equal(await fs.readFile(target, "utf8"), "restore-exactly\n");
+    const after = await fs.lstat(target);
+    assert.equal(
+      `${after.dev}:${after.ino}:${after.birthtimeMs}`,
+      beforeIdentity,
+      "rollback must restore the original filesystem object, not recreate its bytes",
     );
   } finally {
     await cleanupRepo(repo);
@@ -5233,6 +5574,360 @@ test("parallel proven deletion leaves no quarantine artifact on success", async 
     await assert.rejects(fs.stat(path.join(repo, ".sol-luna", "integration-delete")));
   } finally {
     await cleanupRepo(repo);
+  }
+});
+
+test("parallel deletion keeps the applied deletion counted when recovery-backup cleanup fails", async () => {
+  const repo = await makeRepo();
+  const target = path.join(repo, "src", "delete-backup-cleanup-failure.txt");
+  const quarantineRoot = path.join(repo, ".sol-luna", "integration-delete");
+  const events: Array<Record<string, unknown>> = [];
+  try {
+    await fs.writeFile(target, "delete-me\n", "utf8");
+    await runGit(["add", "src/delete-backup-cleanup-failure.txt"], repo);
+    await runGit(["commit", "-m", "add backup cleanup failure fixture"], repo);
+
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/delete-backup-cleanup-failure.txt"] })],
+      {
+        mode: "parallel",
+        batchId: "bintegration-delete-backup-cleanup-failure",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        eventEmitter: (event) => events.push(event),
+        integrationPinnedDeleteTest: { failQuarantineCleanup: true },
+        executor: async (input, options) => {
+          await fs.rm(
+            path.join(
+              options.workingDirectory,
+              "src",
+              "delete-backup-cleanup-failure.txt",
+            ),
+            { force: true },
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/delete-backup-cleanup-failure.txt",
+                kind: "delete",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(result.integrationSummary, /incomplete after copying 1 file/i);
+    assert.match(
+      result.warnings.join("\n"),
+      /recovery-backup cleanup failed after the authoritative deletion.*deletion remains applied/i,
+    );
+    await assert.rejects(fs.stat(target));
+    assert.ok((await fs.readdir(quarantineRoot)).length > 0);
+    assert.equal(
+      events.find((event) => event.type === "integration.partial")?.appliedFiles,
+      1,
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel deletion reports unknown protocol loss without claiming an applied file", async () => {
+  const repo = await makeRepo();
+  const target = path.join(repo, "src", "delete-pre-move-protocol-loss.txt");
+  const events: Array<Record<string, unknown>> = [];
+  try {
+    await fs.writeFile(target, "must-stay\n", "utf8");
+    await runGit(["add", "src/delete-pre-move-protocol-loss.txt"], repo);
+    await runGit(["commit", "-m", "add pre-move protocol loss fixture"], repo);
+
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/delete-pre-move-protocol-loss.txt"] })],
+      {
+        mode: "parallel",
+        batchId: "bintegration-delete-pre-move-protocol-loss",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        eventEmitter: (event) => events.push(event),
+        integrationPinnedDeleteTest: { exitBeforeNamespaceMoveWithoutResult: true },
+        executor: async (input, options) => {
+          await fs.rm(
+            path.join(
+              options.workingDirectory,
+              "src",
+              "delete-pre-move-protocol-loss.txt",
+            ),
+            { force: true },
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/delete-pre-move-protocol-loss.txt",
+                kind: "delete",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(result.integrationSummary, /copying 0 file/i);
+    assert.match(result.warnings.join("\n"), /mutation outcome is unknown/i);
+    assert.equal(await fs.readFile(target, "utf8"), "must-stay\n");
+    assert.equal(
+      events.find((event) => event.type === "integration.failed")?.appliedFiles,
+      0,
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel deletion counts the mutation when the pinned helper exits after tombstone unlink", async () => {
+  const repo = await makeRepo();
+  const target = path.join(repo, "src", "delete-unlink-protocol-crash.txt");
+  const quarantineRoot = path.join(repo, ".sol-luna", "integration-delete");
+  const events: Array<Record<string, unknown>> = [];
+  try {
+    await fs.writeFile(target, "delete-me\n", "utf8");
+    await runGit(["add", "src/delete-unlink-protocol-crash.txt"], repo);
+    await runGit(["commit", "-m", "add unlink protocol crash fixture"], repo);
+
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/delete-unlink-protocol-crash.txt"] })],
+      {
+        mode: "parallel",
+        batchId: "bintegration-delete-unlink-protocol-crash",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        eventEmitter: (event) => events.push(event),
+        integrationPinnedDeleteTest: { exitAfterTombstoneUnlinkBeforeResult: true },
+        executor: async (input, options) => {
+          await fs.rm(
+            path.join(
+              options.workingDirectory,
+              "src",
+              "delete-unlink-protocol-crash.txt",
+            ),
+            { force: true },
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/delete-unlink-protocol-crash.txt",
+                kind: "delete",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(result.integrationSummary, /incomplete after copying 1 file/i);
+    assert.match(
+      result.warnings.join("\n"),
+      /tombstone unlink failed after reporting an authoritative mutation.*recovery backup is retained/is,
+    );
+    await assert.rejects(fs.stat(target));
+    assert.ok((await fs.readdir(quarantineRoot)).length > 0);
+    assert.equal(
+      events.find((event) => event.type === "integration.partial")?.appliedFiles,
+      1,
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel deletion refuses a recovery backup replaced before tombstone unlink", async () => {
+  const repo = await makeRepo();
+  const target = path.join(repo, "src", "delete-backup-race.txt");
+  const quarantineRoot = path.join(repo, ".sol-luna", "integration-delete");
+  let unlinkCalls = 0;
+  try {
+    await fs.writeFile(target, "restore-me\n", "utf8");
+    const before = await fs.lstat(target);
+    const beforeIdentity = `${before.dev}:${before.ino}:${before.birthtimeMs}`;
+    await runGit(["add", "src/delete-backup-race.txt"], repo);
+    await runGit(["commit", "-m", "add recovery backup race fixture"], repo);
+
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/delete-backup-race.txt"] })],
+      {
+        mode: "parallel",
+        batchId: "bintegration-delete-backup-race",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        integrationBeforeDelete: async ({ file, phase }) => {
+          if (file !== "src/delete-backup-race.txt" || phase !== "unlink") return;
+          unlinkCalls += 1;
+          const [backup] = await fs.readdir(quarantineRoot);
+          assert.ok(backup);
+          const backupPath = path.join(quarantineRoot, backup);
+          await fs.rm(backupPath, { force: true });
+          await fs.writeFile(backupPath, "raced-backup\n", "utf8");
+        },
+        executor: async (input, options) => {
+          await fs.rm(
+            path.join(options.workingDirectory, "src", "delete-backup-race.txt"),
+            {
+              force: true,
+            },
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/delete-backup-race.txt",
+                kind: "delete",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(unlinkCalls, 1);
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(result.integrationSummary, /copying 0 file/i);
+    assert.match(
+      result.warnings.join("\n"),
+      /recovery backup changed at the pinned unlink boundary.*restored exactly/is,
+    );
+    assert.equal(await fs.readFile(target, "utf8"), "restore-me\n");
+    const after = await fs.lstat(target);
+    assert.equal(`${after.dev}:${after.ino}:${after.birthtimeMs}`, beforeIdentity);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel deletion removes only a symbolic link and never its target", async (t) => {
+  if (process.platform === "win32") {
+    t.skip(
+      "symbolic-link creation is not reliable on Windows CI without developer privileges",
+    );
+    return;
+  }
+  const repo = await makeRepo();
+  const target = path.join(repo, "src", "delete-link-target.txt");
+  const link = path.join(repo, "src", "delete-link.txt");
+  const quarantineRoot = path.join(repo, ".sol-luna", "integration-delete");
+  let recoveryMetadataObserved = false;
+  try {
+    await fs.writeFile(target, "target-must-survive\n", "utf8");
+    await fs.symlink("delete-link-target.txt", link, "file");
+    await runGit(["add", "src/delete-link-target.txt", "src/delete-link.txt"], repo);
+    await runGit(["commit", "-m", "add symlink deletion fixture"], repo);
+
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/delete-link.txt"] })],
+      {
+        mode: "parallel",
+        batchId: "bintegration-delete-link",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        integrationBeforeDelete: async ({ file, phase }) => {
+          if (file !== "src/delete-link.txt" || phase !== "validated") return;
+          const [backup] = await fs.readdir(quarantineRoot);
+          assert.ok(backup);
+          const backupPath = path.join(quarantineRoot, backup);
+          const backupStat = await fs.lstat(backupPath);
+          assert.equal(backupStat.isFile(), true);
+          assert.equal(backupStat.isSymbolicLink(), false);
+          assert.deepEqual(JSON.parse(await fs.readFile(backupPath, "utf8")), {
+            version: 1,
+            kind: "link",
+            target: "delete-link-target.txt",
+            signature: "link:delete-link-target.txt",
+          });
+          recoveryMetadataObserved = true;
+        },
+        executor: async (input, options) => {
+          await fs.unlink(path.join(options.workingDirectory, "src", "delete-link.txt"));
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/delete-link.txt",
+                kind: "delete",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(result.integrated, true, describeBatch(result));
+    assert.equal(recoveryMetadataObserved, true);
+    await assert.rejects(fs.lstat(link));
+    assert.equal(await fs.readFile(target, "utf8"), "target-must-survive\n");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("link deletion recovery metadata carries no link type or recreation requirement", () => {
+  const target =
+    process.platform === "win32" ? "C:\\missing\\target" : "../missing/target";
+  const signature = `link:${target}`;
+  const encoded = encodeDeletionLinkRecoveryMetadata(target, signature);
+  assert.deepEqual(JSON.parse(encoded.toString("utf8")), {
+    version: 1,
+    kind: "link",
+    target,
+    signature,
+  });
+  assert.equal(Object.hasOwn(JSON.parse(encoded.toString("utf8")), "type"), false);
+});
+
+test("link deletion recovery metadata handles a Windows broken junction without recreating it", async (t) => {
+  if (process.platform !== "win32") {
+    t.skip("broken-junction behavior is Windows-specific");
+    return;
+  }
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "sol-luna-delete-broken-junction-"),
+  );
+  const missingTarget = path.join(root, "missing-target");
+  const junction = path.join(root, "broken-junction");
+  try {
+    try {
+      await fs.symlink(missingTarget, junction, "junction");
+    } catch {
+      t.skip("junction creation is unavailable on this machine");
+      return;
+    }
+    await assert.rejects(fs.stat(junction));
+    const target = await fs.readlink(junction);
+    const signature = `link:${target}`;
+    const encoded = encodeDeletionLinkRecoveryMetadata(target, signature);
+    assert.deepEqual(JSON.parse(encoded.toString("utf8")), {
+      version: 1,
+      kind: "link",
+      target,
+      signature,
+    });
+    assert.equal((await fs.lstat(junction)).isSymbolicLink(), true);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
   }
 });
 
@@ -5287,7 +5982,7 @@ test("parallel deletion refuses a redirected quarantine control root", async (t)
     assert.equal(result.integrated, false, describeBatch(result));
     assert.match(
       result.warnings.join("\n"),
-      /deletion quarantine is not trustworthy.*redirected integration quarantine path/i,
+      /integration deletion quarantine is not trustworthy.*confined directory segment is redirected/i,
     );
     assert.equal(await fs.readFile(target, "utf8"), "keep-me\n");
     assert.deepEqual(await fs.readdir(outside), []);
@@ -5295,6 +5990,133 @@ test("parallel deletion refuses a redirected quarantine control root", async (t)
     await fs.unlink(quarantineRoot).catch(() => undefined);
     await cleanupRepo(repo);
     await fs.rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("parallel deletion cancellation after the namespace move restores the exact original when uncontested", async () => {
+  const repo = await makeRepo();
+  const target = path.join(repo, "src", "delete-cancel-exact-rollback.txt");
+  const controller = new AbortController();
+  let movedCalls = 0;
+  try {
+    await fs.writeFile(target, "restore-original-object\n", "utf8");
+    const before = await fs.lstat(target);
+    const beforeIdentity = `${before.dev}:${before.ino}:${before.birthtimeMs}`;
+    await runGit(["add", "src/delete-cancel-exact-rollback.txt"], repo);
+    await runGit(["commit", "-m", "add exact cancellation rollback fixture"], repo);
+
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/delete-cancel-exact-rollback.txt"] })],
+      {
+        mode: "parallel",
+        batchId: "bintegration-delete-cancel-exact",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        signal: controller.signal,
+        integrationBeforeDelete: ({ file, phase }) => {
+          if (file !== "src/delete-cancel-exact-rollback.txt" || phase !== "moved")
+            return;
+          movedCalls += 1;
+          controller.abort();
+        },
+        executor: async (input, options) => {
+          await fs.rm(
+            path.join(
+              options.workingDirectory,
+              "src",
+              "delete-cancel-exact-rollback.txt",
+            ),
+            { force: true },
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/delete-cancel-exact-rollback.txt",
+                kind: "delete",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(movedCalls, 1);
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(result.integrationSummary, /copying 0 file/i);
+    assert.match(
+      result.warnings.join("\n"),
+      /cancellation was observed after the deletion namespace move.*restored exactly/is,
+    );
+    assert.equal(await fs.readFile(target, "utf8"), "restore-original-object\n");
+    const after = await fs.lstat(target);
+    assert.equal(`${after.dev}:${after.ino}:${after.birthtimeMs}`, beforeIdentity);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel deletion cancellation at the pinned unlink boundary restores the exact original", async () => {
+  const repo = await makeRepo();
+  const target = path.join(repo, "src", "delete-cancel-unlink.txt");
+  const controller = new AbortController();
+  let unlinkCalls = 0;
+  try {
+    await fs.writeFile(target, "restore-original-object\n", "utf8");
+    const before = await fs.lstat(target);
+    const beforeIdentity = `${before.dev}:${before.ino}:${before.birthtimeMs}`;
+    await runGit(["add", "src/delete-cancel-unlink.txt"], repo);
+    await runGit(["commit", "-m", "add unlink cancellation rollback fixture"], repo);
+
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/delete-cancel-unlink.txt"] })],
+      {
+        mode: "parallel",
+        batchId: "bintegration-delete-cancel-unlink",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        signal: controller.signal,
+        integrationBeforeDelete: ({ file, phase }) => {
+          if (file !== "src/delete-cancel-unlink.txt" || phase !== "unlink") return;
+          unlinkCalls += 1;
+          controller.abort();
+        },
+        executor: async (input, options) => {
+          await fs.rm(
+            path.join(options.workingDirectory, "src", "delete-cancel-unlink.txt"),
+            {
+              force: true,
+            },
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/delete-cancel-unlink.txt",
+                kind: "delete",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(unlinkCalls, 1);
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(result.integrationSummary, /copying 0 file/i);
+    assert.match(
+      result.warnings.join("\n"),
+      /cancelled before tombstone unlink.*restored exactly/is,
+    );
+    assert.equal(await fs.readFile(target, "utf8"), "restore-original-object\n");
+    const after = await fs.lstat(target);
+    assert.equal(`${after.dev}:${after.ino}:${after.birthtimeMs}`, beforeIdentity);
+  } finally {
+    await cleanupRepo(repo);
   }
 });
 
@@ -5349,7 +6171,7 @@ test("parallel deletion cancellation after the namespace move never reports zero
     assert.match(result.integrationSummary, /incomplete after copying 1 file/i);
     assert.match(
       result.warnings.join("\n"),
-      /cancellation was observed after the deletion boundary/i,
+      /cancellation was observed.*deletion namespace move/i,
     );
     assert.doesNotMatch(result.warnings.join("\n"), /cancelled before any write/i);
     assert.equal(await fs.readFile(target, "utf8"), "operator-after-delete-move\n");
@@ -7574,6 +8396,7 @@ test(
       continuationStore: continuations,
     });
     let releaseCount = 0;
+    let leaseReleaseCount = 0;
     let secondAuthority: RepositoryOperationAuthority | null = null;
     try {
       const gitAuthority = await captureGitEvidenceAuthority(repo);
@@ -7589,7 +8412,11 @@ test(
         "thread-trust-setup",
         repo,
         true,
-        null,
+        {
+          worktreePath: repo,
+          ownerToken: "continuation-trust-setup-lease",
+          expiresAt: Date.now() + 60_000,
+        },
         null,
         2,
         "gpt-5.6-luna",
@@ -7625,6 +8452,10 @@ test(
           continueTask: async () => {
             throw new Error("worker must not start after trust setup failure");
           },
+          refreshLease: async () => undefined,
+          releaseLease: async () => {
+            leaseReleaseCount += 1;
+          },
         },
       );
 
@@ -7634,6 +8465,7 @@ test(
         /trust setup failed before worker start/i,
       );
       assert.equal(releaseCount, 1);
+      assert.equal(leaseReleaseCount, 1);
 
       secondAuthority = await acquireRepositoryOperationAuthority(repo);
       assert.ok(

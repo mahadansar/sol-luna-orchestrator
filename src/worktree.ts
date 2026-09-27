@@ -70,12 +70,19 @@ export class ConfinedDirectoryChainError extends WorktreeUnavailableError {
   constructor(
     message: string,
     remedy: string,
-    readonly rollbackComplete: boolean,
+    readonly rollbackOutcome: ConfinedDirectoryRollbackOutcome,
   ) {
     super(message, remedy);
     this.name = "ConfinedDirectoryChainError";
   }
+
+  get rollbackComplete(): boolean {
+    return this.rollbackOutcome === "complete";
+  }
 }
+
+export type ConfinedDirectoryRollbackOutcome =
+  "complete" | "residual-proven" | "residual-unknown";
 
 export interface WorktreeBase {
   repoRoot: string;
@@ -298,31 +305,93 @@ export interface ConfinedDirectoryChainResult {
   authority: PinnedDirectoryAuthority;
   created: CreatedConfinedDirectory[];
   /** Remove only directories this call created, in reverse order, if still identical and empty. */
-  rollback: () => Promise<boolean>;
+  rollback: () => Promise<ConfinedDirectoryRollbackOutcome>;
 }
 
 export interface EnsureConfinedDirectoryChainOptions {
   /** Test/coordination seam after the helper has pinned the parent and before mkdir executes. */
   beforeCreate?: (context: ConfinedDirectoryCreateContext) => void | Promise<void>;
+  /** Deterministic protocol-loss seam before mkdir; production leaves this unset. */
+  testExitBeforeCreateWithoutResult?: (
+    context: ConfinedDirectoryCreateContext,
+  ) => boolean;
+  /** Deterministic protocol-loss seam before rollback rmdir; production leaves this unset. */
+  testExitBeforeRollbackWithoutResult?: (entry: CreatedConfinedDirectory) => boolean;
+}
+
+function mergeConfinedRollbackOutcomes(
+  left: ConfinedDirectoryRollbackOutcome,
+  right: ConfinedDirectoryRollbackOutcome,
+): ConfinedDirectoryRollbackOutcome {
+  if (left === "residual-proven" || right === "residual-proven") {
+    return "residual-proven";
+  }
+  if (left === "residual-unknown" || right === "residual-unknown") {
+    return "residual-unknown";
+  }
+  return "complete";
+}
+
+async function inspectCreatedDirectoryResidual(
+  entry: CreatedConfinedDirectory,
+): Promise<ConfinedDirectoryRollbackOutcome> {
+  try {
+    const current = await fs.lstat(entry.path);
+    return current.isDirectory() && directoryIdentity(current) === entry.identity
+      ? "residual-proven"
+      : "complete";
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT"
+      ? "complete"
+      : "residual-unknown";
+  }
 }
 
 async function rollbackCreatedConfinedDirectories(
   created: readonly CreatedConfinedDirectory[],
-): Promise<boolean> {
-  let complete = true;
+  options: EnsureConfinedDirectoryChainOptions,
+): Promise<ConfinedDirectoryRollbackOutcome> {
+  let outcome: ConfinedDirectoryRollbackOutcome = "complete";
   for (const entry of [...created].reverse()) {
     try {
       const removed = await runPinnedDirectoryMutation(entry.parent, {
         op: "rmdir",
         name: entry.name,
         expectedIdentity: entry.identity,
+        testExitBeforeMutationWithoutResult:
+          options.testExitBeforeRollbackWithoutResult?.(entry) ?? false,
       });
-      if (!removed.mutated || removed.snapshot?.kind !== "missing") complete = false;
-    } catch {
-      complete = false;
+      if (removed.mutated && removed.snapshot?.kind === "missing") continue;
+      outcome = mergeConfinedRollbackOutcomes(
+        outcome,
+        await inspectCreatedDirectoryResidual(entry),
+      );
+    } catch (error) {
+      if (
+        error instanceof PinnedDirectoryMutationError &&
+        error.mutated &&
+        !error.mutationProven
+      ) {
+        outcome = mergeConfinedRollbackOutcomes(outcome, "residual-unknown");
+        continue;
+      }
+      if (
+        error instanceof PinnedDirectoryMutationError &&
+        error.mutated &&
+        error.mutationProven
+      ) {
+        // rmdir only marks mutation after the syscall succeeds, so the exact
+        // directory created by this chain is proven removed even if reporting
+        // the post-mutation snapshot failed.
+        continue;
+      }
+      outcome = mergeConfinedRollbackOutcomes(
+        outcome,
+        await inspectCreatedDirectoryResidual(entry),
+      );
     }
   }
-  return complete;
+  return outcome;
 }
 
 /**
@@ -340,7 +409,7 @@ export async function ensureConfinedDirectoryChain(
     throw new ConfinedDirectoryChainError(
       `Directory target resolves outside its confined root: ${resolvedTarget}.`,
       "Use a directory inside the confined root.",
-      true,
+      "complete",
     );
   }
 
@@ -349,7 +418,7 @@ export async function ensureConfinedDirectoryChain(
     throw new ConfinedDirectoryChainError(
       `Confined directory root is missing or inaccessible: ${resolvedRoot}.`,
       "Use an existing real confined root.",
-      true,
+      "complete",
     );
   }
 
@@ -360,14 +429,15 @@ export async function ensureConfinedDirectoryChain(
     throw new ConfinedDirectoryChainError(
       (error as Error).message,
       "Use an existing real confined root.",
-      true,
+      "complete",
     );
   }
 
   const relative = path.relative(resolvedRoot, resolvedTarget);
   const segments = relative === "" ? [] : relative.split(path.sep);
   const created: CreatedConfinedDirectory[] = [];
-  const rollback = (): Promise<boolean> => rollbackCreatedConfinedDirectories(created);
+  const rollback = (): Promise<ConfinedDirectoryRollbackOutcome> =>
+    rollbackCreatedConfinedDirectories(created, options);
 
   for (const segment of segments) {
     const parent = authority;
@@ -377,11 +447,11 @@ export async function ensureConfinedDirectoryChain(
       await fs.lstat(candidate);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        const rollbackComplete = await rollback();
+        const rollbackOutcome = await rollback();
         throw new ConfinedDirectoryChainError(
           `Could not inspect confined directory segment ${candidate}: ${(error as Error).message}`,
           "Retry after concurrent filesystem mutation has stopped.",
-          rollbackComplete,
+          rollbackOutcome,
         );
       }
       appearedMissing = true;
@@ -389,36 +459,56 @@ export async function ensureConfinedDirectoryChain(
 
     let creation: Awaited<ReturnType<typeof runPinnedDirectoryMutation>> | undefined;
     try {
+      const createContext = { parent, candidate, segment };
       creation = await runPinnedDirectoryMutation(
         parent,
-        { op: "mkdir", name: segment },
+        {
+          op: "mkdir",
+          name: segment,
+          testExitBeforeMutationWithoutResult:
+            options.testExitBeforeCreateWithoutResult?.(createContext) ?? false,
+        },
         {
           beforeExecute:
             appearedMissing && options.beforeCreate
-              ? () => options.beforeCreate?.({ parent, candidate, segment })
+              ? () => options.beforeCreate?.(createContext)
               : undefined,
         },
       );
     } catch (error) {
       if (!(error instanceof PinnedDirectoryMutationError && error.code === "EEXIST")) {
-        const rollbackComplete = await rollback();
-        const mutationCleanupProven =
-          !(error instanceof PinnedDirectoryMutationError) || !error.mutated;
+        const rollbackOutcome = await rollback();
+        let creationOutcome: ConfinedDirectoryRollbackOutcome = "complete";
+        if (error instanceof PinnedDirectoryMutationError && error.mutated) {
+          if (error.mutationProven) {
+            try {
+              await fs.lstat(candidate);
+              creationOutcome = "residual-proven";
+            } catch (inspectError) {
+              creationOutcome =
+                (inspectError as NodeJS.ErrnoException).code === "ENOENT"
+                  ? "complete"
+                  : "residual-unknown";
+            }
+          } else {
+            creationOutcome = "residual-unknown";
+          }
+        }
         throw new ConfinedDirectoryChainError(
           `Could not create confined directory segment ${candidate}: ${(error as Error).message}`,
           "Retry after concurrent filesystem mutation has stopped.",
-          rollbackComplete && mutationCleanupProven,
+          mergeConfinedRollbackOutcomes(rollbackOutcome, creationOutcome),
         );
       }
     }
 
     if (creation?.mutated) {
       if (creation.snapshot?.kind !== "directory" || !creation.snapshot.identity) {
-        await rollback();
+        const rollbackOutcome = await rollback();
         throw new ConfinedDirectoryChainError(
           `Could not prove the identity of newly created directory ${candidate}.`,
           "Retry after concurrent filesystem mutation has stopped.",
-          false,
+          mergeConfinedRollbackOutcomes(rollbackOutcome, "residual-proven"),
         );
       }
       created.push({
@@ -433,19 +523,19 @@ export async function ensureConfinedDirectoryChain(
     try {
       child = await capturePinnedDirectoryAuthority(candidate, canonicalRoot);
     } catch (error) {
-      const rollbackComplete = await rollback();
+      const rollbackOutcome = await rollback();
       throw new ConfinedDirectoryChainError(
         `Confined directory segment is redirected, missing, or not a directory: ${candidate}. ${(error as Error).message}`,
         "Retry after restoring a real in-root directory ancestry.",
-        rollbackComplete,
+        rollbackOutcome,
       );
     }
     if (creation?.snapshot?.identity && child.identity !== creation.snapshot.identity) {
-      const rollbackComplete = await rollback();
+      const rollbackOutcome = await rollback();
       throw new ConfinedDirectoryChainError(
         `Confined directory segment changed identity after creation: ${candidate}.`,
         "Retry after concurrent filesystem mutation has stopped.",
-        rollbackComplete,
+        rollbackOutcome,
       );
     }
     authority = child;
@@ -481,7 +571,7 @@ async function ensureRuntimeControlRoots(repoRoot: string): Promise<void> {
     throw new ConfinedDirectoryChainError(
       `Refusing redirected orchestrator control path: ${(error as Error).message}`,
       "Remove the symlink/junction or non-directory .sol-luna control ancestor before using parallel worktrees.",
-      !(error instanceof ConfinedDirectoryChainError) || error.rollbackComplete,
+      error instanceof ConfinedDirectoryChainError ? error.rollbackOutcome : "complete",
     );
   }
 
@@ -494,7 +584,7 @@ async function ensureRuntimeControlRoots(repoRoot: string): Promise<void> {
     throw new ConfinedDirectoryChainError(
       `Refusing redirected orchestrator lease path: ${(error as Error).message}`,
       "Remove the symlink/junction or non-directory continuation-leases path.",
-      !(error instanceof ConfinedDirectoryChainError) || error.rollbackComplete,
+      error instanceof ConfinedDirectoryChainError ? error.rollbackOutcome : "complete",
     );
   }
 }
@@ -523,7 +613,7 @@ async function ensureCommonGitLeaseRoots(commonGitDir: string): Promise<void> {
     throw new ConfinedDirectoryChainError(
       `Refusing redirected common-Git orchestrator lease path: ${(error as Error).message}`,
       "Remove the symlink/junction or non-directory Git control ancestor before retrying.",
-      !(error instanceof ConfinedDirectoryChainError) || error.rollbackComplete,
+      error instanceof ConfinedDirectoryChainError ? error.rollbackOutcome : "complete",
     );
   }
 }
@@ -614,11 +704,28 @@ export async function captureSharedDirectoryFingerprint(
   dirs: string[] = WORKTREE_LINK_DIRS,
 ): Promise<SharedDirectoryFingerprint> {
   const parsed = parseWorktreeLinkDirectories(dirs.join(","));
+  const canonicalWorkspace = await fs.realpath(root);
   const hash = createHash("sha256");
   for (const dir of [...parsed.dirs].sort()) {
     const source = path.resolve(root, dir);
+    const sourceEntry = await fs.lstat(source).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    });
+    if (sourceEntry?.isSymbolicLink()) {
+      throw new WorktreeUnavailableError(
+        `Shared dependency source must be a real directory, not a symbolic link or junction: ${source}.`,
+        "Replace the configured shared-directory root link with a real in-workspace directory.",
+      );
+    }
     const canonical = await fs.realpath(source).catch(() => null);
     if (canonical) {
+      if (!pathIsWithin(canonicalWorkspace, canonical)) {
+        throw new WorktreeUnavailableError(
+          `Shared dependency source resolves outside its workspace: ${source}.`,
+          "Replace the redirected dependency root with a directory contained by the delegated workspace.",
+        );
+      }
       await hashSharedPath(hash, source, dir, canonical);
     } else {
       hash.update(`missing\0${dir}\0`);
@@ -1982,8 +2089,8 @@ export function projectWorktreeChangesToWorkspace(
  */
 async function confinedSharedSource(root: string, dir: string): Promise<string | null> {
   const source = path.resolve(root, dir);
-  const sourceStat = await fs.stat(source).catch(() => null);
-  if (!sourceStat?.isDirectory()) return null;
+  const sourceStat = await fs.lstat(source).catch(() => null);
+  if (!sourceStat?.isDirectory() || sourceStat.isSymbolicLink()) return null;
   const [rootReal, sourceReal] = await Promise.all([
     fs.realpath(root).catch(() => null),
     fs.realpath(source).catch(() => null),
@@ -2032,7 +2139,7 @@ async function provisionSharedDestination(
     throw new ConfinedDirectoryChainError(
       `Shared destination resolves outside its worktree root: ${destination}.`,
       "Use a confined relative shared-directory path.",
-      true,
+      "complete",
     );
   }
   const chain = await ensureConfinedDirectoryChain(root, parentDirectory, {
@@ -2063,7 +2170,9 @@ export async function linkSharedDirectories(
     if (!sourceStat?.isDirectory()) continue;
     const source = await confinedSharedSource(mainWorkspace, dir);
     if (!source) {
-      warnings.push(`Skipped shared worktree link outside the workspace: ${dir}`);
+      warnings.push(
+        `Skipped shared worktree link outside the workspace or through a linked root: ${dir}`,
+      );
       continue;
     }
     let destination: ProvisionedSharedDestination;
@@ -2084,7 +2193,8 @@ export async function linkSharedDirectories(
         type: process.platform === "win32" ? "junction" : "dir",
       });
     } catch (error) {
-      const rollbackComplete = await destination.chain.rollback();
+      const rollbackOutcome = await destination.chain.rollback();
+      const rollbackComplete = rollbackOutcome === "complete";
       if (error instanceof PinnedDirectoryMutationError && error.code === "EEXIST") {
         if (!rollbackComplete) {
           warnings.push(
@@ -2148,7 +2258,9 @@ export async function snapshotSharedDirectories(
     if (!sourceStat?.isDirectory()) continue;
     const source = await confinedSharedSource(mainWorkspace, dir);
     if (!source) {
-      warnings.push(`Skipped shared worktree snapshot outside the workspace: ${dir}`);
+      warnings.push(
+        `Skipped shared worktree snapshot outside the workspace or through a linked root: ${dir}`,
+      );
       continue;
     }
     let destination: ProvisionedSharedDestination;
@@ -2173,7 +2285,8 @@ export async function snapshotSharedDirectories(
       throw error;
     });
     if (existingDestination) {
-      const parentRollbackComplete = await destination.chain.rollback();
+      const parentRollbackOutcome = await destination.chain.rollback();
+      const parentRollbackComplete = parentRollbackOutcome === "complete";
       rollbackComplete &&= parentRollbackComplete;
       warnings.push(
         `Skipped shared worktree snapshot because the destination exists: ${dir}` +
@@ -2194,6 +2307,7 @@ export async function snapshotSharedDirectories(
         op: "copy-directory",
         name: stagingName,
         source,
+        finalName: destination.name,
       });
       stagingMayExist = copied.mutated;
       if (copied.snapshot?.kind !== "directory" || !copied.snapshot.identity) {
@@ -2242,7 +2356,8 @@ export async function snapshotSharedDirectories(
           stagingRollbackComplete = false;
         }
       }
-      const parentRollbackComplete = await destination.chain.rollback();
+      const parentRollbackOutcome = await destination.chain.rollback();
+      const parentRollbackComplete = parentRollbackOutcome === "complete";
       rollbackComplete &&= parentRollbackComplete && stagingRollbackComplete;
       if (error instanceof PinnedDirectoryMutationError && error.code === "EEXIST") {
         warnings.push(

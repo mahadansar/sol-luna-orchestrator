@@ -9,7 +9,12 @@ export interface PinnedDirectoryAuthority {
 }
 
 export type PinnedDirectoryMutation =
-  | { op: "mkdir"; name: string }
+  | {
+      op: "mkdir";
+      name: string;
+      /** Deterministic protocol-loss seam before the syscall; production leaves this unset. */
+      testExitBeforeMutationWithoutResult?: boolean;
+    }
   | {
       op: "write-file";
       name: string;
@@ -25,6 +30,8 @@ export type PinnedDirectoryMutation =
       op: "copy-directory";
       name: string;
       source: string;
+      /** Final child name after the caller atomically renames this staging directory. */
+      finalName?: string;
     }
   | {
       op: "symlink";
@@ -43,6 +50,10 @@ export type PinnedDirectoryMutation =
       destinationName: string;
       expectedIdentity?: string;
       expectedSignature?: string;
+      /** Deterministic protocol-loss seam before the syscall; production leaves this unset. */
+      testExitBeforeMutationWithoutResult?: boolean;
+      /** Deterministic protocol-crash seam; production leaves this unset. */
+      testExitAfterMutationBeforeResult?: boolean;
     }
   | {
       op: "unlink";
@@ -50,11 +61,15 @@ export type PinnedDirectoryMutation =
       expectedIdentity?: string;
       expectedSignature?: string;
       testFailBeforeUnlink?: boolean;
+      /** Deterministic protocol-crash seam; production leaves this unset. */
+      testExitAfterMutationBeforeResult?: boolean;
     }
   | {
       op: "rmdir";
       name: string;
       expectedIdentity: string;
+      /** Deterministic protocol-loss seam before the syscall; production leaves this unset. */
+      testExitBeforeMutationWithoutResult?: boolean;
     };
 
 export interface PinnedDirectoryMutationResult {
@@ -77,6 +92,191 @@ const identity = (stat) =>
   String(stat.dev) + ":" + String(stat.ino) + ":" + String(stat.birthtimeMs);
 const fileSignature = (bytes) =>
   "file:" + crypto.createHash("sha256").update(bytes).digest("hex");
+
+function pathKey(value) {
+  const normalized = path.resolve(value);
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function samePath(left, right) {
+  return pathKey(left) === pathKey(right);
+}
+
+function pathIsWithin(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === "" ||
+    (!relative.startsWith(".." + path.sep) &&
+      relative !== ".." &&
+      !path.isAbsolute(relative))
+  );
+}
+
+async function inspectCopyLink(sourceRoot, canonicalRoot, sourcePath, relative) {
+  const entry = await fs.lstat(sourcePath);
+  if (!entry.isSymbolicLink()) {
+    throw new Error("Shared dependency link changed type during snapshot copy: " + sourcePath);
+  }
+  const rawTarget = await fs.readlink(sourcePath);
+  const resolvedTarget = await fs.realpath(sourcePath).catch(() => null);
+  if (!resolvedTarget || !pathIsWithin(canonicalRoot, resolvedTarget)) {
+    throw new Error("Shared dependency link escapes its configured source tree: " + sourcePath);
+  }
+  const followed = await fs.stat(sourcePath).catch(() => null);
+  const targetKind = followed?.isDirectory()
+    ? "directory"
+    : followed?.isFile()
+      ? "file"
+      : null;
+  if (!targetKind) {
+    throw new Error("Shared dependency link target is missing or unsupported: " + sourcePath);
+  }
+  if (process.platform === "win32" && targetKind !== "directory") {
+    throw new Error(
+      "Windows shared dependency snapshots support internal directory junctions only: " +
+        sourcePath,
+    );
+  }
+  return {
+    sourcePath: path.resolve(sourcePath),
+    relative,
+    identity: identity(entry),
+    rawTarget,
+    resolvedTarget,
+    targetRelative: path.relative(canonicalRoot, resolvedTarget),
+    targetKind,
+  };
+}
+
+async function planCopyDirectory(source) {
+  const rootEntry = await fs.lstat(source);
+  if (rootEntry.isSymbolicLink() || !rootEntry.isDirectory()) {
+    throw new Error("Pinned dependency copy source must be a real directory: " + source);
+  }
+  const canonicalRoot = await fs.realpath(source);
+  const rootIdentity = identity(rootEntry);
+  const links = [];
+
+  async function walk(directory, relative) {
+    for (const name of (await fs.readdir(directory)).sort()) {
+      const child = path.join(directory, name);
+      const childRelative = relative ? path.join(relative, name) : name;
+      const childEntry = await fs.lstat(child);
+      if (childEntry.isSymbolicLink()) {
+        links.push(await inspectCopyLink(source, canonicalRoot, child, childRelative));
+      } else if (childEntry.isDirectory()) {
+        const childReal = await fs.realpath(child);
+        if (!pathIsWithin(canonicalRoot, childReal)) {
+          throw new Error("Shared dependency directory escaped its source tree: " + child);
+        }
+        await walk(child, childRelative);
+      }
+    }
+  }
+
+  await walk(source, "");
+  return { source: path.resolve(source), canonicalRoot, rootIdentity, links };
+}
+
+async function assertCopyRootStable(plan) {
+  const entry = await fs.lstat(plan.source);
+  if (
+    entry.isSymbolicLink() ||
+    !entry.isDirectory() ||
+    identity(entry) !== plan.rootIdentity ||
+    !samePath(await fs.realpath(plan.source), plan.canonicalRoot)
+  ) {
+    throw new Error("Pinned dependency copy source changed identity during snapshot copy.");
+  }
+}
+
+async function assertCopyLinkStable(plan, expected) {
+  const current = await inspectCopyLink(
+    plan.source,
+    plan.canonicalRoot,
+    expected.sourcePath,
+    expected.relative,
+  );
+  if (
+    current.identity !== expected.identity ||
+    current.rawTarget !== expected.rawTarget ||
+    !samePath(current.resolvedTarget, expected.resolvedTarget) ||
+    current.targetKind !== expected.targetKind
+  ) {
+    throw new Error("Shared dependency link changed during snapshot copy: " + expected.sourcePath);
+  }
+}
+
+async function assertCopiedTreeHasNoLinks(root) {
+  async function walk(directory) {
+    for (const name of await fs.readdir(directory)) {
+      const child = path.join(directory, name);
+      const entry = await fs.lstat(child);
+      if (entry.isSymbolicLink()) {
+        throw new Error("Unexpected dependency link appeared during snapshot copy: " + child);
+      }
+      if (entry.isDirectory()) await walk(child);
+    }
+  }
+  await walk(root);
+}
+
+async function recreatePrivateCopyLinks(plan, destinationRoot, finalName) {
+  const canonicalDestinationRoot = await fs.realpath(destinationRoot);
+  if (finalName !== undefined) assertChildName(finalName);
+  for (const link of plan.links) {
+    await assertCopyRootStable(plan);
+    await assertCopyLinkStable(plan, link);
+    const destinationLink = path.join(destinationRoot, link.relative);
+    if ((await snapshot(destinationLink)).kind !== "missing") {
+      throw new Error("Dependency link destination appeared during snapshot copy: " + destinationLink);
+    }
+    const destinationTarget = path.resolve(destinationRoot, link.targetRelative);
+    const canonicalDestinationTarget = await fs.realpath(destinationTarget).catch(() => null);
+    if (
+      !canonicalDestinationTarget ||
+      !pathIsWithin(canonicalDestinationRoot, canonicalDestinationTarget)
+    ) {
+      throw new Error("Dependency link target was not copied into the private snapshot: " + link.relative);
+    }
+    const targetStat = await fs.stat(destinationTarget);
+    if (
+      (link.targetKind === "directory" && !targetStat.isDirectory()) ||
+      (link.targetKind === "file" && !targetStat.isFile())
+    ) {
+      throw new Error("Dependency link target changed type in the private snapshot: " + link.relative);
+    }
+
+    if (process.platform === "win32") {
+      const finalRoot = finalName
+        ? path.resolve(path.dirname(destinationRoot), finalName)
+        : canonicalDestinationRoot;
+      const finalTarget = path.resolve(finalRoot, link.targetRelative);
+      if (!pathIsWithin(finalRoot, finalTarget)) {
+        throw new Error("Private dependency junction target escaped its final root: " + link.relative);
+      }
+      await fs.symlink(finalTarget, destinationLink, "junction");
+      const copiedRawTarget = await fs.readlink(destinationLink);
+      if (!samePath(copiedRawTarget, finalTarget)) {
+        throw new Error("Private dependency junction did not retain its rebased target: " + link.relative);
+      }
+    } else {
+      const relativeTarget = path.relative(path.dirname(destinationLink), destinationTarget) || ".";
+      await fs.symlink(
+        relativeTarget,
+        destinationLink,
+        link.targetKind === "directory" ? "dir" : "file",
+      );
+    }
+
+    if (process.platform !== "win32" || !finalName) {
+      const copiedTarget = await fs.realpath(destinationLink).catch(() => null);
+      if (!copiedTarget || !samePath(copiedTarget, canonicalDestinationTarget)) {
+        throw new Error("Private dependency link did not resolve to its copied target: " + link.relative);
+      }
+    }
+  }
+}
 
 function assertChildName(name) {
   if (
@@ -190,16 +390,11 @@ function emit(value) {
   for await (const chunk of process.stdin) input += chunk.toString("utf8");
   const request = JSON.parse(input);
   let mutated = false;
-  let mutationName =
-    typeof request.name === "string"
-      ? request.name
-      : typeof request.destinationName === "string"
-        ? request.destinationName
-        : null;
   try {
     switch (request.op) {
       case "mkdir": {
         assertChildName(request.name);
+        if (request.testExitBeforeMutationWithoutResult) process.exit(94);
         await fs.mkdir(request.name);
         mutated = true;
         emit({ type: "done", mutated, snapshot: await snapshot(request.name) });
@@ -273,13 +468,48 @@ function emit(value) {
           });
         }
         try {
+          const plan = await planCopyDirectory(request.source);
+          const plannedLinks = new Map(
+            plan.links.map((entry) => [pathKey(entry.sourcePath), entry]),
+          );
+          const observedLinks = new Set();
+          await assertCopyRootStable(plan);
           await fs.cp(request.source, request.name, {
             recursive: true,
             dereference: false,
-            verbatimSymlinks: true,
             force: false,
             errorOnExist: true,
+            filter: async (sourcePath) => {
+              const sourceEntry = await fs.lstat(sourcePath);
+              const planned = plannedLinks.get(pathKey(sourcePath));
+              if (sourceEntry.isSymbolicLink()) {
+                if (!planned) {
+                  throw new Error(
+                    "Unplanned dependency link appeared during snapshot copy: " + sourcePath,
+                  );
+                }
+                await assertCopyLinkStable(plan, planned);
+                observedLinks.add(pathKey(sourcePath));
+                return false;
+              }
+              if (planned) {
+                throw new Error(
+                  "Planned dependency link changed type during snapshot copy: " + sourcePath,
+                );
+              }
+              return true;
+            },
           });
+          await assertCopyRootStable(plan);
+          for (const link of plan.links) {
+            if (!observedLinks.has(pathKey(link.sourcePath))) {
+              throw new Error(
+                "Planned dependency link disappeared during snapshot copy: " + link.sourcePath,
+              );
+            }
+          }
+          await assertCopiedTreeHasNoLinks(request.name);
+          await recreatePrivateCopyLinks(plan, request.name, request.finalName);
         } catch (error) {
           mutated = (await snapshot(request.name)).kind !== "missing";
           throw error;
@@ -322,8 +552,10 @@ function emit(value) {
             code: "EEXIST",
           });
         }
+        if (request.testExitBeforeMutationWithoutResult) process.exit(93);
         await fs.rename(request.sourceName, request.destinationName);
         mutated = true;
+        if (request.testExitAfterMutationBeforeResult) process.exit(91);
         emit({
           type: "done",
           mutated,
@@ -345,6 +577,7 @@ function emit(value) {
         }
         await fs.unlink(request.name);
         mutated = true;
+        if (request.testExitAfterMutationBeforeResult) process.exit(92);
         emit({ type: "done", mutated, snapshot: await snapshot(request.name) });
         return;
       }
@@ -357,6 +590,7 @@ function emit(value) {
         ) {
           throw new Error("Pinned directory changed before rollback.");
         }
+        if (request.testExitBeforeMutationWithoutResult) process.exit(95);
         await fs.rmdir(request.name);
         mutated = true;
         emit({ type: "done", mutated, snapshot: await snapshot(request.name) });
@@ -368,11 +602,6 @@ function emit(value) {
         );
     }
   } catch (error) {
-    if (!mutated && mutationName) {
-      try {
-        mutated = (await snapshot(mutationName)).kind !== "missing";
-      } catch {}
-    }
     emit({
       type: "error",
       mutated,
@@ -461,12 +690,15 @@ type ChildMessage = ChildReady | ChildDone | ChildError;
 
 export class PinnedDirectoryMutationError extends Error {
   readonly mutated: boolean;
+  /** Whether `mutated` is known rather than a conservative protocol-loss assumption. */
+  readonly mutationProven: boolean;
   readonly code?: string;
 
-  constructor(message: string, mutated: boolean, code?: string) {
+  constructor(message: string, mutated: boolean, code?: string, mutationProven = true) {
     super(message);
     this.name = "PinnedDirectoryMutationError";
     this.mutated = mutated;
+    this.mutationProven = mutationProven;
     this.code = code;
   }
 }
@@ -602,9 +834,12 @@ export async function runPinnedDirectoryMutation(
     }
   }
   if (!result) {
+    const deterministicPostMutationCrash = code === 91 || code === 92;
     throw new PinnedDirectoryMutationError(
       `Pinned filesystem helper exited without a result (code=${String(code)}, signal=${String(signal)}). ${stderr.trim()}`.trim(),
-      false,
+      true,
+      undefined,
+      deterministicPostMutationCrash,
     );
   }
   if (result.type === "error") {

@@ -96,6 +96,7 @@ import {
   ConfinedDirectoryChainError,
   WorktreeUnavailableError,
   type CleanupReason,
+  type ConfinedDirectoryRollbackOutcome,
   type SharedDirectoryFingerprint,
   type RepositoryOperationAuthority,
   type WorktreeLeaseMaintenance,
@@ -270,6 +271,11 @@ export async function runBatch(
       segment: string;
       appliedFiles: number;
     }) => void | Promise<void>;
+    /** Deterministic pinned-parent protocol-loss seams; production leaves these unset. */
+    integrationPinnedParentTest?: {
+      exitBeforeMkdirWithoutResult?: boolean;
+      exitBeforeRollbackRmdirWithoutResult?: boolean;
+    };
     /** Deterministic pinned-write fault/short-write seam; production leaves this unset. */
     integrationPinnedWriteTest?: {
       maxWriteBytes?: number;
@@ -279,6 +285,9 @@ export async function runBatch(
     /** Deterministic pinned-deletion cleanup seam; production leaves this unset. */
     integrationPinnedDeleteTest?: {
       failQuarantineCleanup?: boolean;
+      failTombstoneCleanup?: boolean;
+      exitBeforeNamespaceMoveWithoutResult?: boolean;
+      exitAfterTombstoneUnlinkBeforeResult?: boolean;
     };
     /**
      * Deterministic deletion-boundary seam. Production leaves this unset; tests
@@ -290,7 +299,7 @@ export async function runBatch(
       taskId: string;
       file: string;
       appliedFiles: number;
-      phase: "validated" | "moved";
+      phase: PinnedDeletionPhase;
     }) => void | Promise<void>;
     /** Deterministic exceptional-cleanup seam. */
     worktreeCleaner?: typeof cleanupWorktree;
@@ -977,6 +986,7 @@ export async function runBatch(
         options.integrationBeforeWrite,
         options.integrationBeforeDelete,
         options.integrationBeforeParentCreate,
+        options.integrationPinnedParentTest,
         options.integrationPinnedWriteTest,
         options.integrationPinnedDeleteTest,
       );
@@ -2946,51 +2956,25 @@ async function readAllIntegrationBytes(
   return Buffer.concat(chunks);
 }
 
-async function writeAllIntegrationBytes(
-  handle: Awaited<ReturnType<typeof fs.open>>,
-  bytes: Buffer,
-): Promise<void> {
-  let offset = 0;
-  while (offset < bytes.length) {
-    const { bytesWritten } = await handle.write(
-      bytes,
-      offset,
-      bytes.length - offset,
-      offset,
-    );
-    if (bytesWritten <= 0) {
-      throw new Error(
-        "Destination write made no progress before all bytes were written.",
-      );
-    }
-    offset += bytesWritten;
-  }
+interface DeletionLinkRecoveryMetadata {
+  version: 1;
+  kind: "link";
+  target: string;
+  signature: string;
 }
 
-async function restoreQuarantinedIntegrationPath(
-  quarantine: string,
-  destination: string,
-  quarantined: IntegrationPathSnapshot,
-): Promise<boolean> {
-  if ((await snapshotIntegrationPath(destination)).kind !== "missing") return false;
-  try {
-    if (quarantined.kind === "file") {
-      // link(2) is exclusive at the destination name, so a concurrent operator
-      // replacement wins rather than being overwritten by rollback.
-      await fs.link(quarantine, destination);
-    } else if (quarantined.kind === "link") {
-      // symlink creation is likewise exclusive when the destination appears in
-      // the rollback window. Preserve the exact link target we quarantined.
-      await fs.symlink(await fs.readlink(quarantine), destination);
-    } else {
-      return false;
-    }
-    await fs.unlink(quarantine);
-    await fs.rmdir(path.dirname(quarantine)).catch(() => undefined);
-    return true;
-  } catch {
-    return false;
-  }
+/** @internal Pure encoder used by focused recovery tests. */
+export function encodeDeletionLinkRecoveryMetadata(
+  target: string,
+  signature: string,
+): Buffer {
+  const metadata: DeletionLinkRecoveryMetadata = {
+    version: 1,
+    kind: "link",
+    target,
+    signature,
+  };
+  return Buffer.from(`${JSON.stringify(metadata)}\n`, "utf8");
 }
 
 async function pinnedDirectoryAuthorityStillMatches(
@@ -3007,82 +2991,45 @@ async function pinnedDirectoryAuthorityStillMatches(
   );
 }
 
-async function restoreAcceptedIntegrationPath(
-  authority: PinnedDirectoryAuthority,
-  confinedRoot: string,
-  name: string,
-  expected: IntegrationPathSnapshot,
-): Promise<boolean> {
-  if (!(await pinnedDirectoryAuthorityStillMatches(authority, confinedRoot)))
-    return false;
-  try {
-    if (expected.kind === "file" && expected.bytes) {
-      await runPinnedDirectoryMutation(authority, {
-        op: "write-file",
-        name,
-        mode: "exclusive",
-        bytesBase64: expected.bytes.toString("base64"),
-      });
-    } else if (expected.kind === "link" && expected.linkTarget !== undefined) {
-      await runPinnedDirectoryMutation(authority, {
-        op: "symlink",
-        name,
-        target: expected.linkTarget,
-        type: process.platform === "win32" ? "file" : "file",
-      });
-    } else {
-      return false;
-    }
-    return true;
-  } catch {
-    return false;
-  }
+interface IntegrationDeleteQuarantineRoot {
+  authority: PinnedDirectoryAuthority;
+  created: boolean;
+  rollbackCreated: () => Promise<boolean>;
 }
 
-function integrationPathIsWithin(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return (
-    relative === "" ||
-    (!relative.startsWith(`..${path.sep}`) &&
-      relative !== ".." &&
-      !path.isAbsolute(relative))
-  );
-}
-
-async function ensureIntegrationDeleteQuarantineRoot(repoRoot: string): Promise<string> {
+async function ensureIntegrationDeleteQuarantineRoot(
+  repoRoot: string,
+): Promise<IntegrationDeleteQuarantineRoot> {
   const canonicalRepo = await fs.realpath(repoRoot);
-  let current = repoRoot;
-  for (const segment of [".sol-luna", "integration-delete"]) {
-    current = path.join(current, segment);
-    const existing = await fs.lstat(current).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT") return null;
-      throw error;
-    });
-    if (existing && (existing.isSymbolicLink() || !existing.isDirectory())) {
-      throw new Error(`Refusing redirected integration quarantine path: ${current}.`);
-    }
-    if (!existing) await fs.mkdir(current);
-    const created = await fs.lstat(current);
-    if (created.isSymbolicLink() || !created.isDirectory()) {
-      throw new Error(`Refusing redirected integration quarantine path: ${current}.`);
-    }
-    const canonical = await fs.realpath(current);
-    if (!integrationPathIsWithin(canonicalRepo, canonical)) {
-      throw new Error(
-        `Integration quarantine path resolves outside its repository: ${current}.`,
-      );
-    }
+  const target = path.join(canonicalRepo, ".sol-luna", "integration-delete");
+  try {
+    await assertConfinedDirectoryChain(canonicalRepo, target);
+    return {
+      authority: await capturePinnedDirectoryAuthority(target, canonicalRepo),
+      created: false,
+      rollbackCreated: async () => true,
+    };
+  } catch {
+    const chain = await ensureConfinedDirectoryChain(canonicalRepo, target);
+    return {
+      authority: chain.authority,
+      created: chain.created.length > 0,
+      rollbackCreated: async () => (await chain.rollback()) === "complete",
+    };
   }
-  return current;
 }
 
 interface PinnedDeletionResult {
   status: "applied" | "blocked" | "cancelled";
   authoritativeMutation: boolean;
+  /** False only when protocol loss makes the mutation outcome conservatively unknown. */
+  mutationProven?: boolean;
   restored: boolean;
   warning?: string;
   reason?: "source-drift" | "workspace-drift";
 }
+
+type PinnedDeletionPhase = "validated" | "moved" | "unlink";
 
 async function performPinnedIntegrationDeletion(options: {
   repoRoot: string;
@@ -3092,8 +3039,11 @@ async function performPinnedIntegrationDeletion(options: {
   expectedDestination: IntegrationPathSnapshot;
   expectedSourceSignature: string;
   signal?: AbortSignal;
-  beforeDelete?: (phase: "validated" | "moved") => void | Promise<void>;
+  beforeDelete?: (phase: PinnedDeletionPhase) => void | Promise<void>;
   failQuarantineCleanup?: boolean;
+  failTombstoneCleanup?: boolean;
+  exitBeforeNamespaceMoveWithoutResult?: boolean;
+  exitAfterTombstoneUnlinkBeforeResult?: boolean;
 }): Promise<PinnedDeletionResult> {
   const {
     repoRoot,
@@ -3105,6 +3055,9 @@ async function performPinnedIntegrationDeletion(options: {
     signal,
     beforeDelete,
     failQuarantineCleanup,
+    failTombstoneCleanup,
+    exitBeforeNamespaceMoveWithoutResult,
+    exitAfterTombstoneUnlinkBeforeResult,
   } = options;
   if (
     (expectedDestination.kind !== "file" || expectedDestination.bytes === null) &&
@@ -3119,26 +3072,39 @@ async function performPinnedIntegrationDeletion(options: {
     };
   }
 
-  const quarantineRoot = await ensureIntegrationDeleteQuarantineRoot(repoRoot);
-  const quarantineAuthority = await capturePinnedDirectoryAuthority(
-    quarantineRoot,
-    repoRoot,
-  );
+  const quarantine = await ensureIntegrationDeleteQuarantineRoot(repoRoot);
+  const quarantineAuthority = quarantine.authority;
   const quarantineName = `delete-${randomBytes(24).toString("hex")}`;
-  const backupResult =
+  const recoveryBackupBytes =
     expectedDestination.kind === "file"
-      ? await runPinnedDirectoryMutation(quarantineAuthority, {
-          op: "write-file",
-          name: quarantineName,
-          bytesBase64: expectedDestination.bytes!.toString("base64"),
-          mode: "exclusive",
-        })
-      : await runPinnedDirectoryMutation(quarantineAuthority, {
-          op: "symlink",
-          name: quarantineName,
-          target: expectedDestination.linkTarget!,
-          type: "file",
-        });
+      ? expectedDestination.bytes!
+      : encodeDeletionLinkRecoveryMetadata(
+          expectedDestination.linkTarget!,
+          expectedDestination.signature,
+        );
+  const recoveryBackupSignature = integrationFileSignature(recoveryBackupBytes);
+  let backupResult: Awaited<ReturnType<typeof runPinnedDirectoryMutation>>;
+  try {
+    backupResult = await runPinnedDirectoryMutation(quarantineAuthority, {
+      op: "write-file",
+      name: quarantineName,
+      bytesBase64: recoveryBackupBytes.toString("base64"),
+      mode: "exclusive",
+    });
+  } catch (error) {
+    const rollbackComplete = await quarantine.rollbackCreated().catch(() => false);
+    return {
+      status: "blocked",
+      authoritativeMutation: false,
+      restored: false,
+      warning:
+        `could not create a pinned deletion recovery backup (${(error as Error).message})` +
+        (rollbackComplete
+          ? ""
+          : "; quarantine setup cleanup could not be proven complete"),
+      reason: "workspace-drift",
+    };
+  }
 
   const cleanupBackup = async (injectFailure = false): Promise<boolean> => {
     if (!backupResult.snapshot) return false;
@@ -3150,37 +3116,94 @@ async function performPinnedIntegrationDeletion(options: {
         expectedSignature: backupResult.snapshot.signature,
         testFailBeforeUnlink: injectFailure,
       });
-      const rootStat = await fs.lstat(quarantineRoot).catch(() => null);
-      if (rootStat?.isDirectory() && !rootStat.isSymbolicLink()) {
-        const rootParent = path.dirname(quarantineRoot);
-        const rootParentAuthority = await capturePinnedDirectoryAuthority(
-          rootParent,
-          repoRoot,
-        ).catch(() => null);
-        if (rootParentAuthority) {
-          await runPinnedDirectoryMutation(rootParentAuthority, {
-            op: "rmdir",
-            name: path.basename(quarantineRoot),
-            expectedIdentity: integrationStatIdentity(rootStat),
-          }).catch(() => undefined);
-        }
-      }
-      return true;
+      return quarantine.created ? await quarantine.rollbackCreated() : true;
     } catch {
       return false;
     }
   };
 
+  const backupMatchesExpected =
+    backupResult.mutated &&
+    backupResult.snapshot?.kind === "file" &&
+    backupResult.snapshot.signature === recoveryBackupSignature;
+  if (!backupMatchesExpected) {
+    const backupCleaned = await cleanupBackup();
+    return {
+      status: "blocked",
+      authoritativeMutation: false,
+      restored: false,
+      warning:
+        "the pinned deletion recovery backup did not match the accepted destination" +
+        (backupCleaned ? "" : "; untrusted recovery backup cleanup failed"),
+      reason: "workspace-drift",
+    };
+  }
+
   const destinationParent = path.dirname(destination);
   const destinationName = path.basename(destination);
-  const destinationParentAuthority = await capturePinnedDirectoryAuthority(
-    destinationParent,
-    workspace,
-  );
+  let destinationParentAuthority: PinnedDirectoryAuthority;
+  try {
+    destinationParentAuthority = await capturePinnedDirectoryAuthority(
+      destinationParent,
+      workspace,
+    );
+  } catch (error) {
+    const backupCleaned = await cleanupBackup();
+    return {
+      status: "blocked",
+      authoritativeMutation: false,
+      restored: false,
+      warning:
+        `deletion destination parent is no longer authoritative (${(error as Error).message})` +
+        (backupCleaned ? "" : "; recovery backup cleanup failed"),
+      reason: "workspace-drift",
+    };
+  }
   const tombstoneName = `.sol-luna-delete-${randomBytes(24).toString("hex")}.tmp`;
+
+  const restoreMoved = async (): Promise<{
+    restored: boolean;
+    backupCleaned: boolean;
+  }> => {
+    if (
+      !(await pinnedDirectoryAuthorityStillMatches(destinationParentAuthority, workspace))
+    ) {
+      return { restored: false, backupCleaned: false };
+    }
+    try {
+      await runPinnedDirectoryMutation(destinationParentAuthority, {
+        op: "rename-verified",
+        sourceName: tombstoneName,
+        destinationName,
+        expectedIdentity: expectedDestination.identity ?? undefined,
+        expectedSignature: expectedDestination.signature,
+      });
+    } catch {
+      return { restored: false, backupCleaned: false };
+    }
+    return { restored: true, backupCleaned: await cleanupBackup() };
+  };
+
+  const rollbackMovedResult = async (
+    status: "blocked" | "cancelled",
+    warning: string,
+    reason: "source-drift" | "workspace-drift",
+  ): Promise<PinnedDeletionResult> => {
+    const rollback = await restoreMoved();
+    return {
+      status,
+      authoritativeMutation: !rollback.restored,
+      restored: rollback.restored,
+      warning: rollback.restored
+        ? `${warning}; the original deletion target was restored exactly by renaming its tombstone back${rollback.backupCleaned ? "" : ", but recovery backup cleanup failed"}`
+        : `${warning}; exact tombstone rollback was not safe, so recoverable deletion state was retained`,
+      reason,
+    };
+  };
 
   let moved:
     Awaited<ReturnType<typeof runPinnedDirectoryMutation>>["snapshot"] | undefined;
+  let moveBoundaryStatus: "cancelled" | "source-drift" | null = null;
   try {
     const result = await runPinnedDirectoryMutation(
       destinationParentAuthority,
@@ -3190,141 +3213,231 @@ async function performPinnedIntegrationDeletion(options: {
         destinationName: tombstoneName,
         expectedIdentity: expectedDestination.identity ?? undefined,
         expectedSignature: expectedDestination.signature,
+        testExitBeforeMutationWithoutResult: exitBeforeNamespaceMoveWithoutResult,
       },
       {
         beforeExecute: async () => {
           await beforeDelete?.("validated");
           if (signal?.aborted) {
+            moveBoundaryStatus = "cancelled";
             const error = new Error(
               "Integration deletion was cancelled before namespace move.",
             );
             error.name = "AbortError";
             throw error;
           }
+          const moveSource = await snapshotIntegrationPath(source);
+          if (
+            moveSource.kind !== "missing" ||
+            moveSource.signature !== expectedSourceSignature
+          ) {
+            moveBoundaryStatus = "source-drift";
+            throw new Error("Deletion source changed before the pinned namespace move.");
+          }
         },
       },
     );
     moved = result.snapshot;
   } catch (error) {
-    await cleanupBackup();
+    const mutated = error instanceof PinnedDirectoryMutationError && error.mutated;
+    if (mutated) {
+      if (error instanceof PinnedDirectoryMutationError && !error.mutationProven) {
+        const rollback = await restoreMoved();
+        if (rollback.restored) {
+          return {
+            status: signal?.aborted ? "cancelled" : "blocked",
+            authoritativeMutation: false,
+            restored: true,
+            warning: `the pinned deletion namespace move lost its result (${error.message}), but the original deletion target was restored exactly by renaming its tombstone back${rollback.backupCleaned ? "" : ", and recovery backup cleanup failed"}`,
+            reason: "workspace-drift",
+          };
+        }
+        return {
+          status: signal?.aborted ? "cancelled" : "blocked",
+          authoritativeMutation: true,
+          mutationProven: false,
+          restored: false,
+          warning: `the pinned deletion namespace move lost its result (${error.message}); exact rollback could not be proven and the mutation outcome is unknown`,
+          reason: "workspace-drift",
+        };
+      }
+      return await rollbackMovedResult(
+        signal?.aborted ? "cancelled" : "blocked",
+        `the pinned deletion namespace move failed after reporting a mutation (${(error as Error).message})`,
+        "workspace-drift",
+      );
+    }
+    const backupCleaned = await cleanupBackup();
     return {
-      status: signal?.aborted ? "cancelled" : "blocked",
-      authoritativeMutation:
-        error instanceof PinnedDirectoryMutationError ? error.mutated : false,
+      status: moveBoundaryStatus === "cancelled" ? "cancelled" : "blocked",
+      authoritativeMutation: false,
       restored: false,
-      warning: (error as Error).message,
-      reason: "workspace-drift",
+      warning:
+        (error as Error).message +
+        (backupCleaned ? "" : "; recovery backup cleanup failed"),
+      reason: moveBoundaryStatus === "source-drift" ? "source-drift" : "workspace-drift",
     };
   }
-
-  const restoreMoved = async (expected: NonNullable<typeof moved>): Promise<boolean> => {
-    if (
-      !(await pinnedDirectoryAuthorityStillMatches(destinationParentAuthority, workspace))
-    ) {
-      return false;
-    }
-    try {
-      await runPinnedDirectoryMutation(destinationParentAuthority, {
-        op: "rename-verified",
-        sourceName: tombstoneName,
-        destinationName,
-        expectedIdentity: expected.identity ?? undefined,
-        expectedSignature: expected.signature,
-      });
-      await cleanupBackup();
-      return true;
-    } catch {
-      return false;
-    }
-  };
 
   if (
     !moved ||
     moved.signature !== expectedDestination.signature ||
     moved.identity !== expectedDestination.identity
   ) {
-    const restored = moved ? await restoreMoved(moved) : false;
-    return {
-      status: "blocked",
-      authoritativeMutation: !restored,
-      restored,
-      warning: restored
-        ? "the deletion target changed during the pinned namespace move; the raced entry was restored"
-        : "the deletion target changed during the pinned namespace move; recoverable quarantine state was retained",
-      reason: "workspace-drift",
-    };
-  }
-
-  await beforeDelete?.("moved");
-  const parentStillAuthoritative = await pinnedDirectoryAuthorityStillMatches(
-    destinationParentAuthority,
-    workspace,
-  );
-  const boundarySource = await snapshotIntegrationPath(source);
-  const boundaryDestination = parentStillAuthoritative
-    ? await snapshotIntegrationPath(destination)
-    : null;
-  const sourceDrifted =
-    boundarySource.kind !== "missing" ||
-    boundarySource.signature !== expectedSourceSignature;
-  const destinationDrifted =
-    !parentStillAuthoritative || boundaryDestination?.kind !== "missing";
-  if (signal?.aborted || sourceDrifted || destinationDrifted) {
-    const restored = await restoreMoved(moved);
-    return {
-      status: signal?.aborted ? "cancelled" : "blocked",
-      authoritativeMutation: !restored,
-      restored,
-      warning: signal?.aborted
-        ? restored
-          ? "cancellation was observed after the deletion boundary and the namespace move was rolled back safely"
-          : "cancellation was observed after the deletion boundary; rollback could not safely replace newer destination state"
-        : restored
-          ? `${sourceDrifted ? "the deletion source" : "the authoritative destination"} changed at the deletion boundary; the namespace move was rolled back safely`
-          : `${sourceDrifted ? "the deletion source" : "the authoritative destination"} changed at the deletion boundary; recoverable quarantine state was retained`,
-      reason: sourceDrifted ? "source-drift" : "workspace-drift",
-    };
+    return await rollbackMovedResult(
+      "blocked",
+      "the deletion target changed during the pinned namespace move",
+      "workspace-drift",
+    );
   }
 
   try {
-    await runPinnedDirectoryMutation(destinationParentAuthority, {
-      op: "unlink",
-      name: tombstoneName,
-      expectedIdentity: moved.identity ?? undefined,
-      expectedSignature: moved.signature,
-    });
+    await beforeDelete?.("moved");
+    const parentStillAuthoritative = await pinnedDirectoryAuthorityStillMatches(
+      destinationParentAuthority,
+      workspace,
+    );
+    const boundarySource = await snapshotIntegrationPath(source);
+    const boundaryDestination = parentStillAuthoritative
+      ? await snapshotIntegrationPath(destination)
+      : null;
+    const sourceDrifted =
+      boundarySource.kind !== "missing" ||
+      boundarySource.signature !== expectedSourceSignature;
+    const destinationDrifted =
+      !parentStillAuthoritative || boundaryDestination?.kind !== "missing";
+    if (signal?.aborted || sourceDrifted || destinationDrifted) {
+      return await rollbackMovedResult(
+        signal?.aborted ? "cancelled" : "blocked",
+        signal?.aborted
+          ? "cancellation was observed after the deletion namespace move"
+          : `${sourceDrifted ? "the deletion source" : "the authoritative destination"} changed after the deletion namespace move`,
+        sourceDrifted ? "source-drift" : "workspace-drift",
+      );
+    }
+  } catch (error) {
+    return await rollbackMovedResult(
+      signal?.aborted ? "cancelled" : "blocked",
+      `the post-move deletion boundary check failed (${(error as Error).message})`,
+      "workspace-drift",
+    );
+  }
+
+  let unlinkBoundaryStatus: "cancelled" | "source-drift" | "workspace-drift" | null =
+    null;
+  try {
+    await runPinnedDirectoryMutation(
+      destinationParentAuthority,
+      {
+        op: "unlink",
+        name: tombstoneName,
+        expectedIdentity: moved.identity ?? undefined,
+        expectedSignature: moved.signature,
+        testFailBeforeUnlink: failTombstoneCleanup,
+        testExitAfterMutationBeforeResult: exitAfterTombstoneUnlinkBeforeResult,
+      },
+      {
+        beforeExecute: async () => {
+          await beforeDelete?.("unlink");
+          if (signal?.aborted) {
+            unlinkBoundaryStatus = "cancelled";
+            throw new Error(
+              "Integration deletion was cancelled before tombstone unlink.",
+            );
+          }
+          const parentStillAuthoritative = await pinnedDirectoryAuthorityStillMatches(
+            destinationParentAuthority,
+            workspace,
+          );
+          const unlinkSource = await snapshotIntegrationPath(source);
+          if (
+            unlinkSource.kind !== "missing" ||
+            unlinkSource.signature !== expectedSourceSignature
+          ) {
+            unlinkBoundaryStatus = "source-drift";
+            throw new Error("Deletion source changed at the pinned unlink boundary.");
+          }
+          const unlinkDestination = parentStillAuthoritative
+            ? await snapshotIntegrationPath(destination)
+            : null;
+          if (!parentStillAuthoritative || unlinkDestination?.kind !== "missing") {
+            unlinkBoundaryStatus = "workspace-drift";
+            throw new Error(
+              "Authoritative destination changed at the pinned unlink boundary.",
+            );
+          }
+          const quarantineStillAuthoritative = await pinnedDirectoryAuthorityStillMatches(
+            quarantineAuthority,
+            repoRoot,
+          );
+          const unlinkBackup = quarantineStillAuthoritative
+            ? await snapshotIntegrationPath(
+                path.join(quarantineAuthority.directory, quarantineName),
+              )
+            : null;
+          if (
+            !quarantineStillAuthoritative ||
+            !unlinkBackup ||
+            unlinkBackup.identity !== backupResult.snapshot?.identity ||
+            unlinkBackup.signature !== backupResult.snapshot?.signature
+          ) {
+            unlinkBoundaryStatus = "workspace-drift";
+            throw new Error("Recovery backup changed at the pinned unlink boundary.");
+          }
+        },
+      },
+    );
   } catch (error) {
     const mutated = error instanceof PinnedDirectoryMutationError && error.mutated;
-    const restored = mutated
-      ? await restoreAcceptedIntegrationPath(
-          destinationParentAuthority,
-          workspace,
-          destinationName,
-          expectedDestination,
-        )
-      : await restoreMoved(moved);
-    return {
-      status: "blocked",
-      authoritativeMutation: !restored,
-      restored,
-      warning: `pinned deletion cleanup failed (${(error as Error).message})`,
-      reason: "workspace-drift",
-    };
+    if (mutated) {
+      if (error instanceof PinnedDirectoryMutationError && !error.mutationProven) {
+        const rollback = await restoreMoved();
+        if (rollback.restored) {
+          return {
+            status: signal?.aborted ? "cancelled" : "blocked",
+            authoritativeMutation: false,
+            restored: true,
+            warning: `the pinned tombstone unlink lost its result (${error.message}), but the original deletion target was restored exactly by renaming its tombstone back${rollback.backupCleaned ? "" : ", and recovery backup cleanup failed"}`,
+            reason:
+              unlinkBoundaryStatus === "source-drift"
+                ? "source-drift"
+                : "workspace-drift",
+          };
+        }
+        return {
+          status: signal?.aborted ? "cancelled" : "blocked",
+          authoritativeMutation: true,
+          mutationProven: false,
+          restored: false,
+          warning: `the pinned tombstone unlink lost its result (${error.message}); exact rollback is no longer provable, the mutation outcome is unknown, and the recovery backup is retained`,
+          reason:
+            unlinkBoundaryStatus === "source-drift" ? "source-drift" : "workspace-drift",
+        };
+      }
+      return {
+        status: signal?.aborted ? "cancelled" : "blocked",
+        authoritativeMutation: true,
+        restored: false,
+        warning: `the pinned tombstone unlink failed after reporting an authoritative mutation (${(error as Error).message}); exact rollback is no longer provable and the recovery backup is retained`,
+        reason:
+          unlinkBoundaryStatus === "source-drift" ? "source-drift" : "workspace-drift",
+      };
+    }
+    return await rollbackMovedResult(
+      unlinkBoundaryStatus === "cancelled" ? "cancelled" : "blocked",
+      `pinned tombstone unlink was refused (${(error as Error).message})`,
+      unlinkBoundaryStatus === "source-drift" ? "source-drift" : "workspace-drift",
+    );
   }
 
   const quarantineCleaned = await cleanupBackup(failQuarantineCleanup);
   if (!quarantineCleaned) {
-    const restored = await restoreAcceptedIntegrationPath(
-      destinationParentAuthority,
-      workspace,
-      destinationName,
-      expectedDestination,
-    );
     return {
       status: "blocked",
-      authoritativeMutation: !restored,
-      restored,
-      warning: "pinned quarantine cleanup failed after the authoritative deletion",
+      authoritativeMutation: true,
+      restored: false,
+      warning:
+        "pinned recovery-backup cleanup failed after the authoritative deletion; the deletion remains applied because the original tombstone has already been unlinked",
       reason: "workspace-drift",
     };
   }
@@ -3400,7 +3513,7 @@ async function integrateWorktrees(
     taskId: string;
     file: string;
     appliedFiles: number;
-    phase: "validated" | "moved";
+    phase: PinnedDeletionPhase;
   }) => void | Promise<void>,
   beforeParentCreate?: (context: {
     batchId: string;
@@ -3411,6 +3524,10 @@ async function integrateWorktrees(
     segment: string;
     appliedFiles: number;
   }) => void | Promise<void>,
+  pinnedParentTest?: {
+    exitBeforeMkdirWithoutResult?: boolean;
+    exitBeforeRollbackRmdirWithoutResult?: boolean;
+  },
   pinnedWriteTest?: {
     maxWriteBytes?: number;
     failAfterTruncate?: boolean;
@@ -3418,6 +3535,9 @@ async function integrateWorktrees(
   },
   pinnedDeleteTest?: {
     failQuarantineCleanup?: boolean;
+    failTombstoneCleanup?: boolean;
+    exitBeforeNamespaceMoveWithoutResult?: boolean;
+    exitAfterTombstoneUnlinkBeforeResult?: boolean;
   },
 ): Promise<{ fileCount: number; warnings: string[] }> {
   const warnings: string[] = [];
@@ -3437,8 +3557,17 @@ async function integrateWorktrees(
     return { fileCount: 0, warnings };
   }
 
-  const conflicts = (left: string, right: string): boolean =>
-    left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+  const caseInsensitivePaths =
+    process.platform === "win32" || process.platform === "darwin";
+  const conflicts = (left: string, right: string): boolean => {
+    const normalizedLeft = caseInsensitivePaths ? left.toLowerCase() : left;
+    const normalizedRight = caseInsensitivePaths ? right.toLowerCase() : right;
+    return (
+      normalizedLeft === normalizedRight ||
+      normalizedLeft.startsWith(`${normalizedRight}/`) ||
+      normalizedRight.startsWith(`${normalizedLeft}/`)
+    );
+  };
   const plannedPaths = tasks.flatMap((task) => task.result.changedFiles);
 
   return await withWorktreeMetadataAuthority(
@@ -3583,8 +3712,11 @@ async function integrateWorktrees(
           const source = path.join(sourceRoot, ...file.split("/"));
           const destination = path.join(workspace, ...file.split("/"));
           let authoritativeMutation = false;
+          let authoritativeMutationProven = false;
+          let mutationOutcomeUncertain = false;
           let mutationCounted = false;
-          let rollbackAuthoritativeMutation: (() => Promise<boolean>) | null = null;
+          let rollbackAuthoritativeMutation:
+            (() => Promise<ConfinedDirectoryRollbackOutcome>) | null = null;
           const countAuthoritativeMutation = (): void => {
             if (mutationCounted) return;
             applied += 1;
@@ -3715,35 +3847,6 @@ async function integrateWorktrees(
             }
 
             if (currentSource.kind === "missing") {
-              // Deletion cannot safely use unlink(destination): even a final
-              // snapshot leaves a path race where an operator replacement can
-              // land before unlink resolves that name. Move the destination to
-              // a private quarantine name first, then prove the moved object is
-              // exactly the accepted destination before unlinking that object.
-              // A race therefore moves recoverable bytes instead of deleting
-              // them, and cancellation can still roll the namespace move back.
-              let quarantineRoot: string;
-              try {
-                quarantineRoot = await ensureIntegrationDeleteQuarantineRoot(
-                  owner.integrationAuthority!.repoRoot,
-                );
-              } catch (error) {
-                warnings.push(
-                  `Refused to integrate ${file} from ${task.taskId}: integration deletion quarantine is not trustworthy (${(error as Error).message}).`,
-                );
-                emit({
-                  type: "integration.blocked",
-                  batchId,
-                  taskId: task.taskId,
-                  reason: "workspace-drift",
-                });
-                stopIntegration = true;
-                break;
-              }
-              const quarantine = path.join(
-                quarantineRoot,
-                `${batchId}-${task.taskId}-${randomBytes(24).toString("hex")}`,
-              );
               const finalDestination = defaultRealPathResolver(destination);
               const finalSnapshot = await snapshotIntegrationPath(finalDestination);
               const finalSourceSnapshot = await snapshotIntegrationPath(source);
@@ -3770,25 +3873,36 @@ async function integrateWorktrees(
                 stopIntegration = true;
                 break;
               }
-
-              await beforeDelete?.({
-                batchId,
-                taskId: task.taskId,
-                file,
-                appliedFiles,
-                phase: "validated",
-              });
-              if (signal?.aborted) {
-                warnings.push(cancellationWarning(task.taskId, file, appliedFiles));
-                stopIntegration = true;
-                break;
-              }
-
+              let deletion: PinnedDeletionResult;
               try {
-                await fs.rename(finalDestination, quarantine);
+                deletion = await performPinnedIntegrationDeletion({
+                  repoRoot: owner.integrationAuthority!.repoRoot,
+                  workspace,
+                  destination: finalDestination,
+                  source,
+                  expectedDestination,
+                  expectedSourceSignature,
+                  signal,
+                  beforeDelete: beforeDelete
+                    ? (phase) =>
+                        beforeDelete({
+                          batchId,
+                          taskId: task.taskId,
+                          file,
+                          appliedFiles,
+                          phase,
+                        })
+                    : undefined,
+                  failQuarantineCleanup: pinnedDeleteTest?.failQuarantineCleanup,
+                  failTombstoneCleanup: pinnedDeleteTest?.failTombstoneCleanup,
+                  exitBeforeNamespaceMoveWithoutResult:
+                    pinnedDeleteTest?.exitBeforeNamespaceMoveWithoutResult,
+                  exitAfterTombstoneUnlinkBeforeResult:
+                    pinnedDeleteTest?.exitAfterTombstoneUnlinkBeforeResult,
+                });
               } catch (error) {
                 warnings.push(
-                  `Refused to integrate ${file} from ${task.taskId}: the authoritative destination changed while entering the deletion boundary (${(error as Error).message}).`,
+                  `Refused to integrate ${file} from ${task.taskId}: integration deletion quarantine is not trustworthy (${(error as Error).message}).`,
                 );
                 emit({
                   type: "integration.blocked",
@@ -3799,124 +3913,55 @@ async function integrateWorktrees(
                 stopIntegration = true;
                 break;
               }
-              authoritativeMutation = true;
-              rollbackAuthoritativeMutation = async () => {
-                const rollbackSnapshot = await snapshotIntegrationPath(quarantine);
-                if (rollbackSnapshot.signature !== expectedDestination.signature)
-                  return false;
-                return restoreQuarantinedIntegrationPath(
-                  quarantine,
-                  destination,
-                  rollbackSnapshot,
-                );
-              };
 
-              await beforeDelete?.({
-                batchId,
-                taskId: task.taskId,
-                file,
-                appliedFiles,
-                phase: "moved",
-              });
+              const deletionMutationConfirmed =
+                deletion.authoritativeMutation && deletion.mutationProven !== false;
+              if (deletion.authoritativeMutation) {
+                authoritativeMutation = true;
+                if (deletionMutationConfirmed) countAuthoritativeMutation();
+              }
 
-              const quarantined = await snapshotIntegrationPath(quarantine);
-              const boundarySource = await snapshotIntegrationPath(source);
-              const boundaryDestination = await snapshotIntegrationPath(destination);
-              const destinationDrifted =
-                quarantined.signature !== expectedDestination.signature ||
-                boundaryDestination.kind !== "missing";
-              const sourceDrifted =
-                boundarySource.kind !== "missing" ||
-                boundarySource.signature !== expectedSourceSignature;
-
-              if (destinationDrifted || sourceDrifted || signal?.aborted) {
-                const restored = await restoreQuarantinedIntegrationPath(
-                  quarantine,
-                  destination,
-                  quarantined,
-                );
-                if (!restored) {
-                  // The destination was already moved out of the authoritative
-                  // namespace. Preserve the quarantined bytes and count that
-                  // mutation so partial reporting can never claim zero writes.
-                  countAuthoritativeMutation();
+              if (deletion.status !== "applied") {
+                if (deletion.status === "cancelled") {
+                  warnings.push(
+                    deletionMutationConfirmed
+                      ? `Integration stopped after applying ${appliedFiles + 1} file(s); cancellation was observed during deletion of ${file} from ${task.taskId}. ${deletion.warning ?? "Exact rollback could not be proven."}`
+                      : deletion.authoritativeMutation
+                        ? `Integration stopped with ${appliedFiles} confirmed file(s); cancellation was observed during deletion of ${file} from ${task.taskId}, but that deletion's mutation outcome is unknown and is not included in appliedFiles. ${deletion.warning ?? "Exact mutation state could not be proven."}`
+                        : `${cancellationWarning(task.taskId, file, appliedFiles)}${deletion.warning ? ` ${deletion.warning}.` : ""}`,
+                  );
                 } else {
-                  authoritativeMutation = false;
-                  rollbackAuthoritativeMutation = null;
+                  warnings.push(
+                    `Refused to integrate ${file} from ${task.taskId}: ${deletion.warning ?? "the pinned deletion boundary was not trustworthy"}.`,
+                  );
                 }
-
-                if (signal?.aborted) {
-                  warnings.push(
-                    restored
-                      ? cancellationWarning(task.taskId, file, appliedFiles)
-                      : `Integration stopped after applying ${appliedFiles + 1} file(s); cancellation was observed after the deletion boundary for ${file} from ${task.taskId}, and rollback could not safely replace newer destination state.`,
-                  );
-                } else {
-                  warnings.push(
-                    `Refused to integrate ${file} from ${task.taskId}: ${
-                      sourceDrifted
-                        ? "its source changed at the deletion boundary"
-                        : "the authoritative destination changed at the deletion boundary"
-                    }.${
-                      restored
-                        ? " The raced destination state was restored."
-                        : " The raced bytes were preserved in orchestrator quarantine because newer destination state prevented safe rollback."
-                    }`,
-                  );
+                if (deletion.status === "blocked") {
                   emit({
                     type: "integration.blocked",
                     batchId,
                     taskId: task.taskId,
-                    reason: sourceDrifted ? "source-drift" : "workspace-drift",
+                    reason: deletion.reason ?? "workspace-drift",
                   });
                 }
                 stopIntegration = true;
                 break;
               }
 
-              // The random quarantine name is the only name we unlink. It holds
-              // the exact object proven above, so a later operator replacement at
-              // the authoritative path is never the object this unlink targets.
-              const unlinkSource = await snapshotIntegrationPath(source);
-              const unlinkTarget = await snapshotIntegrationPath(quarantine);
-              if (
-                unlinkSource.kind !== "missing" ||
-                unlinkSource.signature !== expectedSourceSignature ||
-                unlinkTarget.signature !== expectedDestination.signature
-              ) {
-                const restored = await restoreQuarantinedIntegrationPath(
-                  quarantine,
-                  destination,
-                  unlinkTarget,
-                );
-                if (!restored) countAuthoritativeMutation();
-                else {
-                  authoritativeMutation = false;
-                  rollbackAuthoritativeMutation = null;
-                }
+              if (!deletion.authoritativeMutation) {
+                // An applied deletion always changes the authoritative namespace.
+                // Keep this guard fail-closed if the helper contract regresses.
                 warnings.push(
-                  `Refused to integrate ${file} from ${task.taskId}: accepted deletion evidence changed at the unlink boundary.${
-                    restored
-                      ? " The authoritative destination was restored."
-                      : " The raced bytes were preserved in orchestrator quarantine because rollback could not safely replace newer destination state."
-                  }`,
+                  `Refused to accept deletion of ${file} from ${task.taskId}: the pinned deletion helper reported success without an authoritative mutation.`,
                 );
                 emit({
                   type: "integration.blocked",
                   batchId,
                   taskId: task.taskId,
-                  reason:
-                    unlinkSource.kind !== "missing" ||
-                    unlinkSource.signature !== expectedSourceSignature
-                      ? "source-drift"
-                      : "workspace-drift",
+                  reason: "workspace-drift",
                 });
                 stopIntegration = true;
                 break;
               }
-              await fs.unlink(quarantine);
-              await fs.rmdir(quarantineRoot).catch(() => undefined);
-              countAuthoritativeMutation();
               rollbackAuthoritativeMutation = null;
             } else {
               const destinationParent = path.dirname(resolvedDestination);
@@ -3945,23 +3990,44 @@ async function integrateWorktrees(
                               appliedFiles,
                             })
                         : undefined,
+                      testExitBeforeCreateWithoutResult:
+                        pinnedParentTest?.exitBeforeMkdirWithoutResult
+                          ? () => true
+                          : undefined,
+                      testExitBeforeRollbackWithoutResult:
+                        pinnedParentTest?.exitBeforeRollbackRmdirWithoutResult
+                          ? () => true
+                          : undefined,
                     },
                   );
                   destinationParentAuthority = chain.authority;
                   if (chain.created.length > 0) {
                     authoritativeMutation = true;
+                    authoritativeMutationProven = true;
                     rollbackAuthoritativeMutation = chain.rollback;
                   }
                 } catch (error) {
-                  const rollbackIncomplete =
-                    error instanceof ConfinedDirectoryChainError &&
-                    !error.rollbackComplete;
-                  if (rollbackIncomplete) {
+                  const rollbackOutcome =
+                    error instanceof ConfinedDirectoryChainError
+                      ? error.rollbackOutcome
+                      : "complete";
+                  if (rollbackOutcome === "residual-proven") {
                     authoritativeMutation = true;
+                    authoritativeMutationProven = true;
                     countAuthoritativeMutation();
+                  } else if (rollbackOutcome === "residual-unknown") {
+                    authoritativeMutation = true;
+                    authoritativeMutationProven = false;
+                    mutationOutcomeUncertain = true;
                   }
+                  const rollbackDetail =
+                    rollbackOutcome === "residual-proven"
+                      ? " Created namespace state could not be rolled back and is counted as an applied mutation."
+                      : rollbackOutcome === "residual-unknown"
+                        ? " Created namespace rollback lost authoritative mutation evidence, so the outcome is unknown and is not included in appliedFiles."
+                        : "";
                   warnings.push(
-                    `Refused to integrate ${file} from ${task.taskId}: destination parent ancestry could not be safely prepared (${(error as Error).message}).${rollbackIncomplete ? " Created namespace state could not be proven rolled back and is counted as an applied mutation." : ""}`,
+                    `Refused to integrate ${file} from ${task.taskId}: destination parent ancestry could not be safely prepared (${(error as Error).message}).${rollbackDetail}`,
                   );
                   emit({
                     type: "integration.blocked",
@@ -3974,22 +4040,34 @@ async function integrateWorktrees(
                 }
               }
 
-              const rollbackPreparedParents = async (): Promise<boolean> => {
-                if (!authoritativeMutation || !rollbackAuthoritativeMutation) return true;
-                let restored = false;
-                try {
-                  restored = await rollbackAuthoritativeMutation();
-                } catch {
-                  restored = false;
-                }
-                if (restored) {
-                  authoritativeMutation = false;
-                  rollbackAuthoritativeMutation = null;
-                } else {
-                  countAuthoritativeMutation();
-                }
-                return restored;
-              };
+              const rollbackPreparedParents =
+                async (): Promise<ConfinedDirectoryRollbackOutcome> => {
+                  if (!authoritativeMutation || !rollbackAuthoritativeMutation) {
+                    return "complete";
+                  }
+                  let rollbackOutcome: ConfinedDirectoryRollbackOutcome;
+                  try {
+                    rollbackOutcome = await rollbackAuthoritativeMutation();
+                  } catch {
+                    rollbackOutcome = "residual-unknown";
+                  }
+                  if (rollbackOutcome === "complete") {
+                    authoritativeMutation = false;
+                    authoritativeMutationProven = false;
+                    mutationOutcomeUncertain = false;
+                    rollbackAuthoritativeMutation = null;
+                  } else if (rollbackOutcome === "residual-proven") {
+                    authoritativeMutation = true;
+                    authoritativeMutationProven = true;
+                    mutationOutcomeUncertain = false;
+                    countAuthoritativeMutation();
+                  } else {
+                    authoritativeMutation = true;
+                    authoritativeMutationProven = false;
+                    mutationOutcomeUncertain = true;
+                  }
+                  return rollbackOutcome;
+                };
 
               if (!destinationParentAuthority) {
                 warnings.push(
@@ -4010,9 +4088,15 @@ async function integrateWorktrees(
                 path.resolve(finalDestination) !== path.resolve(validatedDestination) ||
                 finalSnapshot.signature !== expectedDestination.signature
               ) {
-                const parentsRestored = await rollbackPreparedParents();
+                const parentRollbackOutcome = await rollbackPreparedParents();
+                const rollbackDetail =
+                  parentRollbackOutcome === "residual-proven"
+                    ? " Newly created destination ancestry could not be rolled back and is counted as an applied mutation."
+                    : parentRollbackOutcome === "residual-unknown"
+                      ? " Newly created destination ancestry has an unknown rollback outcome and is not included in appliedFiles."
+                      : "";
                 warnings.push(
-                  `Refused to integrate ${file} from ${task.taskId}: the authoritative destination changed at the write boundary.${parentsRestored ? "" : " Newly created destination ancestry could not be proven rolled back and is counted as an applied mutation."}`,
+                  `Refused to integrate ${file} from ${task.taskId}: the authoritative destination changed at the write boundary.${rollbackDetail}`,
                 );
                 emit({
                   type: "integration.blocked",
@@ -4024,11 +4108,13 @@ async function integrateWorktrees(
                 break;
               }
               if (signal?.aborted) {
-                const parentsRestored = await rollbackPreparedParents();
+                const parentRollbackOutcome = await rollbackPreparedParents();
                 warnings.push(
-                  parentsRestored
+                  parentRollbackOutcome === "complete"
                     ? cancellationWarning(task.taskId, file, appliedFiles)
-                    : `Integration stopped after applying ${appliedFiles + 1} file(s); cancellation was observed after creating destination ancestry for ${file} from ${task.taskId}, and that namespace mutation could not be proven rolled back.`,
+                    : parentRollbackOutcome === "residual-proven"
+                      ? `Integration stopped after applying ${appliedFiles + 1} file(s); cancellation was observed after creating destination ancestry for ${file} from ${task.taskId}, and that namespace mutation could not be rolled back.`
+                      : `Integration stopped with ${appliedFiles} confirmed file(s); cancellation was observed after creating destination ancestry for ${file} from ${task.taskId}, but rollback lost authoritative mutation evidence, so that path's outcome is unknown and is not included in appliedFiles.`,
                 );
                 stopIntegration = true;
                 break;
@@ -4047,6 +4133,8 @@ async function integrateWorktrees(
                     },
                   );
                   authoritativeMutation = authoritativeMutation || result.mutated;
+                  authoritativeMutationProven =
+                    authoritativeMutationProven || result.mutated;
                   const currentParentAuthority = await capturePinnedDirectoryAuthority(
                     destinationParent,
                     workspace,
@@ -4080,6 +4168,8 @@ async function integrateWorktrees(
                 } catch (error) {
                   if (error instanceof PinnedDirectoryMutationError && error.mutated) {
                     authoritativeMutation = true;
+                    if (error.mutationProven) authoritativeMutationProven = true;
+                    else mutationOutcomeUncertain = true;
                   }
                   throw error;
                 }
@@ -4100,6 +4190,8 @@ async function integrateWorktrees(
                     },
                   );
                   authoritativeMutation = authoritativeMutation || result.mutated;
+                  authoritativeMutationProven =
+                    authoritativeMutationProven || result.mutated;
                   const currentParentAuthority = await capturePinnedDirectoryAuthority(
                     destinationParent,
                     workspace,
@@ -4133,6 +4225,8 @@ async function integrateWorktrees(
                 } catch (error) {
                   if (error instanceof PinnedDirectoryMutationError && error.mutated) {
                     authoritativeMutation = true;
+                    if (error.mutationProven) authoritativeMutationProven = true;
+                    else mutationOutcomeUncertain = true;
                   }
                   throw error;
                 }
@@ -4153,19 +4247,32 @@ async function integrateWorktrees(
           } catch (error) {
             let restored = false;
             if (authoritativeMutation && rollbackAuthoritativeMutation) {
+              let rollbackOutcome: ConfinedDirectoryRollbackOutcome;
               try {
-                restored = await rollbackAuthoritativeMutation();
+                rollbackOutcome = await rollbackAuthoritativeMutation();
               } catch {
-                restored = false;
+                rollbackOutcome = "residual-unknown";
+              }
+              restored = rollbackOutcome === "complete";
+              if (rollbackOutcome === "residual-proven") {
+                authoritativeMutationProven = true;
+                mutationOutcomeUncertain = false;
+              } else if (rollbackOutcome === "residual-unknown") {
+                authoritativeMutationProven = false;
+                mutationOutcomeUncertain = true;
               }
             }
-            if (authoritativeMutation && !restored) countAuthoritativeMutation();
+            if (authoritativeMutation && !restored && authoritativeMutationProven) {
+              countAuthoritativeMutation();
+            }
             if (authoritativeMutation) {
               warnings.push(
-                `Could not integrate ${file} from ${task.taskId} after an authoritative mutation: ${(error as Error).message}. ` +
-                  (restored
-                    ? "The mutation was rolled back safely; integration stopped."
-                    : "The mutation is counted as applied because rollback could not be proven safe; integration stopped."),
+                mutationOutcomeUncertain && !authoritativeMutationProven
+                  ? `Could not integrate ${file} from ${task.taskId}: ${(error as Error).message}. The pinned helper lost its result, so this path's mutation outcome is unknown and is not included in appliedFiles; integration stopped for manual-safe recovery.`
+                  : `Could not integrate ${file} from ${task.taskId} after an authoritative mutation: ${(error as Error).message}. ` +
+                      (restored
+                        ? "The mutation was rolled back safely; integration stopped."
+                        : "The mutation is counted as applied because rollback could not be proven safe; integration stopped."),
               );
               stopIntegration = true;
               break;
