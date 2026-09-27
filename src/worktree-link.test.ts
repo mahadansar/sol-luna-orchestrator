@@ -296,6 +296,77 @@ test("shared dependency roots that are links are refused even when their targets
   }
 });
 
+test("broken shared dependency root links are refused instead of being treated as missing", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-broken-root-link-"));
+  const main = path.join(root, "main");
+  const worktree = path.join(root, "worktree");
+  const target = path.join(main, "deps-real");
+  const configured = path.join(main, "node_modules");
+  try {
+    await fs.mkdir(target, { recursive: true });
+    await fs.mkdir(worktree, { recursive: true });
+    try {
+      await fs.symlink(
+        target,
+        configured,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+    } catch {
+      t.skip("directory links are not permitted on this machine");
+      return;
+    }
+    await fs.rm(target, { recursive: true, force: true });
+    assert.equal((await fs.lstat(configured)).isSymbolicLink(), true);
+    assert.equal(await fs.stat(configured).catch(() => null), null);
+
+    const snapshot = await snapshotSharedDirectories(main, worktree, ["node_modules"]);
+    assert.deepEqual(snapshot.provisioned, []);
+    assert.ok(
+      snapshot.warnings.some((warning) => /linked root/i.test(warning)),
+      snapshot.warnings.join("\n"),
+    );
+    assert.deepEqual(await fs.readdir(worktree), []);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("private dependency snapshot rejects raced regular-file bytes even when the source is restored", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-snapshot-file-race-"));
+  const main = path.join(root, "main");
+  const worktree = path.join(root, "worktree");
+  const sourceFile = path.join(main, "node_modules", "fixture", "index.js");
+  try {
+    await fs.mkdir(path.dirname(sourceFile), { recursive: true });
+    await fs.mkdir(worktree, { recursive: true });
+    await fs.writeFile(sourceFile, "module.exports = 'trusted';\n", "utf8");
+
+    const snapshot = await snapshotSharedDirectories(main, worktree, ["node_modules"], {
+      beforeCopy: async () => {
+        await fs.writeFile(sourceFile, "module.exports = 'raced';\n", "utf8");
+      },
+      beforeDestinationCommit: async () => {
+        await fs.writeFile(sourceFile, "module.exports = 'trusted';\n", "utf8");
+      },
+    });
+
+    assert.deepEqual(snapshot.provisioned, []);
+    assert.ok(
+      snapshot.warnings.some((warning) =>
+        /state changed while creating the private snapshot/i.test(warning),
+      ),
+      snapshot.warnings.join("\n"),
+    );
+    assert.equal(await fs.readFile(sourceFile, "utf8"), "module.exports = 'trusted';\n");
+    assert.equal(
+      await fs.lstat(path.join(worktree, "node_modules")).catch(() => null),
+      null,
+    );
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("pinned dependency copy refuses a link raced outside after parent-side admission", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-copy-link-race-"));
   const source = path.join(root, "source");

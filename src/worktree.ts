@@ -698,6 +698,78 @@ async function hashSharedPath(
   hash.update(`other\0${logical}\0${entry.mode}\0${entry.size}\0`);
 }
 
+async function hashSnapshotSemanticPath(
+  hash: ReturnType<typeof createHash>,
+  target: string,
+  logical: string,
+  treeRoot: string,
+  alternateLinkRoot?: string,
+): Promise<void> {
+  const entry = await fs.lstat(target).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  });
+  if (!entry) {
+    hash.update(`missing\0${logical}\0`);
+    return;
+  }
+  if (entry.isSymbolicLink()) {
+    const rawTarget = await fs.readlink(target);
+    const resolvedTarget = path.resolve(path.dirname(target), rawTarget);
+    let logicalTarget: string | null = null;
+    if (pathIsWithin(treeRoot, resolvedTarget)) {
+      logicalTarget = path.relative(treeRoot, resolvedTarget);
+    } else if (alternateLinkRoot && pathIsWithin(alternateLinkRoot, resolvedTarget)) {
+      logicalTarget = path.relative(alternateLinkRoot, resolvedTarget);
+    }
+    if (logicalTarget === null) {
+      throw new WorktreeUnavailableError(
+        `Shared dependency link escapes its snapshot tree: ${target}.`,
+        "Replace the external symlink/junction with a dependency contained by the configured shared directory.",
+      );
+    }
+    hash.update(`link\0${logical}\0${logicalTarget.split(path.sep).join("/")}\0`);
+    return;
+  }
+  if (entry.isDirectory()) {
+    hash.update(`dir\0${logical}\0`);
+    for (const name of (await fs.readdir(target)).sort()) {
+      await hashSnapshotSemanticPath(
+        hash,
+        path.join(target, name),
+        `${logical}/${name}`,
+        treeRoot,
+        alternateLinkRoot,
+      );
+    }
+    return;
+  }
+  if (entry.isFile()) {
+    hash.update(`file\0${logical}\0${entry.size}\0`);
+    hash.update(await fs.readFile(target));
+    hash.update("\0");
+    return;
+  }
+  hash.update(`other\0${logical}\0${entry.size}\0`);
+}
+
+async function captureSnapshotSemanticDigest(
+  treeRoot: string,
+  logicalRoot: string,
+  alternateLinkRoot?: string,
+): Promise<string> {
+  const resolvedRoot = path.resolve(treeRoot);
+  const hash = createHash("sha256");
+  await hashSnapshotSemanticPath(
+    hash,
+    resolvedRoot,
+    logicalRoot,
+    resolvedRoot,
+    alternateLinkRoot ? path.resolve(alternateLinkRoot) : undefined,
+  );
+  return hash.digest("hex");
+}
+
 /** Content identity for directories that may be linked into delegated workspaces. */
 export async function captureSharedDirectoryFingerprint(
   root: string,
@@ -2166,8 +2238,18 @@ export async function linkSharedDirectories(
 
   for (const dir of parsed.dirs) {
     const sourceCandidate = path.resolve(mainWorkspace, dir);
-    const sourceStat = await fs.stat(sourceCandidate).catch(() => null);
-    if (!sourceStat?.isDirectory()) continue;
+    const sourceEntry = await fs.lstat(sourceCandidate).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    });
+    if (!sourceEntry) continue;
+    if (sourceEntry.isSymbolicLink()) {
+      warnings.push(
+        `Skipped shared worktree link outside the workspace or through a linked root: ${dir}`,
+      );
+      continue;
+    }
+    if (!sourceEntry.isDirectory()) continue;
     const source = await confinedSharedSource(mainWorkspace, dir);
     if (!source) {
       warnings.push(
@@ -2228,6 +2310,8 @@ export interface SnapshotSharedDirectoriesOptions {
     name: string;
     dir: string;
   }) => void | Promise<void>;
+  /** Test seam after trusted source capture and before the pinned copy starts. */
+  beforeCopy?: (context: { source: string; dir: string }) => void | Promise<void>;
 }
 
 /**
@@ -2254,8 +2338,16 @@ export async function snapshotSharedDirectories(
 
   for (const dir of parsed.dirs) {
     const sourceCandidate = path.resolve(mainWorkspace, dir);
-    const sourceStat = await fs.stat(sourceCandidate).catch(() => null);
-    if (!sourceStat?.isDirectory()) continue;
+    const sourceEntry = await fs.lstat(sourceCandidate).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    });
+    if (!sourceEntry) continue;
+    if (sourceEntry.isSymbolicLink()) {
+      warnings.push(`Skipped shared worktree snapshot through a linked root: ${dir}`);
+      continue;
+    }
+    if (!sourceEntry.isDirectory()) continue;
     const source = await confinedSharedSource(mainWorkspace, dir);
     if (!source) {
       warnings.push(
@@ -2303,6 +2395,8 @@ export async function snapshotSharedDirectories(
       // junction descendant must resolve inside this configured source tree and
       // is never traversed by the unsandboxed parent process.
       await captureSharedDirectoryFingerprint(mainWorkspace, [dir]);
+      const trustedSourceDigest = await captureSnapshotSemanticDigest(source, dir);
+      await options.beforeCopy?.({ source, dir });
       const copied = await runPinnedDirectoryMutation(destination.parent, {
         op: "copy-directory",
         name: stagingName,
@@ -2325,15 +2419,30 @@ export async function snapshotSharedDirectories(
           expectedIdentity: stagingIdentity,
         },
         {
-          beforeExecute: options.beforeDestinationCommit
-            ? () =>
-                options.beforeDestinationCommit?.({
-                  parent: destination.parent,
-                  destination: destination.destination,
-                  name: destination.name,
-                  dir,
-                })
-            : undefined,
+          beforeExecute: async () => {
+            await options.beforeDestinationCommit?.({
+              parent: destination.parent,
+              destination: destination.destination,
+              name: destination.name,
+              dir,
+            });
+            const [currentSourceDigest, privateSnapshotDigest] = await Promise.all([
+              captureSnapshotSemanticDigest(source, dir),
+              captureSnapshotSemanticDigest(
+                path.join(destination.parent.directory, stagingName),
+                dir,
+                process.platform === "win32" ? destination.destination : undefined,
+              ),
+            ]);
+            if (
+              currentSourceDigest !== trustedSourceDigest ||
+              privateSnapshotDigest !== trustedSourceDigest
+            ) {
+              throw new Error(
+                "Shared dependency state changed while creating the private snapshot.",
+              );
+            }
+          },
         },
       );
       stagingMayExist = false;
