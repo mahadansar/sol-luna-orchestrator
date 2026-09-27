@@ -81,6 +81,7 @@ import {
   assertSharedDirectoryFingerprint,
   captureSharedDirectoryFingerprint,
   assertConfinedDirectoryChain,
+  ensureConfinedDirectoryChain,
   continuationLeasePath,
   createTaskWorktree,
   maintainWorktreeLease,
@@ -92,6 +93,7 @@ import {
   releaseWorktreeOwnership,
   withWorktreeMetadataAuthority,
   WORKTREE_LEASE_GRACE_MS,
+  ConfinedDirectoryChainError,
   WorktreeUnavailableError,
   type CleanupReason,
   type SharedDirectoryFingerprint,
@@ -3917,14 +3919,81 @@ async function integrateWorktrees(
               countAuthoritativeMutation();
               rollbackAuthoritativeMutation = null;
             } else {
+              const destinationParent = path.dirname(resolvedDestination);
+              let destinationParentAuthority: PinnedDirectoryAuthority | null = null;
               try {
-                await assertConfinedDirectoryChain(
+                await assertConfinedDirectoryChain(workspace, destinationParent);
+                destinationParentAuthority = await capturePinnedDirectoryAuthority(
+                  destinationParent,
                   workspace,
-                  path.dirname(resolvedDestination),
                 );
-              } catch (error) {
+              } catch {
+                try {
+                  const chain = await ensureConfinedDirectoryChain(
+                    workspace,
+                    destinationParent,
+                    {
+                      beforeCreate: beforeParentCreate
+                        ? ({ parent, candidate, segment }) =>
+                            beforeParentCreate({
+                              batchId,
+                              taskId: task.taskId,
+                              file,
+                              parent: parent.directory,
+                              candidate,
+                              segment,
+                              appliedFiles,
+                            })
+                        : undefined,
+                    },
+                  );
+                  destinationParentAuthority = chain.authority;
+                  if (chain.created.length > 0) {
+                    authoritativeMutation = true;
+                    rollbackAuthoritativeMutation = chain.rollback;
+                  }
+                } catch (error) {
+                  const rollbackIncomplete =
+                    error instanceof ConfinedDirectoryChainError &&
+                    !error.rollbackComplete;
+                  if (rollbackIncomplete) {
+                    authoritativeMutation = true;
+                    countAuthoritativeMutation();
+                  }
+                  warnings.push(
+                    `Refused to integrate ${file} from ${task.taskId}: destination parent ancestry could not be safely prepared (${(error as Error).message}).${rollbackIncomplete ? " Created namespace state could not be proven rolled back and is counted as an applied mutation." : ""}`,
+                  );
+                  emit({
+                    type: "integration.blocked",
+                    batchId,
+                    taskId: task.taskId,
+                    reason: "workspace-drift",
+                  });
+                  stopIntegration = true;
+                  break;
+                }
+              }
+
+              const rollbackPreparedParents = async (): Promise<boolean> => {
+                if (!authoritativeMutation || !rollbackAuthoritativeMutation) return true;
+                let restored = false;
+                try {
+                  restored = await rollbackAuthoritativeMutation();
+                } catch {
+                  restored = false;
+                }
+                if (restored) {
+                  authoritativeMutation = false;
+                  rollbackAuthoritativeMutation = null;
+                } else {
+                  countAuthoritativeMutation();
+                }
+                return restored;
+              };
+
+              if (!destinationParentAuthority) {
                 warnings.push(
-                  `Refused to integrate ${file} from ${task.taskId}: destination parent ancestry is not an existing confined directory (${(error as Error).message}).`,
+                  `Refused to integrate ${file} from ${task.taskId}: destination parent authority is unavailable after preparation.`,
                 );
                 emit({
                   type: "integration.blocked",
@@ -3941,8 +4010,9 @@ async function integrateWorktrees(
                 path.resolve(finalDestination) !== path.resolve(validatedDestination) ||
                 finalSnapshot.signature !== expectedDestination.signature
               ) {
+                const parentsRestored = await rollbackPreparedParents();
                 warnings.push(
-                  `Refused to integrate ${file} from ${task.taskId}: the authoritative destination changed at the write boundary.`,
+                  `Refused to integrate ${file} from ${task.taskId}: the authoritative destination changed at the write boundary.${parentsRestored ? "" : " Newly created destination ancestry could not be proven rolled back and is counted as an applied mutation."}`,
                 );
                 emit({
                   type: "integration.blocked",
@@ -3954,15 +4024,17 @@ async function integrateWorktrees(
                 break;
               }
               if (signal?.aborted) {
-                warnings.push(cancellationWarning(task.taskId, file, appliedFiles));
+                const parentsRestored = await rollbackPreparedParents();
+                warnings.push(
+                  parentsRestored
+                    ? cancellationWarning(task.taskId, file, appliedFiles)
+                    : `Integration stopped after applying ${appliedFiles + 1} file(s); cancellation was observed after creating destination ancestry for ${file} from ${task.taskId}, and that namespace mutation could not be proven rolled back.`,
+                );
                 stopIntegration = true;
                 break;
               }
               if (expectedDestination.kind === "missing") {
                 try {
-                  const destinationParent = path.dirname(finalDestination);
-                  const destinationParentAuthority =
-                    await capturePinnedDirectoryAuthority(destinationParent, workspace);
                   const result = await runPinnedDirectoryMutation(
                     destinationParentAuthority,
                     {
@@ -3974,7 +4046,7 @@ async function integrateWorktrees(
                       testFailAfterBytes: pinnedWriteTest?.failAfterBytes,
                     },
                   );
-                  authoritativeMutation = result.mutated;
+                  authoritativeMutation = authoritativeMutation || result.mutated;
                   const currentParentAuthority = await capturePinnedDirectoryAuthority(
                     destinationParent,
                     workspace,
@@ -4004,6 +4076,7 @@ async function integrateWorktrees(
                     break;
                   }
                   countAuthoritativeMutation();
+                  rollbackAuthoritativeMutation = null;
                 } catch (error) {
                   if (error instanceof PinnedDirectoryMutationError && error.mutated) {
                     authoritativeMutation = true;
@@ -4012,9 +4085,6 @@ async function integrateWorktrees(
                 }
               } else if (expectedDestination.kind === "file") {
                 try {
-                  const destinationParent = path.dirname(finalDestination);
-                  const destinationParentAuthority =
-                    await capturePinnedDirectoryAuthority(destinationParent, workspace);
                   const result = await runPinnedDirectoryMutation(
                     destinationParentAuthority,
                     {
@@ -4029,7 +4099,7 @@ async function integrateWorktrees(
                       testFailAfterBytes: pinnedWriteTest?.failAfterBytes,
                     },
                   );
-                  authoritativeMutation = result.mutated;
+                  authoritativeMutation = authoritativeMutation || result.mutated;
                   const currentParentAuthority = await capturePinnedDirectoryAuthority(
                     destinationParent,
                     workspace,
@@ -4059,6 +4129,7 @@ async function integrateWorktrees(
                     break;
                   }
                   countAuthoritativeMutation();
+                  rollbackAuthoritativeMutation = null;
                 } catch (error) {
                   if (error instanceof PinnedDirectoryMutationError && error.mutated) {
                     authoritativeMutation = true;

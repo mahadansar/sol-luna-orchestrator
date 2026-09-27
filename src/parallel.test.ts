@@ -4508,7 +4508,7 @@ test("parallel integration binds copied source bytes at the final write boundary
   }
 });
 
-test("parallel integration refuses a missing destination parent without mutation", async () => {
+test("parallel integration safely provisions missing destination parents", async () => {
   const repo = await makeRepo();
   try {
     const result = await runProductionBatch([makeTask({ allowedFiles: ["fresh/**"] })], {
@@ -4534,13 +4534,208 @@ test("parallel integration refuses a missing destination parent without mutation
       },
     });
 
+    assert.equal(result.integrated, true, describeBatch(result));
+    assert.equal(
+      await fs.readFile(path.join(repo, "fresh", "deep", "file.txt"), "utf8"),
+      "worker\n",
+    );
+    for (const directory of ["fresh", path.join("fresh", "deep")]) {
+      const stat = await fs.lstat(path.join(repo, directory));
+      assert.equal(stat.isDirectory(), true);
+      assert.equal(stat.isSymbolicLink(), false);
+    }
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel cancellation during missing-parent provisioning rolls created ancestry back", async () => {
+  const repo = await makeRepo();
+  const controller = new AbortController();
+  let createCalls = 0;
+  try {
+    const result = await runProductionBatch([makeTask({ allowedFiles: ["fresh/**"] })], {
+      mode: "parallel",
+      batchId: "bintegration-parent-cancel",
+      workingDirectory: repo,
+      keepWorktrees: "never",
+      signal: controller.signal,
+      integrationBeforeParentCreate: ({ segment }) => {
+        createCalls += 1;
+        if (segment === "deep") controller.abort();
+      },
+      executor: async (input, options) => {
+        const target = path.join(options.workingDirectory, "fresh", "deep", "file.txt");
+        await fs.mkdir(path.dirname(target), { recursive: true });
+        await fs.writeFile(target, "worker\n", "utf8");
+        return makeOutput({
+          effort: input.effort,
+          filesChanged: [
+            {
+              path: "fresh/deep/file.txt",
+              kind: "add",
+              why: "test",
+              observed: true,
+            },
+          ],
+        });
+      },
+    });
+
+    assert.ok(createCalls >= 2);
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(result.warnings.join("\n"), /cancelled before any write/i);
+    assert.match(result.integrationSummary, /copying 0 file/i);
+    assert.equal(await fs.lstat(path.join(repo, "fresh")).catch(() => null), null);
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel missing-parent provisioning cannot follow a raced junction", async (t) => {
+  const repo = await makeRepo();
+  const outside = await fs.mkdtemp(
+    path.join(os.tmpdir(), "sol-luna-parent-create-race-"),
+  );
+  const parent = path.join(repo, "fresh");
+  const parked = path.join(repo, "fresh.parked");
+  let redirected = false;
+  try {
+    await fs.writeFile(path.join(outside, "sentinel.txt"), "keep\n", "utf8");
+
+    const result = await runProductionBatch([makeTask({ allowedFiles: ["fresh/**"] })], {
+      mode: "parallel",
+      batchId: "bintegration-parent-create-race",
+      workingDirectory: repo,
+      keepWorktrees: "never",
+      integrationBeforeParentCreate: async ({ segment }) => {
+        if (segment !== "deep" || redirected) return;
+        try {
+          await fs.rename(parent, parked);
+        } catch {
+          return;
+        }
+        try {
+          await fs.symlink(
+            outside,
+            parent,
+            process.platform === "win32" ? "junction" : "dir",
+          );
+          redirected = true;
+        } catch (error) {
+          await fs.rename(parked, parent).catch(() => undefined);
+          throw error;
+        }
+      },
+      executor: async (input, options) => {
+        const target = path.join(options.workingDirectory, "fresh", "deep", "file.txt");
+        await fs.mkdir(path.dirname(target), { recursive: true });
+        await fs.writeFile(target, "worker\n", "utf8");
+        return makeOutput({
+          effort: input.effort,
+          filesChanged: [
+            {
+              path: "fresh/deep/file.txt",
+              kind: "add",
+              why: "test",
+              observed: true,
+            },
+          ],
+        });
+      },
+    });
+
+    if (!redirected) {
+      t.skip("this platform keeps the pinned parent from being renamed");
+      return;
+    }
     assert.equal(result.integrated, false, describeBatch(result));
     assert.match(
       result.warnings.join("\n"),
-      /destination parent ancestry.*confined destination parent is missing/i,
+      /destination parent ancestry could not be safely prepared/i,
     );
-    assert.match(result.integrationSummary, /copying 0 file/i);
-    assert.equal(await fs.lstat(path.join(repo, "fresh")).catch(() => null), null);
+    assert.equal(
+      await fs.lstat(path.join(outside, "deep", "file.txt")).catch(() => null),
+      null,
+    );
+    assert.equal(await fs.readFile(path.join(outside, "sentinel.txt"), "utf8"), "keep\n");
+  } finally {
+    await fs.rm(parent, { recursive: true, force: true }).catch(() => undefined);
+    if (await fs.lstat(parked).catch(() => null)) {
+      await fs.rename(parked, parent).catch(() => undefined);
+    }
+    await cleanupRepo(repo);
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("parallel partial write under newly created parents is counted and retained", async () => {
+  const repo = await makeRepo();
+  const target = path.join(repo, "fresh", "deep", "a-partial.txt");
+  const later = path.join(repo, "fresh", "deep", "z-after-partial.txt");
+  const events: Array<Record<string, unknown>> = [];
+  try {
+    const result = await runProductionBatch(
+      [
+        makeTask({
+          allowedFiles: ["fresh/**"],
+        }),
+      ],
+      {
+        mode: "parallel",
+        batchId: "bintegration-parent-partial-write",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        eventEmitter: (event) => events.push(event),
+        integrationPinnedWriteTest: {
+          maxWriteBytes: 5,
+          failAfterBytes: 5,
+        },
+        executor: async (input, options) => {
+          const first = path.join(
+            options.workingDirectory,
+            "fresh",
+            "deep",
+            "a-partial.txt",
+          );
+          const second = path.join(
+            options.workingDirectory,
+            "fresh",
+            "deep",
+            "z-after-partial.txt",
+          );
+          await fs.mkdir(path.dirname(first), { recursive: true });
+          await fs.writeFile(first, "worker-created-bytes\n", "utf8");
+          await fs.writeFile(second, "must-not-integrate\n", "utf8");
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "fresh/deep/a-partial.txt",
+                kind: "add",
+                why: "test",
+                observed: true,
+              },
+              {
+                path: "fresh/deep/z-after-partial.txt",
+                kind: "add",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(result.integrationSummary, /incomplete after copying 1 file/i);
+    assert.ok((await fs.readFile(target)).length > 0);
+    await assert.rejects(fs.stat(later));
+    assert.equal(
+      events.find((event) => event.type === "integration.partial")?.appliedFiles,
+      1,
+    );
   } finally {
     await cleanupRepo(repo);
   }
