@@ -72,6 +72,24 @@ const ORDERED_POLICY: ComputePolicy = buildComputePolicy({
   executorOrder: ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-sol-max"],
 });
 
+async function makeMinimalGitWorkspace(prefix: string): Promise<string> {
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  const git = async (args: string[]): Promise<void> => {
+    const result = await runGit(args, repo);
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+  };
+
+  await git(["init"]);
+  await git(["config", "user.email", "test@example.invalid"]);
+  await git(["config", "user.name", "Orchestrator Test"]);
+  await git(["config", "commit.gpgsign", "false"]);
+  await git(["config", "core.autocrlf", "false"]);
+  fs.writeFileSync(path.join(repo, "README.md"), "# routing fixture\n", "utf8");
+  await git(["add", "."]);
+  await git(["commit", "-m", "initial"]);
+  return repo;
+}
+
 function makeCandidate(overrides: Partial<SeamCandidate> = {}): SeamCandidate {
   return {
     label: "Test candidate",
@@ -393,22 +411,7 @@ test("adaptive routing - telemetry consistency in server and batch execution", a
   const emit = (event: OrchestratorEvent): void => {
     events.push(event);
   };
-  const repo = fs.realpathSync(
-    fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-routing-telemetry-")),
-  );
-
-  const git = async (args: string[]): Promise<void> => {
-    const result = await runGit(args, repo);
-    assert.equal(result.code, 0, result.stderr || result.stdout);
-  };
-
-  await git(["init"]);
-  await git(["config", "user.email", "test@example.invalid"]);
-  await git(["config", "user.name", "Orchestrator Test"]);
-  await git(["config", "commit.gpgsign", "false"]);
-  fs.writeFileSync(path.join(repo, "README.md"), "# routing fixture\n", "utf8");
-  await git(["add", "."]);
-  await git(["commit", "-m", "initial"]);
+  const repo = await makeMinimalGitWorkspace("sol-luna-routing-telemetry-");
 
   try {
     // 1. Single delegation refuseSingleDelegation emits shape and selection fields
@@ -926,7 +929,9 @@ test("HandoffStore returns not-eligible for PASS, cancellation, and non-retryabl
   assert.equal(retryResult.handoffState?.status, "issued");
 });
 
-test("Live handoff preserves immutable contract fields and protects against caller tampering", async () => {
+test("Live handoff preserves immutable contract fields and protects against caller tampering", async (t) => {
+  const workspace = await makeMinimalGitWorkspace("sol-luna-routing-handoff-");
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
   const store = new HandoffStore();
   const originalInput = delegateTaskInputSchema.parse({
     objective: "Implement parser securely.",
@@ -939,7 +944,7 @@ test("Live handoff preserves immutable contract fields and protects against call
     verificationCommands: ["npm test"],
     timeoutSeconds: 321,
     activityLabel: "authoritative-label",
-    workingDirectory: process.cwd(),
+    workingDirectory: workspace,
     computePolicy: { allowStrongerFallback: false },
   });
 
@@ -1021,7 +1026,7 @@ test("Live handoff preserves immutable contract fields and protects against call
     verificationCommands: [],
     timeoutSeconds: 999,
     activityLabel: "tampered-label",
-    workingDirectory: path.dirname(process.cwd()),
+    workingDirectory: path.dirname(workspace),
     computePolicy: { allowStrongerFallback: true },
     handoffReference: handoffRef,
   });
@@ -1033,7 +1038,7 @@ test("Live handoff preserves immutable contract fields and protects against call
 
   await runBatch([tamperedInput], {
     mode: "sequential",
-    workingDirectory: process.cwd(),
+    workingDirectory: workspace,
     computePolicy: ORDERED_POLICY,
     handoffStore: store,
     executor: async (input, options) => {
@@ -1081,7 +1086,7 @@ test("Live handoff preserves immutable contract fields and protects against call
   assert.deepEqual(actualInput.verificationCommands, ["npm test"]);
   assert.equal(actualInput.timeoutSeconds, 321);
   assert.equal(actualInput.activityLabel, "authoritative-label");
-  assert.equal(actualInput.workingDirectory, process.cwd());
+  assert.equal(actualInput.workingDirectory, workspace);
   assert.equal(actualInput.computePolicy?.allowStrongerFallback, false);
 
   // Verify compute escalation and lineage propagation
@@ -1091,7 +1096,9 @@ test("Live handoff preserves immutable contract fields and protects against call
   assert.equal(executedPredecessor, "exec-turn-1");
 });
 
-test("Live adaptive dispatch routes selected model and effort across batch tasks and passes to workers", async () => {
+test("Live adaptive dispatch routes selected model and effort across batch tasks and passes to workers", async (t) => {
+  const workspace = await makeMinimalGitWorkspace("sol-luna-routing-live-batch-");
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
   const recordedExecutions: Array<{ taskId: string; model: string; effort: string }> = [];
   const sdkTurns: ThreadOptions[] = [];
 
@@ -1118,7 +1125,7 @@ test("Live adaptive dispatch routes selected model and effort across batch tasks
     ],
     {
       mode: "parallel",
-      workingDirectory: process.cwd(),
+      workingDirectory: workspace,
       computePolicy: ORDERED_POLICY,
       routingPreflight: {
         seams: ["s1", "s2"],
@@ -1169,7 +1176,7 @@ test("Live adaptive dispatch routes selected model and effort across batch tasks
     },
   );
 
-  assert.equal(batchResults.passed, 2);
+  assert.equal(batchResults.passed, 2, JSON.stringify(batchResults, null, 2));
   assert.equal(recordedExecutions.length, 2);
   assert.equal(recordedExecutions[0]!.model, "gpt-5.6-luna");
   assert.equal(recordedExecutions[1]!.model, "gpt-5.6-luna");
@@ -1191,7 +1198,9 @@ test("Live adaptive dispatch routes selected model and effort across batch tasks
   ]);
 });
 
-test("Multi-step escalation ladder climbs effort rungs then stronger executors through handoff references", async () => {
+test("Multi-step escalation ladder climbs effort rungs then stronger executors through handoff references", async (t) => {
+  const workspace = await makeMinimalGitWorkspace("sol-luna-routing-escalation-");
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
   const store = new HandoffStore();
 
   const originalTask = delegateTaskInputSchema.parse({
@@ -1201,6 +1210,7 @@ test("Multi-step escalation ladder climbs effort rungs then stronger executors t
     allowedFiles: ["src/algo.ts"],
     acceptanceCriteria: ["All invariant tests pass."],
     verificationCommands: ["npm test"],
+    workingDirectory: workspace,
   });
 
   // --- Step 1: Initial run at medium effort fails ---
@@ -1281,7 +1291,7 @@ test("Multi-step escalation ladder climbs effort rungs then stronger executors t
     ],
     {
       mode: "sequential",
-      workingDirectory: process.cwd(),
+      workingDirectory: workspace,
       computePolicy: ORDERED_POLICY,
       handoffStore: store,
       executor: async (input, options) => {
@@ -1365,7 +1375,7 @@ test("Multi-step escalation ladder climbs effort rungs then stronger executors t
     ],
     {
       mode: "sequential",
-      workingDirectory: process.cwd(),
+      workingDirectory: workspace,
       computePolicy: ORDERED_POLICY,
       handoffStore: store,
       executor: async (input, options) => {
@@ -1449,7 +1459,7 @@ test("Multi-step escalation ladder climbs effort rungs then stronger executors t
     ],
     {
       mode: "sequential",
-      workingDirectory: process.cwd(),
+      workingDirectory: workspace,
       computePolicy: ORDERED_POLICY,
       handoffStore: store,
       executor: async (input, options) => {
@@ -1533,7 +1543,7 @@ test("Multi-step escalation ladder climbs effort rungs then stronger executors t
     ],
     {
       mode: "sequential",
-      workingDirectory: process.cwd(),
+      workingDirectory: workspace,
       computePolicy: ORDERED_POLICY,
       handoffStore: store,
       executor: async (input, options) => {
@@ -1552,7 +1562,9 @@ test("Multi-step escalation ladder climbs effort rungs then stronger executors t
   assert.equal(run5Input!.effort, "max");
 });
 
-test("Caller-supplied previousAttempts without a handoff reference cannot claim higher effort or bypass baseline selection", async () => {
+test("Caller-supplied previousAttempts without a handoff reference cannot claim higher effort or bypass baseline selection", async (t) => {
+  const workspace = await makeMinimalGitWorkspace("sol-luna-routing-forged-history-");
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
   const store = new HandoffStore();
 
   // Caller invents fake previousAttempts claiming a prior failure that demanded high/max effort or stronger fallback
@@ -1578,7 +1590,7 @@ test("Caller-supplied previousAttempts without a handoff reference cannot claim 
 
   const forgedResult = await runBatch([forgedTask], {
     mode: "sequential",
-    workingDirectory: process.cwd(),
+    workingDirectory: workspace,
     computePolicy: ORDERED_POLICY,
     handoffStore: store,
     executor: async (input, options) => {
@@ -1625,7 +1637,9 @@ test("Caller-supplied previousAttempts without a handoff reference cannot claim 
   assert.equal(forgedResult.tasks[0]?.handoffState?.status, "not-eligible");
 });
 
-test("Live batch registers handoffs for eligible failed tasks and ignores successful siblings", async () => {
+test("Live batch registers handoffs for eligible failed tasks and ignores successful siblings", async (t) => {
+  const workspace = await makeMinimalGitWorkspace("sol-luna-routing-handoff-batch-");
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
   const store = new HandoffStore();
   const events: OrchestratorEvent[] = [];
 
@@ -1650,7 +1664,7 @@ test("Live batch registers handoffs for eligible failed tasks and ignores succes
 
   const batchResults = await runBatch([task1, task2], {
     mode: "sequential",
-    workingDirectory: process.cwd(),
+    workingDirectory: workspace,
     computePolicy: ORDERED_POLICY,
     handoffStore: store,
     eventEmitter: (event) => events.push(event),
@@ -1774,9 +1788,11 @@ test("Live batch registers handoffs for eligible failed tasks and ignores succes
 
 // --- Audit regressions: advisory routing must not rewrite declared compute ---
 
-test("an advisory routing card cannot raise or lower a declared single-task effort", async () => {
+test("an advisory routing card cannot raise or lower a declared single-task effort", async (t) => {
   const { handleDelegateTask } = await import("./server.js");
   const { ContinuationStore } = await import("./continuation.js");
+  const workspace = await makeMinimalGitWorkspace("sol-luna-routing-advisory-effort-");
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
 
   const runAt = async (effort: "medium" | "high" | "xhigh" | "max") => {
     let executedEffort: string | null = null;
@@ -1788,6 +1804,7 @@ test("an advisory routing card cannot raise or lower a declared single-task effo
       changeIntent: "optional",
       acceptanceCriteria: ["Passes"],
       verificationCommands: [],
+      workingDirectory: workspace,
       // Resolves to a delegation-plausible shape whose starting effort is `high`.
       routingPreflight: {
         seams: ["declared"],
