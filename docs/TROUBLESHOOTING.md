@@ -160,3 +160,48 @@ updating it alone does not necessarily update discovery. Restart the MCP server
 after changing configuration. `doctor` and `status` inspect configuration offline
 and cannot certify catalog freshness or inference access. See
 [model selection](CONFIGURATION.md#worker-model-selection) for exact bounds.
+
+## Isolated Codex home is not reaching Luna
+
+If the parent uses a temporary or custom `CODEX_HOME`, explicitly include its
+absolute path in the MCP server's `env` table too. MCP subprocess environment
+inheritance is narrower than ordinary shell inheritance. Otherwise the worker
+may load another Codex home and report an invalid transport for the disabled
+orchestrator registration. Keep a complete registration with the server command
+and args in the intended home; the worker disables that registration rather
+than removing its transport configuration. Do not print or commit auth files.
+
+## Trusted Git evidence reports unchanged CRLF files
+
+Trusted evidence uses private Git configuration and does not inherit operator
+global/repository normalization or filter commands. On the October 4 Windows
+live fixture, `core.autocrlf=true` converted LF blobs to CRLF in new worktrees;
+the private scan then reported those paths as changed even though ordinary Git
+reported a clean worktree. The run was retained as failed evidence, not accepted
+as a worker success.
+
+Inspect the file bytes, committed blobs, attributes, and ordinary/trusted diffs
+before retrying. For controlled test repositories, set repository-local
+`core.autocrlf=false` before the initial commit and checkout, keeping fixture
+bytes consistent. That setting does not rewrite an existing checkout and is
+not a universal repair for repositories with custom attributes or filters.
+Do not widen task scopes or enable dirty-workspace overrides to hide the
+difference. This compatibility limit remains part of release review.
+
+## Windows worker tests report spawn EPERM
+
+The candidate's Windows live tests used Codex's `unelevated` native sandbox with
+`workspace-write`. `node --test` could fail when spawning its test child even
+though the assertion script itself ran directly. Reproduce the failure in a
+standalone Codex session with the same sandbox settings before attributing it
+to the task's implementation. Use the documented elevated sandbox when its
+administrator-managed setup is available; the package does not install or
+change Windows sandbox accounts or machine policy.
+
+Keep both worker-reported failure and authoritative verification evidence.
+Outside-sandbox checks passing do not prove that the worker could run the same
+command. A sole matching `verification` failure can receive the documented
+narrow promotion while remaining untrustworthy; `environment-tooling` failure
+is not eligible for that promotion. Review code and unchanged test bytes before
+accepting the output. See the
+[live observations](FEATURE_ACCEPTANCE.md#windows-live-observations-2026-10-04).

@@ -350,6 +350,12 @@ trusted-evidence Git then run against a temporary private Git directory with:
 
 This prevents a worker commit, staged/index trick, replace ref, or
 repository-configured clean/process filter from redefining the evidence scan.
+It also means operator line-ending configuration is not inherited by trusted
+evidence Git. A checkout whose normalization relies on that configuration can
+appear changed to the private evidence scan even when ordinary Git reports it
+clean. Review those differences and use a consistent checkout; do not treat
+them as permission to bypass evidence or scope checks. See
+[the CRLF compatibility note](docs/TROUBLESHOOTING.md#trusted-git-evidence-reports-unchanged-crlf-files).
 Changes to real common Git config/refs/hooks/info or worktree control metadata
 after admission invalidate the pinned authority and fail closed. Real absorbed
 and nested submodule control under `.git/modules/**` is authority-bearing too:

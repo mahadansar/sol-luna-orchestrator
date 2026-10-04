@@ -192,14 +192,33 @@ All upgrade-branch commits through the accepted checkpoint were reviewed:
 | `27cea22` | Constructed the MCP server after selection and shared the selector guard. |
 
 Read-only catalog discovery and a real MCP handshake selected/advertised GPT-6
-Luna. No live GPT-6 inference or new performance/cost benchmark was run. This
+Luna. At that original checkpoint, no live GPT-6 inference or new performance/cost benchmark was run. This
 acceptance certifies deterministic runtime behavior and catalog/protocol
 integration, not account entitlement or model quality. The completed upgrade
 was subsequently merged into `main` as `0c0c52d`, following the user's release
 preparation instruction. The 0.13.0 candidate adds version/documentation metadata
-and a parallel live-smoke initialization correction; its new main-branch CI
-must pass before release. Live acceptance remains pending in the
-[acceptance ledger](docs/FEATURE_ACCEPTANCE.md).
+and a parallel live-smoke initialization correction. At merge, its new
+main-branch CI and live acceptance were pending. Subsequent results are
+recorded below and in the [acceptance ledger](docs/FEATURE_ACCEPTANCE.md).
+
+## Subsequent candidate live acceptance
+
+The prepared 0.13.0 candidate at `e1bb262` passed all six jobs in
+[main CI run 37206738223](https://github.com/mahadansar/sol-luna-orchestrator/actions/runs/37206738223).
+The user then authorized real testing with `gpt-6.1-sol` at Low effort and
+parent-selected Luna effort. Windows live runs used an isolated registration
+of this checkout's MCP build. Representative single delegation, parallel integration, automatic
+selection, same-model/same-thread retained continuation, replay refusal,
+process interruption, cooperative MCP cancellation, and activity rotation were
+exercised. Sol selected Medium for the delegated GPT-6 Luna tasks.
+
+The [acceptance ledger](docs/FEATURE_ACCEPTANCE.md#windows-live-observations-2026-10-04)
+records successful and failed runs, evidence paths, host configuration, and
+remaining limits. Initial isolated-home and CRLF setup failures were preserved.
+Windows sandboxed test-runner restrictions produced visible conflicting claims;
+passing outside-sandbox verification was not mislabeled as proof of worker
+test-runner access. No performance/cost benchmark or new cross-platform live
+campaign was run. Release remains on hold; no tag or publication is authorized.
 
 ## Documentation audit findings
 

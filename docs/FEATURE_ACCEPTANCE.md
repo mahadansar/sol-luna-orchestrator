@@ -11,16 +11,18 @@ confidence ledger for the repository. The current release baseline is
   `0.13.0`. The prepared main-branch candidate includes the unreleased hardening
   and worker-model changes recorded below and in `CHANGELOG.md`.
 - **Latest exact-source deterministic acceptance:**
-  [CI run 37204196400](https://github.com/mahadansar/sol-luna-orchestrator/actions/runs/37204196400)
-  passed on 2026-10-04 at runtime/source commit `27cea22` on Windows, Ubuntu,
+  [CI run 37206738223](https://github.com/mahadansar/sol-luna-orchestrator/actions/runs/37206738223)
+  passed on 2026-10-04 at candidate/source commit `e1bb262` on Windows, Ubuntu,
   and macOS with Node 24 and 26. All six jobs passed typecheck, formatting,
   complete tests, MCP protocol smoke, and all 17 V2/V3 benchmark fixtures;
   Ubuntu/Node 24 also passed packaging validation (104 files). Each job ran 1,290 tests:
   Windows and macOS passed 1,286 with 4 platform skips, Ubuntu passed 1,285
   with 5 platform skips. The gate had no failures and only expected platform-specific skips.
-  The subsequent `0c0c52d` acceptance-record edits changed only the plan and this ledger;
-  runtime, tests, fixtures, dependency lockfile, and workflow remain identical
-  to that accepted source.
+  This gate includes the 0.13.0 version bump, parallel live-smoke initialization
+  correction, and landing-page cleanup. The earlier upgrade gate at `27cea22`
+  remains historical evidence in the model-upgrade plan. Subsequent live-record
+  documentation edits leave runtime, tests, fixtures, lockfile, and workflow
+  identical to the accepted `e1bb262` source.
 - **Worker-model upgrade accepted and merged:** `main` now defaults to
   `gpt-6-luna`, with explicit legacy pins preserved. Opt-in
   `LUNA_MODEL=latest-luna` performs bounded compatible catalog selection once
@@ -30,17 +32,17 @@ confidence ledger for the repository. The current release baseline is
   continuation. The SDK/lockfile use 0.160.0. A read-only real catalog probe
   selected `gpt-6-luna` with all four allowed efforts; a real MCP handshake
   advertised that concrete model in instructions/tools. Local CLI lifecycle
-  smoke passed all 11 groups with isolated Codex homes. No live GPT-6 inference
-  run or updated performance/cost benchmark is claimed. The committed
-  [upgrade plan](https://github.com/mahadansar/sol-luna-orchestrator/blob/feature/luna-model-upgrade-2026-10-04/WORKER_MODEL_UPGRADE_PLAN.md) records implementation,
+  smoke passed all 11 groups with isolated Codex homes. Representative live
+  GPT-6 inference now passed on Windows as recorded below; no updated
+  performance/cost benchmark is claimed. The committed
+  [upgrade plan](https://github.com/mahadansar/sol-luna-orchestrator/blob/main/WORKER_MODEL_UPGRADE_PLAN.md) records implementation,
   commit review, and final evidence.
 - **Release preparation:** 0.13.0 is prepared on `main`, not published or tagged.
-  New candidate CI is required after the version bump and parallel live-smoke
-  initialization correction. The six-job `27cea22` result above remains evidence
-  for that exact earlier source; it does not claim acceptance of the new candidate.
+  All six candidate CI jobs passed at `e1bb262`. Final metadata or source changes
+  still require green CI on their exact final main commit before release.
   Local candidate preparation passed typecheck/build, formatting, all 142
   guidance/CLI/catalog tests, MCP protocol smoke, and the 104-file packaging dry
-  run. Live acceptance below is still pending.
+  run. Representative live acceptance and its limits are recorded below.
 - **Earlier local full validation:** `npm run verify` passed on
   2026-10-04 at `a0217f8` on Windows with Node `v22.23.2`: 1,263 tests,
   1,258 passed, 0 failed, and 5 skipped. Typecheck, formatting, the complete
@@ -79,9 +81,11 @@ confidence ledger for the repository. The current release baseline is
 
 ## 0.13.0 live acceptance and release hold
 
-Status: **PENDING**. Candidate preparation is authorized; no live inference has
-been run for this candidate. This checklist records pending acceptance work,
-not a second release-body document.
+Status: **REPRESENTATIVE LIVE ACCEPTANCE RECORDED; RELEASE ON HOLD**. The user
+authorized live testing with `gpt-6.1-sol` at Low effort, allowing the parent to
+select Luna effort. Parent-driven acceptance was used instead of the existing
+live-smoke programs, which prescribe worker efforts. Results and untested cases
+follow; this checklist is not a second release-body document.
 
 1. Build the exact candidate, confirm the repo-local MCP registration launches
    this checkout's absolute `dist/server.js`, and restart the Codex client.
@@ -121,6 +125,68 @@ changelog, and commit any final metadata before its required main-branch CI.
 Tagging, npm publication, and GitHub Release creation require the later release
 instruction and must follow [the release workflow](../CONTRIBUTING.md#releasing).
 
+### Windows live observations (2026-10-04)
+
+Tested source: `e1bb262`, package 0.13.0, SDK/bundled Codex 0.160.0, Node
+22.23.2, Windows 11 Home 10.0.26300. Each parent session requested and recorded
+`gpt-6.1-sol` / `low`. Successful delegated runs recorded `gpt-6-luna` /
+`medium`, selected by the parent rather than imposed by the harness. The MCP
+registration launched this checkout's absolute `dist/server.js`. Tests used
+temporary repositories and isolated Codex homes, leaving the normal registration
+and credentials unchanged. Copies of authentication files were removed after
+each completed test. The working native sandbox configuration was
+`windows.sandbox="unelevated"` with `workspace-write` and network access disabled.
+This is host-qualified evidence, not proof of every Windows sandbox setup.
+
+Raw prompts, parent streams, manifests, event streams, diagnostic logs, and
+independent checks are retained locally under
+`%TEMP%/sol-luna-live-013-20261004/`; they are not committed or packaged. Preserve
+the negative runs alongside the successful retries. No pricing estimate or
+claim about a new benchmark campaign is made.
+
+| Run/evidence directory     | Observed result                                                                                                                                                                                                                                                                                                                                                                                                       |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `natural-ohPZ64`           | Failed setup: parent recorded read-only permissions and could not inspect/edit. No worker ran; no acceptance credit.                                                                                                                                                                                                                                                                                                  |
+| `natural-STxx1O`           | Natural routing chose solo for three small utilities. External tests passed and test files were byte-identical. Correct zero-worker behavior; no unprompted delegation discovery claim.                                                                                                                                                                                                                               |
+| `parallel-n0wJWj`          | Three worker launches failed before inference because the server lacked the isolated Codex home/complete worker MCP transport configuration. CRLF checkout conversion also appeared in trusted evidence. Parent takeover later passed tests; the worker batch remains failed evidence.                                                                                                                                |
+| `continuation-7W56G4`      | Automatic mode resolved GPT-6 Luna, but both worker launches failed under the same setup. No continuation was exercised in this run.                                                                                                                                                                                                                                                                                  |
+| `parallel-KG74W6`          | Explicit parallel acceptance: 3/3 authoritative PASS, concurrency peak 3, three files integrated, all three final checks passed, test hashes unchanged, zero retained worktrees. Parent independently inspected code and ran the assertion scripts.                                                                                                                                                                   |
+| `continuation-013IGj`      | Automatic mode selected GPT-6 Luna; 2/2 initial tasks passed with integration disabled. A documentation follow-up passed on the original model/thread. Replay was rejected. Independent tests in both retained worktrees passed, test bytes matched, and root tracked files remained unchanged. The consumed task's lease settled; its sibling's unused continuation lease remained protected under retention policy. |
+| `cancel-SwLUy6`            | Parent process interrupted after a real Luna session started. All six captured parent/server/worker/helper processes exited. No terminal usage record survived abrupt transport loss; usage is unknown. The repository operation lease stayed protected until its expiry, then production acquisition/release succeeded.                                                                                              |
+| `protocol-cancel-HkgGnk`   | Reusing that interrupted repository before lease expiry could not start another worker. Request timeout cancelled setup and the server still answered ping. This is evidence of bounded protected ownership, not a successful execution cancellation.                                                                                                                                                                 |
+| `protocol-cancel-fyUMcE`   | Cooperative MCP cancellation in a fresh repository reused Sol's chosen contract/effort. The attempt ended as `cancelled`, usage was unavailable with reason `cancelled`, the server still answered ping, and no operation lease remained.                                                                                                                                                                             |
+| `activity-rotation-4uUVDy` | Real activity CLI watched copies of the live event streams, recovered from rename/recreate rotation, and reached the passing batch. Task prompt text was absent. Original live event files were untouched.                                                                                                                                                                                                            |
+| `protocol-single-RrrI4H`   | Single-worker transport replay reused Sol's contract/effort. The edited function passed independent authoritative checks, but worker claim `FAILED` with `environment-tooling` remained a FAILED verdict; it was not promoted or counted as a clean success.                                                                                                                                                          |
+| `single-9LYai9`            | Parent-driven single delegation with a direct assertion script completed with worker claim PASS, authoritative PASS, `trustworthy:true`, and no discrepancies or scope violations. Only the admitted source file changed; test bytes were unchanged and the external grader passed.                                                                                                                                   |
+
+The successful parallel and continuation runs each started exactly one
+orchestrator server; no worker spawned another orchestrator. Their event streams
+contained no objective fields. The worker sessions retained their selected model
+and effort, and the continuation attempt recorded `threadIdentityMatched=true`.
+
+Windows sandboxed `node --test` commands hit child-process `spawn EPERM`.
+Authoritative checks outside that sandbox passed, while the runtime preserved
+the conflicting worker claims and `trustworthy:false`. The sole-verification
+claim case received the documented narrow PASS promotion; the broader
+`environment-tooling` claim did not. Sol reviewed the code, ran assertion files
+directly, and checked immutable test hashes. These observations prove that
+contradictory evidence remains visible; they do not certify unrestricted test
+execution inside the Windows sandbox.
+
+The final single-worker run used `node test/slug.test.mjs` instead of the
+child-spawning test runner. Both sandboxed worker execution and the independent
+authoritative rerun passed. Parent thread `01a1074c-ae80-77e0-820a-4ea3fb3bd33d`
+recorded GPT-6.1 Sol at Low; worker thread
+`01a1074d-b33f-7101-b2b5-9428b884f784` recorded GPT-6 Luna at parent-selected
+Medium. Complete reported worker usage was 77,499 input tokens (59,392 cached)
+and 564 output tokens; these are usage observations, not a cost estimate.
+
+Release hold still applies. A substantial unprompted delegation-discovery case,
+native graceful-shutdown signals during active work, and model-backed coverage
+on Linux/macOS were not rerun in this campaign. Line-ending compatibility and
+the Windows test-runner restriction must remain visible in review; see
+[Troubleshooting](TROUBLESHOOTING.md#trusted-git-evidence-reports-unchanged-crlf-files).
+
 ## Current capability matrix
 
 The October 4 platform skips are intentional: Windows skips the pinned-parent
@@ -132,7 +198,7 @@ file and directory symlink-escape tests skipped on the local machine.
 | Capability                                              | Coverage | Deterministic | Live evidence | Confidence    |
 | ------------------------------------------------------- | -------- | ------------- | ------------- | ------------- |
 | Zero-worker/adaptive delegation                         | PASS     | PASS          | PASS          | Strong        |
-| Pinned/default and optional automatic Luna selection    | PASS     | DEEP PASS     | NOT TESTED    | Strong        |
+| Pinned/default and optional automatic Luna selection    | PASS     | DEEP PASS     | PASS          | Strong        |
 | Single delegation                                       | PASS     | PASS          | PASS          | Strong        |
 | Sequential batches                                      | PASS     | PASS          | PASS          | Strong        |
 | Parallel batches                                        | PASS     | DEEP PASS     | DEEP PASS     | Battle-tested |
