@@ -840,87 +840,89 @@ test("watch mode rebinds when rotation happens during the first watcher attachme
   }
 });
 
-test("watch mode health poll recovers silent delete/recreate with zero watcher callbacks", async () => {
-  const workRoot = await fs.mkdtemp(
-    path.join(os.tmpdir(), "luna-watch-silent-rotation-"),
-  );
-  const eventsPath = path.join(workRoot, "events.jsonl");
-  const encodeBatch = (batchId: string): string =>
-    `${JSON.stringify({
-      timestamp: batchId === "old" ? "2024-04-06T00:00:00Z" : "2024-04-07T00:00:00Z",
-      type: "batch.started",
-      batchId,
-      mode: "parallel",
-      taskCount: 1,
-      maxParallel: 1,
-    })}\n`;
-  await fs.writeFile(eventsPath, encodeBatch("old"), "utf8");
-
-  let attachments = 0;
-  const silentWatch = (() => {
-    attachments += 1;
-    const watcher = new EventEmitter() as EventEmitter & { close: () => void };
-    watcher.close = () => undefined;
-    // Deliberately never invoke the supplied callback and never emit an error.
-    return watcher;
-  }) as any;
-
-  const originalStdoutWrite = process.stdout.write;
-  let output = "";
-  process.stdout.write = ((chunk: string | Uint8Array) => {
-    output += chunk.toString();
-    return true;
-  }) as typeof process.stdout.write;
-
-  const waitFor = async (condition: () => boolean): Promise<void> => {
-    const deadline = Date.now() + 5_000;
-    while (!condition()) {
-      if (Date.now() >= deadline) {
-        throw new Error(
-          `Timed out waiting for silent-rotation activity output:\n${output}`,
-        );
-      }
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-  };
-
-  let watchPromise: Promise<number> | undefined;
-  try {
-    const { activityCommand } = await import("./cli/activity.js");
-    watchPromise = activityCommand(["--watch", "--json"], {
-      eventsFile: eventsPath,
-      watchFile: silentWatch,
-      watchHealthIntervalMs: 20,
-    });
-    await waitFor(() => output.includes('"batchId":"old"'));
-    assert.equal(attachments, 1);
-
-    await fs.rm(eventsPath);
-    await fs.writeFile(eventsPath, encodeBatch("new"), "utf8");
-    await waitFor(() => output.includes('"batchId":"new"'));
-    await waitFor(() => attachments >= 2);
-
-    await fs.appendFile(
-      eventsPath,
-      `${JSON.stringify({
-        timestamp: "2024-04-07T00:00:01Z",
-        type: "task.queued",
-        batchId: "new",
-        taskId: "silent-later",
-        effort: "high",
-      })}\n`,
-      "utf8",
+for (const rotation of ["delete/recreate", "same-size rewrite"] as const) {
+  test(`watch mode health poll recovers silent ${rotation} with zero watcher callbacks`, async () => {
+    const workRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "luna-watch-silent-rotation-"),
     );
-    await waitFor(() => output.includes("silent-later"));
-  } finally {
-    if (watchPromise) {
-      process.emit("SIGINT", "SIGINT");
-      await watchPromise.catch(() => undefined);
+    const eventsPath = path.join(workRoot, "events.jsonl");
+    const encodeBatch = (batchId: string): string =>
+      `${JSON.stringify({
+        timestamp: batchId === "old" ? "2024-04-06T00:00:00Z" : "2024-04-07T00:00:00Z",
+        type: "batch.started",
+        batchId,
+        mode: "parallel",
+        taskCount: 1,
+        maxParallel: 1,
+      })}\n`;
+    await fs.writeFile(eventsPath, encodeBatch("old"), "utf8");
+
+    let attachments = 0;
+    const silentWatch = (() => {
+      attachments += 1;
+      const watcher = new EventEmitter() as EventEmitter & { close: () => void };
+      watcher.close = () => undefined;
+      // Deliberately never invoke the supplied callback and never emit an error.
+      return watcher;
+    }) as any;
+
+    const originalStdoutWrite = process.stdout.write;
+    let output = "";
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      output += chunk.toString();
+      return true;
+    }) as typeof process.stdout.write;
+
+    const waitFor = async (condition: () => boolean): Promise<void> => {
+      const deadline = Date.now() + 5_000;
+      while (!condition()) {
+        if (Date.now() >= deadline) {
+          throw new Error(
+            `Timed out waiting for silent-rotation activity output:\n${output}`,
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    };
+
+    let watchPromise: Promise<number> | undefined;
+    try {
+      const { activityCommand } = await import("./cli/activity.js");
+      watchPromise = activityCommand(["--watch", "--json"], {
+        eventsFile: eventsPath,
+        watchFile: silentWatch,
+        watchHealthIntervalMs: 20,
+      });
+      await waitFor(() => output.includes('"batchId":"old"'));
+      assert.equal(attachments, 1);
+
+      if (rotation === "delete/recreate") await fs.rm(eventsPath);
+      await fs.writeFile(eventsPath, encodeBatch("new"), "utf8");
+      await waitFor(() => output.includes('"batchId":"new"'));
+      await waitFor(() => attachments >= 2);
+
+      await fs.appendFile(
+        eventsPath,
+        `${JSON.stringify({
+          timestamp: "2024-04-07T00:00:01Z",
+          type: "task.queued",
+          batchId: "new",
+          taskId: "silent-later",
+          effort: "high",
+        })}\n`,
+        "utf8",
+      );
+      await waitFor(() => output.includes("silent-later"));
+    } finally {
+      if (watchPromise) {
+        process.emit("SIGINT", "SIGINT");
+        await watchPromise.catch(() => undefined);
+      }
+      process.stdout.write = originalStdoutWrite;
+      await fs.rm(workRoot, { recursive: true, force: true }).catch(() => undefined);
     }
-    process.stdout.write = originalStdoutWrite;
-    await fs.rm(workRoot, { recursive: true, force: true }).catch(() => undefined);
-  }
-});
+  });
+}
 
 test("watch mode polls file growth while watcher attachment keeps failing", async () => {
   const workRoot = await fs.mkdtemp(path.join(os.tmpdir(), "luna-watch-no-fs-watch-"));

@@ -410,6 +410,8 @@ Activity watch also recovers if deletion races the stream open/read after a
 successful stat. It discards partial read and decoder state, reattaches or polls,
 and reads replacement history from byte zero. Other read failures still terminate
 with a diagnostic.
+Same-size rewrites also reattach the watcher, including delete/recreate when
+the filesystem reuses the previous inode.
 
 ## Usage data
 

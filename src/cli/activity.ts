@@ -668,7 +668,7 @@ export async function activityCommand(
         return {
           changed: false,
           snapshots: [],
-          watchTarget: replaced ? "replaced" : "same",
+          watchTarget: replaced || rewritten ? "replaced" : "same",
         };
       }
 
@@ -739,7 +739,9 @@ export async function activityCommand(
       return {
         changed,
         snapshots,
-        watchTarget: replaced ? "replaced" : "same",
+        // A same-size rewrite can be delete/recreate with a recycled inode.
+        // Rebind even when dev/ino happen to match the previous file.
+        watchTarget: replaced || rewritten ? "replaced" : "same",
       };
     };
 

@@ -8,6 +8,8 @@ All notable changes to this project are documented here. Format follows
 
 ### Fixed
 
+- Activity watch now reattaches after same-size rewrites, including
+  delete/recreate when the filesystem recycles an inode.
 - Retained continuations now carry the original private dependency-snapshot
   fingerprint, exclude only proven setup directories from change attribution,
   and check dependency integrity before and after resuming, including turns
