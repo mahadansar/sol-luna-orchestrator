@@ -8,6 +8,8 @@ All notable changes to this project are documented here. Format follows
 
 ### Fixed
 
+- Confined parent rollback now reports displaced or replaced created-directory
+  identities as uncertain rather than claiming their removal.
 - Activity watch now reattaches after same-size rewrites, including
   delete/recreate when the filesystem recycles an inode.
 - Retained continuations now carry the original private dependency-snapshot

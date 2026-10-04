@@ -200,6 +200,30 @@ test("confined parent creation preserves unknown mkdir protocol loss", async () 
   }
 });
 
+test("confined parent rollback cannot claim a displaced directory was removed", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-parent-displaced-"));
+  const created = path.join(root, "created");
+  const parked = path.join(root, "parked");
+  try {
+    const chain = await ensureConfinedDirectoryChain(root, created);
+    await fs.rename(created, parked);
+    await fs.mkdir(created);
+    await fs.writeFile(
+      path.join(created, "replacement.txt"),
+      "leave replacement alone\n",
+    );
+
+    assert.equal(await chain.rollback(), "residual-unknown");
+    assert.equal((await fs.stat(parked)).isDirectory(), true);
+    assert.equal(
+      await fs.readFile(path.join(created, "replacement.txt"), "utf8"),
+      "leave replacement alone\n",
+    );
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("confined parent rollback distinguishes unknown protocol loss from proven residual state", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-parent-rmdir-loss-"));
   try {

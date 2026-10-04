@@ -339,7 +339,9 @@ async function inspectCreatedDirectoryResidual(
     const current = await fs.lstat(entry.path);
     return current.isDirectory() && directoryIdentity(current) === entry.identity
       ? "residual-proven"
-      : "complete";
+      : // A replacement does not prove our created directory was removed: it
+        // may have been moved elsewhere while this pathname was reused.
+        "residual-unknown";
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "ENOENT"
       ? "complete"

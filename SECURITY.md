@@ -399,6 +399,8 @@ are recorded by identity and rolled back in reverse order only while identical
 and empty. Replaced, non-directory, or redirected ancestry is refused. Residual
 namespace mutation is reported as proven or unknown rather than silently
 claiming complete rollback.
+Replacing a created directory's pathname does not prove its removal; that
+rollback outcome remains unknown, and the replacement is left untouched.
 
 These checks do not provide an atomic filesystem sandbox. Standard Node lacks
 portable directory-handle-relative mkdir/unlink/rename primitives. A concurrent
