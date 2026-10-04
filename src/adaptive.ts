@@ -1,7 +1,7 @@
 /**
  * Unified adaptive routing and execution pipeline.
  *
- * Connects the four P1.2 primitives into a single deterministic flow:
+ * Connects the four adaptive-routing primitives into a single deterministic flow:
  * 1. Decomposition and Seam Planning (`planSeams`): Task contracts / candidates -> SeamPlan & RoutingPreflightCard.
  * 2. Cheap Routing Evaluation (`evaluateRouting`): PreflightCard & ComputeEnvelope -> RoutingEvaluation.
  * 3. Execution Shape Recommendation (`ExecutionShape`): mechanism, effort, workerCount, concurrency.

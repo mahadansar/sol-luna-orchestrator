@@ -173,8 +173,7 @@ started. Reach for that suite whenever a worker claims it can delegate — a
 model's own answer is not evidence.
 
 `--config mcp_servers={}` does **not** work for this: Codex merges that override
-into the existing table and every server still starts. This was verified against
-codex-cli 0.147.0 and is why guard 1 is written the way it is.
+into the existing table and every server still starts. That merge behavior is why guard 1 is written the way it is.
 
 **The worker inherits your full environment.** The worker's Codex process is
 launched with a copy of the orchestrator's own environment plus

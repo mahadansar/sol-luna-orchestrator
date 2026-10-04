@@ -2006,7 +2006,7 @@ test("the thread id is always returned so the parent can inspect the session", (
   assert.equal(analyze(makeReport(), [passingRun]).workerThreadId, "thread-abc");
 });
 
-test("P1.1 failure decisions conservatively cover deterministic failure classes", () => {
+test("failure decisions conservatively cover deterministic failure classes", () => {
   const passed = analyze(makeReport(), [passingRun]);
   assert.deepEqual(
     [
@@ -2113,7 +2113,7 @@ test("P1.1 failure decisions conservatively cover deterministic failure classes"
   );
 });
 
-test("P1.1 retry and escalation require evidence and respect hard bounds", () => {
+test("retry and escalation require evidence and respect hard bounds", () => {
   const implementationReport = makeReport({
     status: "FAILED",
     failureCauses: ["implementation"],
@@ -2183,7 +2183,7 @@ test("P1.1 retry and escalation require evidence and respect hard bounds", () =>
   assert.equal(exhausted.automaticRetryLimit, 1);
 });
 
-test("P1.1 never chains retry or escalation after automatic repair", () => {
+test("failure policy never chains retry or escalation after automatic repair", () => {
   const result = analyze(makeReport(), [failingRun], { automaticRepair: true });
   result.repair = {
     requested: true,
@@ -2229,7 +2229,7 @@ test("a passing task gets no escalation advice", () => {
   assert.equal(analyze(makeReport(), [passingRun]).escalationAdvice, null);
 });
 
-test("legacy escalation advice projects the P1.1 repair decision", () => {
+test("legacy escalation advice projects the failure decision", () => {
   const result = analyze(makeReport(), [failingRun], { effort: "high" });
   assert.equal(result.verdict, "FAILED");
   assert.match(result.escalationAdvice ?? "", /next action: repair/i);

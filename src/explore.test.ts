@@ -1,5 +1,5 @@
 /**
- * P2.1 Optional Explorer deterministic test suite.
+ * Optional explorer deterministic test suite.
  *
  * Verifies that the exploration companion is optional, bounded, strictly
  * read-only, distinguishes observed facts from inferences/unknowns, integrates
@@ -10,11 +10,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { z } from "zod";
 import { LUNA_MODEL } from "./config.js";
 import {
   exploreInputSchema,
-  exploreMcpInputShape,
   explorerOutputJsonSchema,
   INPUT_METADATA_SIZE_BUDGETS,
   inputMetadataSizeReport,
@@ -36,14 +34,12 @@ import {
   isCleanExplore,
   renderExploreResult,
   registerExplore,
-  EXPLORE_TOOL_DESCRIPTION,
   ContextLifecycleRegistry,
 } from "./server.js";
 import {
   compactContext,
   createOrchestrationContext,
   ingestExplorationTurn,
-  isCleanExploreResult,
   ContextLifecycleStore,
 } from "./context.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";

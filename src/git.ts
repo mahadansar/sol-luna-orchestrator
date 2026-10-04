@@ -9,7 +9,6 @@ import {
   readlink,
   realpath,
   rm,
-  stat,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";

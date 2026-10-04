@@ -160,11 +160,9 @@ export async function getRegisteredServer(name: string): Promise<RegisteredServe
   return parseRegisteredServerResult(name, result);
 }
 
-// `codex mcp add` / `codex mcp remove` are deliberately not used. Both rewrite
-// the whole config file: measured against codex-cli 0.147.0, adding a server
-// deleted the comment above an unrelated `context7` table and rewrote that
-// server's `startup_timeout_sec = 15` as `15.0`. Registration is done with the
-// surgical editor in `toml-edit.ts` instead, so only our own keys are touched.
+// `codex mcp add` / `codex mcp remove` are deliberately not used because they
+// can rewrite unrelated config content. Registration uses the surgical editor in
+// `toml-edit.ts` instead, so only our own keys are touched.
 
 /** Read the config file, returning an empty string when it does not exist. */
 export function readConfig(configPath = codexConfigPath()): string {

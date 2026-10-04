@@ -173,7 +173,7 @@ needs an explicit justification, or stay solo. In particular, substantial
 mutable/shared-core work can reach `either` because a single `delegate_task` or
 sequential delegation may be useful even though parallel execution is unsafe.
 `read-only` shared state is not a coupling signal. There is no score and no
-benchmark-derived tuning.
+measurement-derived tuning.
 
 The **parent keeps every judgement** a recommendation touches: whether to proceed
 against a `solo` recommendation, sequential versus parallel, `delegate_task`
@@ -398,7 +398,7 @@ worker claim alone never authorizes retry.
 A completed trustworthy implementation failure may recommend a same-effort
 retry. Repeated implementation evidence may recommend the next effort step the
 compute policy permits; repeated failure once the effort ladder is exhausted may
-recommend a stronger executor. P1.2 owns executor/model authorization and
+recommend a stronger executor. Compute policy owns executor/model authorization and
 selection. An eligible first retry can return one opaque, single-use in-memory
 handoff; consuming it restores the immutable contract and authentic predecessor
 lineage. Only a turn reached through that server-issued lineage can earn a later
@@ -457,7 +457,7 @@ executed orchestrator `argv` or `shell` verification rows prove a command;
 `rejected`, `skipped`, and worker `reported` rows do not.
 
 `workerClaimedFailureCauses` preserves the worker's structured explanation; it
-is low-trust evidence, not the repair or P1.1 failure classification. New
+is low-trust evidence, not the repair or authoritative failure classification. New
 worker reports obey these invariants: `PASS` uses no causes, `FAILED` uses one or
 more non-`blocked` causes, and `BLOCKED` includes `blocked`. Legacy reports with
 no field normalize conservatively to no causes for `PASS`, `unclassified` for

@@ -1,5 +1,14 @@
 # Repository instructions
 
+## Repository development workflow
+
+- Repository work may use one prime agent plus zero to four worker agents at the
+  same time. The prime owns decomposition, review, integration, and final
+  verification. This is the development workflow for this repository; it does
+  not describe or change the orchestrator product's runtime worker limits.
+- Automatic CI is intentionally paused. Keep `.github/workflows/ci.yml` manual
+  only until the repository owner explicitly asks to turn automatic CI back on.
+
 ## Source of truth
 
 This package is a Node.js/TypeScript MCP server and companion CLI for bounded
@@ -24,12 +33,11 @@ for future work only. Keep these ownership boundaries:
 - [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md): event, activity, telemetry,
   and privacy semantics.
 - [`docs/FEATURE_ACCEPTANCE.md`](docs/FEATURE_ACCEPTANCE.md): current capability
-  evidence, freshness, confidence, and acceptance history.
+  evidence, freshness, confidence, and acceptance limits.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md): contributor and release workflow.
-- [`bench/RESULTS.md`](bench/RESULTS.md): benchmark evidence and limits.
 
-Do not duplicate current runtime semantics, benchmark figures, or detailed
-release history in these instructions. Do not edit generated `dist/`,
+Do not duplicate current runtime semantics or detailed release history in these
+instructions. Do not edit generated `dist/`,
 dependencies, runtime logs/events, or `.sol-luna/` worktrees.
 
 ## Repository-specific safety
@@ -56,7 +64,7 @@ Choose verification proportionally. Documentation-only changes do not require
 model-backed smoke tests. For implementation changes, run at least
 `npm run typecheck` and the tests covering the changed area; use `npm run verify`
 for broad runtime changes. The deterministic protocol smoke test is
-`npm run smoke`, and fixture validation is `npm run bench:validate`.
+`npm run smoke`.
 
 ## Release discipline
 

@@ -1,5 +1,5 @@
 /**
- * Integration tests for the delivered P1.2 adaptive-routing primitives.
+ * Integration tests for the adaptive-routing primitives.
  *
  * Tests the full pipeline:
  * seam planning -> routing evaluation -> execution shape -> compute selection -> telemetry
@@ -28,7 +28,6 @@ import {
   deriveSeamCandidates,
   deriveDeclaredEvidence,
   routeLiveTask,
-  routeLiveTasks,
 } from "./adaptive.js";
 import { buildComputePolicy, type ComputePolicy } from "./policy.js";
 import type { SeamCandidate } from "./seam-plan.js";
@@ -42,13 +41,7 @@ import {
   type FailureDecision,
   type DelegateTaskInput,
 } from "./contract.js";
-import {
-  HandoffStore,
-  handoffError,
-  registerHandoff,
-  isHandoffReference,
-} from "./handoff.js";
-import { type PriorExecution } from "./selection.js";
+import { HandoffStore, registerHandoff, isHandoffReference } from "./handoff.js";
 import { executeTask, type WorkerCodex } from "./worker.js";
 import type { ThreadEvent, ThreadOptions } from "@openai/codex-sdk";
 

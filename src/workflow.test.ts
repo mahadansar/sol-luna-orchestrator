@@ -1,5 +1,5 @@
 /**
- * P2.3 End-to-End Automated Workflow Test Suite.
+ * End-to-end automated workflow test suite.
  *
  * Deterministic end-to-end tests verifying the capstone workflow across:
  * 1. Solo / zero-worker parent takeover
@@ -24,29 +24,28 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import {
   executeWorkflow,
   renderWorkflowReport,
   type WorkflowDependencies,
-  type WorkflowInput,
   type WorkflowOutput,
 } from "./workflow.js";
 import {
   type BatchOutput,
   type DelegateTaskInput,
   type DelegateTaskOutput,
-  type DelegateTasksInput,
-  type ExploreInput,
   type ExploreOutput,
-  type FailureDecision,
 } from "./contract.js";
-import { buildComputePolicy, type ComputePolicy } from "./policy.js";
-import { HandoffStore, registerHandoff } from "./handoff.js";
+import { HandoffStore } from "./handoff.js";
 import { ContinuationStore } from "./continuation.js";
 import { ContextLifecycleRegistry } from "./server.js";
 import { ContextLifecycleStore, createOrchestrationContext } from "./context.js";
 import type { OrchestratorEvent } from "./events.js";
 import { executeTask, type WorkerCodex } from "./worker.js";
+import { runGit } from "./git.js";
 import {
   exportSessionHandoff,
   SESSION_HANDOFF_SCHEMA_VERSION,
@@ -1512,6 +1511,10 @@ test("an injected context store receives the restored session handoff", async ()
 });
 
 test("workflow composes the real single-delegation handler through authoritative verification", async () => {
+  const workspace = await fs.mkdtemp(
+    path.join(os.tmpdir(), "sol-luna-workflow-handler-"),
+  );
+  await runGit(["init", "-q"], workspace);
   const emitted: OrchestratorEvent[] = [];
   const handoffStore = new HandoffStore();
   const continuationStore = new ContinuationStore();
@@ -1585,62 +1588,68 @@ test("workflow composes the real single-delegation handler through authoritative
     });
   };
 
-  const output = await executeWorkflow(
-    {
-      objective: "Exercise the production-composed single delegation lifecycle",
-      executionMode: "single",
-      tasks: [
-        {
-          objective: "Inspect the production workflow composition without editing files",
-          effort: "medium",
-          effortReason: "A deterministic composed handler path is sufficient",
-          acceptanceCriteria: ["Authoritative verification passes"],
-          allowedFiles: [],
-          forbiddenFiles: [],
-          verificationCommands: ['node -e "process.exit(0)"'],
-          changeIntent: "forbidden",
-          automaticRepair: false,
-          resultDetail: "compact",
-          previousAttempts: [],
-          routingPreflight: {
-            seams: ["composed-single-handler"],
-            seamSize: "substantial",
-            sharedState: "none",
-            coreOverlap: "disjoint",
-            integration: "mechanical",
-            verification: "per-seam",
+  try {
+    const output = await executeWorkflow(
+      {
+        objective: "Exercise the production-composed single delegation lifecycle",
+        executionMode: "single",
+        tasks: [
+          {
+            objective:
+              "Inspect the production workflow composition without editing files",
+            effort: "medium",
+            effortReason: "A deterministic composed handler path is sufficient",
+            acceptanceCriteria: ["Authoritative verification passes"],
+            allowedFiles: [],
+            forbiddenFiles: [],
+            verificationCommands: ['node -e "process.exit(0)"'],
+            changeIntent: "forbidden",
+            automaticRepair: false,
+            resultDetail: "compact",
+            previousAttempts: [],
+            workingDirectory: workspace,
+            routingPreflight: {
+              seams: ["composed-single-handler"],
+              seamSize: "substantial",
+              sharedState: "none",
+              coreOverlap: "disjoint",
+              integration: "mechanical",
+              verification: "per-seam",
+            },
           },
-        },
-      ],
-    },
-    undefined,
-    {
-      emit: (event) => emitted.push(event),
-      handoffStore,
-      continuationStore,
-      contextRegistry,
-      makeWorkflowId: () => "wf_composed_real_handler",
-      delegateTaskDependencies: {
+        ],
+      },
+      undefined,
+      {
+        emit: (event) => emitted.push(event),
         handoffStore,
         continuationStore,
         contextRegistry,
-        delegateToLuna: fakeSdkDelegate,
-        emit: (event) => emitted.push(event),
-        record: () => {},
-        makeBatchId: () => "b_composed_real_handler",
+        makeWorkflowId: () => "wf_composed_real_handler",
+        delegateTaskDependencies: {
+          handoffStore,
+          continuationStore,
+          contextRegistry,
+          delegateToLuna: fakeSdkDelegate,
+          emit: (event) => emitted.push(event),
+          record: () => {},
+          makeBatchId: () => "b_composed_real_handler",
+        },
       },
-    },
-  );
+    );
 
-  assert.equal(output.status, "COMPLETED");
-  assert.equal(output.verified, true);
-  assert.equal(
-    output.result && "verdict" in output.result && output.result.verdict,
-    "PASS",
-  );
-  assert.ok(emitted.some((event) => event.type === "worker.started"));
-  assert.ok(emitted.some((event) => event.type === "verification.completed"));
-  assert.equal(emitted.filter((event) => event.type === "batch.completed").length, 1);
+    assert.equal(output.status, "COMPLETED");
+    assert.equal(output.verified, true);
+    assert.equal(
+      output.result && "verdict" in output.result && output.result.verdict,
+      "PASS",
+    );
+    assert.ok(emitted.some((event) => event.type === "worker.started"));
+    assert.ok(emitted.some((event) => event.type === "verification.completed"));
+    assert.equal(emitted.filter((event) => event.type === "batch.completed").length, 1);
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
 });
 
 test("an installation that renames the worker model still routes its workflows", async () => {

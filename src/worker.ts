@@ -1473,7 +1473,7 @@ const AUTOMATIC_RETRY_LIMIT = 1;
  *
  * This function never starts work. Existing automatic repair and parallel
  * recovery remain the only automatic handlers; every unresolved non-stop
- * action is advice to the parent. P1.2 owns any actual executor/model change.
+ * action is advice to the parent. Compute selection owns any executor/model change.
  */
 export function classifyFailureDecision(
   input: DelegateTaskInput,
@@ -1792,7 +1792,7 @@ export function classifyFailureDecision(
       return decide(
         "capability",
         "stronger-executor-fallback",
-        "Repeated trustworthy implementation failure at max effort warrants a stronger-executor fallback recommendation; P1.2 must authorize and select any executor.",
+        "Repeated trustworthy implementation failure at max effort warrants a stronger-executor fallback recommendation; compute selection must authorize and select any executor.",
       );
     }
     return decide(
@@ -1811,7 +1811,7 @@ export function classifyFailureDecision(
   );
 }
 
-/** Keep the legacy advice field as a projection of the canonical P1.1 decision. */
+/** Keep the legacy advice field as a projection of the canonical failure decision. */
 export function applyFailureDecision(
   input: DelegateTaskInput,
   result: DelegateTaskOutput,

@@ -1339,7 +1339,7 @@ export async function handleDelegateTask(
   // recommendation must not silently raise it (spending compute the supervisor
   // did not authorise) or lower it (running below the justified level while the
   // justification still says otherwise). Only a selection made against real
-  // prior execution evidence — the P1.1/P1.2 escalation ladder, reached through
+  // prior execution evidence — the failure-decision and compute-selection ladder, reached through
   // a consumed server handoff — replaces the declared effort.
   const targetEffort =
     priorEvidence !== undefined
@@ -3414,8 +3414,7 @@ async function main(): Promise<void> {
 
 // Only start the server when this file is the entry point. Importing it — which
 // the render and compaction tests do — must not connect the stdio transport,
-// because that holds stdin open and the process never exits. Same guard, and
-// same reason, as `src/bench/run.ts`.
+// because that holds stdin open and the process never exits.
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((error: unknown) => {
     log(`fatal: ${(error as Error).stack ?? String(error)}`);

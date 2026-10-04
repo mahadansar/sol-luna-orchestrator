@@ -2,7 +2,6 @@
 
 [![npm](https://img.shields.io/npm/v/sol-luna-orchestrator)](https://www.npmjs.com/package/sol-luna-orchestrator)
 [![npm downloads](https://img.shields.io/npm/dt/sol-luna-orchestrator?logo=npm&label=downloads)](https://www.npmjs.com/package/sol-luna-orchestrator)
-[![CI](https://github.com/mahadansar/sol-luna-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/mahadansar/sol-luna-orchestrator/actions/workflows/ci.yml)
 [![M8ven Verified](https://m8ven.ai/badge/mcp/mahadansar-sol-luna-orchestrator-1k52hj)](https://m8ven.ai/mcp/mahadansar-sol-luna-orchestrator-1k52hj) <!-- m8ven-verify: 11a42c6cbe4b21f5016f5899ac006562 -->
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.12-brightgreen)](docs/CONFIGURATION.md#requirements)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -115,18 +114,6 @@ reports scope or integration conflicts. These are guardrails, not an absolute
 sandbox: workers write real files, and some execution runs with the operator's
 permissions. Read [Security](SECURITY.md) for the threat model and limitations.
 
-## Benchmark status
-
-V2 is historical architecture evidence, documented in
-[bench/RESULTS.md](bench/RESULTS.md). Benchmark V3 used the frozen
-[methodology](bench/V3_METHODOLOGY.md) and completed 36/36 valid runs against the
-v0.11.0 production baseline: both Solo Medium and Adaptive Medium passed all
-nine tasks across two repetitions, but Adaptive delegated zero workers and was
-slower and more expensive overall. The two-repetition result is directional,
-not statistically significant. It motivated the post-V3 routing corrections
-shipped in v0.12.0; those corrections have not been evaluated by another full
-campaign, so no v0.12.0 performance improvement is claimed.
-
 ## Documentation
 
 - [Configuration](docs/CONFIGURATION.md) - requirements, setup, policies, and platform details.
@@ -135,7 +122,7 @@ campaign, so no v0.12.0 performance improvement is claimed.
 - [Troubleshooting](docs/TROUBLESHOOTING.md) - diagnosis and recovery.
 - [Supervisor rules](SOL_RULES.md) - delegation, effort, contracts, and review policy.
 - [Roadmap](ROADMAP.md) - future priorities and constraints.
-- [Changelog](CHANGELOG.md) - shipped release history.
+- [Changelog](CHANGELOG.md) - release notes from the 0.13.0 baseline forward.
 - [Contributing](CONTRIBUTING.md) - development and release workflow.
 
 ## Contributing

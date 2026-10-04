@@ -167,7 +167,7 @@ test("evidence packet - bounded repair decision and exact failure excerpt", () =
   assert.match(text, /exact failing assertion/);
 });
 
-test("evidence packet - P1.1 decision remains visible and survives compaction", () => {
+test("evidence packet - failure decision remains visible and survives compaction", () => {
   const result = mockResult();
   result.verdict = "FAILED";
   result.failureDecision = {

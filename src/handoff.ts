@@ -103,7 +103,7 @@ export class HandoffStore {
       (() => `${HANDOFF_PREFIX}${randomBytes(24).toString("base64url")}`);
   }
 
-  /** Issue one opaque reference for an earned P1.1 failure decision. */
+  /** Issue one opaque reference for an earned failure decision. */
   issue(
     input: DelegateTaskInput,
     result: DelegateTaskOutput,

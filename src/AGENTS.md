@@ -68,8 +68,7 @@ cross-surface rules.
 - Events/activity projection: `src/activity*.test.ts`.
 - Prompt, evidence compaction, and policy wording: `src/prompt.test.ts`,
   `src/evidence.test.ts`, and `src/guidance.test.ts`.
-- Benchmark harness/fixture invariants: `src/bench.test.ts`.
 
 The package test script enumerates compiled test files explicitly. When adding a new
-test file, add it to `package.json` and both CI/publish workflow test commands, or put the
-cases in an existing suite.
+test file, add it to `package.json`, or put the cases in an existing suite. CI and the
+publish workflow both use the package test script.

@@ -18,8 +18,8 @@
  * baseline is the one model `LUNA_MODEL`. No operator surface declares that one
  * authorised executor is stronger than another, so this module never reads list
  * position as strength. A `stronger-executor-fallback` is therefore *received and
- * reported*, not resolved: P1.1 may earn the recommendation and the envelope may
- * permit it, and P1.2 still declines to guess which permitted executor is the
+ * reported*, not resolved: failure classification may earn the recommendation and
+ * the envelope may permit it, while selection still declines to guess which executor is the
  * stronger one. Should the operator contract ever declare an ordering, this is the
  * single module that would consume it.
  *
@@ -31,17 +31,17 @@
  * choice instead of resolved by picking an index.
  *
  * Two decisions, never one. Executor fallback and effort escalation stay separate.
- * Selecting a different executor never resets effort — P1.1 recommends a fallback
+ * Selecting a different executor never resets effort — failure policy recommends a fallback
  * only once effort is exhausted, so resetting would discard the very evidence that
  * earned it — and escalating effort never changes the executor.
  *
  * One rung, never the ceiling. Escalation moves to the lowest permitted effort
  * strictly above the evidenced one, so `xhigh` and `max` are reachable only by
- * climbing to them or from an envelope that leaves no lower option at all. P1.1
+ * climbing to them or from an envelope that leaves no lower option at all. Failure classification
  * computes its `nextEffort` by the same rule and so agrees by construction; the
  * clamp binds only on stale or hand-built evidence, and it can only ever lower
- * what P1.1 named, never raise it. Whatever remains above the selected rung is
- * what the P1.1 ladder escalates into next.
+ * what the failure decision named, never raise it. Whatever remains above the selected rung is
+ * what the failure ladder escalates into next.
  *
  * Deliberately absent: filesystem access, environment reads, git, worktrees,
  * threads, workers, child processes, network, model calls, and every form of
@@ -100,7 +100,7 @@ export type SelectionReason = (typeof SELECTION_REASONS)[number];
  * Exactly one execution, and the latest. Nothing is derived from how many attempts
  * preceded it, from aggregate counts, or from any cross-call trend:
  * `automaticRetryCount` and `automaticRetryLimit` bound the ladder and stay
- * P1.1's, and history P1.1 has already weighed does not get a second, larger vote
+ * with failure policy, and history it has already weighed does not get a second, larger vote
  * here.
  */
 export interface PriorExecution {
@@ -115,7 +115,7 @@ export interface SelectionInput {
   readonly shape: ExecutionShape;
   /** The active envelope, already resolved by the caller. Never widened here. */
   readonly policy: ComputePolicy;
-  /** The latest execution and its P1.1 decision. Absent on a first attempt. */
+  /** The latest execution and its failure decision. Absent on a first attempt. */
   readonly evidence?: PriorExecution;
 }
 
@@ -123,7 +123,7 @@ export interface SelectionInput {
  * One bounded selection. Never a permission, and never outside the envelope.
  *
  * `effort` is null exactly when no next worker execution is authorised at all —
- * the shape is solo, the P1.1 action authorises none, or the envelope permits no
+ * the shape is solo, the failure action authorises none, or the envelope permits no
  * effort to run at. `model` is null in each of those cases too, and in one more:
  * when the envelope authorises several executors and declares no ordering among
  * them, the choice is open, and saying so is more honest than resolving it by
@@ -137,7 +137,7 @@ export interface SelectionDecision {
 }
 
 /**
- * Whether one P1.1 action authorises another worker execution at all.
+ * Whether one failure action authorises another worker execution at all.
  *
  * Total, so a newly declarable action is a compile error here rather than an
  * unlisted value that silently falls through to "select an executor for it".
@@ -337,7 +337,7 @@ export function selectCompute(input: SelectionInput): SelectionDecision {
         );
       }
       const rung = nextRungAbove(evidencedEffort, policy.allowedEfforts);
-      // P1.1 owns whether to escalate and how far. Escalating with no named next
+      // Failure policy owns whether to escalate and how far. Escalating with no named next
       // effort would originate the decision here; selecting a rung above the named
       // one would widen it. Both are refusals instead.
       if (

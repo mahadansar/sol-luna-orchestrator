@@ -832,7 +832,6 @@ export async function runBatch(
       await recoverParallel(
         batchId,
         running,
-        workspace,
         run,
         emit,
         options.signal,
@@ -2023,7 +2022,7 @@ function recoveryDecision(
     return base(
       false,
       "not-eligible",
-      `P1.1 selected ${failure.action} (${failure.classification}), which is outside bounded parallel automatic recovery: ${failure.reason}`,
+      `Failure policy selected ${failure.action} (${failure.classification}), which is outside bounded parallel automatic recovery: ${failure.reason}`,
     );
   }
 
@@ -2048,7 +2047,7 @@ function recoveryDecision(
     return base(
       false,
       "not-eligible",
-      `P1.1 selected ${failure.action} (${failure.classification}); an unused retry allowance alone cannot authorize another process: ${failure.reason}`,
+      `Failure policy selected ${failure.action} (${failure.classification}); an unused retry allowance alone cannot authorize another process: ${failure.reason}`,
     );
   }
   return base(
@@ -2121,7 +2120,6 @@ function mergeRecoveredResult(
 async function recoverParallel(
   batchId: string,
   running: RunningTask[],
-  workspace: string,
   run: TaskExecutor,
   emit: EventEmitter,
   signal: AbortSignal | undefined,

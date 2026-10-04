@@ -40,13 +40,8 @@ import { bold, dim, out, symbols, table } from "./ui.js";
  * One-command setup.
  *
  * Every change is made with the surgical TOML editor rather than with
- * `codex mcp add`, which was the original design. That command was measured
- * round-tripping the entire config: against a file containing an unrelated
- * `context7` server it deleted the comment above that server's table and
- * rewrote its `startup_timeout_sec = 15` as `15.0`. Losing a comment and
- * retyping an integer in someone else's configuration is not an acceptable
- * price for delegating the write, so registration is done here where the blast
- * radius is exactly the keys we own. (Verified against codex-cli 0.147.0.)
+ * `codex mcp add`, which can round-trip and rewrite unrelated configuration.
+ * Registration is done here where the blast radius is exactly the keys we own.
  *
  * `codex mcp get` is still used, read-only, to cross-check what Codex sees.
  *

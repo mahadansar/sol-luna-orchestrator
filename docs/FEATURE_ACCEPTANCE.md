@@ -1,1505 +1,178 @@
 # Feature Acceptance Ledger
 
 This is the authoritative current capability, evidence, freshness, and
-confidence ledger for the repository. The current release baseline is
-`0.13.0`. Shipped history belongs in `CHANGELOG.md`; future work belongs in
-`ROADMAP.md`.
+confidence ledger for the repository. The current release baseline is `0.13.0`.
+Release notes from this baseline forward belong in
+[`CHANGELOG.md`](../CHANGELOG.md); future work belongs in
+[`ROADMAP.md`](../ROADMAP.md).
 
 ## Current baseline
 
 - **Runtime baseline:** v0.13.0, with package and lockfile versions set to
-  `0.13.0`. The main-branch release includes the hardening
-  and worker-model changes recorded below and in `CHANGELOG.md`.
-- **Latest exact-source deterministic acceptance:**
-  [CI run 37210120543](https://github.com/mahadansar/sol-luna-orchestrator/actions/runs/37210120543)
-  passed on 2026-10-04 at release commit `438cd37` on Windows, Ubuntu,
-  and macOS with Node 24 and 26. All six jobs passed typecheck, formatting,
-  complete tests, MCP protocol smoke, and all 17 V2/V3 benchmark fixtures;
-  Ubuntu/Node 24 also passed packaging validation (104 files). Each job ran 1,290 tests:
-  Windows and macOS passed 1,286 with 4 platform skips, Ubuntu passed 1,285
-  with 5 platform skips. The gate had no failures and only expected platform-specific skips.
-  This gate includes the 0.13.0 version bump, parallel live-smoke initialization
-  correction, landing-page cleanup, live acceptance record, and final release metadata. The earlier upgrade gate at `27cea22`
-  remains historical evidence in the model-upgrade plan. Subsequent live-record
-  documentation edits leave runtime, tests, fixtures, lockfile, and workflow
-  identical to the accepted `438cd37` release source.
-- **Worker-model upgrade accepted and merged:** `main` now defaults to
-  `gpt-6-luna`, with explicit legacy pins preserved. Opt-in
-  `LUNA_MODEL=latest-luna` performs bounded compatible catalog selection once
-  before admission and freezes the concrete model for the server lifetime.
-  Deterministic regressions cover protocol bounds, cancellation/process cleanup,
-  policy agreement, offline CLI inspection, session freezing, and exact-model
-  continuation. The SDK/lockfile use 0.160.0. A read-only real catalog probe
-  selected `gpt-6-luna` with all four allowed efforts; a real MCP handshake
-  advertised that concrete model in instructions/tools. Local CLI lifecycle
-  smoke passed all 11 groups with isolated Codex homes. Representative live
-  GPT-6 inference now passed on Windows as recorded below; no updated
-  performance/cost benchmark is claimed. The committed
-  [upgrade plan](https://github.com/mahadansar/sol-luna-orchestrator/blob/main/WORKER_MODEL_UPGRADE_PLAN.md) records implementation,
-  commit review, and final evidence.
-- **Publication:** v0.13.0 was published on 2026-10-04 from the annotated tag
-  at `438cd37`, after all six exact-main CI jobs passed.
-  [Publish run 37211401834, attempt 2](https://github.com/mahadansar/sol-luna-orchestrator/actions/runs/37211401834/attempts/2)
-  completed the tag-triggered OIDC workflow. The npm registry reported version
-  and latest tag `0.13.0`, the matching Git head, and SLSA provenance. The
+  `0.13.0`.
+- **Release-source deterministic acceptance:** [CI run
+  37210120543](https://github.com/mahadansar/sol-luna-orchestrator/actions/runs/37210120543)
+  passed on 2026-10-04 at release commit `438cd37` across Windows, Ubuntu, and
+  macOS on Node 24 and 26. All six jobs passed the release gate, including
+  typecheck, formatting, the complete deterministic test suite, MCP protocol
+  smoke, and the packaging check where applicable.
+- **Worker model:** the 0.13.0 release defaults to `gpt-6-luna`. Explicit
+  `LUNA_MODEL` pins remain supported, and opt-in `LUNA_MODEL=latest-luna`
+  performs bounded compatible catalog selection once before tool admission and
+  freezes the concrete model for that server process. The SDK and bundled Codex
+  dependency are 0.160.0.
+- **Publication:** v0.13.0 was published on 2026-10-04 from annotated tag
+  `v0.13.0` at `438cd37`, after the release-source CI gate passed. [Publish
+  run 37211401834, attempt
+  2](https://github.com/mahadansar/sol-luna-orchestrator/actions/runs/37211401834/attempts/2)
+  completed the tag-triggered OIDC workflow. npm reported version and latest tag
+  `0.13.0`, the matching Git head, and provenance. The
   [GitHub Release](https://github.com/mahadansar/sol-luna-orchestrator/releases/tag/v0.13.0)
-  was created afterward against the existing remote tag, as a non-draft stable release.
-  Local candidate preparation passed typecheck/build, formatting, all 142
-  guidance/CLI/catalog tests, MCP protocol smoke, and the 104-file packaging dry
-  run. Representative live acceptance and its limits are recorded below.
-  The 2026-10-04 release documentation audit reconciled README, changelog,
-  roadmap, supervisor rules, security, configuration, troubleshooting,
-  observability, contributor workflow, this ledger, benchmark evidence,
-  repository instructions, and the PR template. Historical GPT-5.6 benchmark
-  identifiers and dated pricing examples remain historical; no new performance
-  or savings claim is attached to GPT-6 Luna.
-- **Earlier local full validation:** `npm run verify` passed on
-  2026-10-04 at `a0217f8` on Windows with Node `v22.23.2`: 1,263 tests,
-  1,258 passed, 0 failed, and 5 skipped. Typecheck, formatting, the complete
-  deterministic suite, MCP protocol smoke, and all 17 V2/V3 benchmark fixtures
-  passed. The skips covered a pinned-parent rename unavailable on Windows,
-  file-symlink deletion, two symlink-escape cases without creation privileges,
-  and POSIX process-group cleanup. Later native CI exposed additional issues;
-  this run is evidence for `a0217f8`, not acceptance of the subsequent fixes.
-- **Unreleased hardening checkpoint:** source commit `3224d4a` adds inode-reuse
-  watcher recovery, displaced-directory rollback uncertainty, leaf-link
-  deletion, and canonical workspace aliases/evidence projection. Local focused
-  validation at `8e1eba5` passed 140 tests (137 passed, 3 Windows skips), followed
-  by a passing canonical-alias/evidence regression at `3224d4a` and clean
-  typecheck. Fresh complete cross-platform acceptance is supplied by
-  [CI run 37194760358](https://github.com/mahadansar/sol-luna-orchestrator/actions/runs/37194760358).
-  See the root [audit report](https://github.com/mahadansar/sol-luna-orchestrator/blob/main/phase4-audit-report.md) for commit coverage and
-  corrections to the supplied handoff. No model-backed campaign was run.
-- **Benchmark V3 baseline evidence:** campaign `2026-08-30T04-26-16-817Z`
-  completed 36/36 valid runs against the v0.11.0 production baseline at standard
-  Codex speed: nine tasks, Solo Medium versus Adaptive Medium, two repetitions,
-  and `gpt-5.6-sol` at Medium supervising. Both strategies passed every task;
-  Adaptive delegated zero workers and was slower and more expensive overall.
-  Two repetitions are directional evidence, not statistical significance.
-- **Current native platform evidence:** the accepted October 4 deterministic CI
-  covers Windows, Linux, and macOS, including private dependency snapshots,
-  canonical workspace aliases, real symlink escape checks, pinned integration,
-  and POSIX process-group cleanup on supported runners. Historical dependency-link
-  runs are not proof of private snapshot behavior. Live Codex
-  delegation has representative Windows and
-  Linux evidence; the accepted Ubuntu runs used the documented repo-local
-  `LUNA_SANDBOX=danger-full-access` trusted-development workaround.
-- **Live-evidence boundary:** published-v0.9.0 and earlier pre-release live runs
-  remain historical evidence. They support unchanged behavior, but do not by
-  themselves prove the later cancellation, reconciliation, or retention-policy
-  semantics. Those changed seams have current deterministic regression evidence.
+  was created afterward against the existing remote tag.
+- **Release retry evidence:** the first publish attempt stopped during the
+  prepublish verification rerun on one shared-checkout capability fixture. The
+  isolated case and complete focused lifecycle suite passed, and an unchanged
+  retry of the tagged workflow passed both full suites and publication. No
+  source, test, tag, or gate was changed to obtain the successful retry.
 
-## 0.13.0 live acceptance and release authorization
-
-Status: **REPRESENTATIVE LIVE ACCEPTANCE RECORDED; RELEASE AUTHORIZED**. The user
-authorized live testing with `gpt-6.1-sol` at Low effort, allowing the parent to
-select Luna effort. Parent-driven acceptance was used instead of the existing
-live-smoke programs, which prescribe worker efforts. Results and untested cases
-follow; this checklist is not a second release-body document.
-
-1. Build the exact candidate, confirm the repo-local MCP registration launches
-   this checkout's absolute `dist/server.js`, and restart the Codex client.
-   Record the commit, package/SDK/client versions, platform, requested model
-   mode, resolved model, and configured policy. See
-   [the acceptance procedure](../CONTRIBUTING.md#acceptance-procedure).
-2. With `LUNA_MODEL=gpt-6-luna`, run `npm run smoke:live`,
-   `npm run smoke:isolation`, and `npm run smoke:parallel`. Retain command exits
-   and diagnostic/event evidence outside tracked source. Verify real worker
-   model/effort, independent verification, unchanged forbidden files, recursion
-   prevention, separate worktrees, integration, and cleanup. The parallel smoke
-   now initializes automatic selection before workers and checks exact model
-   telemetry; this correction was not part of the earlier accepted checkpoint.
-3. In a separate fresh process, opt into `LUNA_MODEL=latest-luna` and rerun a
-   live delegation and parallel smoke. Record the concrete selected model and
-   verify descriptions, policy, results, and events agree. Do not assume the
-   catalog grants access. Restore the pinned setting when that run ends.
-4. Exercise a retained-worktree continuation through the MCP: record the exact
-   model/thread, original dependency evidence, follow-up verification, lease
-   settlement, and replay refusal. Exercise cancellation and shutdown while
-   work is active; inspect terminal results, descendant cleanup, and worktree
-   ownership rather than accepting worker claims.
-5. Run a genuine substantial task in a fresh parent session without mentioning
-   orchestration. Record natural discovery/routing and independent parent
-   review. Inspect activity during a batch and after log rotation for recovery
-   and privacy. Record failures and unsupported platform cases explicitly.
-6. Add dated observations using
-   [the recording template](../CONTRIBUTING.md#recording-a-run), including evidence
-   locations and unavailable usage. Fix any defects with focused regressions,
-   then rerun the affected live paths and deterministic gate. Refresh exact
-   main-commit CI evidence after any source or candidate metadata changes.
-
-The user reviewed the recorded live results and authorized release on 2026-10-04.
-The final release metadata must pass all six CI jobs on its exact `main` commit
-before tagging. Publication uses the tag-triggered OIDC workflow; the GitHub
-Release is created only after npm publication succeeds. The release date and
-comparison link are recorded in `CHANGELOG.md`, and the release body is prepared
-transiently. Publication evidence belongs to the
-[Publish workflow](https://github.com/mahadansar/sol-luna-orchestrator/actions/workflows/publish.yml),
-[npm version history](https://www.npmjs.com/package/sol-luna-orchestrator?activeTab=versions),
-and [GitHub Release](https://github.com/mahadansar/sol-luna-orchestrator/releases/tag/v0.13.0).
-See [the release workflow](../CONTRIBUTING.md#releasing).
-
-### Publication verification and retry (2026-10-04)
-
-The first publish attempt passed its initial suite but stopped during the
-mandatory prepublish rerun: 1,284 passed, 1 failed, and 5 skipped. The failure
-was `an executor that throws still spends the handoff it was handed`, which
-observed an issued reference where it expected consumption. That fixture uses
-the shared repository checkout for setup and did not independently assert that
-executor entry occurred. Production commits the handoff synchronously before
-executor entry; pre-execution refusals deliberately return unspent authority.
-The failed log does not establish the precise setup-refusal cause.
-
-The isolated local case and complete 49-test capability lifecycle suite passed.
-One retry of the unchanged tagged workflow then passed both full suites,
-protocol smoke, prepublish verification/fixture validation, and OIDC publication.
-No source, test, tag, or verification gate was changed to obtain that result.
-The failed attempt remains retained in GitHub Actions; the shared-checkout
-fixture dependency remains a test-isolation follow-up, not a proven runtime defect.
-
-### Windows live observations (2026-10-04)
-
-Tested source: `e1bb262`, package 0.13.0, SDK/bundled Codex 0.160.0, Node
-22.23.2, Windows 11 Home 10.0.26300. Each parent session requested and recorded
-`gpt-6.1-sol` / `low`. Successful delegated runs recorded `gpt-6-luna` /
-`medium`, selected by the parent rather than imposed by the harness. The MCP
-registration launched this checkout's absolute `dist/server.js`. Tests used
-temporary repositories and isolated Codex homes, leaving the normal registration
-and credentials unchanged. Copies of authentication files were removed after
-each completed test. The working native sandbox configuration was
-`windows.sandbox="unelevated"` with `workspace-write` and network access disabled.
-This is host-qualified evidence, not proof of every Windows sandbox setup.
-
-Raw prompts, parent streams, manifests, event streams, diagnostic logs, and
-independent checks are retained locally under
-`%TEMP%/sol-luna-live-013-20261004/`; they are not committed or packaged. Preserve
-the negative runs alongside the successful retries. No pricing estimate or
-claim about a new benchmark campaign is made.
-
-| Run/evidence directory     | Observed result                                                                                                                                                                                                                                                                                                                                                                                                       |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `natural-ohPZ64`           | Failed setup: parent recorded read-only permissions and could not inspect/edit. No worker ran; no acceptance credit.                                                                                                                                                                                                                                                                                                  |
-| `natural-STxx1O`           | Natural routing chose solo for three small utilities. External tests passed and test files were byte-identical. Correct zero-worker behavior; no unprompted delegation discovery claim.                                                                                                                                                                                                                               |
-| `parallel-n0wJWj`          | Three worker launches failed before inference because the server lacked the isolated Codex home/complete worker MCP transport configuration. CRLF checkout conversion also appeared in trusted evidence. Parent takeover later passed tests; the worker batch remains failed evidence.                                                                                                                                |
-| `continuation-7W56G4`      | Automatic mode resolved GPT-6 Luna, but both worker launches failed under the same setup. No continuation was exercised in this run.                                                                                                                                                                                                                                                                                  |
-| `parallel-KG74W6`          | Explicit parallel acceptance: 3/3 authoritative PASS, concurrency peak 3, three files integrated, all three final checks passed, test hashes unchanged, zero retained worktrees. Parent independently inspected code and ran the assertion scripts.                                                                                                                                                                   |
-| `continuation-013IGj`      | Automatic mode selected GPT-6 Luna; 2/2 initial tasks passed with integration disabled. A documentation follow-up passed on the original model/thread. Replay was rejected. Independent tests in both retained worktrees passed, test bytes matched, and root tracked files remained unchanged. The consumed task's lease settled; its sibling's unused continuation lease remained protected under retention policy. |
-| `cancel-SwLUy6`            | Parent process interrupted after a real Luna session started. All six captured parent/server/worker/helper processes exited. No terminal usage record survived abrupt transport loss; usage is unknown. The repository operation lease stayed protected until its expiry, then production acquisition/release succeeded.                                                                                              |
-| `protocol-cancel-HkgGnk`   | Reusing that interrupted repository before lease expiry could not start another worker. Request timeout cancelled setup and the server still answered ping. This is evidence of bounded protected ownership, not a successful execution cancellation.                                                                                                                                                                 |
-| `protocol-cancel-fyUMcE`   | Cooperative MCP cancellation in a fresh repository reused Sol's chosen contract/effort. The attempt ended as `cancelled`, usage was unavailable with reason `cancelled`, the server still answered ping, and no operation lease remained.                                                                                                                                                                             |
-| `activity-rotation-4uUVDy` | Real activity CLI watched copies of the live event streams, recovered from rename/recreate rotation, and reached the passing batch. Task prompt text was absent. Original live event files were untouched.                                                                                                                                                                                                            |
-| `protocol-single-RrrI4H`   | Single-worker transport replay reused Sol's contract/effort. The edited function passed independent authoritative checks, but worker claim `FAILED` with `environment-tooling` remained a FAILED verdict; it was not promoted or counted as a clean success.                                                                                                                                                          |
-| `single-9LYai9`            | Parent-driven single delegation with a direct assertion script completed with worker claim PASS, authoritative PASS, `trustworthy:true`, and no discrepancies or scope violations. Only the admitted source file changed; test bytes were unchanged and the external grader passed.                                                                                                                                   |
-
-The successful parallel and continuation runs each started exactly one
-orchestrator server; no worker spawned another orchestrator. Their event streams
-contained no objective fields. The worker sessions retained their selected model
-and effort, and the continuation attempt recorded `threadIdentityMatched=true`.
-
-Windows sandboxed `node --test` commands hit child-process `spawn EPERM`.
-Authoritative checks outside that sandbox passed, while the runtime preserved
-the conflicting worker claims and `trustworthy:false`. The sole-verification
-claim case received the documented narrow PASS promotion; the broader
-`environment-tooling` claim did not. Sol reviewed the code, ran assertion files
-directly, and checked immutable test hashes. These observations prove that
-contradictory evidence remains visible; they do not certify unrestricted test
-execution inside the Windows sandbox.
-
-The final single-worker run used `node test/slug.test.mjs` instead of the
-child-spawning test runner. Both sandboxed worker execution and the independent
-authoritative rerun passed. Parent thread `01a1074c-ae80-77e0-820a-4ea3fb3bd33d`
-recorded GPT-6.1 Sol at Low; worker thread
-`01a1074d-b33f-7101-b2b5-9428b884f784` recorded GPT-6 Luna at parent-selected
-Medium. Complete reported worker usage was 77,499 input tokens (59,392 cached)
-and 564 output tokens; these are usage observations, not a cost estimate.
-
-Release authorization does not expand the observed coverage. A substantial
-unprompted delegation-discovery case,
-native graceful-shutdown signals during active work, and model-backed coverage
-on Linux/macOS were not rerun in this campaign. Line-ending compatibility and
-the Windows test-runner restriction must remain visible in review; see
-[Troubleshooting](TROUBLESHOOTING.md#trusted-git-evidence-reports-unchanged-crlf-files).
+Acceptance evidence below describes the released 0.13.0 behavior. Documentation
+cleanup after release does not retroactively turn a historical run into evidence
+for changed runtime code.
 
 ## Current capability matrix
 
-The October 4 platform skips are intentional: Windows skips the pinned-parent
-rename seam, two POSIX file-symlink deletion cases, and process-group cleanup;
-macOS skips four Windows-only path/launcher/junction cases; Ubuntu also skips
-the case-folded integration case. The Windows CI runners did execute the real
-file and directory symlink-escape tests skipped on the local machine.
+| Capability                                              | Deterministic | Live evidence | Confidence    |
+| ------------------------------------------------------- | ------------- | ------------- | ------------- |
+| Zero-worker/adaptive delegation                         | PASS          | PASS          | Strong        |
+| Pinned/default and optional automatic Luna selection    | DEEP PASS     | PASS          | Strong        |
+| Single delegation                                       | PASS          | PASS          | Strong        |
+| Sequential batches                                      | PASS          | PASS          | Strong        |
+| Parallel batches                                        | DEEP PASS     | DEEP PASS     | Battle-tested |
+| Worktree isolation and integration                      | DEEP PASS     | DEEP PASS     | Battle-tested |
+| Bounded concurrency                                     | PASS          | DEEP PASS     | Battle-tested |
+| Adaptive effort                                         | PASS          | PASS          | Strong        |
+| Independent verification                                | PASS          | DEEP PASS     | Strong        |
+| Claimed-versus-observed reconciliation                  | PASS          | DEEP PASS     | Strong        |
+| Context Capsule v2                                      | PASS          | PASS          | Strong        |
+| Compact evidence and thin verified handoff              | PASS          | DEEP PASS     | Strong        |
+| CLI lifecycle                                           | PASS          | PASS          | Strong        |
+| Activity, observability, and privacy                    | PASS          | DEEP PASS     | Strong        |
+| Natural discovery                                       | PASS          | PASS          | Strong        |
+| Explicit change intent                                  | PASS          | DEEP PASS     | Strong        |
+| Worker continuation                                     | DEEP PASS     | DEEP PASS     | Battle-tested |
+| Bounded repair                                          | PASS          | DEEP PASS     | Strong        |
+| Bounded parallel automatic recovery                     | PASS          | PASS          | Strong        |
+| Parent identity and post-hoc cost foundation            | PASS          | N/A           | Strong        |
+| Per-execution failure and usage evidence                | DEEP PASS     | PARTIAL       | Strong        |
+| Reasoned retry and effort-escalation decisions          | DEEP PASS     | NOT TESTED    | Strong        |
+| User-owned compute policy and enforcement               | PASS          | NOT TESTED    | Strong        |
+| Adaptive routing and compute selection                  | PASS          | NOT TESTED    | Strong        |
+| Context lifecycle management                            | PASS          | NOT TESTED    | Strong        |
+| Optional Explorer                                       | PASS          | NOT TESTED    | Strong        |
+| Lightweight cross-session handoff                       | PASS          | NOT TESTED    | Strong        |
+| End-to-end automated workflow                           | DEEP PASS     | NOT TESTED    | Basic         |
+| `failureCauses` and verification contradiction handling | PASS          | PASS          | Strong        |
 
-| Capability                                              | Coverage | Deterministic | Live evidence | Confidence    |
-| ------------------------------------------------------- | -------- | ------------- | ------------- | ------------- |
-| Zero-worker/adaptive delegation                         | PASS     | PASS          | PASS          | Strong        |
-| Pinned/default and optional automatic Luna selection    | PASS     | DEEP PASS     | PASS          | Strong        |
-| Single delegation                                       | PASS     | PASS          | PASS          | Strong        |
-| Sequential batches                                      | PASS     | PASS          | PASS          | Strong        |
-| Parallel batches                                        | PASS     | DEEP PASS     | DEEP PASS     | Battle-tested |
-| Worktree isolation/integration                          | PASS     | DEEP PASS     | DEEP PASS     | Battle-tested |
-| Bounded concurrency                                     | PASS     | PASS          | DEEP PASS     | Battle-tested |
-| Adaptive effort                                         | PASS     | PASS          | PASS          | Strong        |
-| Independent verification                                | PASS     | PASS          | DEEP PASS     | Strong        |
-| Claimed-vs-observed reconciliation                      | PASS     | PASS          | DEEP PASS     | Strong        |
-| Context Capsule v2                                      | PASS     | PASS          | PASS          | Strong        |
-| Compact Evidence Packets                                | PASS     | PASS          | DEEP PASS     | Strong        |
-| Terminal verification and thin handoff boundary         | PASS     | PASS          | PASS          | Strong        |
-| CLI lifecycle                                           | PASS     | PASS          | PASS          | Strong        |
-| Activity, observability, and privacy                    | PASS     | PASS          | DEEP PASS     | Strong        |
-| Natural discovery                                       | PASS     | PASS          | PASS          | Strong        |
-| Explicit Change Intent                                  | PASS     | PASS          | DEEP PASS     | Strong        |
-| Worker Continuation                                     | PASS     | DEEP PASS     | DEEP PASS     | Battle-tested |
-| Bounded Repair                                          | PASS     | PASS          | DEEP PASS     | Strong        |
-| Bounded parallel automatic recovery                     | PASS     | PASS          | PASS          | Strong        |
-| P1.0 parent/pricing foundation                          | PASS     | PASS          | N/A           | Strong        |
-| P1.0 per-execution failure and usage evidence           | PASS     | DEEP PASS     | N/A           | Strong        |
-| P1.1 reasoned retry and effort escalation decisions     | PASS     | DEEP PASS     | NOT TESTED    | Strong        |
-| P1.2 user-owned compute policy and enforcement          | PASS     | PASS          | NOT TESTED    | Strong        |
-| P1.2 adaptive routing and compute selection             | PASS     | PASS          | NOT TESTED    | Strong        |
-| P1.3 Context lifecycle management (P1.3A/B/C)           | PASS     | PASS          | NOT TESTED    | Strong        |
-| P2.1 Optional Explorer                                  | PASS     | PASS          | NOT TESTED    | Strong        |
-| P2.2 Lightweight Cross-Session Handoff                  | PASS     | PASS          | NOT TESTED    | Strong        |
-| P2.3 End-to-End Automated Workflow                      | PASS     | DEEP PASS     | NOT TESTED    | Basic         |
-| `failureCauses` and verification contradiction handling | PASS     | PASS          | PASS          | Strong        |
+The deterministic column refers to the 0.13.0 release gate and focused
+regressions for the named capability. Live status is deliberately narrower:
+deterministic coverage is not promoted to live evidence merely because another
+part of the product was exercised by a model.
 
-Dates, provenance, dependencies, and retest triggers are recorded below. A live
-status can combine historical evidence for unchanged behavior with current
-deterministic evidence for a later changed seam; the detailed record says when
-that distinction matters.
+## 0.13.0 live acceptance
 
-Bounded parallel automatic recovery is deterministic and internal to the original
-batch call. The default is enabled with an explicit opt-out. Only one eligible
-failed task turn is added after the initial parallel window: timeout continuation
-uses the same thread/worktree, while canonical `process-exit` evidence may use a
-fresh thread in the same owned worktree. Recovery preserves partial successes,
-reruns verification, reconciles final worktree evidence before integration, and
-records stable identities, attempt ordinals, classifications, and separate usage
-and duration. Fresh Benchmark V2 evidence exercised one real 300-second timeout:
-the runtime preserved two successful parallel streams, retried only the failed
-task in its owned worktree, passed final verification, and exposed the missing
-failed-attempt usage as unknown. The 475-second run is evidence that recovery
-works and that timeout latency and accounting remain open problems.
+Representative live acceptance was recorded on 2026-10-04 before release. The
+Windows campaign used package 0.13.0, SDK/bundled Codex 0.160.0, Node 22.23.2,
+and a repo-local registration pointing at the candidate's absolute
+`dist/server.js`. Parent sessions requested GPT-6.1 Sol at Low effort;
+successful delegated turns recorded GPT-6 Luna at parent-selected Medium effort.
 
-Current P1.0 hardening makes each worker SDK invocation independently
-attributable through an append-only attempt record and canonical lifecycle
-events. Deterministic cases cover success, reported failure, verification
-failure, timeout, cancellation, stream/runtime/process failure, partial
-messages/files, repair, manual continuation, timeout recovery, fresh-process
-retry, failed recovery, sibling preservation, and post-execution lifecycle
-failure. Aggregate usage now fails closed whenever any constituent lacks
-authoritative `turn.completed` usage; the known constituent remains visible.
+The accepted live evidence includes:
 
-P1.1 now derives one `failureDecision` from that factual evidence. Deterministic
-coverage distinguishes success, cancellation, timeout, exact process exit,
-generic runtime failure, local and non-local verification failure, scope,
-security/trust, contract/requirement, environment/tooling, implementation,
-effort, capability, and evidence failure. It proves repair-before-recovery
-precedence, one-turn bounds, no retry from counter availability alone, one-step
-effort escalation, stronger-executor recommendation without selection, lineage
-and truthful usage preservation, terminal cancellation, and successful sibling
-preservation. No model-backed P1.1 campaign was run; the later P1.2 closure adds
-executor authorization and server-authoritative selection.
+- a single bounded delegation with a required edit, authoritative verification,
+  trustworthy completion, unchanged test bytes, and independent parent review;
+- a three-worker parallel batch with three integrated files, authoritative final
+  checks, peak concurrency three, and no retained worktrees;
+- automatic Luna selection followed by a retained-worktree continuation on the
+  original model/thread, successful follow-up verification, replay refusal, and
+  lease settlement;
+- cooperative MCP cancellation producing a canonical cancelled attempt with
+  unavailable usage recorded as unavailable rather than zero;
+- activity watch recovery through rename/recreate rotation while task prompt
+  text remained absent from the activity stream; and
+- zero-worker routing on work that did not justify delegation.
 
-P1.2 adaptive routing and compute selection (`src/adaptive.ts`, `src/seam-plan.ts`,
-`src/selection.ts`, `src/routing.ts`, `src/policy.ts`, `src/adaptive-routing.test.ts`,
-`src/selection.test.ts`, `src/seam-plan.test.ts`, `src/routing.test.ts`, `src/policy.test.ts`)
-is recorded with **PASS** deterministic coverage and **Strong** confidence.
-The unified pipeline wires decomposition, routing evaluation, shape recommendation,
-compute selection, explicit operator-declared executor ordering, and telemetry
-into one pure, synchronous flow. Seam planning decides whether work stays whole or
-splits based strictly on declared evidence, with undeclared coupling keeping work
-whole. Route evaluation computes the execution shape inside the policy envelope.
-Compute selection determines the starting model and effort, ascending rungs only
-with evidence. An explicit operator hierarchy (`SOL_LUNA_EXECUTOR_ORDER` / `executorOrder`)
-allows stronger-executor fallback resolution (`stronger-executor-selected` / `exhausted`)
-without treating `allowedModels` list position as an inferred strength order. Telemetry
-in single delegation, preflight, and batch execution records recommended mechanism,
-worker count, concurrency, effort, selected model, selected effort, and selection reason;
-existing worker lifecycle and attempt records remain the authority on actual execution.
-The first post-V3 routing-policy correction permits cheap bounded structural
-inspection before preflight, classifies candidate delegated leaves instead of
-whole objectives, separates parallel hazards from delegation economics, and
-narrowly routes three-or-more explicit small read-only/disjoint/mechanical seams
-with shared-only final proof to `either`. Mutable shared state still blocks
-parallel execution; shared core does too unless the caller deliberately accepts
-that declared overlap with `allowOverlappingScopes: true`. A substantial leaf may
-be considered for single or sequential delegation. Routing telemetry
-adds the matched R0-R5 rule and explicit-versus-defaulted card provenance without
-persisting seam text. Deterministic coverage includes the recorded V3-equivalent
-static-site, observability-parser, and parent-owned-AST renderer shapes. The
-completed V3 evidence and benchmark fixtures were not changed or rerun.
-The production single and batch surfaces now pass selected model and effort into
-the Codex SDK turn, and continuation retains the model/effort lineage it actually
-resumes. An eligible P1.1 bounded retry can bootstrap authenticated lineage,
-after which effort-escalation and stronger-executor decisions can issue an
-opaque, single-use, 15-minute in-memory handoff. Consumption restores the
-authoritative task contract and factual predecessor evidence; caller history or
-replacement fields cannot create escalation authority. Deterministic coverage
-includes concurrent double consumption, expiry/replay/malformed refusal, exact
-contract restoration, batch sibling preservation, and selected SDK thread options.
-Restart loss is intentionally fail-closed and no model-backed P1.2 campaign is
-claimed.
+The successful parallel and continuation runs each started exactly one
+orchestrator server; worker processes did not recurse into orchestration.
+Continuation evidence recorded matching thread identity and preserved the
+selected model and effort.
 
-P1.3 Context lifecycle management (`src/context.ts`, `src/context.test.ts`, `src/context-lifecycle.test.ts`)
-is recorded with **PASS** deterministic coverage and **Strong** confidence across P1.3A (retention
-and compaction core), P1.3B (pressure metrics and trigger policy), and P1.3C (live runtime lifecycle integration).
-The pure synchronous primitive accepts single delegations, batch delegations, continuations, and preflight turns,
-producing a redacted compact projection without mutating the authoritative context. Complete
-contract arrays, distinct decisions, constraints, blockers, attempt lineage, failure/conflict/refusal
-evidence, per-task batch claims, observed changes, and authoritative verification facts are preserved.
-Turn bounding is a soft target that prunes stale clean history while protected evidence may exceed
-it. Clean verified PASS paths omit only successful command output while retaining command outcomes,
-provenance, counts, changed files, and risks. Compact projections report only the count and
-state of authority whose latest live registry status is issued and unconsumed; capability values
-are never exposed. P1.3B adds deterministic context pressure metrics (exact
-UTF-8 byte size, turn distribution, exactly removable narration/tool-prose bytes, normalized compact-projection
-reclaimable bytes, and complete provider-reported token usage) and a configurable trigger policy. Cached
-input remains a subset of provider input, reasoning output remains a subset of provider output, and any
-unavailable constituent keeps aggregate usage unknown. The evaluator accepts resolved configuration and
-checks size, total turns, stale clean history, repeated tool overhead, and reclaimable ratio at inclusive
-thresholds. Deterministic safety precedence blocks unsafe lifecycle boundaries, no-new-turn repeat
-compaction, authoritative cooldown, and insufficient reclaimable gain; manual force bypasses none of
-these. In P1.3C, a server-owned registry isolates authoritative stores for unrelated fresh
-calls and batches while server-issued continuation/handoff lineage restores only its owning
-context. Reference-counted execution leases cover execution, repair, recovery, reconciliation,
-and continuation cleanup; one completion cannot clear another active lease. Evaluation and safe
-compaction run after `delegate_task`, `delegate_tasks`, and `continue_task`. Advisory
-`routing_preflight` remains side-effect-free with respect to execution context. Deterministic tests
-cover overlapping calls, isolation, error release, stale-projection invalidation, live non-consuming
-reference status, and capability-free projections. Factual telemetry events (`context.evaluated`,
-`context.compacted`) emit exact metrics without leaking capability tokens, prompts, or sensitive output.
+The Windows native sandbox exposed a real environment boundary: child-spawning
+`node --test` could fail with `spawn EPERM` even when direct assertion scripts
+and authoritative verification outside that sandbox passed. The runtime kept
+the conflicting worker claim visible and did not treat a broad
+`environment-tooling` claim as trustworthy success. The final single-worker
+acceptance used a direct assertion script so both worker-side execution and the
+authoritative rerun passed.
 
-P2.1 Optional Explorer (`src/contract.ts`, `src/prompt.ts`, `src/worker.ts`, `src/server.ts`, `src/context.ts`, `src/explore.test.ts`, `src/security.test.ts`)
-is recorded with **PASS** deterministic coverage and **Strong** confidence. The `explore` MCP tool provides
-a bounded read-only investigation companion with Luna under strict `changeIntent: "forbidden"`. It requires an
-explicit admitted scope, copies only that scope to a disposable surface, fixes the SDK sandbox to `read-only`, and
-never uses the authoritative workspace as the explorer working directory. An independent content/symlink manifest
-detects creation, deletion, modification, rename, symlink, and untracked-file changes; mutation invalidates trust,
-fails the verdict, and is discarded. Findings conform to strict JSON schema `explorerOutputJsonSchema`: worker claims
-carry explicit worker provenance and exact runtime-checked file/line/evidence grounding, while runtime-observed facts,
-hypotheses/inferences, and open unknowns remain separate.
-Suggested candidate seams provide supervisor planning input without creating an unchecked implementation plan.
-The tool adheres to operator compute policy envelopes via `admitCompute`, emits `explore.started`, `explore.completed`,
-and `explore.rejected` telemetry, and integrates into `ContextLifecycleStore` with execution leases and `"post-exploration"`
-compaction evaluation. The tool is disabled in worker threads (`IS_WORKER_PROCESS`), preventing recursive explorer spawning.
-Deterministic tests prove fail-closed single-payload parsing, prompt generation, disposable isolation and cleanup,
-all mutation classes, source grounding, scope checks, compute propagation/admission/refusal, lifecycle leases and
-trust-preserving compaction, privacy-safe telemetry ingestion, and semantically consistent rendering modes. No
-model-backed benchmark is claimed.
+Linux also has representative live delegation evidence, with an explicit
+qualification: the accepted Ubuntu host required the documented
+`LUNA_SANDBOX=danger-full-access` trusted-development workaround because host
+AppArmor policy blocked nested `workspace-write` bwrap/user-namespace setup.
+macOS has deterministic CI evidence but no current live delegation record.
 
-P2.2 Lightweight Cross-Session Handoff (`src/session-handoff.ts`, `src/session-handoff.test.ts`, `src/context.ts`, `src/server.ts`)
-is recorded with **PASS** deterministic coverage and **Strong** confidence. The cross-session handoff primitive
-provides a compact, deterministic, explicitly caller-supplied historical packet (`SessionHandoffArtifact`, schema
-`"sol-luna-handoff/v1"`) for resuming context across server restarts or separate supervisor sessions without
-replaying raw conversation logs or weakening trust boundaries. Schema validation proves structure, not factual
-authenticity. The export process aggregates historical
-architectural/user/policy/invariant decisions, active constraints, active and resolved blockers with
-classified causes, observed file modifications, verification counts and diagnostic failures, worker claims,
-discrepancies, scope violations, integration conflicts, and unresolved review checklist items. Exploration
-findings are strictly segregated into worker claims with grounding, runtime-observed facts, inferences, and
-clearly labeled open unknowns. All bearer capability tokens (`ctr_*`, `hdf_*`), API keys (`sk-*`), bearer headers,
-and credentials are deep-scrubbed and replaced with explicit expiration notices. Restart semantics fail closed:
-in-memory capabilities from the prior session are marked expired (`inMemoryContinuationsExpired: true`,
-`inMemoryHandoffsExpired: true`), prior tokens cannot be consumed in fresh server processes (`status: "unknown"`),
-and restored context re-enters standard admission, compute policy, scope, and verification gates. Imported task
-scope is a resumable description only; imported decisions, constraints, blockers, observations, verification,
-lineage, verdicts, and failure decisions remain in a separate informational history packet and never populate
-current-session canonical evidence or capability stores. Fresh delegations establish their own current task contract
-and evidence. Recursive canonical key sorting (`canonicalizeObject`) makes repeated serialization of one artifact
-byte-for-byte stable. Pure parse/restore/re-export preserves the packet identity and timestamp; new snapshots after
-fresh evidence generate new metadata unless the caller explicitly supplies it. A 256 KiB guard rejects oversized
-diagnostic artifacts rather than truncating them. Deterministic tests cover clean export/import cycles, semantic
-tampering without authority gain, historical/current evidence separation, secret scrubbing, restart fail-closed
-behavior, malformed payload rejection, stale handoff handling, bounded output, policy re-entry, identity/timestamp
-preservation, and lifecycle overwrite refusal. No model-backed benchmark is claimed.
+## Platform evidence
 
-P2.3 End-to-End Automated Workflow (`src/workflow.ts`, `src/workflow.test.ts`, `src/events.ts`)
-is recorded with **PASS** deterministic coverage and **Basic** confidence. The capstone workflow
-engine provides one bounded supervisor-driven coordinator (`executeWorkflow`) that composes the
-P1 and P2 primitives across task assessment, optional exploration, seam planning, adaptive routing,
-zero-worker parent takeover, single and batch execution, authoritative verification, P1.1 failure
-decisions, bounded repair, timeout/exit recovery, continuation, and evidence-earned next-action
-escalation without duplicating server paths. The engine uses 13 states (`assessing`, `exploring`,
-`routing`, `solo`, `delegating`, `evaluating`, `continuing`, `escalating`, `completed`, `failed`,
-`blocked`, `parent_takeover`, `cancelled`). `solo` is non-terminal and cannot produce completion.
-Execution bounds
-enforce hard limits on steps (`maxSteps` <= 20), effort escalations (`maxEscalations` <= 5), and
-continuations (`maxContinuations` <= 3), guaranteeing termination. It reuses existing execution
-handlers directly (`handleExplore`, `handleDelegateTask`, `handleDelegateTasks`, `handleContinueTask`),
-adaptive routing and compute admission, and stores (`ContextLifecycleStore`,
-`HandoffStore`, `ContinuationStore`, `ContextLifecycleRegistry`). It manages execution leases and triggers
-safe post-delegation context compaction. Handler-owned repair and recovery remain independently bounded;
-the workflow neither re-verifies nor reimplements them. Unrecoverable verification failures, scope violations, untrusted
-results, or missing capabilities yield cleanly to `PARENT_TAKEOVER`. Telemetry events (`workflow.started`,
-`workflow.transition`, `workflow.completed`) contain only allowlisted structural fields and distinguish
-requested, recommended, and executed compute. The workflow suite covers the
-coordinator scenarios and report renderer without treating their count as an
-acceptance contract. It proves zero-worker parent takeover, advisory explorer-to-delegation,
-single delegation, parallel batches, sequential batches, repair, recovery, continuations, effort escalation,
-stronger-executor fallback via explicit `allowedModels` + `executorOrder`, compact authoritative evidence
-on the normal thin-handoff path, failed verification parent takeover,
-scope violation fail-closed takeover, external cancellation, concurrent isolation, fail-closed restart semantics,
-step bound limits, telemetry privacy, and multi-step context compaction. Most coordinator tests inject handler
-results; they do not prove real server capability consumption and lifecycle transitions as one composed path.
-No model-backed benchmark is claimed.
+| Platform       | Deterministic CI | Live delegation | Current qualification                                                   |
+| -------------- | ---------------- | --------------- | ----------------------------------------------------------------------- |
+| Windows 11     | Verified         | Verified        | Native test-runner child spawning can hit the documented `spawn EPERM`. |
+| Linux / Ubuntu | Verified         | Verified        | Accepted live host used the documented trusted-development workaround.  |
+| macOS          | Verified         | Not yet run     | Deterministic Git/filesystem/process paths execute in CI.               |
 
-The terminal handoff protocol defaults clean verified PASS responses to compact
-text without `structuredContent`. A batch reruns the deduplicated declared checks
-in the final workspace and reaches `verified-complete` only when every seam,
-integration step, and final execution passes. Explicit `compact` and `full`
-modes retain structured compatibility; non-clean results expand to full
-evidence. Advertised schemas retain canonical validators/defaults while omitting
-descriptive prose. Deterministic tests prove parser equivalence, final-check
-deduplication, terminal closure, no-command refusal, failure expansion, activity
-projection, and the protocol surface. Fresh local-runtime targeted and full
-Benchmark V2 campaigns exercised the handoff from isolated Codex sessions. All
-48 final records passed; natural Adaptive delegated runs spent 5.5-8.9 seconds
-in observed supervisor-after time, compared with 26.8-113.1 seconds in the
-delegated frozen baseline. The canonical economics and limitations are in
-`bench/RESULTS.md`; this is representative live acceptance, not a claim of
-universal savings.
+See [Configuration](CONFIGURATION.md#platform-support) for the support summary
+and [Troubleshooting](TROUBLESHOOTING.md) for host-specific diagnosis.
 
-## Final acceptance boundary (P2.4A)
+## Current evidence gaps and non-claims
 
-This is the frozen acceptance boundary for the completed orchestrator, covering
-everything implemented from P1.0 through P2.3. It separates three evidence classes
-that the rest of this ledger sometimes reports in one column, because they
-support different claims:
+- There is no current broad model-backed OS matrix. macOS has no live delegation
+  record, and the accepted Ubuntu host does not prove that nested
+  `workspace-write` works on every Linux configuration.
+- No fresh natural-routing case selected a sequential batch. Sequential
+  execution itself has deterministic and live acceptance; the gap is natural
+  route selection evidence.
+- Natural adaptive-effort evidence covers `medium` and `high`. No natural
+  `xhigh` or `max` selection is claimed.
+- Retention modes, continuation expiry, verification refusal/timeout, deceptive
+  worker claims, and several abnormal cleanup paths have broader deterministic
+  than live coverage.
+- Exact usage is unavailable when a started execution never emits Codex
+  `turn.completed`. Timeout, cancellation, failed-turn, stream/runtime, and
+  abnormal-exit paths therefore retain an explicit unavailable reason; the
+  runtime does not infer missing usage.
+- Native graceful-shutdown signal delivery during active model-backed work and a
+  deliberately hung Windows descendant are not part of the representative live
+  release campaign.
+- The workflow coordinator has deterministic end-to-end composition through a
+  real single-delegation handler. Several batch, repair, recovery, continuation,
+  and escalation branches remain stronger at the handler-contract level than as
+  one live composed workflow.
+- No current performance, latency, price, or savings claim is made. The runtime's
+  post-hoc cost primitive uses caller-supplied authoritative rate-card evidence;
+  it performs no account lookup or price retrieval.
 
-- **Deterministic / code-confirmed.** A named test file executed in the
-  canonical `npm run verify` gate. It establishes that the behaviour exists, is
-  bounded, and holds at the current baseline. It establishes nothing about how a
-  real model behaves, how long anything takes, or what anything costs.
-- **Live model-backed behavioural.** A real Codex supervisor turn exercised the
-  path end to end. It establishes that the behaviour survives contact with a
-  model and a real workspace. It is not a performance or economic measurement.
-- **Benchmark performance / economics.** A committed campaign record under a
-  frozen methodology, with external grading and recorded usage. It establishes
-  latency, routing, and credit evidence within that methodology's limits, and
-  nothing about capabilities it did not exercise.
+## Reading this ledger
 
-Vocabulary is the ledger's own: **N/A**, **NOT TESTED**, **PARTIAL**, **PASS**,
-**DEEP PASS**, **STALE**.
-
-| Roadmap capability                                        | Deterministic | Live model-backed | Benchmark economics | Primary deterministic evidence                                                                                              |
-| --------------------------------------------------------- | ------------- | ----------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| P0 Context Capsule v2 / Compact Evidence Packets          | PASS          | PASS              | PARTIAL (V2)        | `src/evidence.test.ts`, `src/prompt.test.ts`                                                                                |
-| P0.2a Explicit Change Intent Contracts                    | PASS          | DEEP PASS         | PARTIAL (V2)        | `src/evidence.test.ts`, `src/selftest.ts`                                                                                   |
-| P0.3 Worker Continuation                                  | DEEP PASS     | DEEP PASS         | NOT TESTED          | `src/parallel.test.ts`, `src/evidence.test.ts`                                                                              |
-| P0.4 Bounded Repair Loop                                  | PASS          | DEEP PASS         | NOT TESTED          | `src/evidence.test.ts`, `src/parallel.test.ts`                                                                              |
-| Thin Supervisor terminal verification / handoff           | PASS          | DEEP PASS         | PASS (V2)           | `src/evidence.test.ts`, `src/selftest.ts`                                                                                   |
-| Parallel batches, worktree isolation, bounded concurrency | DEEP PASS     | DEEP PASS         | PASS (V1/V2)        | `src/parallel.test.ts`, `src/security.test.ts`                                                                              |
-| Bounded parallel automatic recovery                       | PASS          | PASS              | PARTIAL (V2)        | `src/parallel.test.ts`                                                                                                      |
-| P1.0 Parent identity, billing, post-hoc cost              | PASS          | N/A               | PASS (V2 profile)   | `src/bench/credits.test.ts`, `src/evidence.test.ts`                                                                         |
-| P1.0 Per-execution attempt, failure, and usage evidence   | DEEP PASS     | PARTIAL           | PARTIAL (V2)        | `src/evidence.test.ts`, `src/parallel.test.ts`                                                                              |
-| P1.1 Reasoned retry and effort escalation                 | DEEP PASS     | NOT TESTED        | NOT TESTED          | `src/evidence.test.ts`, `src/policy.test.ts`                                                                                |
-| P1.2 User-owned compute policy and enforcement            | PASS          | NOT TESTED        | NOT TESTED          | `src/policy.test.ts`, `src/selection.test.ts`                                                                               |
-| P1.2 Adaptive routing, seam planning, selection           | PASS          | NOT TESTED        | STALE (V3)          | `src/adaptive-routing.test.ts`, `src/routing.test.ts`, `src/seam-plan.test.ts`, `src/selection.test.ts`                     |
-| P1.3A Retention and compaction core                       | PASS          | NOT TESTED        | NOT TESTED          | `src/context.test.ts`                                                                                                       |
-| P1.3B Context pressure metrics and trigger policy         | PASS          | NOT TESTED        | NOT TESTED          | `src/context.test.ts`                                                                                                       |
-| P1.3C Live context lifecycle integration                  | PASS          | NOT TESTED        | NOT TESTED          | `src/context-lifecycle.test.ts`                                                                                             |
-| P2.1 Optional Explorer                                    | PASS          | NOT TESTED        | NOT TESTED          | `src/explore.test.ts`, `src/security.test.ts`                                                                               |
-| P2.2 Lightweight Cross-Session Handoff                    | PASS          | NOT TESTED        | NOT TESTED          | `src/session-handoff.test.ts`                                                                                               |
-| P2.3 End-to-End Automated Workflow                        | DEEP PASS     | NOT TESTED        | NOT TESTED          | `src/workflow.test.ts` (state-machine seams plus real single-handler composition and authoritative subprocess verification) |
-| Benchmark harness and acceptance methodology (P2.4A)      | PASS          | N/A               | N/A                 | `src/bench.test.ts`, `src/bench/harness.test.ts`, `src/bench/v3-analysis.test.ts`, `src/bench/credits.test.ts`              |
-| Benchmark V3 execution and mature acceptance (P2.4B)      | PASS          | N/A               | PASS (v0.11.0)      | `bench/results/2026-08-30T04-26-16-817Z.v3.json`, `src/bench/v3-analysis.test.ts`                                           |
-
-### Reading this table against the matrix above
-
-The current matrix and this acceptance boundary both use **NOT TESTED** for
-applicable live behaviour that has no live campaign. **N/A** is reserved for
-capabilities where a live turn cannot produce the evidence, such as post-hoc
-credit arithmetic.
-
-`PARTIAL` in the benchmark column means a V1 or V2 campaign exercised the path
-incidentally while measuring something else. It is not a performance claim about
-that capability.
-
-### What is explicitly not claimed
-
-- **No separate live acceptance evidence exists for P1.1, P1.2, P1.3, P2.1,
-  P2.2, or P2.3.** P1.2 has model-backed Benchmark V3 evidence for the v0.11.0
-  baseline; the other listed capabilities remain deterministic only. A green
-  test file is not a live behavioural result, and this ledger does not present
-  it as one.
-- **Benchmark V3 measured v0.11.0, not the post-V3 routing corrections.** Its
-  36/36 valid runs found both strategies correct, while Adaptive delegated zero
-  workers and was slower and more expensive overall. Two repetitions are
-  directional evidence and establish no statistical significance.
-- **The current corrected routing is not claimed to be cheaper, faster, or
-  better than v0.11.0.** The V3 result motivated the correction, but no full
-  post-correction campaign has measured it.
-- **V2 evidence is not V3 evidence.** It measured an earlier architecture on a
-  different suite under a different configuration, and the two are not two
-  samples of one experiment.
-- **The deterministic suite is not a correctness claim.** The 2026-08-29 native
-  coverage run is diagnostic only; exercised lines do not prove lifecycle or
-  adversarial transition correctness.
-
-### Freeze status
-
-P2.4A and P2.4B are complete. The acceptance boundary and Benchmark V3
-methodology in [`bench/V3_METHODOLOGY.md`](../bench/V3_METHODOLOGY.md) were
-frozen before launch. Campaign `2026-08-30T04-26-16-817Z` then completed 36/36
-valid runs under methodology digest
-`0994a7090ffacaa4f59641f36501430047a8215626e87de4f810e254fd8aea4c`
-against the released v0.11.0 production baseline. The post-V3 routing correction
-has deterministic coverage but no subsequent full-campaign result.
-
-## Current known evidence gaps and non-claims
-
-- No fresh parent in the current natural-routing portfolio selected a sequential
-  batch. Sequential execution itself has current deterministic and live
-  acceptance; this is a routing evidence boundary, not a defect or blocker.
-- Natural adaptive-effort evidence covers materially different `medium` and
-  `high` selections. No natural `xhigh` or `max` selection is claimed, and those
-  optional observations are not required for Strong confidence.
-- A fresh whole-system native coverage report was produced on 2026-08-29 with
-  Node's built-in test coverage: **93.16% lines, 86.29% branches, and 90.76%
-  functions**. Its percentages are diagnostic, not acceptance evidence; branch
-  and cleanup gaps still require manual review.
-- Raw transcripts, diagnostic logs, event streams, and some structured live
-  results are session-local and intentionally uncommitted. The ledger preserves
-  their reviewed conclusions, not durable raw artifacts.
-- There is no broad durable model-backed OS matrix. macOS has deterministic CI
-  but no current live delegation record; accepted Ubuntu live runs required the
-  documented trusted-development sandbox workaround.
-- Retention modes, continuation expiry, verification refusal/timeout, and
-  deceptive worker-claim variants have broader deterministic than live coverage.
-  These are evidence limits, not known product defects.
-- Exact token usage remains fundamentally unavailable when a started execution
-  never emits Codex `turn.completed`, including some timeout, cancellation,
-  failed-turn, stream/runtime, and abnormal-exit paths. The runtime now records
-  that unknown explicitly; no test or local timing can recover the missing
-  provider fact.
-- Verification cancellation, event-sink isolation, bounded graceful shutdown,
-  nested control-metadata boundaries, explorer removal failure, and long
-  continuation expiry/reclamation now have focused deterministic regressions.
-  Windows awaits `taskkill /T /F`; POSIX process-group behavior remains exercised
-  only on POSIX CI because it is not reachable on Windows.
-- The workflow suite now includes one deterministic composition through the real
-  single-delegation handler and authoritative subprocess verification. Batch,
-  repair, recovery, continuation, and escalation workflow branches retain
-  handler-contract injection; they are not claimed as fully composed or live.
-- Shutdown coordination is covered without destructive signals in-process.
-  Native signal delivery and a deliberately hung Windows descendant remain
-  platform/integration risks rather than accepted evidence.
-
-**Confirmed defects exposed by the 2026-08-29 pre-release audit were fixed with
-regressions in the same change.** The remaining items above are release risks,
-not accepted behavioural evidence. Optional future work remains in `ROADMAP.md`;
-this ledger does not promote or implement it.
-
-## How to read this ledger
-
-Evidence status vocabulary is intentionally small: **N/A**, **NOT TESTED**,
-**PARTIAL**, **PASS**, **DEEP PASS**, or **STALE**. Overall confidence is one of
-**Unverified**, **Basic**, **Strong**, **Battle-tested**, or **Stale**.
+Evidence status uses a small vocabulary:
 
 - **N/A:** that evidence class does not apply.
-- **NOT TESTED:** coverage may exist, but no execution is established.
-- **PARTIAL:** only part of the relevant surface executed or a material gap
-  remains.
-- **PASS:** the stated relevant paths passed at the stated version or commit.
-- **DEEP PASS:** broad or repeated acceptance also exercised important failure
-  paths, integration boundaries, or platforms.
-- **STALE:** the evidence ran, but a relevant implementation or dependency later
-  changed.
-
-- **Unverified:** no relevant execution evidence is established.
-- **Basic:** focused deterministic evidence is current, or live evidence is only
-  partial.
-- **Strong:** broad current deterministic evidence, or current deterministic
-  evidence plus a representative live path.
-- **Battle-tested:** repeated, varied deterministic and live evidence covers
-  important failure paths as well as the happy path.
-- **Stale:** evidence once supported a higher confidence, but a relevant behavior
-  or dependency changed after it ran.
-
-Coverage means a test or artifact exists. Execution means that it actually ran;
-a test file alone is not execution evidence. Freshness means the evidence still
-matches the relevant implementation and dependencies at the current runtime
-baseline. Freshness is dependency-aware: an unrelated source change does not
-stale evidence, while a changed semantic seam does. A historical result can
-therefore remain applicable to unchanged behavior or become **STALE** for a
-changed seam. Dates are UTC dates from committed records or git history; an
-execution date is **unknown** when the repository does not establish it.
-
-## Historical acceptance campaigns
-
-The following sections preserve concise campaign chronology and historical test
-counts. They describe the state at each checkpoint and are superseded wherever
-the current baseline, matrix, gaps, or detailed records above say otherwise.
-
-### Thin-supervisor terminal-verification campaign
-
-The 2026-08-25 Candidate 3 runtime at
-`187f962be18998a6a4e0b5d9e717d62001ffbe41`, with targeted evidence committed
-at `62d9e00f9e44b51ca9bae4941c50f332bfe93585`, passed the full deterministic
-gate: 513/516 tests passed with three expected Windows skips and no failures,
-plus typecheck, protocol smoke, fixture validation, formatting, and build. The
-local development checkout was rebuilt and registered with
-`init --allow-ephemeral`; status, doctor, and `codex mcp get` all resolved
-`D:\code\gpt-test\sol-luna-orchestrator\dist\server.js`.
-
-Fresh Codex sessions then ran the frozen V2 contract with `gpt-5.6-sol` Medium,
-`gpt-5.6-luna`, standard speed, and Fast disabled. The targeted campaign was
-`benchmark-v2-terminal-verification-c3-187f962-20260825`; the full campaign was
-`benchmark-v2-final-terminal-verification-62d9e00-20260825`. All 48 final
-records passed external grading. The campaign repeatedly exercised terminal
-integration verification, text-only successful handoffs, zero-worker routing,
-single workers, parallel peaks 3 and 4, mixed Medium/High effort, and one
-targeted timeout recovery. The recovery preserved completed siblings and
-retried only the failed ownership seam, while truthfully leaving total credits
-unknown because failed-attempt usage was unavailable.
-
-The campaign establishes live functional acceptance and a materially thinner
-post-delegation Sol lifecycle. It does not establish overall Adaptive savings:
-the seven fully priced task medians were about 2% more expensive than Solo and
-the full Adaptive total is unknown. `bench/RESULTS.md` owns the complete
-candidate mapping, BEFORE/AFTER economics, failure analysis, thresholds, and
-reproduction sequence.
-
-The initial deterministic campaign executed against the released v0.9.0 tree on
-2026-08-24. `npm ci` and `npm run build` passed. An initial native Node coverage
-run across every package test suite reported **453 tests: 452 pass, 0 fail, 1
-skipped**; the skip was the real on-disk symlink case because symlink creation was
-not permitted on this Windows host. It measured **90.56% lines, 84.24% branches,
-and 87.93% functions**. Five focused test blocks were then retained for cost
-foundation boundaries, Codex subprocess failure handling, and legacy path-only
-worktree leases. After rebuild, the affected suites reported **196 pass, 0
-fail**, and the final Wave 1 coverage run reported **458 tests: 457 pass, 0 fail,
-1 skipped**, measuring **90.70% lines, 84.70% branches, and 88.24% functions**.
-The full run covered schemas, prompts, guidance, evidence, CLI/config lifecycle,
-activity/reducer/watch compatibility, benchmark invariants, command and
-filesystem security, worker verdicts and repair, sequential/parallel scheduling,
-worktrees, leases, cancellation, integration, continuation, reconciliation,
-pricing primitives, and verification.
-
-Fresh Linux closure evidence then executed on 2026-08-24 against the same v0.9.0
-runtime baseline on Ubuntu 24.04.4 LTS, kernel 7.0.0-28-generic, Node v24.15.0,
-npm 11.12.1, and Codex CLI 0.149.1. Before Linux-only additions, the full
-deterministic suite reported **458 tests: 458 pass, 0 fail, 0 skipped**, so the
-Windows-skipped real on-disk symlink test executed successfully. Two narrow
-test-only cases were retained for an actual directory-symlink escape and POSIX
-process-group descendant termination; the existing worktree dependency-link
-case gained an assertion that Linux created a real directory symlink to the
-source dependency tree. The affected suites reported **45/45 security**,
-**73/73 parallel/worktree**, and **97/97 CLI plus activity-configuration**
-tests passing. The final full deterministic suite reported **460 tests: 460
-pass, 0 fail, 0 skipped**.
-
-### v0.9.0 confidence-hardening campaign
-
-Wave 1 completed on 2026-08-24. Every material matrix row now has a fresh
-deterministic execution at the released baseline. The scheduler/worktree suite
-included configured concurrency peaks, queue progress, disjoint integration,
-same-file conflicts, partial failure, setup failure, cancellation, retained
-worktrees, lease acquisition/refresh/loss/release, continuation binding, and
-cleanup. The worker/evidence suites included strict report parsing, explicit
-change intent, claimed-versus-observed reconciliation, authoritative verification,
-verification-only contradiction promotion and negative controls, one-turn repair
-admission/exhaustion, compact/full projection, and P1.0 cost/identity boundaries.
-This deterministic refresh does not by itself refresh stale live routing or
-effort evidence, and it does not convert a repeated happy path into DEEP PASS.
-
-Wave 2 completed on 2026-08-24 against the globally installed published v0.9.0
-server at
-`C:\Users\mahad\AppData\Local\nvm\v26.7.0\node_modules\sol-luna-orchestrator\dist\server.js`.
-All mutation scenarios used committed disposable Git repositories under the
-campaign fixture root, not product source. Fresh live evidence included:
-
-- a compact single required edit with authoritative verification and matching
-  Git state;
-- a Context Capsule task whose exact JSON output depended on structured service,
-  numeric-port, and header invariants, with a private sentinel absent from human,
-  JSON, and campaign-appended activity telemetry;
-- a 4/4 sequential dependency batch: Task 2 consumed Task 1's file, followed by
-  legitimate optional and forbidden zero-change tasks;
-- a 3/3 parallel batch with distinct worktrees, observed activity peak 3 (the
-  configured ceiling), 3 attempted/3 applied integrations, and complete cleanup;
-- retained-worktree continuation on the same Luna thread, cumulative two-file
-  reconciliation, repeated authoritative verification, single-use replay
-  refusal, and lease release;
-- bounded repair after one controlled authoritative failure, classified
-  `local-verification`, with exactly one same-thread repair and final PASS;
-- the exact verification-contradiction promotion: worker `FAILED`, sole
-  `verification` cause and matching failed row, authoritative PASS, preserved
-  discrepancy/claim provenance, final PASS, and untrustworthy review semantics;
-- an isolated published-CLI lifecycle covering init, repeat init, dry runs,
-  doctor, status, activity/human/JSON, owned-setting reconciliation, backup,
-  uninstall, repeated uninstall, discovery-hint ownership, and unrelated byte
-  preservation; hashes proved the real Codex config/instructions were unchanged;
-- three genuinely fresh Codex parents without explicit Sol-Luna instructions:
-  two consulted guidance and deliberately chose zero workers for small tasks;
-  one discovered the server and naturally selected one high-effort Luna worker
-  for a broad read-only lifecycle audit, then independently reviewed its claims;
-- a controlled same-file parallel conflict where both isolated tasks passed,
-  nothing integrated, both worktrees were retained, and activity/integration
-  evidence named the conflict.
-
-At that checkpoint, the campaign had not naturally elicited a sequential or
-parallel batch from a fresh parent after three materially different discovery
-attempts. Adaptive effort had only one natural high-effort selection and was
-then **PARTIAL**. The later focused adaptive-routing campaign superseded both
-limits with current natural parallel-batch evidence and natural `medium` plus
-`high` selections; a natural sequential batch remains unobserved.
-
-### Focused Linux platform evidence closure
-
-The 2026-08-24 Linux pass closed the deterministic platform gaps that the
-Windows campaign could not execute, without changing production/runtime source:
-
-- real file and directory symlinks were created on disk; both an existing target
-  and a nonexistent child beneath an escaping directory symlink were rejected as
-  outside the workspace even under allowedFiles: ["**"];
-- a timed-out verification command spawned a descendant, and the POSIX detached
-  process group was terminated with exitCode: null, timeout classification,
-  no surviving descendant, and no continuing heartbeat;
-- the full worktree suite passed on native Git/POSIX filesystems, including
-  isolation, dependency-directory symlinking, unlink-before-cleanup, source
-  dependency survival, stale pruning limited to orchestrator paths, persistent
-  lease acquire/refresh/loss/release/sweep, retained continuation protection,
-  and cancellation leaving no worktrees;
-- the real CLI lifecycle smoke passed all 11 groups using temporary isolated
-  CODEX_HOME directories: init, repeat init, repair, doctor/status, uninstall
-  and repeat uninstall, round trip, empty/malformed config, v0.6.0 migration,
-  discovery opt-out, and active override handling.
-
-These results added the missing Linux/POSIX platform evidence. At this
-checkpoint, the three known cross-module abnormal lifecycle handoffs remained
-out of scope; the later focused lifecycle closure superseded that state.
-Adaptive Effort was addressed by a later focused campaign. P1.1 was future work
-at this checkpoint and was never part of these campaigns.
-
-### Focused abnormal-lifecycle findings closure
-
-The 2026-08-24 findings-closure pass added three deterministic end-to-end
-regressions across the previously missing module handoffs. A real parallel
-integration copied one file before a later destination-parent collision failed,
-preserving the applied main-workspace change while reporting 2 attempted / 1
-applied, `integration.partial`, `integrated:false`, the exact copy warning, and a
-retained diagnostic worktree. A promise-barrier fixture started two real
-`executeTask` lifecycles concurrently, completed and integrated one sibling, then
-aborted the other while it was still inside its worker event stream; cancellation
-classification, evidence scanning, events, result counts, retention policy, and
-lease release all completed, and the case passed 10/10 repeated executions. A
-real retained continuation was then consumed through the server handler, its
-persistent lease was observed changing from `retained-continuation` to
-`executing-continuation`, and a controlled post-start failure exercised handler
-classification and `finally` release; replay returned `used`, the lease artifact
-was gone, and orchestrator pruning removed the now-unprotected worktree.
-
-The closure initially reported no runtime-semantic defect. Later incidental
-triage recovered a production handoff that its fixture omitted: the MCP registrar
-could issue a continuation for the cancelled worker and keep its retained lease.
-Cancellation is now terminal for continuation eligibility, and the same focused
-regression supplies a registrar and proves that only the completed sibling is
-registered. Partial integration remains intentionally non-atomic and is
-represented at batch/integration level without rewriting the worker's
-independently established verdict or trust evidence. The default `onFailure`
-policy intentionally retains an in-flight-cancelled worktree for diagnosis while
-releasing its lease. The MCP schema and tool contract remain unchanged.
-
-This closes the recorded abnormal-lifecycle blocker for Parallel batches,
-Worktree isolation/integration, and Worker Continuation. Those capabilities now
-meet the ledger's Battle-tested definition because existing live DEEP PASS
-evidence already covers successful integration, conflict retention, and a
-successful retained continuation, while broad deterministic evidence now also
-covers the important partial-application, in-flight cancellation, and consumed
-continuation failure paths. Bounded concurrency remains Strong: its separate
-second-live-configured-limit gap remains. No other capability is promoted by
-this focused pass, and Adaptive Effort and P1.1 remain untouched.
-
-Final validation for this closure passed `npm run verify`: typecheck, **463/463**
-deterministic tests with no failures or skips, and every MCP protocol smoke
-check. The focused parallel/worktree suite passed **76/76**, the in-flight
-cancellation case passed **10/10** repeated executions, formatting and build
-passed, all nine benchmark fixtures discriminated correctly with mutation
-detection, and `git diff --check` was clean.
-
-### Focused worktree-retention precedence closure
-
-The subsequent 2026-08-24 policy pass resolved the temporary campaign finding
-between explicit `SOL_LUNA_KEEP_WORKTREES=never` and diagnostic, conflict,
-`integrate:false`, evidence-failure, and continuation retention.
-`never` now has absolute precedence for intentional retention after all
-obtainable structured evidence is captured. Worktree-bound continuations are
-issued only when configured cleanup actually retained their directory and a
-persistent lease protects it; continuations bound to already integrated shared
-workspace state remain eligible under every retention mode. Cleanup failure is
-reported separately and can still leave a physical path because configuration
-cannot make a failed filesystem operation succeed.
-
-The same pass made `onFailure` verdict-aware: a normally returned final
-`FAILED` or `BLOCKED` result is diagnostic failure, not cleanup success merely
-because its worker lifecycle completed. Focused table-driven tests cover all
-cleanup reasons across `onFailure`, `always`, and `never`; successful and failed
-verdict finalization; integration-disabled and conflicted state; continuation
-reference/lease admission; truthful worktree events and paths; and
-unlink-before-cleanup survival of the source dependency tree. Existing
-continuation consumption/failure and partial-integration regressions remain the
-evidence for those lifecycle handoffs. This is a deterministic semantic closure;
-the earlier live default-`onFailure` acceptance facts remain historical evidence
-rather than a claim that every mode was rerun live.
-
-Final validation for this closure passed `npm run verify`: typecheck,
-**470/470** deterministic tests with no failures or skips, and every MCP
-protocol smoke check. Formatting, all nine benchmark fixture validations,
-`git diff --check`, and the explicit final build and smoke reruns also passed.
-
-### Focused second live configured-concurrency limit
-
-A focused live run on 2026-08-24 closed Bounded Concurrency's remaining
-second-configured-limit gap. A fresh local MCP process started from this
-checkout's rebuilt `dist/server.js` with `SOL_LUNA_MAX_PARALLEL=2`, distinct
-from the prior live ceiling of 3. The Ubuntu/Linux host retained the deliberate
-repo-local `LUNA_SANDBOX=danger-full-access` workaround because its normal Luna
-workspace sandbox is unavailable; this was host configuration, not a product
-change. The server's isolated command-line configuration and event paths did
-not alter user/global Codex configuration and remained ignored under
-`.sol-luna/`.
-
-The one worker-consuming batch, `bmt6wx6ibe3aq`, queued four independent,
-read-only investigations for four real `gpt-5.6-luna` medium-effort workers.
-All four `task.queued` events preceded any worker start. `t1` and `t2` then
-started 1 ms apart and reached active concurrency 2. `t3` started only when
-`t2` completed, after 44.018 seconds queued; `t4` started only when `t1`
-completed, after 49.016 seconds queued. Replaying the typed terminal events
-produced active counts 1, 2, 1, 2, 1, 0: peak 2 was reached and never exceeded.
-All four task ids had queued, worktree-created, started, completed, and
-worktree-removed evidence; the final event reported 4 passed / 0 failed in 106
-seconds. The reduced activity snapshot independently reported
-`maxParallel:2`, `current:0`, `peak:2`, four completed Luna workers, no
-conflicts, zero retained worktrees, and 4/0 results. Git exposed only the main
-worktree afterward, no lease artifact or worker process remained, and no source
-file changed.
-
-The configured `git status --short` verification was refused for every task
-because `git` was not in the operator verification allowlist. The structured
-results truthfully retained the refusal and corresponding discrepancies, so
-their task-level `PASS` verdicts were `trustworthy:false`; the semantic audit
-claims are not used as scheduler proof. Concurrency acceptance instead rests on
-the orchestrator-owned batch, queue, worker lifecycle, worktree, result, and
-activity evidence above, plus the runtime-observed empty changed-file sets. An
-initial contract submission had overlapping declared scopes and was rejected
-before batch creation or any worker start; it is not counted as a live run.
-No runtime concurrency defect was observed.
-
-Together with the prior live configured ceiling of 3 and the broad current
-deterministic scheduler evidence, including queue progression, cancellation,
-setup and failure paths, the distinct live ceiling-2 run now satisfies the
-existing Battle-tested definition for Bounded Concurrency. No unrelated feature
-is promoted, and Adaptive Effort, P1.1, and broader hardening remain out of
-scope.
-
-### Focused adaptive-routing acceptance
-
-A focused Linux live pass on 2026-08-24 closed those two evidence gaps without
-changing runtime source or routing guidance. Six genuinely fresh ephemeral
-Codex parents ran ordinary read-only repository tasks using GPT-5.6 Sol at
-medium parent effort, the checkout-local MCP, dedicated diagnostic/event paths,
-and the deliberate repo-local `LUNA_SANDBOX=danger-full-access` Ubuntu
-workaround. None of the six task prompts named Sol-Luna, Luna, delegation,
-workers, routing, effort, or MCP discovery.
-
-| Parent thread                          | Task shape                                           | Natural route  | Orchestrator-owned result                                                                                               | Judgment                                                                                                                                    |
-| -------------------------------------- | ---------------------------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `01a032bd-8184-7be0-b8b7-443aae398e63` | Small CLI/README parity check                        | Solo           | MCP connected; no task events; parent PASS                                                                              | Sensible zero-worker choice                                                                                                                 |
-| `01a032bf-1f8d-7612-8137-c50b146623c8` | One tightly coupled verification-contradiction trace | Solo           | MCP connected; no task events; parent PASS                                                                              | Sensible zero-worker choice                                                                                                                 |
-| `01a032c2-39a7-7d63-be0c-714ad91c89ed` | Cross-module cancellation lifecycle audit            | Solo           | MCP connected; no task events; parent PASS                                                                              | Sensible because the requested boundaries formed one state machine                                                                          |
-| `01a032c8-927d-7602-8301-4d49e83f9329` | Three-stream release-readiness review                | Parallel batch | Batch `bmt6y5ebj4olo`: three concurrent high-effort Luna starts; 2 PASS / 1 FAILED; no edits; independent parent review | Sensible batch; an initial overlapping-scope contract was rejected, then explicitly accepted for read-only scopes with integration disabled |
-| `01a032d6-56ae-7d51-b6a7-281ac86ba7de` | Cross-surface privacy audit                          | Single         | Batch `bmt6yo0fp5mqy`: one high-effort Luna PASS/trustworthy, zero edits                                                | Sensible single bounded investigation                                                                                                       |
-| `01a032dd-2aa0-7a52-af37-aff8b77a2736` | Environment-variable traceability inventory          | Parallel batch | Batch `bmt6yy5l0cjtb`: concurrent medium/high Luna starts, 2 PASS / 0 FAILED, zero edits                                | Sensible split; documentation mapping was mechanical while coverage judgment was broader                                                    |
-
-Every parent naturally consulted the configured guidance before its routing
-decision. The three solo attempts are supported by the fresh-parent transcripts
-and dedicated MCP connection logs; delegated attempts additionally have typed
-queued, started, completed, worktree, integration, and batch events. Attempt 4's
-three initial tasks all selected `high`; its explicit same-thread continuation
-preserved `high` but failed on a false-positive scope violation caused by the
-orchestrator-owned shared `node_modules` link. At that time, focused triage
-excluded only links still resolving to the expected dependency source. The
-v0.13.0 hardening replaces that approach with private dependency snapshots;
-worker-created links remain visible in evidence. Attempt 5 selected one `high`.
-Attempt 6 independently selected `medium` for a mechanical documentation
-inventory and `high` for cross-file coverage judgment; both started as real
-GPT-5.6 Luna tasks and passed with no observed edits. The effort variation is
-therefore natural and plausible, not inferred from prose or supplied by the
-acceptance driver.
-
-The focused pass stopped after attempt 6 because it had both a meaningful
-natural batch and two naturally selected worker-effort levels. Natural routing
-now has current representative zero-worker, single, and parallel-batch evidence.
-No fresh parent selected a sequential batch in this portfolio, so this is not a
-claim of a complete natural sequential/parallel ladder. Adaptive effort advances
-to live **PASS** and **Strong** confidence under the ledger's existing definition.
-Raw transcripts, diagnostic logs, structured results, and event streams are
-retained under ignored `.sol-luna/acceptance/adaptive-routing-2026-08-24/`.
-
-### Earlier pre-release live acceptance campaign
-
-The final real-model campaign ran on 2026-08-24 against runtime baseline
-`6d610b37c277f7c6875627572306585b8f219a45`. Its results are session-local but
-documented here; raw transcripts, activity output, appended events, and diagnostic
-logs are not committed.
-
-- **Single:** a real `gpt-5.6-luna` medium-effort `delegate_task` crossed the live
-  API boundary, made the required edit, passed authoritative verification, and
-  returned final `PASS` / `trustworthy` evidence matching Git state.
-- **Sequential:** both tasks passed; Task 2 consumed and modified Task 1's file in
-  the shared workspace. Authoritative verification and Git state matched;
-  `integrationConflicts` was empty, `integrated` was true, and `worktreePath` was
-  null.
-- **Parallel:** both isolated tasks passed with peak concurrency 2 in distinct
-  `.sol-luna` worktrees. Two disjoint edits integrated: 2 attempted, 2 applied,
-  0 conflicts. Completed worktrees and leases were cleaned according to policy.
-- **Retained-worktree continuation:** integration was disabled and the worktree
-  retained; the opaque continuation resumed the same Luna thread, made a real
-  follow-up edit, and reconciled both retained files under the unchanged original
-  contract. Replay was rejected and lease artifacts were released according to
-  policy.
-- **Activity/privacy:** human and JSON views reflected the actual sequential,
-  parallel, integration, concurrency, and retained-worktree states.
-  `LIVE_ACCEPTANCE_PRIVATE_SENTINEL_823` was absent from both views and appended
-  telemetry; appended telemetry contained neither objective nor context fields.
-
-A later documentation-only parallel run also exercised Context Capsule v2 and
-compact result packets, followed by one bounded continuation. It configured no
-authoritative verification commands and is recorded only as partial supporting
-evidence.
-
-### Historical natural-discovery run
-
-The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
-
-- **Client and version:** Codex; version not recorded
-- **Parent model and effort:** GPT-5.6 Sol, medium
-- **Orchestrator version / commit:** v0.8.0; commit not recorded
-- **Worker model and effort:** GPT-5.6 Luna, high
-- **Discovery:** found unprompted in a fresh Codex session before the parent
-  researched the public repository
-- **Routing:** one bounded read-only investigation for the initial broad audit,
-  then zero workers for a tightly coupled README refinement; both decisions fit
-  the work
-- **Silence while pending:** not recorded
-- **Parent review:** independent; the parent retained synthesis, editing, and
-  final verification, and checked package, release, CI, and link evidence itself
-- **Outcome:** completed successfully. The delegated read-only task returned
-  `PASS` with no changed files, but the then-current orchestrator still emitted
-  its generic no-file-changes discrepancy. There was no solo control; this was
-  not a performance benchmark and supports no speed, cost, or quality comparison.
-- **Retained evidence:** the task ran in another repository; its transcript and
-  diagnostic evidence are not retained here
-
-## System-wide invariants
-
-- A parent chooses solo, one worker, sequential, or parallel work adaptively;
-  zero workers is valid. Workers cannot delegate recursively: the child config
-  disables this server and `SOL_LUNA_WORKER=1` makes the child register no tools.
-- Contracts remain bounded by workspace/file scope, forbidden files, acceptance
-  criteria, effort, timeout, and verification commands. Scope is a detective
-  boundary, not a write sandbox; canonical path and symlink checks still apply.
-- Parallel means independent tasks with isolated git worktrees and conservative
-  integration. Sequential means shared workspace and ordered dependencies.
-  Parallel setup mutations are serialized, concurrency is bounded, and same-file
-  observed edits do not get copied over each other.
-- Parallel worktree finalization obeys the operator's retention mode:
-  `onFailure` is outcome/integration-aware, `always` retains every parallel task
-  worktree, and `never` permits no intentional retention. Structured evidence
-  survives cleanup; a deletion failure is reported as cleanup failure rather
-  than policy retention.
-- Workspace-bound continuation is independent of worktree retention.
-  Worktree-bound continuation requires the isolated directory to survive
-  cleanup under policy and hold a persistent lease. References are single-use;
-  cancelled results are terminal and leases are released on finalization,
-  failure, and cancellation.
-- Worker reports are claims. The orchestrator independently reruns permitted
-  verification, reconciles claimed and observed files, records scope and
-  integration conflicts, and leaves final judgment to the parent.
-- Verification is conditional on the configured policy. Default command parsing
-  is argv-based, shell syntax is refused, executables are constrained, and
-  credential-shaped environment variables are withheld.
-- Activity is append-only local telemetry. Objectives, prompts, source, and
-  verification output are excluded from the activity stream; unavailable usage
-  is `null`, never zero. Canonical attempt events exclude termination messages
-  and sensitive subprocess output while retaining attribution, factual lifecycle,
-  usage status, and verification counts. Diagnostic logs remain more sensitive.
-- Parent review is risk-based: a clean verified result can be reviewed
-  proportionally, while suspicious, failed, contradictory, scope-violating,
-  unverified, or integration-conflicted evidence demands deeper inspection.
-- Material behavior changes require updating this ledger and marking affected
-  and dependent evidence **STALE** until it is rerun. Dependency or upstream
-  contract changes use the same rule.
-
-## Detailed records
-
-### Zero-worker/adaptive delegation
-
-- **Implementation/tests:** `src/server.ts`, `src/prompt.ts`, `src/batch.ts`,
-  `src/bench/*`; `src/guidance.test.ts`, `src/bench.test.ts`,
-  `src/parallel.test.ts`.
-- **Authority/history:** policy in `SOL_RULES.md`; acceptance procedure in
-  `CONTRIBUTING.md`; `a03a325` (2026-08-14), `18c29b6` and
-  `050c6cb` (2026-08-23), followed by `4118525` and `4657768` guidance/test
-  alignment.
-- **Evidence:** Coverage **PASS**. Targeted guidance/schema execution **PASS** on
-  2026-08-24. Committed live benchmark evidence is **STALE**: the
-  2026-08-14 scale records show 0/6 free-choice runs delegated and all 6
-  passed, but later guidance, batch, evidence, repair, continuation, and
-  pricing changes mean this is historical routing evidence, not a current
-  closure result. Fresh live **PASS** now records six genuinely fresh parents
-  consulting guidance and choosing among zero workers, one worker, and parallel
-  batches; this distinguishes informed solo routing from MCP non-discovery.
-- **Dependencies/retest triggers:** parent guidance, tool descriptions, cost
-  semantics, batch semantics, or routing changes; rerun a fresh-session
-  acceptance and the scale/adaptive benchmark. A natural sequential batch was
-  not observed, but the prior natural-batch gap is closed by two meaningful
-  parallel choices.
-- **Confidence:** **Strong**.
-
-### Single delegation
-
-- **Implementation/tests:** `src/server.ts`, `src/worker.ts`, `src/batch.ts`;
-  `src/selftest.ts`, `src/parallel.test.ts`, `src/bench.test.ts`,
-  `src/guidance.test.ts`.
-- **Authority/history:** `README.md`, `SOL_RULES.md`, `CHANGELOG.md` v0.5.0;
-  initial implementation history `a03a325` (2026-08-14).
-- **Evidence:** Coverage and targeted deterministic execution **PASS** on
-  2026-08-24. Final live acceptance **PASS**: a real medium-effort Luna turn
-  crossed the API boundary, made the required edit, passed authoritative
-  verification, and returned final `PASS` / `trustworthy` evidence matching Git.
-  The older committed benchmark records remain **STALE** after later runtime
-  changes.
-- **Dependencies/retest triggers:** contract/schema, worker lifecycle,
-  verification, continuation, repair, or result rendering changes. **Gap:** the
-  final run is documented session-local evidence; its raw transcript and logs
-  are not committed.
-- **Confidence:** **Strong**.
-
-### Sequential batches
-
-- **Implementation/tests:** `src/batch.ts` shared-workspace sequential path;
-  `src/parallel.test.ts`, `src/activity.test.ts`, `src/guidance.test.ts`.
-- **Authority/history:** `README.md`, `SOL_RULES.md`, `CHANGELOG.md` v0.5.0;
-  `a03a325` (2026-08-14), `908c977` and `da496df` (2026-08-23).
-- **Evidence:** Coverage and deterministic execution **PASS** on 2026-08-24. The
-  full batch suite refreshed shared-workspace dependency, cancellation,
-  terminal-state, evidence, and event behavior.
-  Current live acceptance **PASS**: 4/4 tasks passed in the shared workspace;
-  Task 2 consumed Task 1's file, then optional and forbidden tasks legitimately
-  made no change. Authoritative verification and Git state matched,
-  `integrationConflicts` was empty, `integrated` was true, and `worktreePath`
-  was null. Historical benchmark records remain **STALE** where they predate
-  lifecycle and reconciliation hardening.
-- **Dependencies/retest triggers:** shared-workspace semantics, cancellation,
-  worktree/batch lifecycle, evidence reconciliation, or integration rendering.
-  **Gap:** raw final-campaign artifacts are not committed; cancellation and
-  failure paths were not part of this live run.
-- **Confidence:** **Strong**.
-
-### Parallel batches
-
-- **Implementation/tests:** `src/batch.ts` parallel scheduler;
-  `src/parallel.test.ts`, `src/activity.test.ts`, `src/bench.test.ts`.
-- **Authority/history:** `README.md`, `SOL_RULES.md`, `CHANGELOG.md` v0.5.0;
-  `a03a325`, `5e388c3` (2026-08-14), `da496df` (2026-08-23).
-- **Evidence:** Coverage and deterministic execution **PASS** on 2026-08-24. The
-  full parallel suite refreshed setup serialization, bounded scheduling,
-  cancellation, worker/setup failures, overlap rejection/override, same-file
-  conflicts, partial integration, cleanup, and risk-review behavior. The focused
-  lifecycle closure advanced deterministic evidence to **DEEP PASS**: an actual
-  integration applied one file before a later filesystem operation failed, and
-  an already-running worker was aborted only after its concurrently started
-  sibling completed; the latter passed 10/10 repeated executions without sleeps.
-  Current live acceptance **DEEP PASS**: 3/3 isolated tasks passed at peak
-  concurrency 3 in distinct `.sol-luna` worktrees; three disjoint edits
-  integrated with 3 attempted, 3 applied, and 0 conflicts. A materially
-  different same-file batch then produced two isolated PASS results, correctly
-  withheld all integration, retained both worktrees under the configured
-  default `onFailure` mode, and exposed the conflict. Completed non-retained
-  worktrees and leases were cleaned according to that policy.
-  Older committed benchmark evidence remains **STALE** where it predates
-  lifecycle fixes.
-- **Dependencies/retest triggers:** scheduler, worktree metadata, cancellation,
-  overlap, integration, continuation, or verification changes. Raw
-  final-campaign live artifacts are not committed, but the prior in-flight
-  cancellation and post-application integration blockers now have durable
-  deterministic regressions.
-- **Confidence:** **Battle-tested**.
-
-### Worktree isolation and integration
-
-- **Implementation/tests:** `src/worktree.ts`, `src/git.ts`, `src/overlap.ts`,
-  `src/batch.ts`; `src/parallel.test.ts`, `src/security.test.ts`.
-- **Authority/history:** `SECURITY.md`, `SOL_RULES.md`,
-  `docs/TROUBLESHOOTING.md`; `5e388c3` and `da496df` (2026-08-14/23).
-- **Evidence:** Coverage and deterministic execution **PASS** on 2026-08-24. The
-  full worktree suite refreshed isolation, dependency linking, cleanup, stale
-  pruning, integration/conflicts, retained continuations, cross-process lease
-  ownership, acquisition/refresh failure, expiry, sweep, and legacy path-only
-  lease compatibility.
-  Historical live acceptance **DEEP PASS** covered distinct isolated worktrees,
-  clean disjoint integration, same-file conflict retention, policy cleanup of
-  completed worktrees and leases, and a deliberately retained
-  integration-disabled worktree used by continuation under the then-current
-  default policy. It remains applicable to isolation, integration, and cleanup
-  mechanics that have not changed, but it does not prove current dependency
-  provisioning or every current retention mode. Current retention precedence,
-  finalization, and private dependency-snapshot confinement instead have focused
-  deterministic coverage in the current full deterministic baseline. Older
-  committed evidence remains **STALE** for lifecycle/lease seams that later
-  changed. The focused Linux run added historical native POSIX evidence for the
-  former dependency-link implementation: the dependency link was an actual
-  directory symlink resolving to the source dependency tree, cleanup removed the
-  link/worktree without deleting the source, stale pruning left a user worktree
-  intact, and the complete 73-test suite passed with no skips. That link evidence
-  does not prove current private-snapshot provisioning; the current deterministic
-  snapshot/confinement regressions do. The focused lifecycle closure advanced
-  deterministic evidence to **DEEP PASS** by
-  combining partial main-workspace integration, in-flight parallel cancellation,
-  retained-worktree policy, exact lease release, consumed-continuation
-  finalization, and orchestrator pruning in end-to-end cases.
-- **Dependencies/retest triggers:** git version/platform, junction/symlink
-  handling, lease ownership, cleanup, or copy integration changes. **Gap:** raw
-  final-campaign artifacts are not committed and no broad durable model-backed
-  live platform matrix is established.
-- **Confidence:** **Battle-tested**.
-
-### Bounded concurrency
-
-- **Implementation/tests:** `src/batch.ts`, `src/config.ts`; `src/parallel.test.ts`,
-  `src/bench.test.ts`.
-- **Authority/history:** `docs/CONFIGURATION.md`, `SOL_RULES.md`; `a03a325`
-  (2026-08-14) and `da496df` (2026-08-23).
-- **Evidence:** Coverage and deterministic execution **PASS** on 2026-08-24;
-  tests measured peaks, queue progression, setup-before-run ordering, and the
-  configured ceiling. Historical scale
-  evidence is **STALE**: committed records measured peak concurrency 4 and 6 in
-  forced arms under the then-authorized setup, before latest lifecycle changes.
-- **Dependencies/retest triggers:** semaphore/config ceiling, scheduler,
-  worktree setup, cancellation, or lease changes. **Live evidence:** final
-  acceptance observed peak 3 at the published configured ceiling, with 3/3
-  isolated checks, queued progress, 3 attempted/3 applied integrations, and
-  complete worktree cleanup. A distinct fresh-server run then configured 2,
-  queued 4 read-only tasks, reached but never exceeded peak 2, started the later
-  two workers only after slots opened, completed 4/4, and removed all four
-  worktrees and leases. Typed events and the reduced activity snapshot agreed
-  on configured 2, current 0, peak 2, and 4/0 results. Live state is **DEEP
-  PASS** for the repeated configured-limit evidence, not a broader scale claim.
-- **Confidence:** **Battle-tested**. Two distinct live configured limits now
-  complement broad deterministic happy, queue, cancellation, setup, and failure
-  coverage.
-
-### Adaptive worker effort
-
-- **Implementation/tests:** `src/contract.ts`, `src/prompt.ts`, `src/worker.ts`;
-  `src/selftest.ts`, `src/parallel.test.ts`, `src/guidance.test.ts`.
-- **Authority/history:** `SOL_RULES.md`, `docs/CONFIGURATION.md`, `README.md`;
-  `a03a325` (2026-08-14).
-- **Evidence:** Coverage and targeted deterministic execution **PASS** on
-  2026-08-24. Historical benchmark evidence is **STALE**: 2026-08-14 records show
-  per-task medium/high/xhigh choices and no max selection, but later
-  prompt/schema/evidence changes affect freshness. Current fresh-parent live
-  evidence naturally selected high effort for a broad cross-module audit, three
-  independent release-readiness streams, and a cross-surface privacy audit. A
-  separate environment-variable traceability task naturally split into a
-  medium-effort mechanical documentation inventory and a high-effort focused-test
-  coverage audit; typed events prove both real Luna starts and 2/2 PASS with no
-  observed edits.
-- **Dependencies/retest triggers:** effort ladder/default, worker prompt/schema,
-  continuation/repair attempt rules, parent routing guidance, or model support
-  changes. Live is **PASS**: medium and high were selected naturally for
-  materially different, plausibly matched subtasks. No xhigh or max selection is
-  claimed.
-- **Confidence:** **Strong**.
-
-### Independent verification
-
-- **Implementation/tests:** `src/verify.ts`, `src/command.ts`, `src/worker.ts`;
-  `src/security.test.ts`, `src/selftest.ts`, `src/evidence.test.ts`.
-- **Authority/history:** `SECURITY.md`, `SOL_RULES.md`, `CONTRIBUTING.md`;
-  initial implementation in `a03a325` (2026-08-14), hardening in `908c977`
-  (2026-08-23).
-- **Evidence:** Coverage and targeted deterministic execution **PASS** on
-  2026-08-24, including real exit-code capture, timeout, refusal, authority
-  ordering, and output handling. Current live acceptance **DEEP PASS**: single,
-  sequential, parallel, continuation, and repaired tasks ran configured
-  authoritative verification; controlled repair exercised an initial
-  authoritative failure and successful rerun; and the exact contradiction case
-  preserved a failed worker row beside a passing authoritative row. Linux
-  deterministic evidence additionally exercised the real POSIX detached
-  process-group timeout path, verified exitCode: null timeout classification,
-  and established that the spawned descendant exited and stopped writing.
-- **Dependencies/retest triggers:** verification policy/parser, command runner,
-  worker output schema, or authoritative evidence rules. **Gap:** raw
-  final-campaign verification rows are not committed; command refusal and
-  timeout paths remain deterministic-only.
-- **Confidence:** **Strong**.
-
-### Claimed-versus-observed reconciliation
-
-- **Implementation/tests:** `src/worker.ts`, `src/batch.ts`, `src/worktree.ts`;
-  `src/evidence.test.ts`, `src/parallel.test.ts`, `src/selftest.ts`.
-- **Authority/history:** `README.md`, `SOL_RULES.md`, `SECURITY.md`; initial
-  implementation `a03a325`, latest contradiction/evidence fixes `908c977` and
-  `6d610b3` (2026-08-23).
-- **Evidence:** Coverage and targeted deterministic execution **PASS** on
-  2026-08-24 for claimed files, observed edits, forbidden edits, final Git
-  snapshots, and discrepancies. Final live acceptance **DEEP PASS**: single and
-  sequential authoritative results matched actual Git state; parallel
-  integration matched two disjoint edits; and retained-worktree continuation
-  reconciled both the original and follow-up files. Historical benchmark workers
-  did not produce false passes, but that remains **STALE** context rather than
-  current adversarial evidence.
-- **Dependencies/retest triggers:** Git snapshot/reconciliation, change intent,
-  worktree integration, worker schema, or final-verdict rules. **Gap:** raw
-  final-campaign artifacts are not committed and no deceptive worker claim was
-  forced live.
-- **Confidence:** **Strong**.
-
-### Context Capsule v2
-
-- **Implementation/tests:** `src/contract.ts`, `src/prompt.ts`, `src/server.ts`;
-  `src/prompt.test.ts`, `src/evidence.test.ts`, `src/guidance.test.ts`.
-- **Authority/history:** `CHANGELOG.md` v0.7.0, `SOL_RULES.md`, `ROADMAP.md` P0.1;
-  `debd8cb` (2026-08-19).
-- **Evidence:** Coverage and targeted deterministic execution **PASS** on
-  2026-08-24; tests cover optional fields, omission of empty values, ordering,
-  bounded rendering, malformed input, and activity privacy. The 2026-08-24
-  session-local documentation run exercised Context Capsule v2, but its raw
-  artifacts are not committed. Current live **PASS** produced an exact verified
-  JSON artifact whose service, numeric port, and trace-header values materially
-  depended on the structured capsule; the private sentinel did not enter
-  campaign activity telemetry.
-- **Dependencies/retest triggers:** capsule schema/prompt rendering, prompt
-  boundaries, worker contract, or telemetry changes. **Gap:** no model-backed
-  context-efficiency measurement is committed.
-- **Confidence:** **Strong**.
-
-### Compact Evidence Packets
-
-- **Implementation/tests:** `src/evidence.test.ts`, `src/worker.ts`,
-  `src/server.ts`, `src/contract.ts`.
-- **Authority/history:** `CHANGELOG.md` v0.7.0, `SOL_RULES.md`, `ROADMAP.md` P0.2;
-  `debd8cb` (2026-08-19).
-- **Evidence:** Coverage and targeted deterministic execution **PASS** on
-  2026-08-24; tests verify compact/full defaults, removal of only passing output,
-  retention of failures, discrepancies, scope evidence, and text parity. The
-  2026-08-24 session-local documentation run exercised compact result packets,
-  but its raw artifacts are not committed. Current live **DEEP PASS** includes
-  compact verified success plus compact scope-failure and same-file-conflict
-  results that retained discrepancies, terminal evidence, conflicts, files,
-  and review guidance while removing only passing verbosity.
-- **Dependencies/retest triggers:** result schema/detail projection, verification
-  capture, failure handling, or batch result rendering changes.
-- **Confidence:** **Strong**.
-
-### CLI init/doctor/status/uninstall
-
-- **Implementation/tests:** `src/cli.ts`, `src/cli/init.ts`, `src/cli/doctor.ts`,
-  `src/cli/uninstall.ts`, `src/cli/settings.ts`, `src/cli/toml-edit.ts`;
-  `src/cli.test.ts`, `src/activity-config.test.ts`, `src/smoke-cli.ts`.
-- **Authority/history:** `README.md`, `docs/CONFIGURATION.md`,
-  `docs/TROUBLESHOOTING.md`, `CHANGELOG.md` v0.5.0/v0.6.1/v0.8.0; `868726b`
-  (2026-08-14), `c966365` (2026-08-22).
-- **Evidence:** Coverage and targeted deterministic execution **PASS** on
-  2026-08-24. The CLI and CLI-activity configuration suites covered idempotent
-  init, repair, doctor, status, uninstall, dry-run, migration, and discovery-hint
-  behavior. Current published-CLI acceptance **PASS** used an isolated campaign
-  `CODEX_HOME` for init/repeat/dry-run/doctor/status/activity/reconciliation/
-  backup/uninstall, preserving unrelated TOML and user instruction bytes.
-- **Dependencies/retest triggers:** Codex config format, Node/Codex versions,
-  path resolution, discovery-hint ownership, or CLI writes. The packaged/local
-  smoke:cli program was rerun on both campaign platforms. The focused Linux
-  run passed all 11 lifecycle groups with the real Codex CLI and temporary
-  isolated CODEX_HOME directories; no user Codex home was mutated. This closes
-  the prior missing POSIX lifecycle execution, while a broader live platform
-  matrix remains uncommitted.
-- **Confidence:** **Strong**.
-
-### Activity, observability, and privacy
-
-- **Implementation/tests:** `src/events.ts`, `src/activity.test.ts`,
-  `src/activity-watch.test.ts`, `src/activity-config.test.ts`,
-  `src/cli/activity.ts`, `src/cli/activity-reducer.ts`, `docs/OBSERVABILITY.md`.
-- **Authority/history:** `docs/OBSERVABILITY.md`, `SECURITY.md`, `CHANGELOG.md`
-  v0.6.0/v0.8.0; `ce42a06` (2026-08-17), `deca34d` (2026-08-22), `da496df`
-  (2026-08-23).
-- **Evidence:** Coverage and deterministic execution **PASS** on 2026-08-24:
-  event-path configuration, prompt-to-activity privacy, reducer, watch,
-  redaction, legacy compatibility, and latest-batch suites all passed. Historical
-  live acceptance **DEEP PASS**: human and JSON
-  activity views reflected actual sequential, parallel, integration,
-  concurrency, and retained-worktree state. The private sentinel was absent from
-  both views and appended telemetry, which contained neither objective nor
-  context fields.
-- **Dependencies/retest triggers:** event schema, reducer projection, path
-  resolution, privacy fields, watch attachment, or CLI rendering changes.
-  That live run still supports the unchanged privacy and activity projections;
-  current retention-neutral integration wording and truthful retained/removed
-  projection are covered deterministically after the retention-policy change.
-  **Gap:** raw activity and telemetry artifacts are not committed; diagnostic
-  logs and tool-result evidence remain more sensitive than activity events.
-  Historical pre-hardening JSONL may contain objective fields that current
-  writers exclude.
-- **Confidence:** **Strong**.
-
-### Natural discovery
-
-- **Implementation/tests:** `src/cli/discovery-hint.ts`, `src/cli/init.ts`,
-  `src/cli/doctor.ts`, `src/cli.test.ts`, `src/activity-config.test.ts`,
-  `src/guidance.test.ts`.
-- **Authority/history:** setup mechanics in `docs/CONFIGURATION.md`; routing
-  policy in `SOL_RULES.md`; acceptance procedure in `CONTRIBUTING.md`;
-  `CHANGELOG.md` v0.8.0; `c966365` (2026-08-22), then
-  `deca34d` and `4118525` (2026-08-22).
-- **Evidence:** Coverage and targeted deterministic execution **PASS** on
-  2026-08-24 for installation, opt-out, override, and guidance behavior. The
-  committed live record reports one 2026-08-22 fresh-session run found the
-  orchestrator unprompted, but its transcript and diagnostic evidence were not
-  retained, so it was previously **PARTIAL**. Current live **PASS** records six
-  fresh-parent run and worker identifiers whose informed routing decisions span
-  zero workers, one high-effort Luna task, a three-task high-effort parallel
-  batch, and a mixed medium/high two-task parallel batch, each with independent
-  parent review. Raw JSONL transcripts are retained locally under the ignored
-  acceptance-artifact path and are not committed.
-- **Dependencies/retest triggers:** global instruction-file selection, hint text,
-  Codex startup/discovery behavior, parent guidance, or init/uninstall changes.
-  **Gap:** no fresh parent naturally selected sequential batching; natural
-  parallel batching now has current representative evidence.
-- **Confidence:** **Strong**.
-
-### Explicit Change Intent
-
-- **Implementation/tests:** `src/contract.ts`, `src/prompt.ts`, `src/worker.ts`,
-  `src/server.ts`; `src/selftest.ts`, `src/prompt.test.ts`,
-  `src/evidence.test.ts`, `src/parallel.test.ts`, `src/guidance.test.ts`.
-- **Authority/history:** `ROADMAP.md` P0.2a (implemented for v0.9.0),
-  `SOL_RULES.md`, `README.md`; `d1be8d6` (2026-08-23).
-- **Evidence:** Coverage and targeted deterministic execution **PASS** on
-  2026-08-24 for `required`, `optional`, and `forbidden`, independent of
-  `allowedFiles` and task category, including zero-change and forbidden-edit
-  classification. Current live **DEEP PASS** covers required edits across single,
-  sequential, parallel, repair, contradiction, and continuation; legitimate
-  optional and forbidden zero-change tasks; and fail-closed scope precedence
-  from a malformed supervisor contract.
-- **Dependencies/retest triggers:** contract/schema, worker prompt, observed-file
-  reconciliation, repair admission, or release of P0.2a.
-- **Confidence:** **Strong**.
-
-### Worker Continuation
-
-- **Implementation/tests:** `src/continuation.ts`, `src/batch.ts`,
-  `src/contract.ts`, `src/server.ts`; `src/selftest.ts`, `src/parallel.test.ts`,
-  `src/evidence.test.ts`, `src/guidance.test.ts`.
-- **Authority/history:** `ROADMAP.md` P0.3 (implemented for v0.9.0),
-  `SOL_RULES.md`, `docs/OBSERVABILITY.md`; `cdaf9f5` and `da496df`
-  (2026-08-23).
-- **Evidence:** Coverage and targeted deterministic execution **PASS** on
-  2026-08-24 for opaque single-use expiry, exact-thread resume, immutable
-  contract, repeat verification, integrated/retained worktree binding, lease
-  protection, terminal cancellation, dependency-link reconciliation, and all
-  retention modes. The focused lifecycle and policy closures advanced deterministic evidence to
-  **DEEP PASS**: a real retained continuation crossed store consumption, lease
-  refresh, same-thread/immutable-contract checks, server start/failure events,
-  handler `finally`, replay refusal, lease release, and stale-worktree pruning in
-  one test. Historical live acceptance is **DEEP PASS** for the unaffected
-  continuation behavior: an integration-disabled worktree
-  was retained, the continuation resumed the same Luna thread, completed a real
-  follow-up edit, and reconciled both retained files under the unchanged original
-  contract. Replay was rejected and lease artifacts were released according to
-  the configured policy. That run predates the cancellation-eligibility,
-  dependency-link, and retention-precedence fixes and is not used as proof of
-  those changed semantics; current deterministic regressions are their authority.
-- **Dependencies/retest triggers:** continuation TTL/reference store, worktree
-  leases, final Git reconciliation, contract fields, or worker lifecycle changes.
-  Raw final-campaign artifacts are not committed and expiry was not exercised
-  live, but the abnormal consumed-continuation finalization blocker now has a
-  durable deterministic regression.
-- **Confidence:** **Battle-tested**.
-
-### Bounded Repair
-
-- **Implementation/tests:** `src/worker.ts`, `src/batch.ts`, `src/contract.ts`,
-  `src/events.ts`, `src/continuation.ts`; `src/evidence.test.ts`,
-  `src/activity.test.ts`, `src/guidance.test.ts`, `src/selftest.ts`.
-- **Authority/history:** `ROADMAP.md` P0.4 (implemented for v0.9.0),
-  `SOL_RULES.md`, `docs/OBSERVABILITY.md`; `9d2ebe9` and `da496df`
-  (2026-08-23).
-- **Evidence:** Coverage and targeted deterministic execution **PASS** on
-  2026-08-24 for the conservative classifier, exact failure evidence,
-  same-thread one-turn repair, immutable change intent, re-verification, and
-  exhaustion behavior. Current live **DEEP PASS** includes two conservative
-  non-admissions with distinct environment/claims discrepancies and one clean
-  `local-verification` admission with exactly one same-thread repair and final
-  authoritative PASS.
-- **Dependencies/retest triggers:** verifier authority, failure classification,
-  continuation, change intent, event lifecycle, or worker thread reuse changes.
-  **Gap:** recursive repair is proven only deterministically, by design.
-- **Confidence:** **Strong**.
-
-### P1.0 parent/pricing foundation
-
-- **Implementation/tests:** `src/cost.ts`, `src/worker.ts`, `src/contract.ts`,
-  `src/events.ts`, `src/server.ts`, `src/batch.ts`, `src/continuation.ts`,
-  `src/cli/activity-reducer.ts`; `src/selftest.ts`, `src/guidance.test.ts`,
-  `src/activity.test.ts`, `src/evidence.test.ts`, `src/parallel.test.ts`.
-- **Authority/history:** `ROADMAP.md` P1.0 (foundation implemented for v0.9.0),
-  `docs/CONFIGURATION.md`, `SOL_RULES.md`; `2d6e4c6` (2026-08-23).
-- **Evidence:** Coverage and deterministic execution **PASS** on 2026-08-24 for
-  explicit parent-identity provenance, distinct billing contexts, promotional
-  cards, all rate bases and charge-unit shapes, observed usage meters, complete
-  post-hoc eligibility, stable unavailable reasons (including missing input and
-  non-finite totals), freshness/effective bounds, and no inferred prices. Live
-  acceptance is **N/A** for these pure post-hoc primitives: real campaign usage
-  was observed, but no production rate-card lookup, billing-account consumer,
-  cost-based routing consumer, or cost-calculation API exists.
-- **Attempt-evidence hardening:** Targeted deterministic execution **DEEP PASS**
-  on 2026-08-26 for authoritative success usage; `turn.failed`; stream and
-  abnormal-process errors; failure before `thread.started`; timeout and external
-  cancellation; partial message/file retention; exactly one terminal record per
-  start; non-1 ordinals; attributed verification; immutable automatic-repair,
-  manual-continuation, timeout-recovery, and process-retry lineage; successful
-  sibling preservation; post-execution lifecycle failure; activity compatibility
-  and privacy; compact/full/handoff projection; and complete versus incomplete
-  aggregate usage. No model-backed benchmark or live worker call was used.
-- **Dependencies/retest triggers:** cost-input schema, rate-card applicability,
-  usage projection, attempt/result/event schema, worker lifecycle, repair,
-  continuation, recovery, activity reduction, identity provenance, or any future
-  routing/policy consumer.
-  **Gap:** this foundation implements no price retrieval, account lookup,
-  prediction, cost-based routing, or measured saving; it remains limited to
-  post-hoc evidence. Adaptive compute policy is recorded separately above.
-- **Confidence:** **Strong** for the shipped bounded foundation. P1.1 policy
-  evidence is recorded separately above; pricing services remain future work.
-
-### Worker `failureCauses` and authoritative-verification contradiction handling
-
-- **Implementation/tests:** `src/contract.ts`, `src/prompt.ts`, `src/worker.ts`,
-  `src/batch.ts`; `src/selftest.ts`, `src/prompt.test.ts`, `src/evidence.test.ts`,
-  `src/parallel.test.ts`, `src/guidance.test.ts`.
-- **Authority/history:** `CHANGELOG.md` v0.9.0, `README.md`, `SOL_RULES.md`,
-  `ROADMAP.md` P1.1 note; `908c977` and `6d610b3` (2026-08-23).
-- **Evidence:** Coverage and targeted deterministic execution **PASS** on
-  2026-08-24 for strict status-aligned causes, legacy normalization, malformed
-  reports, complete one-to-one authoritative contradiction promotion only for a
-  sole `verification` cause, terminal-evidence vetoes, and preserved worker claim
-  / untrustworthy result. Current live **PASS** exercised the exact narrow
-  promotion with a required observed edit, worker `FAILED`, sole `verification`
-  cause, matching failed worker row, passing authoritative rerun, preserved
-  discrepancy/provenance, and activity `claimed: FAILED` versus `verdict: PASS`.
-- **Dependencies/retest triggers:** external worker schema, verification
-  authority/equivalence, final Git evidence, repair classifier, or failure
-  rendering changes. **Gap:** this historical run proves the contradiction
-  boundary, not the later P1.1 classifier; deterministic negative controls remain the
-  authority for malformed and veto cases.
-- **Confidence:** **Strong**.
-
-## Closure campaign boundary
-
-P2.4 Mature Benchmark and Acceptance completed against the v0.11.0 production
-baseline. It does not retroactively erase the deterministic, historical
-benchmark, or documented session-local live evidence above. Because routing
-changed after that campaign, its routing and performance evidence is **STALE**
-for the corrected runtime until a deliberate full rerun at that runtime baseline
-exists; unknown execution dates remain unknown.
+- **NOT TESTED:** the capability exists, but no applicable live execution is
+  established.
+- **PARTIAL:** only part of the relevant surface has applicable evidence.
+- **PASS:** the stated relevant path passed at the stated baseline.
+- **DEEP PASS:** broad or repeated evidence also exercised important failure or
+  integration boundaries.
+
+Confidence is **Unverified**, **Basic**, **Strong**, or **Battle-tested**.
+Coverage means an applicable test or artifact exists; execution means it
+actually ran. Freshness is dependency-aware: an unrelated documentation change
+does not stale runtime evidence, while a changed semantic seam requires fresh
+evidence for that seam.

@@ -1,5 +1,5 @@
 /**
- * P2.x capability lifecycle: reserve -> commit/release, and the ownership a
+ * Capability lifecycle: reserve -> commit/release, and the ownership a
  * reservation, an expiry, or a concurrent sibling must settle exactly once.
  *
  * Every concurrency test here is deterministic. Interleavings are driven by

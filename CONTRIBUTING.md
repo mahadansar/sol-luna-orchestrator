@@ -15,11 +15,10 @@ npm test          # unit, security, parallel and CLI tests; no model calls
 npm run smoke     # MCP protocol handshake, no model calls
 ```
 
-Build, typecheck, formatting, tests, `smoke`, `smoke:cli`, `bench:validate`,
-`bench:report`, and `bench:analyze` are deterministic and make no model calls.
-Only the explicitly live-model scripts (`smoke:live`, `smoke:parallel`,
-`smoke:isolation`, and `bench`) invoke real Codex turns; they may consume the
-quota or billing associated with your Codex setup.
+Build, typecheck, formatting, tests, `smoke`, and `smoke:cli` are deterministic
+and make no model calls. Only the explicitly live-model scripts (`smoke:live`,
+`smoke:parallel`, and `smoke:isolation`) invoke real Codex turns; they may
+consume the quota or billing associated with your Codex setup.
 
 ## Developing the MCP locally
 
@@ -66,12 +65,10 @@ absolute `dist/server.js` path, not a path under a global `node_modules`.
 
 ## Ground rules
 
-**Verify against the real thing, not the documentation.** Several behaviours in
-this project contradict what the docs imply — `mcp_servers={}` not isolating
-workers, `default_tools_approval_mode = "auto"` cancelling every call, and older
-SDK effort types omitting `max` that the CLI accepted. Each was found by running
-it. The current SDK types `max` directly. If you change something in that area,
-run it.
+**Verify against the real thing, not assumptions about the client or SDK.** MCP
+configuration merging, tool approval, model catalog behavior, and process
+isolation can differ from what a caller expects. The current SDK types `max`
+directly. If you change something in that area, run it.
 
 **Don't let a model's self-report be the test.** A low-effort model will happily
 claim it has a tool it does not have. The isolation test asserts against the
@@ -86,7 +83,7 @@ file hashes, process logs.
 
 | Path                          | What it is                                                                      |
 | ----------------------------- | ------------------------------------------------------------------------------- |
-| `src/server.ts`               | MCP server; registers `delegate_task` and `delegate_tasks`                      |
+| `src/server.ts`               | MCP server; registers the five parent-facing tools and owns their lifecycle     |
 | `src/worker.ts`               | Single-worker lifecycle, concurrency slots, claim-checking                      |
 | `src/batch.ts`                | Batch scheduling, integration, cleanup                                          |
 | `src/worktree.ts`             | Per-task git worktree lifecycle                                                 |
@@ -104,7 +101,6 @@ file hashes, process logs.
 | `src/cli/activity-reducer.ts` | Pure event-stream reducer producing an activity snapshot                        |
 | `src/cli/events-path.ts`      | Canonical resolver for the effective activity event file                        |
 | `src/cli/`                    | Other CLI internals, including the surgical TOML config editor                  |
-| `src/bench/`                  | Benchmark harness and fixtures                                                  |
 
 Pure logic lives apart from I/O on purpose. `buildDelegationResult` takes
 measurements and returns a report with no side effects, which is why the
@@ -116,71 +112,6 @@ claim-checking rules are cheap to test.
 - `npm run format` (Prettier) before opening a PR.
 - Comment _why_, not _what_. Most existing comments record a non-obvious
   constraint or a behaviour that was verified experimentally — keep that bar.
-
-## Changing the benchmark
-
-`npm run bench:validate` proves every fixture fails in its starting state and
-passes with its hidden reference solution, including mutation detection where
-tests are the deliverable. Run it after changing `src/bench/v2-tasks.ts` or
-`src/bench/v2-solutions.ts`.
-
-Benchmark V2 has eight realistic task shapes: two small, two medium/ambiguous,
-three delegation-friendly, and one coupled control. Its arms all use
-`gpt-5.6-sol` at Medium: Solo disables orchestration in configuration, Adaptive
-leaves the normal zero/one/many-worker decision to Sol, and Forced uses only the
-four predeclared tasks with a legitimate single or parallel seam. Do not add an
-artificial sequential or tightly coupled forced split.
-
-The result schema embeds its versioned pricing profile and records nullable
-`actualCredits` separately from calculated `rateCardCredits`. Missing usage is
-unknown, never zero. Preserve old raw JSON unchanged; historical repricing is an
-explicit, labelled report option and does not establish historical billing.
-Schema-4 runs also persist `creditAccounting.participants`: one supervisor row
-and one row per worker with model, selected effort, flat usage meters, individual
-rate-card credits, available telemetry identifiers, and per-worker duration.
-Participant credits must reconcile to the Sol/Luna/run aggregates whenever all
-usage is known; parallel worker durations are never summed into wall-clock.
-
-Benchmark V2 runs at normal/standard Codex speed. The installed SDK has no
-supported per-thread speed or service-tier setting, so disable Fast mode in the
-ChatGPT/Codex account before launch. The live commands must explicitly pass
-`--confirm-standard-speed` to acknowledge that precondition; without it the
-harness exits before a model turn. Schema 4 records the execution profile and
-SDK limitation. The flag does not inspect account settings.
-
-`npm run bench:report -- <file>` summarizes one result file.
-`npm run bench:analyze -- bench/results --campaign <id>` combines schema-4 files
-for one campaign only after checking that their pricing profiles match. Both are
-deterministic. The report
-orders correctness, credits, and latency, includes Pareto trade-off labels, and
-recommends selective third repetitions without launching them.
-After reviewing a completed campaign, add `--output bench/RESULTS.md` to replace
-the pre-campaign methodology page with the combined measured report.
-
-The live campaign requires explicit authorization. After disabling Fast mode,
-`npm run bench:v2 -- --confirm-standard-speed` performs 32 Solo/Adaptive runs
-and `npm run bench:v2:forced -- --confirm-standard-speed` performs eight forced
-runs. Do not change production defaults, prompts, fixtures, rate profiles, or
-stopping rules after reading results to improve a benchmark number.
-
-Campaign cells are identified by campaign ID, task, arm, and repetition. Startup
-validates every existing schema-4 shard for the selected campaign and refuses
-incompatible metadata, duplicate cells, or an accidental ordinary rerun before
-any model call. The non-overlapping Forced phase remains a normal invocation.
-After an interruption, inspect the checkpoint and add `--resume` to the same
-command. Resume treats PASS and FAIL as completed evidence, skips them, and
-checkpoints only missing cells into a new timestamped shard; a fully complete
-resume is a successful no-op. Never delete or edit an earlier shard to force a
-rerun.
-
-Checkpoint replacement writes and flushes a unique temporary file beside the
-target before renaming it over the current shard. Do not replace this with an
-in-place write: on interruption that can expose truncated JSON. Temporary files
-end in `.tmp`, are best-effort cleaned after handled failures, and are not result
-shards.
-
-Do not report benchmark numbers that the committed raw results in
-`bench/results/` do not support.
 
 ## Live model-backed acceptance
 
@@ -200,10 +131,10 @@ npm run typecheck
 npm test
 ```
 
-`npm run verify` also runs the model-free MCP protocol handshake and frozen
-benchmark-fixture validation. `npm run smoke:cli` is an additional deterministic
-installed-CLI check, but it requires a real Codex CLI installation and login
-state, so it is intentionally not part of the clean-environment npm/CI gate.
+`npm run verify` also runs the model-free MCP protocol handshake.
+`npm run smoke:cli` is an additional deterministic installed-CLI check, but it
+requires a real Codex CLI installation and login state, so it is intentionally
+not part of the clean-environment npm/CI gate.
 Run it for CLI compatibility or release acceptance when that dependency is
 available. Record the real totals, including skips: a test skipped for a
 platform permission is a skip, not a pass.
@@ -305,8 +236,7 @@ the implementation being released:
 - `CONTRIBUTING.md`
 - `docs/FEATURE_ACCEPTANCE.md`
 
-Also audit `bench/RESULTS.md` when benchmark, routing, model, or performance
-claims changed. Audit the root or scoped `AGENTS.md` files and
+Audit the root or scoped `AGENTS.md` files and
 `.github/pull_request_template.md` when architecture, ownership, test selection,
 security-sensitive modules, or the release workflow changed. Reconcile the
 intended transient GitHub Release body against the matching `CHANGELOG.md`
@@ -321,7 +251,8 @@ affected canonical document in the same change.
    `CHANGELOG.md` entry. Prepare and review the intended GitHub Release body
    transiently from that entry; do not commit a second release-body source.
 2. Commit and push the release candidate to `main`.
-3. Wait for the required CI checks to pass on that exact `main` commit.
+3. While automatic CI is paused, manually dispatch `.github/workflows/ci.yml`
+   for that exact `main` commit and wait for every matrix job to pass.
 4. Create the annotated release tag from that validated commit and push it:
    `git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`.
 5. `.github/workflows/publish.yml` fires on the tag. It refuses to continue if
@@ -339,9 +270,6 @@ affected canonical document in the same change.
 Only tags matching `vX.Y.Z` trigger a publish. Branches and pull requests never
 can. Pre-release tags such as `v1.0.0-rc.1` deliberately do not match; publishing
 one is a manual decision.
-
-v0.5.0 was published manually before this was set up, so it carries no provenance
-attestation. Everything from v0.5.1 onward is published this way.
 
 ## Pull requests
 

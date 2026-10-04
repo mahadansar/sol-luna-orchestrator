@@ -24,7 +24,7 @@ export let LUNA_MODEL = CONFIGURED_LUNA_MODEL;
  *
  * Note: `mcp_servers={}` does NOT work for this — Codex merges that override
  * into the existing table rather than replacing it, and every server still
- * starts. Verified against codex-cli 0.147.0.
+ * starts.
  */
 export const DEFAULT_ORCHESTRATOR_SERVER_NAME = "sol-luna-orchestrator";
 export const ORCHESTRATOR_SERVER_NAME =
@@ -297,8 +297,7 @@ export const ALLOWED_WORKSPACE_ROOTS = parseAllowedWorkspaceRoots(
  * Optional JSONL file recording one line per completed delegation.
  *
  * Machine-readable counterpart to SOL_LUNA_LOG: effort, verdict, duration and
- * token usage. The benchmark harness reads this; it is also the honest way to
- * see what delegation actually costs you.
+ * token usage. This is the source for local activity and accounting evidence.
  */
 export const EVENTS_FILE = parseAbsoluteOptionalPath(process.env.SOL_LUNA_EVENTS);
 export const EVENTS_FILE_INVALID = absoluteOptionalPathInvalid(
@@ -540,7 +539,7 @@ export const ALLOW_DIRTY_WORKTREE_BASE = process.env.SOL_LUNA_ALLOW_DIRTY === "1
 export const MAX_OUTPUT_CHARS = 4000;
 
 /**
- * Context lifecycle management defaults and environment overrides (P1.3).
+ * Context lifecycle management defaults and environment overrides.
  */
 export const DEFAULT_CONTEXT_MAX_BYTES = 50_000;
 export const DEFAULT_CONTEXT_MAX_TURNS = 20;

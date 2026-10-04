@@ -1,13 +1,13 @@
 /**
- * P2.3 End-to-End Automated Workflow Engine.
+ * End-to-end automated workflow engine.
  *
  * Provides a bounded, supervisor-driven capstone workflow that coordinates
  * task intake, optional exploration, semantic decomposition / adaptive routing,
  * zero-worker solo resolution, single / batch delegation, authoritative verification,
- * P1.1 failure classification, bounded repair / recovery / continuation, and
+ * evidence-driven failure classification, bounded repair / recovery / continuation, and
  * evidence-earned next-action escalation without creating a second orchestration system.
  *
- * Reuses existing P1/P2 primitives directly:
+ * Reuses existing orchestration primitives directly:
  * - Admission & compute policy (`admitCompute`)
  * - Semantic seam planning and adaptive routing (`routeAdaptiveTask`)
  * - Optional explorer (`handleExplore`)
@@ -135,7 +135,7 @@ export interface WorkflowInput {
   readonly routingPreflight?: RoutingPreflightInput;
   /** Optional compute policy narrowing. */
   readonly computePolicy?: Partial<ComputePolicy>;
-  /** Optional caller-supplied session handoff from P2.2. */
+  /** Optional caller-supplied cross-session handoff. */
   readonly sessionHandoff?: string | SessionHandoffArtifact;
   /** Optional follow-up instruction for continuations if continuationReference is provided. */
   readonly continuationInstruction?: string;
@@ -224,14 +224,14 @@ function boundedCount(
 /**
  * Execute one bounded, supervisor-driven automated workflow end-to-end.
  *
- * Implements P2.3 automated lifecycle:
+ * Implements the bounded automated lifecycle:
  * 1. Initial assessment (and session-handoff context intake)
  * 2. Optional exploration companion
  * 3. Semantic decomposition & adaptive routing
  * 4. Zero-worker solo resolution
  * 5. Single / batch delegation
  * 6. Authoritative verification
- * 7. P1.1 failure classification
+ * 7. Failure classification
  * 8. Bounded repair / recovery / continuation
  * 9. Evidence-earned next-action handoff & escalation
  * 10. Final verified completion or parent takeover
@@ -894,7 +894,7 @@ export async function executeWorkflow(
             } else if (finalTaskResult.verdict === "BLOCKED") {
               transitionTo("blocked", finalTaskResult.notes || "Worker declared blocked");
             } else {
-              // FAILED: Evaluate P1.1 failure decision
+              // FAILED: Evaluate the failure decision
               const decision = lastFailureDecision ?? finalTaskResult.failureDecision;
               details.failureAction = decision?.action;
               details.failureClassification = decision?.classification;

@@ -20,12 +20,11 @@
  * recommend Solo and nothing more; the parent keeps the decision.
  *
  * Deliberately absent: filesystem access, child processes, network, model calls,
- * repo-wide analysis, weighted scores, and benchmark-tuned thresholds. The single
+ * repo-wide analysis, weighted scores, and workload-tuned thresholds. The single
  * import is type-only, so at runtime this module still depends on nothing at all
  * and still reads nothing but its arguments: the compute envelope a recommended
  * shape is bounded by is passed in, never read from the process. This file must
- * stay trivially cheap to run and trivially easy to reason about, and it must
- * never import benchmark code.
+ * stay trivially cheap to run and trivially easy to reason about.
  */
 import type { Effort } from "./config.js";
 
@@ -647,8 +646,8 @@ export function evaluateRouting(
     ...routeNeutralAdvisories(card, context),
   ];
 
-  // Ordered route table, first match wins. No weighted score, no numeric
-  // economic score, no benchmark-tuned threshold.
+  // Ordered route table, first match wins. No weighted score and no numeric
+  // economic threshold.
   let route: RoutingRoute;
   let ruleId: RoutingRuleId;
   if (card.seams.length === 0) {

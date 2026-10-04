@@ -10,14 +10,12 @@ import {
   restoreSessionHandoff,
   restoreSessionHandoffIntoStore,
   serializeSessionHandoff,
-  SESSION_HANDOFF_PREFIX,
   SESSION_HANDOFF_MAX_BYTES,
   SESSION_HANDOFF_SCHEMA_VERSION,
   validateSessionHandoff,
   type SessionHandoffArtifact,
 } from "./session-handoff.js";
 import {
-  compactContext,
   ContextLifecycleStore,
   createOrchestrationContext,
   ingestDelegationTurn,
@@ -28,7 +26,6 @@ import {
   recordConstraint,
   recordDecision,
   resolveBlocker,
-  type OrchestrationContext,
 } from "./context.js";
 import type {
   DelegateTaskInput,
@@ -45,7 +42,7 @@ function mockCleanTaskInput(
   overrides: Partial<DelegateTaskInput> = {},
 ): DelegateTaskInput {
   return {
-    objective: "Implement P2.2 Lightweight Cross-Session Handoff in Sol-Luna.",
+    objective: "Implement lightweight cross-session handoff in Sol-Luna.",
     effort: "high",
     effortReason:
       "Core cross-session persistence primitive with strict security guarantees",
@@ -523,6 +520,8 @@ test("strictly segregates worker claims, runtime-observed facts, inferences, and
 
   const artifact = exportSessionHandoff(ctx);
   const findings = artifact.investigationFindings;
+
+  assert.equal(artifact.metadata.sourceVersion, "0.13.0");
 
   // Grounded worker claims
   assert.equal(findings.observedFacts.length, 2);

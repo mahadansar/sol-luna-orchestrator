@@ -5,7 +5,7 @@ on:
 
 # No API keys, no model calls, no network access to OpenAI. Everything here is
 # deterministic. Tests that need a real Codex login live in the `smoke:live`,
-# `smoke:parallel` and `bench` scripts and are deliberately not run here.
+# `smoke:isolation` and `smoke:parallel` scripts and are deliberately not run here.
 permissions:
   contents: read
 
@@ -66,11 +66,6 @@ jobs:
       # handshake. Needs no model access.
       - name: MCP protocol smoke test
         run: node dist/smoke-protocol.js
-
-      # Proves each benchmark fixture fails in its starting state and passes
-      # with its committed reference solution.
-      - name: Benchmark fixture validation
-        run: node dist/bench/validate.js
 
       # Catches an accidental change to `files` or `bin` before it reaches npm.
       - name: Packaging check

@@ -290,7 +290,7 @@ test("selection - a stale decision naming a distant level is clamped to one rung
   const result = selectCompute({
     shape: DELEGATING,
     policy: MULTI_MODEL,
-    // P1.1 computes the next rung itself, so this disagreement only arises from
+    // Failure classification computes the next rung itself, so this disagreement only arises from
     // stale or hand-built evidence. It must lower the jump, never honour it.
     evidence: prior("worker-b", "medium", failure("effort-escalation", "max")),
   });
@@ -298,7 +298,7 @@ test("selection - a stale decision naming a distant level is clamped to one rung
   assert.equal(result.reason, "effort-escalated");
 });
 
-test("selection - escalation never selects a level above the one P1.1 named", () => {
+test("selection - escalation never selects a level above the failure decision", () => {
   const result = selectCompute({
     shape: DELEGATING,
     policy: { ...MULTI_MODEL, allowedEfforts: ["medium", "max"] },
@@ -662,7 +662,6 @@ test("selection - the module reads no environment, filesystem, or model code", (
 
   const source = fs.readFileSync(path.join(SRC_DIR, "selection.ts"), "utf8");
   assert.doesNotMatch(source, /process\.env/, "no environment read");
-  assert.doesNotMatch(source, /bench/i, "no benchmark code");
 });
 
 test("selection - worker count and concurrency are not restated as a selection", () => {

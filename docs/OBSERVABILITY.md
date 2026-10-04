@@ -94,7 +94,7 @@ termination, usage status, claimed outcome, and authoritative verification
 counts. A real host crash may leave only the start event; that is truthful
 incomplete evidence rather than a fabricated completion.
 
-Attempt termination is a runtime fact, not a derived P1.1 diagnosis. Known
+Attempt termination is a runtime fact, not a derived failure-policy diagnosis. Known
 categories are `completed`, `timed-out`, `cancelled`, `turn-failed`,
 `stream-error`, `process-exit`, and `runtime-error`. Untyped SDK exceptions stay
 `runtime-error`; their text is not promoted to a network, transport, provider,
@@ -453,8 +453,8 @@ authoritative usage: known + known is summed, while known + unknown and unknown
 The parent's own usage is not among these fields and cannot be: Codex does not
 report the parent turn to an MCP server it launched, so the snapshot's
 `supervisor.usage` is permanently `null` and `supervisor.state` reports only what
-the stream can honestly support. The benchmark harness records parent usage
-separately because it drives the parent itself.
+the stream can honestly support. Any external experiment that drives the parent
+must record parent usage independently.
 
 ## Test isolation
 

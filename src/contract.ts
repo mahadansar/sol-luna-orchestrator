@@ -65,7 +65,7 @@ export const RECOVERY_CLASSIFICATIONS = [
 ] as const;
 export type RecoveryClassification = (typeof RECOVERY_CLASSIFICATIONS)[number];
 
-/** Conservative P1.1 classifications derived from task execution evidence. */
+/** Conservative failure classifications derived from task execution evidence. */
 export const FAILURE_CLASSIFICATIONS = [
   "success",
   "cancellation",
@@ -84,7 +84,7 @@ export const FAILURE_CLASSIFICATIONS = [
 ] as const;
 export type FailureClassification = (typeof FAILURE_CLASSIFICATIONS)[number];
 
-/** One next action selected by P1.1; executor selection remains P1.2-owned. */
+/** One next action selected from failure evidence; executor selection remains separate. */
 export const FAILURE_ACTIONS = [
   "stop",
   "repair",
@@ -128,7 +128,7 @@ export const ATTEMPT_ROLES = [
 ] as const;
 export type AttemptRole = (typeof ATTEMPT_ROLES)[number];
 
-/** Runtime-observed termination facts. These are evidence, not P1.1 policy. */
+/** Runtime-observed termination facts. These are evidence, not failure policy. */
 export const ATTEMPT_TERMINATIONS = [
   "completed",
   "timed-out",
@@ -1008,7 +1008,7 @@ export const delegateTaskOutputShape = {
   failureDecision: failureDecisionShape
     .optional()
     .describe(
-      "P1.1 evidence-derived classification and single next action. Current runtime " +
+      "Evidence-derived failure classification and single next action. Current runtime " +
         "results populate it; omission denotes a historical result. Repair and recovery " +
         "remain the only automatic handlers, and stronger-executor fallback is only a recommendation.",
     ),

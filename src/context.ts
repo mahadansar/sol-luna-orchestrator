@@ -1,4 +1,4 @@
-// P1.3A deterministic context-retention and compaction core.
+// Deterministic context-retention and compaction core.
 // Callers retain the authoritative OrchestrationContext. Compaction returns a
 // redacted, decision-safe projection and never mutates canonical evidence.
 import type {
@@ -1775,7 +1775,7 @@ export function compactContext(
 }
 
 // ============================================================================
-// P1.3B Context Pressure and Trigger Policy
+// Context Pressure and Trigger Policy
 // ============================================================================
 
 export const SAFE_LIFECYCLE_BOUNDARIES = [
@@ -2504,7 +2504,7 @@ export function maybeCompactContext(
 }
 
 // ============================================================================
-// P1.3C Live Context Lifecycle Store & Management
+// Live Context Lifecycle Store & Management
 // ============================================================================
 
 export interface ContextLifecycleStoreOptions {

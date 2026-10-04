@@ -25,6 +25,13 @@ import type {
   DelegateTasksInput,
 } from "./contract.js";
 import type { OrchestratorEvent } from "./events.js";
+import { runGit } from "./git.js";
+
+async function createHermeticGitWorkspace(prefix: string): Promise<string> {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  await runGit(["init", "-q"], workspace);
+  return fs.realpath(workspace);
+}
 
 function makeMinimalOutput(
   overrides: Partial<DelegateTaskOutput> = {},
@@ -114,6 +121,7 @@ function makeCleanReadOnlyOutput(
 }
 
 test("lifecycle - single delegation compaction boundary triggers at post-delegation", async () => {
+  const workspace = await createHermeticGitWorkspace("sol-luna-context-single-");
   const events: OrchestratorEvent[] = [];
   const emit = (event: OrchestratorEvent) => events.push(event);
   const continuationStore = new ContinuationStore();
@@ -129,36 +137,40 @@ test("lifecycle - single delegation compaction boundary triggers at post-delegat
     },
   });
 
-  const task = makeCleanReadOnlyTask();
-  const output = makeCleanReadOnlyOutput();
+  try {
+    const task = makeCleanReadOnlyTask({ workingDirectory: workspace });
+    const output = makeCleanReadOnlyOutput();
 
-  const response = await handleDelegateTask(task, undefined, {
-    continuationStore,
-    handoffStore,
-    contextStore,
-    delegateToLuna: async () => output,
-    emit,
-    makeBatchId: () => "b_test_1",
-  });
+    const response = await handleDelegateTask(task, undefined, {
+      continuationStore,
+      handoffStore,
+      contextStore,
+      delegateToLuna: async () => output,
+      emit,
+      makeBatchId: () => "b_test_1",
+    });
 
-  assert.equal(response.isError, undefined);
-  const authContext = contextStore.getAuthoritativeContext();
-  assert.ok(authContext);
-  assert.equal(authContext.turns.length, 1);
+    assert.equal(response.isError, undefined);
+    const authContext = contextStore.getAuthoritativeContext();
+    assert.ok(authContext);
+    assert.equal(authContext.turns.length, 1);
 
-  const projection = contextStore.getCompactedProjection();
-  assert.ok(projection);
-  assert.equal(projection.stats.compactedCleanTurns, 1);
+    const projection = contextStore.getCompactedProjection();
+    assert.ok(projection);
+    assert.equal(projection.stats.compactedCleanTurns, 1);
 
-  const evaluatedEvents = events.filter((e) => e.type === "context.evaluated");
-  assert.equal(evaluatedEvents.length, 1);
-  assert.equal(evaluatedEvents[0]?.boundary, "post-delegation");
-  assert.equal(evaluatedEvents[0]?.decision, "trigger");
+    const evaluatedEvents = events.filter((e) => e.type === "context.evaluated");
+    assert.equal(evaluatedEvents.length, 1);
+    assert.equal(evaluatedEvents[0]?.boundary, "post-delegation");
+    assert.equal(evaluatedEvents[0]?.decision, "trigger");
 
-  const compactedEvents = events.filter((e) => e.type === "context.compacted");
-  assert.equal(compactedEvents.length, 1);
-  assert.equal(compactedEvents[0]?.boundary, "post-delegation");
-  assert.equal(compactedEvents[0]?.compactedCleanTurns, 1);
+    const compactedEvents = events.filter((e) => e.type === "context.compacted");
+    assert.equal(compactedEvents.length, 1);
+    assert.equal(compactedEvents[0]?.boundary, "post-delegation");
+    assert.equal(compactedEvents[0]?.compactedCleanTurns, 1);
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
 });
 
 test("lifecycle - batch delegation compaction boundary triggers at post-batch", async () => {
@@ -272,6 +284,7 @@ test("lifecycle - batch delegation compaction boundary triggers at post-batch", 
 });
 
 test("lifecycle - continuation compaction boundary records turn and compacts correctly", async () => {
+  const workspace = await createHermeticGitWorkspace("sol-luna-context-continuation-");
   const events: OrchestratorEvent[] = [];
   const emit = (event: OrchestratorEvent) => events.push(event);
   const continuationStore = new ContinuationStore();
@@ -287,54 +300,58 @@ test("lifecycle - continuation compaction boundary records turn and compacts cor
     },
   });
 
-  const baseTask = makeMinimalTask();
-  const ref = continuationStore.issue(
-    baseTask,
-    "th_123",
-    process.cwd(),
-    false,
-    null,
-    null,
-    2,
-    "test-model",
-  );
+  try {
+    const baseTask = makeMinimalTask({ workingDirectory: workspace });
+    const ref = continuationStore.issue(
+      baseTask,
+      "th_123",
+      workspace,
+      false,
+      null,
+      null,
+      2,
+      "test-model",
+    );
 
-  const output = makeMinimalOutput({
-    attempt: 2,
-    workerClaimedStatus: "PASS",
-    verdict: "PASS",
-  });
+    const output = makeMinimalOutput({
+      attempt: 2,
+      workerClaimedStatus: "PASS",
+      verdict: "PASS",
+    });
 
-  const response = await handleContinueTask(
-    {
-      continuationReference: ref,
-      instruction: "Please fix lint errors",
-    },
-    undefined,
-    {
-      store: continuationStore,
-      handoffStore,
-      contextStore,
-      continueTask: async () => output,
-      emit,
-      makeBatchId: () => "b_cont_1",
-      render: () => {
-        throw new Error("continuation renderer unavailable");
+    const response = await handleContinueTask(
+      {
+        continuationReference: ref,
+        instruction: "Please fix lint errors",
       },
-    },
-  );
+      undefined,
+      {
+        store: continuationStore,
+        handoffStore,
+        contextStore,
+        continueTask: async () => output,
+        emit,
+        makeBatchId: () => "b_cont_1",
+        render: () => {
+          throw new Error("continuation renderer unavailable");
+        },
+      },
+    );
 
-  assert.equal(response.isError, undefined);
-  assert.match(response.content[0]?.text ?? "", /evidence is preserved/);
-  assert.equal(response.structuredContent?.verdict, "PASS");
-  const authContext = contextStore.getAuthoritativeContext();
-  assert.ok(authContext);
-  assert.equal(authContext.turns.length, 1);
-  assert.equal(authContext.turns[0]?.kind, "continuation");
+    assert.equal(response.isError, undefined);
+    assert.match(response.content[0]?.text ?? "", /evidence is preserved/);
+    assert.equal(response.structuredContent?.verdict, "PASS");
+    const authContext = contextStore.getAuthoritativeContext();
+    assert.ok(authContext);
+    assert.equal(authContext.turns.length, 1);
+    assert.equal(authContext.turns[0]?.kind, "continuation");
 
-  const evaluatedEvents = events.filter((e) => e.type === "context.evaluated");
-  assert.equal(evaluatedEvents.length, 1);
-  assert.equal(evaluatedEvents[0]?.boundary, "post-continuation");
+    const evaluatedEvents = events.filter((e) => e.type === "context.evaluated");
+    assert.equal(evaluatedEvents.length, 1);
+    assert.equal(evaluatedEvents[0]?.boundary, "post-continuation");
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
 });
 
 test("lifecycle - repair and recovery evidence is fully preserved across compaction", () => {

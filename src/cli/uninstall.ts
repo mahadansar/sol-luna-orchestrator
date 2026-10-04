@@ -1,6 +1,5 @@
 import { codexVersion, getRegisteredServer, readConfig, writeConfig } from "./codex.js";
 import {
-  discoveryHintPath,
   discoveryHintPaths,
   readDiscoveryInstructions,
   removeDiscoveryHints,

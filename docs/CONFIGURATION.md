@@ -24,8 +24,7 @@ Everything the orchestrator reads, and how to change it. The
 - **OpenAI Codex CLI**, logged in (`codex login`). Built against bundled `codex-cli 0.160.0`.
 - **git ≥ 2.20** — only for parallel batches, which use `git worktree`.
 - Access to a compatible parent Codex model and the configured worker model
-  `gpt-6-luna`. Compatible parent models are allowed; the creator's historical
-  GPT-5.6 examples below are experience reports, not current worker defaults.
+  `gpt-6-luna`. Compatible parent models are allowed.
 
 `sol-luna-orchestrator doctor` checks the supported Node range, git and Codex
 availability, the presence of Codex's local authentication file, registration,
@@ -116,11 +115,9 @@ A catalog can be cached or bundled. The newest model in it is not proof of
 account access or global release freshness; a real worker turn checks access.
 Refreshing the catalog or updating the bundled Codex dependency may be needed
 for a new model to appear, even when this package needs no model-name change.
-A read-only check on 2026-10-04 with bundled Codex 0.147.0 listed GPT-5.6 Luna
-only, so automatic mode refused to downgrade. A second read-only check with
-Codex 0.160.0 exposed `gpt-6-luna` with all four allowed efforts and selected it.
-The package now requires SDK `^0.160.0` (lockfile 0.160.0), which bundles that CLI.
-Neither catalog check is a live GPT-6 inference run.
+The package requires SDK `^0.160.0` (lockfile 0.160.0), whose bundled catalog
+exposes `gpt-6-luna` with the supported effort ladder. Catalog discovery is not
+a live inference run.
 Offline `status` and `doctor` show the configured selector without discovery or
 model calls; the running server's diagnostic log reports its concrete model.
 
@@ -202,8 +199,8 @@ non-sensitive diagnostics; raw seam labels are not recorded.
 
 The stdio server registers exactly five MCP tools in a normal parent process:
 `delegate_task`, `delegate_tasks`, `continue_task`, `routing_preflight`, and
-`explore`. A process marked `SOL_LUNA_WORKER=1` registers none. The P2.2
-`SessionHandoffArtifact` helpers and P2.3 `executeWorkflow` coordinator are
+`explore`. A process marked `SOL_LUNA_WORKER=1` registers none. The
+`SessionHandoffArtifact` helpers and `executeWorkflow` coordinator are
 exported programmatic APIs, not additional MCP tools or CLI commands.
 
 The MCP registration advertises a compact routing card and bounded input
@@ -249,11 +246,9 @@ credential filtering, and operator permissions shown below.
 
 ### Why init edits the file directly
 
-`init` does not use `codex mcp add`. That command round-trips the whole config:
-measured against codex-cli 0.147.0, adding a server deleted the comment above an
-unrelated `context7` table and rewrote that server's `startup_timeout_sec = 15`
-as `15.0`. `init` edits only the keys it owns, so comments, formatting, key order
-and other servers survive byte for byte. Every write is atomic and leaves a
+`init` does not use `codex mcp add` because that command can round-trip and
+rewrite unrelated configuration. `init` edits only the keys it owns, so comments,
+formatting, key order and other servers survive byte for byte. Every write is atomic and leaves a
 `config.toml.sol-luna-backup` when an existing config is replaced. The separate
 discovery-hint write is also atomic but does not create a backup.
 
@@ -304,17 +299,17 @@ registration explicitly has `enabled = false`, a plain `init` repairs it to
 | `SOL_LUNA_VERIFY_ENV_PASSTHROUGH`  | off                     | `1` stops withholding credential-shaped env vars                     |
 | `SOL_LUNA_ALLOWED_ROOTS`           | —                       | Confine delegation to these directory trees                          |
 | `SOL_LUNA_SERVER_NAME`             | `sol-luna-orchestrator` | **Must match** the name registered in Codex                          |
-| `SOL_LUNA_CONTEXT_MAX_BYTES`       | `50000`                 | P1.3B policy threshold in exact serialized UTF-8 bytes               |
-| `SOL_LUNA_CONTEXT_MAX_TURNS`       | `20`                    | P1.3B total-turn threshold                                           |
-| `SOL_LUNA_CONTEXT_MAX_CLEAN_TURNS` | `5`                     | P1.3B clean PASS accumulation threshold                              |
-| `SOL_LUNA_CONTEXT_COOLDOWN_TURNS`  | `2`                     | P1.3B authoritative turns required between compact projections       |
+| `SOL_LUNA_CONTEXT_MAX_BYTES`       | `50000`                 | Context-policy threshold in exact serialized UTF-8 bytes             |
+| `SOL_LUNA_CONTEXT_MAX_TURNS`       | `20`                    | Total-turn threshold                                                 |
+| `SOL_LUNA_CONTEXT_MAX_CLEAN_TURNS` | `5`                     | Clean PASS accumulation threshold                                    |
+| `SOL_LUNA_CONTEXT_COOLDOWN_TURNS`  | `2`                     | Authoritative turns required between compact projections             |
 | `SOL_LUNA_WORKER`                  | set per worker          | Internal marker; a server seeing it registers zero tools             |
 | `SOL_LUNA_EVENTS`                  | set by `init`           | Absolute path to the structured JSONL activity log                   |
 | `SOL_LUNA_LOG`                     | set by `init`           | Absolute path to the human-readable diagnostics log                  |
 
 The three context thresholds must be positive safe integers; the cooldown must
 be a non-negative safe integer. Invalid values fail startup instead of silently
-disabling or forcing a trigger. In P1.3C, these settings configure each isolated
+disabling or forcing a trigger. These settings configure each isolated
 authoritative `ContextLifecycleStore` in the server-owned lifecycle registry. Fresh
 delegations and batches do not share state; only server-issued continuation or handoff
 lineage can restore an existing context.
@@ -613,7 +608,7 @@ collapsed into an empty history.
   explicitly unknown and is never estimated from time or another execution.
   Aggregate task usage is present only when every constituent execution reports
   usage, while known constituent values remain in per-attempt evidence.
-- **P1.0 provides a pure, post-hoc calculation foundation.** The calculation
+- **Cost calculation is pure and post-hoc.** The calculation
   applies a caller-supplied rate card to explicitly supplied, billing-ready
   observed usage. The caller must provide complete uncached-input, cached-input,
   cache-write-input, and output quantities rather than passing raw SDK totals. It
@@ -640,62 +635,21 @@ collapsed into an empty history.
   stable reason code.
 - Nothing in this project claims a cost saving, because none has been measured.
 
-Benchmark V2 is a separate, reproducible experiment: each schema-4 result embeds
-the dated official Codex credit-rate snapshot used to calculate
-`rateCardCredits`, while `actualCredits` stays unknown unless authoritative
-per-run billing is available. That benchmark snapshot is not a production
-default or account lookup. See [`bench/RESULTS.md`](../bench/RESULTS.md).
-
-#### Dated Sol-Luna unit-rate example
-
-As of **2026-08-24**, the official API model pages listed Sol at $4/$0.40/$20
-and Luna at $0.20/$0.02/$1.20 per 1M tokens (input/cached input/output). That is
-a **20:1** Sol:Luna API unit-price ratio for input and cached input and about
-**16.7:1** for output:
-[Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol) and
-[Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna).
-
-Codex credit rates are a separate billing context and cannot be derived from
-those API prices. They depend on the plan and rate card applicable to the
-account; operators must consult that current official rate card rather than
-reusing this API ratio.
-
-Benchmark V2 specifically snapshots the ChatGPT Plus Codex rate card linked in
-[`bench/RESULTS.md`](../bench/RESULTS.md); it must not reuse the separate
-Business/Enterprise purchased-credit promotional schedule. Its live campaign
-also requires normal/standard Codex speed with Fast mode disabled. The installed
-SDK cannot pin or observe a service tier, so this remains an operator-confirmed
-pre-run account condition recorded in schema-4 campaign metadata.
-
-This is a dated human reference only, not a bundled runtime rate card. It does
-not make Sol the required parent or convert a per-token ratio into a task
-saving. Aggregate task token usage and its input/cache/output mix, the selected
-parent, worker count, applicable Codex or API schedule, fixed orchestration cost,
-coordination and review overhead, latency and quality determine realised task
-cost. Purchased-credit rates do not describe every included Plus or Pro task;
-Codex credit, included-plan, promotional, and legacy schedules may differ from
-the API. The implementation requires the caller to supply the applicable card,
-and operators must re-check official sources before relying on this example.
-
 ## Parent model and effort
 
 The parent model is yours to choose; the orchestrator does not require a
-particular model. Historical GPT-5.6 creator experience, documented as examples rather than
-requirements: `gpt-5.6-sol` at `medium` is commonly sufficient for substantial
-repository work, while `gpt-5.6-luna` at `high` has successfully handled simpler
-docs and maintenance work and can delegate bounded Luna work. The effort is
-yours to set, not the model's to change mid-session.
+particular model. The effort is yours to set, not the model's to change
+mid-session.
 
 | Effort   | Use for                                                                                                         |
 | -------- | --------------------------------------------------------------------------------------------------------------- |
-| `medium` | The creator's usual setting; simple through substantial work with clear decomposition                           |
+| `medium` | Simple through substantial work with clear decomposition                                                        |
 | `high`   | Heavier work requiring more architecture, decomposition, delegation, or review                                  |
 | `xhigh`  | Difficult architecture, subtle production bugs, cross-service reasoning, tricky concurrency, hard decomposition |
 | `max`    | Exceptional supervisor-level problems only — not a routine setting                                              |
 
 The orchestrator does not set the parent effort. Choose the effort the work
-warrants; the creator usually uses `medium` and selects `high` for heavier work.
-`ultra` is a separate Codex multi-agent execution mode, not another
+warrants. `ultra` is a separate Codex multi-agent execution mode, not another
 reasoning-effort value.
 
 ## End-to-end automated workflow
@@ -713,7 +667,7 @@ tool and not a CLI command:
      that implementation or verification occurred.
    - `delegating`: Executes single (`delegate_task`) or batch (`delegate_tasks`) delegation.
    - `evaluating`: Consumes the existing handlers' authoritative verification, scope reconciliation,
-     and P1.1 failure decision; it does not run another verification pass.
+     and failure decision; it does not run another verification pass.
    - Repair and recovery remain internal to the existing single-task and batch handlers. The workflow
      consumes their final authoritative evidence and does not add separate states or verification runs.
    - `continuing`: Resumes incomplete tasks via single-use continuation references (`ctr_*`).
@@ -741,15 +695,15 @@ Statuses reflect what has actually been executed, not what the code intends.
 
 Two different things get called "supported", so they are reported separately.
 **Deterministic CI** runs the build, typecheck, format check, unit, security,
-parallel-orchestration and CLI suites, the MCP protocol handshake and the
-benchmark fixture validation — no model access. **Live model testing** drives
-real Codex sessions with real parent and Luna turns.
+parallel-orchestration and CLI suites, and the MCP protocol handshake — no model
+access. **Live model testing** drives real Codex sessions with real parent and
+Luna turns.
 
-| Platform       | Deterministic CI | Live Codex delegation | Notes                                                                       |
-| -------------- | ---------------- | --------------------- | --------------------------------------------------------------------------- |
-| **Windows 11** | Verified         | **Verified**          | Single + parallel delegation, worktree lifecycle, CLI lifecycle, benchmarks |
-| **Linux**      | Verified         | **Verified**          | Ubuntu acceptance used the trusted-development sandbox workaround below     |
-| **macOS**      | Verified         | Not yet run           | `macos-latest`, GitHub-hosted                                               |
+| Platform       | Deterministic CI | Live Codex delegation | Notes                                                                   |
+| -------------- | ---------------- | --------------------- | ----------------------------------------------------------------------- |
+| **Windows 11** | Verified         | **Verified**          | Single + parallel delegation, worktree lifecycle, CLI lifecycle         |
+| **Linux**      | Verified         | **Verified**          | Ubuntu acceptance used the trusted-development sandbox workaround below |
+| **macOS**      | Verified         | Not yet run           | `macos-latest`, GitHub-hosted                                           |
 
 This table summarizes platform coverage. Exact commit, date, skips, and
 v0.13.0 hardening freshness are recorded in

@@ -19,11 +19,7 @@ import {
   resolveBlocker,
   resolveContextPressureConfig,
   scrubSensitiveText,
-  type ContextBlocker,
-  type ContextConstraint,
-  type ContextDecision,
   type ContextPressurePolicyConfig,
-  type OrchestrationContext,
 } from "./context.js";
 import type {
   BatchOutput,
@@ -1318,7 +1314,7 @@ test("context core - clean batch retains review facts while omitting only passed
 });
 
 // ============================================================================
-// P1.3B Context Pressure and Trigger Policy Tests
+// Context Pressure and Trigger Policy Tests
 // ============================================================================
 
 function mockCleanCompletedOutput(

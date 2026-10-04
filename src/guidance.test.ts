@@ -13,14 +13,13 @@ import { z } from "zod";
 import {
   BATCH_TOOL_DESCRIPTION,
   CONTINUE_TOOL_DESCRIPTION,
-  EXPLORE_TOOL_DESCRIPTION,
   METADATA_SIZE_BUDGETS,
   metadataSizeReport,
   ROUTING_PREFLIGHT_TOOL_DESCRIPTION,
   SERVER_INSTRUCTIONS,
   TOOL_DESCRIPTION,
 } from "./server.js";
-import { LUNA_MODEL, MAX_BATCH_SIZE, MAX_PARALLEL } from "./config.js";
+import { MAX_BATCH_SIZE, MAX_PARALLEL } from "./config.js";
 import {
   continueTaskInputSchema,
   continueTaskMcpInputShape,
@@ -377,7 +376,7 @@ test("bounded repair guidance and schemas keep parent control and the one-turn l
   assert.match(rules, /Manual[\s\S]*continue_task[\s\S]*never chains into repair/i);
 });
 
-test("P1.1 guidance exposes one evidence-driven action and strict retry precedence", async () => {
+test("failure guidance exposes one evidence-driven action and strict retry precedence", async () => {
   assert.match(TOOL_DESCRIPTION, /failureDecision/i);
   assert.match(TOOL_DESCRIPTION, /parent owns nonautomatic actions/i);
   assert.match(BATCH_TOOL_DESCRIPTION, /exact process-exit retry/i);
@@ -395,7 +394,7 @@ test("P1.1 guidance exposes one evidence-driven action and strict retry preceden
   ]);
   assert.match(rules, /exactly one next action/i);
   assert.match(rules, /Recovery disables repair/i);
-  assert.match(rules, /P1\.2 owns executor\/model authorization/i);
+  assert.match(rules, /executor\/model authorization/i);
   assert.match(configuration, /unused retry count are not sufficient/i);
   assert.match(observability, /result evidence/i);
   assert.match(observability, /not a separate activity[\s\S]*event/i);
@@ -641,7 +640,8 @@ test("parent model and effort guidance stays example-only across surfaces", asyn
     configuration.indexOf("## Platform support"),
   );
   assert.doesNotMatch(parentSection, /\brecommended\b/i);
-  assert.match(parentSection, /creator's usual setting/i);
+  assert.match(parentSection, /effort is yours to set/i);
+  assert.doesNotMatch(parentSection, /gpt-5\.6-(?:sol|luna)/i);
   assert.match(parentSection, /high[\s\S]*heavier work/i);
   for (const document of [readme, rules, configuration, example]) {
     assert.doesNotMatch(document, /high[^\n]{0,80}recommended/i);
@@ -665,34 +665,9 @@ test("parent model and effort guidance stays example-only across surfaces", asyn
     /only when[\s\S]*(?:selected parent(?: model)?|parent you picked)[\s\S]*priced above[\s\S]*worker[\s\S]*(?:current|applicable)[\s\S]*(?:pricing )?schedule/i,
   );
   assert.match(rulesCost, /no (?:cost )?saving has been\s+measured/i);
-
-  const benchmarkSection = readme.slice(
-    readme.indexOf("## Benchmark status"),
-    readme.indexOf("## Documentation"),
-  );
-  assert.match(
-    benchmarkSection,
-    /V2[\s\S]{0,160}historical[\s\S]{0,160}bench\/RESULTS\.md/i,
-  );
-  assert.match(benchmarkSection, /V3[\s\S]{0,160}bench\/V3_METHODOLOGY\.md/i);
-  assert.match(benchmarkSection, /V3[\s\S]{0,240}36\/36 valid runs/i);
-  assert.match(
-    benchmarkSection,
-    /v0\.11\.0[\s\S]{0,240}Adaptive delegated zero workers[\s\S]{0,160}slower and more expensive overall/i,
-  );
-  assert.match(
-    benchmarkSection,
-    /two-repetition[\s\S]{0,80}directional[\s\S]{0,80}not statistically significant/i,
-  );
-  assert.match(benchmarkSection, /post-V3 routing corrections/i);
-  assert.match(
-    benchmarkSection,
-    /those corrections have not been evaluated by another full\s+campaign/i,
-  );
-  assert.match(benchmarkSection, /no v0\.12\.0 performance improvement is claimed/i);
 });
 
-test("SOL_RULES carries the runtime's operational distinctions without benchmark narration", async () => {
+test("SOL_RULES carries the runtime's operational distinctions", async () => {
   const rules = await readDoc("SOL_RULES.md");
   for (const invariant of [
     /Zero workers is valid/i,
@@ -719,7 +694,6 @@ test("SOL_RULES carries the runtime's operational distinctions without benchmark
   ]) {
     assert.match(rules, invariant);
   }
-  assert.doesNotMatch(rules, /2\.3x|3\.5x|V6|around 70 seconds|four and six/i);
 });
 
 test("landing page links to authoritative operational guidance", async () => {
@@ -765,21 +739,9 @@ test("landing page links to authoritative operational guidance", async () => {
   }
 });
 
-test("human pricing example is dated and distinct from durable runtime policy", async () => {
+test("cost guidance and roadmap keep current semantics and ownership", async () => {
   const configuration = await readDoc("docs/CONFIGURATION.md");
   const roadmap = await readDoc("ROADMAP.md");
-  assert.match(
-    configuration,
-    /2026-08-24[\s\S]*API[\s\S]*Sol at \$4\/\$0\.40\/\$20[\s\S]*Luna at \$0\.20\/\$0\.02\/\$1\.20[\s\S]*20:1[\s\S]*16\.7:1/i,
-  );
-  assert.match(
-    configuration,
-    /Codex credit rates[\s\S]*separate billing context[\s\S]*cannot be derived from[\s\S]*API prices/i,
-  );
-  assert.match(
-    configuration,
-    /plan and rate card applicable to the[\s\S]*account[\s\S]*current official rate card/i,
-  );
   assert.match(
     configuration,
     /API prices[\s\S]*Codex\s+credit rates[\s\S]*not interchangeable/i,
@@ -790,16 +752,18 @@ test("human pricing example is dated and distinct from durable runtime policy", 
   );
   assert.match(
     configuration,
-    /aggregate task token usage[\s\S]*selected[\s\S]*parent[\s\S]*worker count[\s\S]*coordination and[\s\S]*review overhead[\s\S]*latency[\s\S]*quality[\s\S]*realised task[\s\S]*cost/i,
+    /Rate cards are caller-owned evidence[\s\S]*source URL[\s\S]*retrieval time[\s\S]*freshness bound/i,
   );
-  assert.match(configuration, /legacy[\s\S]*rate card/i);
   assert.match(
     configuration,
-    /Codex credit,[\s\S]*included-plan,[\s\S]*promotional,[\s\S]*legacy schedules may differ from[\s\S]*API/i,
+    /Nothing in this project claims a cost saving[\s\S]*none has been measured/i,
   );
-  assert.match(roadmap, /Completed and implemented foundations[\s\S]*P0\.2a/i);
-  assert.match(roadmap, /release status[\s\S]*CHANGELOG\.md/i);
-  assert.doesNotMatch(roadmap, /25:1|20:1|16\.7:1/);
+  assert.match(roadmap, /This file tracks future work only/i);
+  assert.match(
+    roadmap,
+    /Shipped behavior belongs in[\s\S]*CHANGELOG\.md[\s\S]*acceptance evidence belongs in[\s\S]*FEATURE_ACCEPTANCE\.md/i,
+  );
+  assert.match(roadmap, /0\.13\.0 baseline[\s\S]*future work/i);
   assert.doesNotMatch(
     [SERVER_INSTRUCTIONS, TOOL_DESCRIPTION, BATCH_TOOL_DESCRIPTION].join("\n"),
     /\$\s*\d|\b\d+(?:\.\d+)?\s*(?:x|:1)\b/i,
@@ -869,7 +833,10 @@ test("current documentation distinguishes diagnostics, activity privacy, and leg
 });
 
 test("acceptance ledger owns the current release baseline", async () => {
-  const acceptance = await readDoc("docs/FEATURE_ACCEPTANCE.md");
+  const [acceptance, changelog] = await Promise.all([
+    readDoc("docs/FEATURE_ACCEPTANCE.md"),
+    readDoc("CHANGELOG.md"),
+  ]);
   const manifest = JSON.parse(await readDoc("package.json")) as { version: string };
   const escapedVersion = manifest.version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   assert.match(
@@ -886,24 +853,18 @@ test("acceptance ledger owns the current release baseline", async () => {
   );
   assert.match(
     acceptance,
-    /Benchmark V3 baseline evidence:[\s\S]{0,240}v0\.11\.0 production baseline/i,
-  );
-  assert.match(acceptance, /`npm run verify` passed/i);
-  assert.match(
-    acceptance,
-    /no failures and\s+(?:three\s+expected|only\s+expected\s+platform-specific\s+skips)/i,
+    /Release-source deterministic acceptance:[\s\S]*passed[\s\S]*Windows[\s\S]*Ubuntu[\s\S]*macOS/i,
   );
   assert.match(acceptance, /## Current capability matrix/);
+  assert.match(acceptance, /Parallel batches[\s\S]*Battle-tested/);
+  assert.match(acceptance, /Worker continuation[\s\S]*Battle-tested/i);
+  assert.match(acceptance, /No fresh natural-routing case selected a sequential batch/i);
+  assert.match(acceptance, /No natural\s+`xhigh` or `max` selection is claimed/i);
   assert.match(
     acceptance,
-    /Terminal verification and thin handoff boundary[\s\S]*NOT TESTED/,
+    new RegExp("Publication:[\\s\\S]*v" + escapedVersion + "[\\s\\S]*annotated tag", "i"),
   );
-  assert.match(acceptance, /Parallel batches[\s\S]*Battle-tested/);
-  assert.match(acceptance, /Worker Continuation[\s\S]*Battle-tested/);
-  assert.match(acceptance, /no fresh parent[\s\S]*sequential batch/i);
-  assert.match(acceptance, /No natural `xhigh` or `max` selection is claimed/i);
-  assert.doesNotMatch(acceptance, /findings\.md/i);
-  assert.doesNotMatch(acceptance, /runtime is unchanged from/i);
+  assert.match(changelog, new RegExp("## \\[" + escapedVersion + "\\]"));
 });
 
 // --- Cheap routing preflight guidance ---------------------------------------

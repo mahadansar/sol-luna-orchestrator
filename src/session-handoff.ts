@@ -536,7 +536,7 @@ function buildUsageSummary(
  * authoritative OrchestrationContext or a CompactedContext projection.
  *
  * Guaranteed properties:
- * 1. Compact & decision-safe: reuses P1.3 compaction primitives.
+ * 1. Compact & decision-safe: reuses context compaction primitives.
  * 2. Complete boundary preservation: objective, criteria, scope, change intent,
  *    decisions, constraints, blockers, grounded facts, unknowns, risks, lineage.
  * 3. Strict capability exclusion: no bearer tokens (ctr_*, hdf_*), secrets, or raw prompts.
@@ -590,7 +590,7 @@ export function exportSessionHandoff(
       : `${SESSION_HANDOFF_PREFIX}${randomBytes(16).toString("hex")}`);
 
   const exportedAt = options.timestamp ?? new Date().toISOString();
-  const sourceVersion = options.sourceVersion ?? "0.11.0";
+  const sourceVersion = options.sourceVersion ?? "0.13.0";
 
   // Aggregate exploration findings across all exploration turns
   const observedFactsMap = new Map<
