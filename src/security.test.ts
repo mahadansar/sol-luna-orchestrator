@@ -6,6 +6,7 @@
  * offline and spawn no agents.
  */
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -17,6 +18,8 @@ import {
   MAX_ARGUMENT_COUNT,
   MAX_COMMAND_LENGTH,
   parseCommand,
+  resolveAllowedExecutables,
+  resolveCommandPolicy,
   tokenizeCommand,
   unrepresentableCmdArgument,
   verificationCommandsEquivalent,
@@ -27,16 +30,23 @@ import { buildVerificationEnv, runVerificationCommand } from "./verify.js";
 import { sanitizeForLog } from "./log.js";
 import {
   keepWorktreesInvalid,
+  parseCommaList,
   parseKeepWorktrees,
   parseWorkerSandbox,
+  WORKER_MARKER_ENV,
   workerSandboxInvalid,
 } from "./config.js";
 import { WorkspaceError, resolveWorkspace } from "./workspace.js";
-import { buildDelegationResult, buildExploreResult } from "./worker.js";
+import {
+  buildDelegationResult,
+  buildExploreResult,
+  buildWorkerEnvironment,
+} from "./worker.js";
 import { delegateTaskInputSchema } from "./contract.js";
 import { collectWorktreeChanges, runGit } from "./git.js";
 
 const POLICY: CommandPolicy = { allowed: DEFAULT_ALLOWED_EXECUTABLES };
+const NODE_POLICY: CommandPolicy = { allowed: ["node"] };
 
 test("git evidence collection disables repository-controlled external diff execution", async () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-git-evidence-"));
@@ -145,8 +155,195 @@ test("shell metacharacters inside quotes are safe literal arguments", () => {
   assert.equal(parsed.file, "pytest");
   assert.deepEqual(parsed.args, ["-k", "not slow and not net"]);
 
-  const regex = parseCommand(`npx jest --testNamePattern "handles a|b"`, POLICY);
-  assert.deepEqual(regex.args, ["jest", "--testNamePattern", "handles a|b"]);
+  const regex = parseCommand(`jest --testNamePattern "handles a|b"`, POLICY);
+  assert.deepEqual(regex.args, ["--testNamePattern", "handles a|b"]);
+});
+
+test("default verification excludes direct interpreters and ad-hoc package executors", () => {
+  for (const executable of [
+    "node",
+    "python",
+    "python3",
+    "py",
+    "deno",
+    "npx",
+    "pnpx",
+    "bun",
+    "bunx",
+    "uv",
+    "poetry",
+  ]) {
+    assert.equal(
+      DEFAULT_ALLOWED_EXECUTABLES.includes(executable as never),
+      false,
+      executable,
+    );
+    assert.throws(
+      () => parseCommand(`${executable} --version`, POLICY),
+      /not in the verification allowlist/,
+      executable,
+    );
+  }
+});
+
+test("default package runners allow project scripts but refuse exec and fetch forms", () => {
+  for (const command of [
+    "npm test",
+    "npm run build",
+    "pnpm test",
+    "pnpm run lint",
+    "yarn test",
+    "yarn run build",
+  ]) {
+    assert.doesNotThrow(() => parseCommand(command, POLICY), command);
+  }
+
+  for (const command of [
+    "npm exec jest",
+    "npm x jest",
+    "pnpm exec jest",
+    "pnpm dlx cowsay hi",
+    "yarn dlx cowsay hi",
+    "yarn node script.js",
+  ]) {
+    assert.throws(
+      () => parseCommand(command, POLICY),
+      /project verification commands/,
+      command,
+    );
+  }
+});
+
+test("operator-explicit package runner authorization bypasses default subcommand limits", () => {
+  assert.throws(
+    () => parseCommand("npm exec jest", POLICY),
+    /project verification commands/,
+  );
+
+  const explicitlyAdded = resolveCommandPolicy({ add: ["npm"] });
+  assert.equal(parseCommand("npm exec jest", explicitlyAdded).file, "npm");
+  assert.deepEqual(explicitlyAdded.unrestricted, ["npm"]);
+
+  const deniedThenAdded = resolveCommandPolicy({ remove: ["npm"], add: ["npm"] });
+  assert.equal(parseCommand("npm exec jest", deniedThenAdded).file, "npm");
+  assert.deepEqual(deniedThenAdded.unrestricted, ["npm"]);
+
+  const replacement = resolveCommandPolicy({ replace: ["npm"] });
+  assert.equal(parseCommand("npm exec jest", replacement).file, "npm");
+  assert.deepEqual(replacement.unrestricted, ["npm"]);
+});
+
+test("operator executable policy can add, remove, or replace defaults", () => {
+  const additive = resolveAllowedExecutables({ add: ["node"] });
+  assert.ok(additive.includes("npm"));
+  assert.ok(additive.includes("node"));
+  assert.equal(
+    parseCommand('node -e "process.exit(0)"', { allowed: additive }).file,
+    "node",
+  );
+
+  const removed = resolveAllowedExecutables({ remove: ["npm", "pytest"] });
+  assert.equal(removed.includes("npm"), false);
+  assert.equal(removed.includes("pytest"), false);
+
+  const replaced = resolveAllowedExecutables({ replace: ["pytest"] });
+  assert.deepEqual(replaced, ["pytest"]);
+  assert.deepEqual(resolveAllowedExecutables({ replace: [] }), []);
+
+  // Additions have final precedence, so an operator can deliberately restore a
+  // default they also removed while composing a generated policy.
+  const restored = resolveAllowedExecutables({ remove: ["npm"], add: ["npm"] });
+  assert.ok(restored.includes("npm"));
+  assert.deepEqual(parseCommaList(String.raw`node,C:\tools\runner.exe`), [
+    "node",
+    String.raw`C:\tools\runner.exe`,
+  ]);
+});
+
+test("verification executable environment controls wire into the production policy", () => {
+  const verifyModule = new URL("./verify.js", import.meta.url).href;
+  const commandModule = new URL("./command.js", import.meta.url).href;
+  const inspect = (
+    overrides: Record<string, string | undefined>,
+  ): { allowed: string[]; unrestricted: string[]; npmExecAdmitted: boolean } => {
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    for (const [key, value] of Object.entries(overrides)) {
+      if (value === undefined) delete env[key];
+      else env[key] = value;
+    }
+    const stdout = execFileSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `import {verificationPolicy} from ${JSON.stringify(verifyModule)};
+         import {parseCommand} from ${JSON.stringify(commandModule)};
+         let npmExecAdmitted=true;
+         try{parseCommand('npm exec jest',verificationPolicy);}catch{npmExecAdmitted=false;}
+         console.log(JSON.stringify({...verificationPolicy,npmExecAdmitted}));`,
+      ],
+      { env, encoding: "utf8" },
+    );
+    return JSON.parse(stdout) as {
+      allowed: string[];
+      unrestricted: string[];
+      npmExecAdmitted: boolean;
+    };
+  };
+
+  const defaults = inspect({
+    SOL_LUNA_VERIFY_ALLOW: undefined,
+    SOL_LUNA_VERIFY_DENY: undefined,
+    SOL_LUNA_VERIFY_ALLOW_ONLY: undefined,
+  });
+  assert.equal(defaults.npmExecAdmitted, false);
+
+  const composed = inspect({
+    SOL_LUNA_VERIFY_ALLOW: "node,npm",
+    SOL_LUNA_VERIFY_DENY: "pytest",
+    SOL_LUNA_VERIFY_ALLOW_ONLY: undefined,
+  });
+  assert.ok(composed.allowed.includes("npm"));
+  assert.ok(composed.allowed.includes("node"));
+  assert.equal(composed.allowed.includes("pytest"), false);
+  assert.deepEqual(composed.unrestricted.sort(), ["node", "npm"]);
+  assert.equal(composed.npmExecAdmitted, true);
+
+  const replaced = inspect({
+    SOL_LUNA_VERIFY_ALLOW: undefined,
+    SOL_LUNA_VERIFY_DENY: undefined,
+    SOL_LUNA_VERIFY_ALLOW_ONLY: "pytest,ruff",
+  });
+  assert.deepEqual(replaced.allowed, ["pytest", "ruff"]);
+  assert.deepEqual(replaced.unrestricted, ["pytest", "ruff"]);
+  assert.equal(replaced.npmExecAdmitted, false);
+
+  const npmOnly = inspect({
+    SOL_LUNA_VERIFY_ALLOW: undefined,
+    SOL_LUNA_VERIFY_DENY: undefined,
+    SOL_LUNA_VERIFY_ALLOW_ONLY: "npm",
+  });
+  assert.deepEqual(npmOnly.allowed, ["npm"]);
+  assert.deepEqual(npmOnly.unrestricted, ["npm"]);
+  assert.equal(npmOnly.npmExecAdmitted, true);
+
+  const emptyReplacement = inspect({
+    SOL_LUNA_VERIFY_ALLOW: undefined,
+    SOL_LUNA_VERIFY_DENY: undefined,
+    SOL_LUNA_VERIFY_ALLOW_ONLY: "",
+  });
+  assert.deepEqual(emptyReplacement.allowed, []);
+  assert.deepEqual(emptyReplacement.unrestricted, []);
+  assert.equal(emptyReplacement.npmExecAdmitted, false);
+
+  const restored = inspect({
+    SOL_LUNA_VERIFY_ALLOW: "npm",
+    SOL_LUNA_VERIFY_DENY: "npm",
+    SOL_LUNA_VERIFY_ALLOW_ONLY: undefined,
+  });
+  assert.ok(restored.allowed.includes("npm"));
+  assert.ok(restored.unrestricted.includes("npm"));
+  assert.equal(restored.npmExecAdmitted, true);
 });
 
 test("only allowlisted executables may run", () => {
@@ -292,9 +489,10 @@ test("mode=off runs nothing and says the claim is unverified", async () => {
   assert.match(result.output, /NOT run/);
 });
 
-test("allowlisted commands still execute and report real exit codes", async () => {
+test("an explicitly allowlisted interpreter executes and reports real exit codes", async () => {
   const ok = await runVerificationCommand('node -e "process.exit(0)"', process.cwd(), {
     mode: "allowlist",
+    policy: NODE_POLICY,
   });
   assert.equal(ok.execution, "argv");
   assert.equal(ok.exitCode, 0);
@@ -302,6 +500,7 @@ test("allowlisted commands still execute and report real exit codes", async () =
 
   const bad = await runVerificationCommand('node -e "process.exit(7)"', process.cwd(), {
     mode: "allowlist",
+    policy: NODE_POLICY,
   });
   assert.equal(bad.exitCode, 7);
   assert.equal(bad.passed, false);
@@ -311,7 +510,7 @@ test("arguments reach the process intact, without shell mangling", async () => {
   const result = await runVerificationCommand(
     `node -e "console.log(process.argv[1])" "a|b;c&d"`,
     process.cwd(),
-    { mode: "allowlist" },
+    { mode: "allowlist", policy: NODE_POLICY },
   );
   assert.equal(result.execution, "argv");
   assert.match(result.output, /a\|b;c&d/);
@@ -605,6 +804,116 @@ test("environment scrubbing can be disabled deliberately", () => {
   const { env, scrubbed } = buildVerificationEnv({ OPENAI_API_KEY: "sk-x" }, false);
   assert.equal(env.OPENAI_API_KEY, "sk-x");
   assert.deepEqual(scrubbed, []);
+});
+
+test("worker Codex receives only functional/provider env plus server-owned overrides", () => {
+  const env = buildWorkerEnvironment(
+    {
+      PATH: "/usr/local/bin:/usr/bin",
+      HOME: "/home/dev",
+      CODEX_HOME: "/home/dev/.codex-alt",
+      OPENAI_API_KEY: "sk-provider",
+      HTTPS_PROXY: "http://proxy.internal:8080",
+      NODE_EXTRA_CA_CERTS: "/etc/ssl/custom-node-ca.pem",
+      NODE_OPTIONS: "--require=/tmp/evil.cjs",
+      JAVA_HOME: "/opt/jdk",
+      GITHUB_TOKEN: "ghp-unrelated",
+      AWS_SECRET_ACCESS_KEY: "aws-unrelated",
+      DB_PASSWORD: "db-unrelated",
+      SOL_LUNA_VERIFY_ALLOW: "node",
+      GIT_DIR: "/operator/git-dir",
+      SOL_LUNA_WORKER: "0",
+    },
+    [],
+    { GIT_DIR: "/isolated/git-dir", GIT_CONFIG_NOSYSTEM: "1" },
+    "linux",
+  );
+
+  assert.equal(env.PATH, "/usr/local/bin:/usr/bin");
+  assert.equal(env.HOME, "/home/dev");
+  assert.equal(env.CODEX_HOME, "/home/dev/.codex-alt");
+  assert.equal(env.OPENAI_API_KEY, "sk-provider", "provider auth remains functional");
+  assert.equal(env.HTTPS_PROXY, "http://proxy.internal:8080");
+  assert.equal(env.NODE_EXTRA_CA_CERTS, "/etc/ssl/custom-node-ca.pem");
+  assert.equal(
+    env.NODE_OPTIONS,
+    undefined,
+    "arbitrary Node startup code is not inherited",
+  );
+  assert.equal(env.JAVA_HOME, "/opt/jdk");
+  assert.equal(env.GIT_DIR, "/isolated/git-dir", "isolated Git authority wins");
+  assert.equal(env.GIT_CONFIG_NOSYSTEM, "1");
+  assert.equal(env[WORKER_MARKER_ENV], "1", "recursion marker has final precedence");
+
+  for (const unrelated of [
+    "GITHUB_TOKEN",
+    "AWS_SECRET_ACCESS_KEY",
+    "DB_PASSWORD",
+    "SOL_LUNA_VERIFY_ALLOW",
+  ]) {
+    assert.equal(env[unrelated], undefined, `${unrelated} must not be inherited`);
+  }
+});
+
+test("worker environment passes additional variables only when the operator names them", () => {
+  const source = {
+    PATH: String.raw`C:\Windows\System32`,
+    Path: String.raw`C:\preferred`,
+    USERPROFILE: String.raw`C:\Users\dev`,
+    CUSTOM_PROVIDER_TOKEN: "provider-secret",
+    GITHUB_TOKEN: "explicit-secret",
+    git_dir: String.raw`C:\operator\git-dir`,
+    sol_luna_worker: "0",
+  };
+  const env = buildWorkerEnvironment(
+    source,
+    ["CUSTOM_PROVIDER_TOKEN", "github_token", "git_dir", "sol_luna_worker"],
+    { GIT_DIR: String.raw`C:\isolated\git-dir` },
+    "win32",
+  );
+
+  // Windows variable lookup is case-insensitive and preserves the source key.
+  assert.equal(env.PATH, String.raw`C:\Windows\System32`);
+  assert.equal(env.CUSTOM_PROVIDER_TOKEN, "provider-secret");
+  assert.equal(env.GITHUB_TOKEN, "explicit-secret");
+  assert.equal(env.GIT_DIR, String.raw`C:\isolated\git-dir`);
+  assert.equal(
+    env.git_dir,
+    undefined,
+    "case-variant inherited Git authority was removed",
+  );
+  assert.equal(env[WORKER_MARKER_ENV], "1");
+  assert.equal(
+    env.sol_luna_worker,
+    undefined,
+    "case-variant inherited recursion marker was removed",
+  );
+});
+
+test("worker environment pass-through configuration is applied by default", () => {
+  const workerModule = new URL("./worker.js", import.meta.url).href;
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    SOL_LUNA_WORKER_ENV_PASSTHROUGH: "CUSTOM_PROVIDER_TOKEN",
+    CUSTOM_PROVIDER_TOKEN: "custom-provider-secret",
+    GITHUB_TOKEN: "unrelated-secret",
+  };
+  const stdout = execFileSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import {buildWorkerEnvironment} from ${JSON.stringify(workerModule)};
+       const env=buildWorkerEnvironment();
+       console.log(JSON.stringify({custom:env.CUSTOM_PROVIDER_TOKEN,github:Object.hasOwn(env,'GITHUB_TOKEN'),marker:env.SOL_LUNA_WORKER}));`,
+    ],
+    { env, encoding: "utf8" },
+  );
+  assert.deepEqual(JSON.parse(stdout), {
+    custom: "custom-provider-secret",
+    github: false,
+    marker: "1",
+  });
 });
 
 // --- Operator configuration -------------------------------------------------
@@ -1196,6 +1505,7 @@ test("POSIX verification timeout kills a spawned process-group descendant", asyn
   try {
     const result = await runVerificationCommand(`node ${parentScript}`, root, {
       timeoutSeconds: 1,
+      policy: NODE_POLICY,
     });
     assert.equal(result.passed, false);
     assert.equal(result.exitCode, null);

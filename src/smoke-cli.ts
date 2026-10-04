@@ -175,7 +175,7 @@ async function scenarioFreshInstall(): Promise<void> {
     check("init printed next steps", () => {
       assert.match(result.stdout, /1\. Open Codex with any compatible parent model/);
       assert.match(result.stdout, /2\. Choose the effort the work warrants/);
-      assert.match(result.stdout, /creator example: GPT-5\.6 Sol at Medium/);
+      assert.doesNotMatch(result.stdout, /GPT-5\.6/i);
       assert.match(result.stdout, /3\. Work normally/);
     });
   } finally {
@@ -450,14 +450,28 @@ async function scenarioDiscoveryOptOut(): Promise<void> {
   console.log("\n[10] init can opt out of the discovery hint");
   const home = makeHome();
   const userInstructions = "# Keep this opt-out instruction.\n";
+  const overrideInstructions = "# This override became active after initial setup.\n";
   fs.writeFileSync(path.join(home, "AGENTS.md"), userInstructions, "utf8");
   try {
+    const installed = await cli(["init"], home);
+    check("precondition: default init installed the hint", () => {
+      assert.equal(installed.code, 0, installed.stdout + installed.stderr);
+      assert.match(readInstructions(home), /BEGIN SOL-LUNA-ORCHESTRATOR DISCOVERY HINT/);
+    });
+    fs.writeFileSync(path.join(home, "AGENTS.override.md"), overrideInstructions, "utf8");
+
     const result = await cli(["init", "--no-discovery-hint"], home);
     check("opt-out init succeeds", () =>
       assert.equal(result.code, 0, result.stdout + result.stderr),
     );
-    check("opt-out leaves AGENTS.md byte-identical", () =>
+    check("opt-out removes only the managed hint and restores user bytes", () =>
       assert.equal(readInstructions(home), userInstructions),
+    );
+    check("opt-out preserves a newly active override byte-for-byte", () =>
+      assert.equal(
+        fs.readFileSync(path.join(home, "AGENTS.override.md"), "utf8"),
+        overrideInstructions,
+      ),
     );
   } finally {
     cleanup(home);

@@ -11,6 +11,8 @@ import {
 } from "./config.js";
 import {
   addWorktree,
+  DEFAULT_EVIDENCE_READ_LIMITS,
+  EvidenceReadLimitError,
   captureGitEvidenceAuthority,
   collectTrustedWorktreeChanges,
   currentHead,
@@ -26,6 +28,7 @@ import {
   removeWorktree,
   resolveGitCommonDir,
   type GitEvidenceAuthority,
+  type EvidenceReadLimits,
   type TrustedWorkspaceSnapshot,
   type WorktreeChanges,
 } from "./git.js";
@@ -215,7 +218,7 @@ const directoryIdentity = (
   stat: Awaited<ReturnType<typeof fs.lstat>> & {
     dev: number | bigint;
     ino: number | bigint;
-    birthtimeMs: number;
+    birthtimeMs: number | bigint;
   },
 ): string => `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
 
@@ -312,6 +315,8 @@ export interface ConfinedDirectoryChainResult {
 export interface EnsureConfinedDirectoryChainOptions {
   /** Test/coordination seam after the helper has pinned the parent and before mkdir executes. */
   beforeCreate?: (context: ConfinedDirectoryCreateContext) => void | Promise<void>;
+  signal?: AbortSignal;
+  mutationTimeoutMs?: number;
   /** Deterministic protocol-loss seam before mkdir; production leaves this unset. */
   testExitBeforeCreateWithoutResult?: (
     context: ConfinedDirectoryCreateContext,
@@ -357,13 +362,19 @@ async function rollbackCreatedConfinedDirectories(
   let outcome: ConfinedDirectoryRollbackOutcome = "complete";
   for (const entry of [...created].reverse()) {
     try {
-      const removed = await runPinnedDirectoryMutation(entry.parent, {
-        op: "rmdir",
-        name: entry.name,
-        expectedIdentity: entry.identity,
-        testExitBeforeMutationWithoutResult:
-          options.testExitBeforeRollbackWithoutResult?.(entry) ?? false,
-      });
+      const removed = await runPinnedDirectoryMutation(
+        entry.parent,
+        {
+          op: "rmdir",
+          name: entry.name,
+          expectedIdentity: entry.identity,
+          testExitBeforeMutationWithoutResult:
+            options.testExitBeforeRollbackWithoutResult?.(entry) ?? false,
+        },
+        {
+          timeoutMs: options.mutationTimeoutMs,
+        },
+      );
       if (removed.mutated && removed.snapshot?.kind === "missing") continue;
       outcome = mergeConfinedRollbackOutcomes(
         outcome,
@@ -476,6 +487,8 @@ export async function ensureConfinedDirectoryChain(
             appearedMissing && options.beforeCreate
               ? () => options.beforeCreate?.(createContext)
               : undefined,
+          signal: options.signal,
+          timeoutMs: options.mutationTimeoutMs,
         },
       );
     } catch (error) {
@@ -556,7 +569,10 @@ export async function ensureConfinedDirectoryChain(
  * could otherwise make setup/cleanup create or delete state outside the
  * authorised repository before any worker starts.
  */
-async function ensureRuntimeControlRoots(repoRoot: string): Promise<void> {
+async function ensureRuntimeControlRoots(
+  repoRoot: string,
+  signal?: AbortSignal,
+): Promise<void> {
   const canonicalRepo = await fs.realpath(repoRoot).catch(() => null);
   if (!canonicalRepo) {
     throw new WorktreeUnavailableError(
@@ -569,6 +585,7 @@ async function ensureRuntimeControlRoots(repoRoot: string): Promise<void> {
     await ensureConfinedDirectoryChain(
       canonicalRepo,
       path.join(canonicalRepo, ".sol-luna", "worktrees"),
+      { signal },
     );
   } catch (error) {
     throw new ConfinedDirectoryChainError(
@@ -582,6 +599,7 @@ async function ensureRuntimeControlRoots(repoRoot: string): Promise<void> {
     await ensureConfinedDirectoryChain(
       canonicalRepo,
       path.join(canonicalRepo, ".sol-luna", "continuation-leases"),
+      { signal },
     );
   } catch (error) {
     throw new ConfinedDirectoryChainError(
@@ -598,7 +616,10 @@ async function ensureRuntimeControlRoots(repoRoot: string): Promise<void> {
  * That namespace is parent-owned authority just like repo-root `.sol-luna` and
  * must not be redirectable through a symlink/junction planted under `.git`.
  */
-async function ensureCommonGitLeaseRoots(commonGitDir: string): Promise<void> {
+async function ensureCommonGitLeaseRoots(
+  commonGitDir: string,
+  signal?: AbortSignal,
+): Promise<void> {
   const canonicalCommon = await fs.realpath(commonGitDir).catch(() => null);
   if (!canonicalCommon) {
     throw new WorktreeUnavailableError(
@@ -611,6 +632,7 @@ async function ensureCommonGitLeaseRoots(commonGitDir: string): Promise<void> {
     await ensureConfinedDirectoryChain(
       canonicalCommon,
       path.join(canonicalCommon, "sol-luna-orchestrator", "continuation-leases"),
+      { signal },
     );
   } catch (error) {
     throw new ConfinedDirectoryChainError(
@@ -652,17 +674,174 @@ export interface SharedDirectoryFingerprint {
   digest: string;
 }
 
+export interface SharedDirectoryFingerprintOptions {
+  limits?: EvidenceReadLimits;
+  signal?: AbortSignal;
+}
+
+class SharedHashBudget {
+  private readonly startedAt = Date.now();
+  private readonly maxFileBytes: number;
+  private readonly maxTotalBytes: number;
+  private readonly maxEntries: number;
+  private readonly maxElapsedMs: number;
+  private readonly signal?: AbortSignal;
+  private totalBytes = 0;
+  private entries = 0;
+
+  constructor(options: SharedDirectoryFingerprintOptions = {}) {
+    const limits = options.limits ?? {};
+    this.maxFileBytes = limits.maxFileBytes ?? DEFAULT_EVIDENCE_READ_LIMITS.maxFileBytes;
+    this.maxTotalBytes =
+      limits.maxTotalBytes ?? DEFAULT_EVIDENCE_READ_LIMITS.maxTotalBytes;
+    this.maxEntries = limits.maxEntries ?? DEFAULT_EVIDENCE_READ_LIMITS.maxEntries;
+    this.maxElapsedMs = limits.maxElapsedMs ?? DEFAULT_EVIDENCE_READ_LIMITS.maxElapsedMs;
+    this.signal = options.signal;
+  }
+
+  noteEntry(target: string): void {
+    this.assertActive();
+    this.entries += 1;
+    if (this.entries > this.maxEntries) {
+      throw new EvidenceReadLimitError(
+        `Shared dependency evidence exceeded its ${this.maxEntries}-entry safety budget while reading ${target}.`,
+      );
+    }
+  }
+
+  async readDirectoryNames(target: string): Promise<string[]> {
+    this.assertActive();
+    const names: string[] = [];
+    const directory = await fs.opendir(target);
+    try {
+      for await (const entry of directory) {
+        this.assertActive();
+        if (this.entries + names.length + 1 > this.maxEntries) {
+          throw new EvidenceReadLimitError(
+            `Shared dependency evidence exceeded its ${this.maxEntries}-entry safety budget while listing ${target}.`,
+          );
+        }
+        names.push(entry.name);
+      }
+    } finally {
+      await directory.close().catch(() => undefined);
+    }
+    return names.sort();
+  }
+
+  assertFileSize(target: string, size: number): void {
+    this.assertActive();
+    if (!Number.isSafeInteger(size) || size < 0) {
+      throw new EvidenceReadLimitError(
+        `Shared dependency file has an unsafe size and was not read: ${target}.`,
+      );
+    }
+    if (size > this.maxFileBytes) {
+      throw new EvidenceReadLimitError(
+        `Shared dependency file exceeds its ${this.maxFileBytes}-byte safety budget: ${target}.`,
+      );
+    }
+    if (this.totalBytes + size > this.maxTotalBytes) {
+      throw new EvidenceReadLimitError(
+        `Shared dependency evidence exceeds its ${this.maxTotalBytes}-byte aggregate safety budget at ${target}.`,
+      );
+    }
+  }
+
+  consumeBytes(target: string, bytes: number, fileBytes: number): void {
+    this.assertActive();
+    if (fileBytes > this.maxFileBytes) {
+      throw new EvidenceReadLimitError(
+        `Shared dependency file exceeded its ${this.maxFileBytes}-byte safety budget while reading ${target}.`,
+      );
+    }
+    if (this.totalBytes + bytes > this.maxTotalBytes) {
+      throw new EvidenceReadLimitError(
+        `Shared dependency evidence exceeded its ${this.maxTotalBytes}-byte aggregate safety budget at ${target}.`,
+      );
+    }
+    this.totalBytes += bytes;
+  }
+
+  assertActive(): void {
+    if (this.signal?.aborted) {
+      const error = new Error("Shared dependency evidence was cancelled.");
+      error.name = "AbortError";
+      throw error;
+    }
+    if (Date.now() - this.startedAt > this.maxElapsedMs) {
+      throw new EvidenceReadLimitError(
+        `Shared dependency evidence exceeded its ${this.maxElapsedMs}ms safety budget.`,
+      );
+    }
+  }
+}
+
+async function hashSharedFileInto(
+  hash: ReturnType<typeof createHash>,
+  target: string,
+  expected: Awaited<ReturnType<typeof fs.lstat>>,
+  budget: SharedHashBudget,
+): Promise<void> {
+  const expectedSize =
+    typeof expected.size === "bigint" ? Number(expected.size) : expected.size;
+  budget.assertFileSize(target, expectedSize);
+  const expectedIdentity = directoryIdentity(expected);
+  const handle = await fs.open(target, "r");
+  try {
+    const opened = await handle.stat();
+    const openedSize =
+      typeof opened.size === "bigint" ? Number(opened.size) : opened.size;
+    if (
+      !opened.isFile() ||
+      directoryIdentity(opened) !== expectedIdentity ||
+      openedSize !== expectedSize
+    ) {
+      throw new Error(
+        `Shared dependency file changed identity before hashing: ${target}.`,
+      );
+    }
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    let fileBytes = 0;
+    while (fileBytes < expectedSize) {
+      budget.assertActive();
+      const requested = Math.min(buffer.length, expectedSize - fileBytes);
+      const { bytesRead } = await handle.read(buffer, 0, requested, fileBytes);
+      if (bytesRead <= 0) break;
+      fileBytes += bytesRead;
+      budget.consumeBytes(target, bytesRead, fileBytes);
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+    const after = await handle.stat();
+    const afterSize = typeof after.size === "bigint" ? Number(after.size) : after.size;
+    if (
+      fileBytes !== expectedSize ||
+      !after.isFile() ||
+      directoryIdentity(after) !== expectedIdentity ||
+      afterSize !== expectedSize
+    ) {
+      throw new Error(
+        `Shared dependency file changed while being hashed: ${target} (expected ${expectedSize}, read ${fileBytes}).`,
+      );
+    }
+  } finally {
+    await handle.close();
+  }
+}
+
 async function hashSharedPath(
   hash: ReturnType<typeof createHash>,
   target: string,
   logical: string,
   canonicalRoot: string,
+  budget: SharedHashBudget,
 ): Promise<void> {
   const entry = await fs.lstat(target).catch(() => null);
   if (!entry) {
     hash.update(`missing\0${logical}\0`);
     return;
   }
+  budget.noteEntry(target);
   if (entry.isSymbolicLink()) {
     const link = await fs.readlink(target);
     hash.update(`link\0${logical}\0${link}\0`);
@@ -680,19 +859,20 @@ async function hashSharedPath(
   }
   if (entry.isDirectory()) {
     hash.update(`dir\0${logical}\0`);
-    for (const name of (await fs.readdir(target)).sort()) {
+    for (const name of await budget.readDirectoryNames(target)) {
       await hashSharedPath(
         hash,
         path.join(target, name),
         `${logical}/${name}`,
         canonicalRoot,
+        budget,
       );
     }
     return;
   }
   if (entry.isFile()) {
     hash.update(`file\0${logical}\0${entry.mode}\0${entry.size}\0`);
-    hash.update(await fs.readFile(target));
+    await hashSharedFileInto(hash, target, entry, budget);
     hash.update("\0");
     return;
   }
@@ -705,6 +885,7 @@ async function hashSnapshotSemanticPath(
   logical: string,
   treeRoot: string,
   alternateLinkRoot?: string,
+  budget: SharedHashBudget = new SharedHashBudget(),
 ): Promise<void> {
   const entry = await fs.lstat(target).catch((error) => {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
@@ -714,6 +895,7 @@ async function hashSnapshotSemanticPath(
     hash.update(`missing\0${logical}\0`);
     return;
   }
+  budget.noteEntry(target);
   if (entry.isSymbolicLink()) {
     const rawTarget = await fs.readlink(target);
     const resolvedTarget = path.resolve(path.dirname(target), rawTarget);
@@ -734,20 +916,21 @@ async function hashSnapshotSemanticPath(
   }
   if (entry.isDirectory()) {
     hash.update(`dir\0${logical}\0`);
-    for (const name of (await fs.readdir(target)).sort()) {
+    for (const name of await budget.readDirectoryNames(target)) {
       await hashSnapshotSemanticPath(
         hash,
         path.join(target, name),
         `${logical}/${name}`,
         treeRoot,
         alternateLinkRoot,
+        budget,
       );
     }
     return;
   }
   if (entry.isFile()) {
     hash.update(`file\0${logical}\0${entry.size}\0`);
-    hash.update(await fs.readFile(target));
+    await hashSharedFileInto(hash, target, entry, budget);
     hash.update("\0");
     return;
   }
@@ -758,6 +941,7 @@ async function captureSnapshotSemanticDigest(
   treeRoot: string,
   logicalRoot: string,
   alternateLinkRoot?: string,
+  budget: SharedHashBudget = new SharedHashBudget(),
 ): Promise<string> {
   const resolvedRoot = path.resolve(treeRoot);
   const hash = createHash("sha256");
@@ -767,6 +951,7 @@ async function captureSnapshotSemanticDigest(
     logicalRoot,
     resolvedRoot,
     alternateLinkRoot ? path.resolve(alternateLinkRoot) : undefined,
+    budget,
   );
   return hash.digest("hex");
 }
@@ -775,6 +960,16 @@ async function captureSnapshotSemanticDigest(
 export async function captureSharedDirectoryFingerprint(
   root: string,
   dirs: string[] = WORKTREE_LINK_DIRS,
+  options: SharedDirectoryFingerprintOptions = {},
+): Promise<SharedDirectoryFingerprint> {
+  const budget = new SharedHashBudget(options);
+  return captureSharedDirectoryFingerprintWithBudget(root, dirs, budget);
+}
+
+async function captureSharedDirectoryFingerprintWithBudget(
+  root: string,
+  dirs: string[],
+  budget: SharedHashBudget,
 ): Promise<SharedDirectoryFingerprint> {
   const parsed = parseWorktreeLinkDirectories(dirs.join(","));
   const canonicalWorkspace = await fs.realpath(root);
@@ -799,7 +994,7 @@ export async function captureSharedDirectoryFingerprint(
           "Replace the redirected dependency root with a directory contained by the delegated workspace.",
         );
       }
-      await hashSharedPath(hash, source, dir, canonical);
+      await hashSharedPath(hash, source, dir, canonical, budget);
     } else {
       hash.update(`missing\0${dir}\0`);
     }
@@ -1706,7 +1901,20 @@ export async function acquireRepositoryOperationAuthority(
   const resolvedCommonGitDir = await resolveGitCommonDir(workspace);
   if (!resolvedCommonGitDir) return null;
   const commonGitDir = await fs.realpath(resolvedCommonGitDir);
-  await ensureCommonGitLeaseRoots(commonGitDir);
+  try {
+    await ensureCommonGitLeaseRoots(commonGitDir, signal);
+  } catch (error) {
+    // Cancellation can land while the pinned helper is creating the common-Git
+    // lease namespace. That helper correctly reports its own low-level abort,
+    // but callers of repository-operation authority have one stable lifecycle
+    // contract: cancellation before authority is acquired is a repository
+    // operation cancellation, not a misleading "redirected control path" error.
+    if (signal?.aborted || forcedRepositoryOperationShutdown.signal.aborted) {
+      throw repositoryOperationAbortError();
+    }
+    throw error;
+  }
+  throwIfOperationAborted(signal);
   const identity = repositoryOperationIdentity(commonGitDir);
   let lease: WorktreeLease | null = null;
 
@@ -1924,7 +2132,7 @@ async function withPersistentMetadataLease<T>(
       "Retry from a valid Git repository; parallel worktree metadata cannot be safely serialized otherwise.",
     );
   }
-  await ensureCommonGitLeaseRoots(commonGitDir);
+  await ensureCommonGitLeaseRoots(commonGitDir, signal);
   // Key peer processes by the canonical common Git directory, not by their
   // individual linked-worktree roots. Every linked worktree mutates the same
   // common .git/worktrees registry, so they must contend on one persistent
@@ -2016,6 +2224,7 @@ export function createTaskWorktree(
         mainWorkspace,
         leaseLifetimeMs,
         assertLeaseHealthy,
+        signal,
       ),
     signal,
   );
@@ -2027,8 +2236,9 @@ async function createTaskWorktreeUnsynchronized(
   mainWorkspace: string,
   leaseLifetimeMs: number,
   assertMetadataLeaseHealthy: () => void,
+  signal?: AbortSignal,
 ): Promise<TaskWorktree> {
-  await ensureRuntimeControlRoots(base.repoRoot);
+  await ensureRuntimeControlRoots(base.repoRoot, signal);
   const target = path.join(base.repoRoot, ...WORKTREE_DIR.split("/"), taskId);
   const targetKey = worktreePathKey(target);
   const warnings: string[] = [];
@@ -2075,7 +2285,7 @@ async function createTaskWorktreeUnsynchronized(
     workingDirectory = base.workspaceRelativePath
       ? path.join(target, base.workspaceRelativePath)
       : target;
-    await ensureConfinedDirectoryChain(target, workingDirectory);
+    await ensureConfinedDirectoryChain(target, workingDirectory, { signal });
     gitEvidenceAuthority = await captureGitEvidenceAuthority(target, base.baseCommit);
     if (!gitEvidenceAuthority) {
       throw new WorktreeUnavailableError(
@@ -2086,6 +2296,8 @@ async function createTaskWorktreeUnsynchronized(
     const sharedSnapshot = await snapshotSharedDirectories(
       mainWorkspace,
       workingDirectory,
+      WORKTREE_LINK_DIRS,
+      { signal },
     );
     warnings.push(...sharedSnapshot.warnings);
     sharedSnapshotDirs = sharedSnapshot.provisioned;
@@ -2093,6 +2305,7 @@ async function createTaskWorktreeUnsynchronized(
       sharedDirectoryBaseline = await captureSharedDirectoryFingerprint(
         workingDirectory,
         sharedSnapshotDirs,
+        { signal },
       );
     }
     assertMetadataLeaseHealthy();
@@ -2201,6 +2414,8 @@ async function provisionSharedDestination(
   worktreePath: string,
   dir: string,
   beforeCreate?: EnsureConfinedDirectoryChainOptions["beforeCreate"],
+  signal?: AbortSignal,
+  mutationTimeoutMs?: number,
 ): Promise<ProvisionedSharedDestination> {
   const root = path.resolve(worktreePath);
   const destination = path.resolve(root, dir);
@@ -2214,6 +2429,8 @@ async function provisionSharedDestination(
   }
   const chain = await ensureConfinedDirectoryChain(root, parentDirectory, {
     beforeCreate,
+    signal,
+    mutationTimeoutMs,
   });
   return {
     destination,
@@ -2231,6 +2448,9 @@ export interface SharedDirectorySnapshotResult {
 
 export interface SnapshotSharedDirectoriesOptions {
   beforeParentCreate?: EnsureConfinedDirectoryChainOptions["beforeCreate"];
+  signal?: AbortSignal;
+  mutationTimeoutMs?: number;
+  hashLimits?: EvidenceReadLimits;
   /** Test seam after the helper has pinned the destination parent and before final rename. */
   beforeDestinationCommit?: (context: {
     parent: PinnedDirectoryAuthority;
@@ -2259,12 +2479,15 @@ export async function snapshotSharedDirectories(
   const warnings: string[] = [];
   const provisioned: string[] = [];
   let rollbackComplete = true;
+  const newHashBudget = (): SharedHashBudget =>
+    new SharedHashBudget({ limits: options.hashLimits, signal: options.signal });
   const parsed = parseWorktreeLinkDirectories(dirs.join(","));
   for (const invalid of parsed.invalid) {
     warnings.push(`Skipped unsafe shared worktree snapshot path: ${invalid}`);
   }
 
   for (const dir of parsed.dirs) {
+    newHashBudget().assertActive();
     const sourceCandidate = path.resolve(mainWorkspace, dir);
     const sourceEntry = await fs.lstat(sourceCandidate).catch((error) => {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
@@ -2289,8 +2512,11 @@ export async function snapshotSharedDirectories(
         worktreePath,
         dir,
         options.beforeParentCreate,
+        options.signal,
+        options.mutationTimeoutMs,
       );
     } catch (error) {
+      if (options.signal?.aborted) throw error;
       if (error instanceof ConfinedDirectoryChainError) {
         rollbackComplete &&= error.rollbackComplete;
       }
@@ -2322,15 +2548,31 @@ export async function snapshotSharedDirectories(
       // The fingerprint walk is also the confinement walk: every symlink or
       // junction descendant must resolve inside this configured source tree and
       // is never traversed by the unsandboxed parent process.
-      await captureSharedDirectoryFingerprint(mainWorkspace, [dir]);
-      const trustedSourceDigest = await captureSnapshotSemanticDigest(source, dir);
-      await options.beforeCopy?.({ source, dir });
-      const copied = await runPinnedDirectoryMutation(destination.parent, {
-        op: "copy-directory",
-        name: stagingName,
+      await captureSharedDirectoryFingerprintWithBudget(
+        mainWorkspace,
+        [dir],
+        newHashBudget(),
+      );
+      const trustedSourceDigest = await captureSnapshotSemanticDigest(
         source,
-        finalName: destination.name,
-      });
+        dir,
+        undefined,
+        newHashBudget(),
+      );
+      await options.beforeCopy?.({ source, dir });
+      const copied = await runPinnedDirectoryMutation(
+        destination.parent,
+        {
+          op: "copy-directory",
+          name: stagingName,
+          source,
+          finalName: destination.name,
+        },
+        {
+          signal: options.signal,
+          timeoutMs: options.mutationTimeoutMs,
+        },
+      );
       stagingMayExist = copied.mutated;
       if (copied.snapshot?.kind !== "directory" || !copied.snapshot.identity) {
         throw new Error(
@@ -2347,6 +2589,8 @@ export async function snapshotSharedDirectories(
           expectedIdentity: stagingIdentity,
         },
         {
+          signal: options.signal,
+          timeoutMs: options.mutationTimeoutMs,
           beforeExecute: async () => {
             await options.beforeDestinationCommit?.({
               parent: destination.parent,
@@ -2355,11 +2599,12 @@ export async function snapshotSharedDirectories(
               dir,
             });
             const [currentSourceDigest, privateSnapshotDigest] = await Promise.all([
-              captureSnapshotSemanticDigest(source, dir),
+              captureSnapshotSemanticDigest(source, dir, undefined, newHashBudget()),
               captureSnapshotSemanticDigest(
                 path.join(destination.parent.directory, stagingName),
                 dir,
                 process.platform === "win32" ? destination.destination : undefined,
+                newHashBudget(),
               ),
             ]);
             if (
@@ -2382,11 +2627,15 @@ export async function snapshotSharedDirectories(
       let stagingRollbackComplete = !stagingMayExist;
       if (stagingMayExist && stagingIdentity) {
         try {
-          const removed = await runPinnedDirectoryMutation(destination.parent, {
-            op: "rmdir",
-            name: stagingName,
-            expectedIdentity: stagingIdentity,
-          });
+          const removed = await runPinnedDirectoryMutation(
+            destination.parent,
+            {
+              op: "rmdir",
+              name: stagingName,
+              expectedIdentity: stagingIdentity,
+            },
+            { timeoutMs: options.mutationTimeoutMs },
+          );
           stagingRollbackComplete =
             removed.mutated && removed.snapshot?.kind === "missing";
         } catch {
@@ -2396,6 +2645,7 @@ export async function snapshotSharedDirectories(
       const parentRollbackOutcome = await destination.chain.rollback();
       const parentRollbackComplete = parentRollbackOutcome === "complete";
       rollbackComplete &&= parentRollbackComplete && stagingRollbackComplete;
+      if (options.signal?.aborted) throw error;
       if (error instanceof PinnedDirectoryMutationError && error.code === "EEXIST") {
         warnings.push(
           `Skipped shared worktree snapshot because the destination exists: ${dir}` +

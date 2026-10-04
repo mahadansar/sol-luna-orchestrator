@@ -1,4 +1,4 @@
-import { appendFileSync } from "node:fs";
+import { appendBoundedPrivateFile } from "./telemetry-file.js";
 import { EVENTS_FILE } from "./config.js";
 import type {
   AttemptEvidence,
@@ -620,14 +620,10 @@ function sanitizeEvent(event: OrchestratorEvent): Record<string, unknown> {
 export function createEventEmitter(file = EVENTS_FILE): EventEmitter {
   return (event: OrchestratorEvent): void => {
     if (!file) return;
-    try {
-      appendFileSync(
-        file,
-        `${JSON.stringify({ timestamp: new Date().toISOString(), ...sanitizeEvent(event) })}\n`,
-      );
-    } catch {
-      // Telemetry must never break a run.
-    }
+    appendBoundedPrivateFile(
+      file,
+      `${JSON.stringify({ timestamp: new Date().toISOString(), ...sanitizeEvent(event) })}\n`,
+    );
   };
 }
 

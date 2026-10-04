@@ -10,9 +10,11 @@ import {
 } from "./codex.js";
 import {
   discoveryHintPath,
+  discoveryHintPaths,
   ensureDiscoveryHint,
   inspectDiscoveryHint,
   readDiscoveryInstructions,
+  removeDiscoveryHints,
   writeDiscoveryInstructions,
 } from "./discovery-hint.js";
 import { defaultEventsPath } from "./events-path.js";
@@ -69,6 +71,18 @@ const INIT_BOOLEAN_FLAGS = [
   "--no-discovery-hint",
 ];
 const INIT_VALUE_FLAGS = ["--log", "--events"];
+
+const INIT_HELP = `${bold("Usage")}
+  sol-luna-orchestrator init [options]
+
+${bold("Options")}
+  --dry-run           Show what would change, write nothing
+  --force             Re-apply configuration even if it looks correct
+  --log <path>        Set the diagnostic log path, replacing any existing one
+  --events <path>     Set the activity event path, replacing any existing one
+  --allow-ephemeral   Permit registering a temporary npx install
+  --no-discovery-hint Remove the managed fresh-chat discovery hint if installed
+  --help, -h          Show this help`;
 
 /**
  * Parse `init`'s arguments strictly.
@@ -264,6 +278,15 @@ export function applyInitConfig(before: string, input: InitConfigInput): string 
 }
 
 export async function initCommand(argv: string[]): Promise<number> {
+  if (argv.includes("--help") || argv.includes("-h")) {
+    const unknownWithHelp = argv.filter((arg) => arg !== "--help" && arg !== "-h");
+    if (unknownWithHelp.length > 0) {
+      for (const arg of unknownWithHelp) out(`${symbols.fail} Unknown option: ${arg}`);
+      return 1;
+    }
+    out(INIT_HELP);
+    return 0;
+  }
   const options = parseInitOptions(argv);
 
   out(bold("Sol-Luna Orchestrator setup"));
@@ -321,6 +344,17 @@ export async function initCommand(argv: string[]): Promise<number> {
   const instructionsPath = discoveryHintPath();
   const instructionsBefore = readDiscoveryInstructions(instructionsPath);
   const discoveryBefore = inspectDiscoveryHint(instructionsBefore);
+  const instructionFilesBefore = discoveryHintPaths().map((filePath) => {
+    const contents = readDiscoveryInstructions(filePath);
+    return {
+      filePath,
+      removableCount: removeDiscoveryHints(contents).removedCount,
+    };
+  });
+  const removableDiscoveryHintCount = instructionFilesBefore.reduce(
+    (count, entry) => count + entry.removableCount,
+    0,
+  );
   const settingsBefore = inspectSettings(before);
 
   // The config file is what Codex actually loads, so it is the authority here.
@@ -350,8 +384,9 @@ export async function initCommand(argv: string[]): Promise<number> {
 
   const registrationOk =
     isRegistered && pathMatches && commandMatches && registrationIsEnabled;
-  const discoveryHintConfigured =
-    options.noDiscoveryHint || discoveryBefore.exactCount > 0;
+  const discoveryHintConfigured = options.noDiscoveryHint
+    ? removableDiscoveryHintCount === 0
+    : discoveryBefore.exactCount > 0;
   const alreadyDone =
     registrationOk &&
     settingsSatisfied(settingsBefore) &&
@@ -416,8 +451,10 @@ export async function initCommand(argv: string[]): Promise<number> {
     planned.push(`set SOL_LUNA_SERVER_NAME to ${SERVER_NAME} for worker isolation`);
   }
   if (options.noDiscoveryHint) {
-    if (discoveryBefore.exactCount === 0) {
-      planned.push(`skip Codex discovery hint (--no-discovery-hint)`);
+    for (const entry of instructionFilesBefore) {
+      if (entry.removableCount > 0) {
+        planned.push(`remove managed Codex discovery hint from ${entry.filePath}`);
+      }
     }
   } else if (discoveryBefore.exactCount === 0) {
     planned.push(`install Codex discovery hint in ${instructionsPath}`);
@@ -450,7 +487,15 @@ export async function initCommand(argv: string[]): Promise<number> {
     ({ backupPath } = writeConfig(text, configPath));
   }
 
-  if (!options.noDiscoveryHint) {
+  if (options.noDiscoveryHint) {
+    for (const entry of instructionFilesBefore) {
+      const currentInstructions = readDiscoveryInstructions(entry.filePath);
+      const removal = removeDiscoveryHints(currentInstructions);
+      if (removal.removedCount > 0) {
+        writeDiscoveryInstructions(removal.text, entry.filePath);
+      }
+    }
+  } else {
     const instructionsAfter = ensureDiscoveryHint(instructionsBefore);
     if (instructionsAfter !== instructionsBefore) {
       writeDiscoveryInstructions(instructionsAfter, instructionsPath);
@@ -524,6 +569,17 @@ export async function initCommand(argv: string[]): Promise<number> {
   const discoveryAfter = inspectDiscoveryHint(
     readDiscoveryInstructions(instructionsPath),
   );
+  const remainingManagedHints = discoveryHintPaths().reduce(
+    (count, filePath) =>
+      count + removeDiscoveryHints(readDiscoveryInstructions(filePath)).removedCount,
+    0,
+  );
+  if (options.noDiscoveryHint && remainingManagedHints > 0) {
+    out();
+    out(`${symbols.fail} Codex discovery hint opt-out did not verify after writing.`);
+    if (backupPath) out(`    Previous config saved at ${backupPath}`);
+    return 1;
+  }
   if (!options.noDiscoveryHint && discoveryAfter.exactCount === 0) {
     out();
     out(`${symbols.fail} Codex discovery hint did not verify after writing.`);
@@ -540,9 +596,7 @@ export async function initCommand(argv: string[]): Promise<number> {
   out();
   out("Next:");
   out("  1. Open Codex with any compatible parent model");
-  out(
-    "  2. Choose the effort the work warrants (creator example: GPT-5.6 Sol at Medium)",
-  );
+  out("  2. Choose the effort the work warrants");
   out("  3. Work normally");
   out();
   out(dim("Run `sol-luna-orchestrator doctor` any time."));

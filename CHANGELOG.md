@@ -16,9 +16,41 @@ All notable changes to this project are documented here. Format follows
   cannot survive as stale package contents.
 - New cross-session handoff exports identify `0.13.0` as their default source
   version.
-- The lockfile now resolves current compatible dependency versions, including
-  `@modelcontextprotocol/sdk` `1.32.0`, clearing the repository's npm audit
-  findings without widening declared dependency ranges.
+- Runtime dependencies are now exact and the published package carries
+  `npm-shrinkwrap.json`, so installs of the same package version use the validated
+  runtime dependency graph instead of floating within semver ranges. The current
+  graph includes `@modelcontextprotocol/sdk` `1.32.0` and has no npm audit findings.
+- Verification allowlist mode now keeps direct interpreters and ad-hoc package
+  fetchers out of the default-safe set, constrains multi-purpose package/tool
+  launchers to verification-oriented subcommands, and lets operators explicitly
+  add, deny, or replace executable policy. Worker Codex processes receive a
+  least-privilege environment with explicit opt-in passthrough for extra variables.
+- CI remains manually dispatched, now with an exact Node 22.12 floor lane in
+  addition to the Node 24/26 cross-platform matrix. Release actions are pinned to
+  immutable commits, and tagged publishing now requires the exact current `main`
+  commit plus a successful manual CI run for that SHA before packaging. OIDC
+  authority is isolated to a minimal job that publishes the already-validated tarball.
+- Local diagnostics and activity files are owner-only on POSIX where supported,
+  bounded to 16 MiB with one rotated predecessor, and activity reads use bounded
+  tail windows for oversized legacy files.
+
+### Fixed
+
+- Parent-side workspace and dependency evidence hashing now streams file content
+  under explicit per-file, aggregate-byte, entry-count, and elapsed-time budgets,
+  preventing worker-controlled files from forcing unbounded parent memory use.
+- Pinned filesystem mutation helpers now inherit orchestration cancellation and a
+  finite deadline, are killed/reaped on cancellation or timeout, and preserve
+  conservative mutation evidence when interruption happens after dispatch.
+- The previously shared-checkout throwing-executor lifecycle fixture now runs in
+  an isolated temporary Git repository, removing the demonstrated release-gate flake.
+- `init --no-discovery-hint` now removes exact managed discovery hints from an
+  existing install while preserving user instructions. CLI help, uninstall scope,
+  `status` health exit codes, doctor remedies, and parent-model onboarding copy are
+  aligned with current product behavior.
+- Human activity output now includes a privacy-safe workspace/run discriminator
+  so concurrent projects sharing one Codex home are distinguishable without
+  exposing absolute paths or raw batch identifiers.
 
 ## [0.13.0] - 2026-10-04
 

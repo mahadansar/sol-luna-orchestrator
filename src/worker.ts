@@ -15,6 +15,7 @@ import {
   MAX_PARALLEL,
   ORCHESTRATOR_SERVER_NAME,
   VERIFY_MODE,
+  WORKER_ENV_PASSTHROUGH,
   WORKER_MARKER_ENV,
   WORKER_NETWORK_ACCESS,
   WORKER_SANDBOX,
@@ -178,6 +179,133 @@ export interface WorkerCodex {
 }
 
 /**
+ * Parent variables needed for the Codex process itself and ordinary local
+ * toolchains. Credentials unrelated to the configured model provider are
+ * intentionally absent; operators can opt additional names in explicitly.
+ */
+const DEFAULT_WORKER_ENV_KEYS = [
+  // Executable lookup and Windows process startup.
+  "PATH",
+  "PATHEXT",
+  "SystemRoot",
+  "WINDIR",
+  "ComSpec",
+  // Home/config/temp directories used by Codex and child tools.
+  "HOME",
+  "USERPROFILE",
+  "HOMEDRIVE",
+  "HOMEPATH",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "TMP",
+  "TEMP",
+  "TMPDIR",
+  "XDG_CONFIG_HOME",
+  "XDG_CACHE_HOME",
+  "XDG_DATA_HOME",
+  "SHELL",
+  // Locale/terminal behavior.
+  "LANG",
+  "LANGUAGE",
+  "LC_ALL",
+  "LC_CTYPE",
+  "TERM",
+  "COLORTERM",
+  // Codex auth/config and the built-in OpenAI provider.
+  "CODEX_HOME",
+  "OPENAI_API_KEY",
+  "OPENAI_BASE_URL",
+  "OPENAI_API_BASE",
+  "OPENAI_ORGANIZATION",
+  "OPENAI_ORG_ID",
+  "OPENAI_PROJECT",
+  "OPENAI_PROJECT_ID",
+  // Common non-secret toolchain selectors needed to execute repository tasks.
+  "JAVA_HOME",
+  "ANDROID_HOME",
+  "ANDROID_SDK_ROOT",
+  "DOTNET_ROOT",
+  "GOPATH",
+  "GOROOT",
+  "CARGO_HOME",
+  "RUSTUP_HOME",
+  "PNPM_HOME",
+  "NVM_BIN",
+  "NVM_DIR",
+  "VOLTA_HOME",
+  "VIRTUAL_ENV",
+  "CONDA_PREFIX",
+  // Network routing/certificate configuration can be required to reach the
+  // configured provider without granting unrelated service credentials.
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "all_proxy",
+  "no_proxy",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "NODE_EXTRA_CA_CERTS",
+] as const;
+
+function copyWorkerEnvKey(
+  target: Record<string, string>,
+  source: NodeJS.ProcessEnv,
+  requestedKey: string,
+  platform: NodeJS.Platform,
+): void {
+  const sourceKey = Object.prototype.hasOwnProperty.call(source, requestedKey)
+    ? requestedKey
+    : platform === "win32"
+      ? Object.keys(source).find(
+          (key) => key.toLowerCase() === requestedKey.toLowerCase(),
+        )
+      : undefined;
+  if (!sourceKey) return;
+  const value = source[sourceKey];
+  if (value !== undefined) target[sourceKey] = value;
+}
+
+function setWorkerEnvValue(
+  target: Record<string, string>,
+  key: string,
+  value: string,
+  platform: NodeJS.Platform,
+): void {
+  if (platform === "win32") {
+    for (const existing of Object.keys(target)) {
+      if (existing !== key && existing.toLowerCase() === key.toLowerCase()) {
+        delete target[existing];
+      }
+    }
+  }
+  target[key] = value;
+}
+
+/** Build the least-privilege environment handed to the worker Codex process. */
+export function buildWorkerEnvironment(
+  source: NodeJS.ProcessEnv = process.env,
+  passThroughKeys: readonly string[] = WORKER_ENV_PASSTHROUGH,
+  overrides: Readonly<Record<string, string>> = {},
+  platform: NodeJS.Platform = process.platform,
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const key of DEFAULT_WORKER_ENV_KEYS) copyWorkerEnvKey(env, source, key, platform);
+  for (const key of passThroughKeys) copyWorkerEnvKey(env, source, key, platform);
+
+  // Git evidence isolation is server-owned authority and must win over an
+  // inherited/pass-through value. The recursion marker has final precedence so
+  // no parent setting or pass-through can re-enable delegation in a child.
+  for (const [key, value] of Object.entries(overrides)) {
+    setWorkerEnvValue(env, key, value, platform);
+  }
+  setWorkerEnvValue(env, WORKER_MARKER_ENV, "1", platform);
+  return env;
+}
+
+/**
  * Drive one Luna thread to completion, recording what the Codex runtime
  * actually observed rather than only what the model says it did.
  */
@@ -223,12 +351,11 @@ async function runWorkerThread(
   //  2. Mark the worker's environment. A server instance that starts with the
   //     marker set refuses to serve `delegate_task`, so isolation survives the
   //     server being registered under an unexpected name.
-  const workerEnv: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined) workerEnv[key] = value;
-  }
-  Object.assign(workerEnv, options.envOverrides ?? {});
-  workerEnv[WORKER_MARKER_ENV] = "1";
+  const workerEnv = buildWorkerEnvironment(
+    process.env,
+    WORKER_ENV_PASSTHROUGH,
+    options.envOverrides,
+  );
 
   const threadOptions: ThreadOptions = {
     model: options.model ?? LUNA_MODEL,

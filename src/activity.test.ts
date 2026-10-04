@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import path from "node:path";
 import {
   reduceEvents,
   reduceRecentBatches,
@@ -2111,6 +2112,62 @@ test("human rendering: running parallel work answers the at-a-glance questions",
   assert.doesNotMatch(
     output,
     /batch-internal-uuid|internal-task-[12]|Implement persistent|Update model-agnostic|SUPERVISOR|Usage/,
+  );
+});
+
+test("human rendering identifies the latest global-stream workspace without exposing paths or batch ids", () => {
+  const olderWorkspace = path.resolve("private", "project-alpha");
+  const latestWorkspace = path.resolve("private", "project-beta");
+  const output = human([
+    {
+      timestamp: "2024-01-01T09:59:00Z",
+      type: "batch.started",
+      batchId: "opaque-old-batch",
+      mode: "parallel",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T09:59:01Z",
+      type: "worker.started",
+      batchId: "opaque-old-batch",
+      taskId: "old-task",
+      effort: "medium",
+      workingDirectory: path.join(
+        olderWorkspace,
+        ".sol-luna",
+        "worktrees",
+        "opaque-old-task",
+      ),
+    },
+    {
+      timestamp: "2024-01-01T10:00:00Z",
+      type: "batch.started",
+      batchId: "opaque-new-batch",
+      mode: "parallel",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2024-01-01T10:00:01Z",
+      type: "worker.started",
+      batchId: "opaque-new-batch",
+      taskId: "new-task",
+      effort: "high",
+      workingDirectory: path.join(
+        latestWorkspace,
+        ".sol-luna",
+        "worktrees",
+        "opaque-new-task",
+      ),
+    },
+  ]);
+
+  assert.match(output, /Source: workspace project-beta .* run [0-9a-f]{8}/);
+  assert.doesNotMatch(output, /project-alpha|opaque-(?:old|new)-batch/);
+  assert.ok(
+    !output.includes(latestWorkspace),
+    "human source label must not expose the path",
   );
 });
 

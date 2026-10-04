@@ -174,7 +174,13 @@ test("every test file is wired into the deterministic gate", async () => {
     scripts: Record<string, string>;
   };
   const script = manifest.scripts.test ?? "";
+  const coverageScript = manifest.scripts.coverage ?? "";
   assert.match(script, /node --test/, "the test script must run node --test");
+  assert.match(
+    coverageScript,
+    /node --experimental-test-coverage --test/,
+    "the coverage script must run the same deterministic test corpus",
+  );
 
   const sources = await fs.readdir(path.join(ROOT_DIR, "src"), {
     recursive: true,
@@ -198,6 +204,15 @@ test("every test file is wired into the deterministic gate", async () => {
     `Test files exist but never run. Add them to the "test" script in` +
       ` package.json: ${missing.join("; ")}`,
   );
+  const missingCoverage = suites.filter(
+    (suite) => !coverageScript.includes(`dist/${suite}`),
+  );
+  assert.deepEqual(
+    missingCoverage,
+    [],
+    `Test files exist but never run under coverage. Add them to the "coverage" script in` +
+      ` package.json: ${missingCoverage.join("; ")}`,
+  );
 
   for (const workflow of ["ci.yml", "publish.yml"]) {
     const text = await readDoc(`.github/workflows/${workflow}`);
@@ -205,6 +220,38 @@ test("every test file is wired into the deterministic gate", async () => {
       text,
       /run: npm test/,
       `${workflow} must defer to the npm test list rather than duplicating it`,
+    );
+  }
+});
+
+test("published runtime dependency graph is release-reproducible", async () => {
+  const manifest = JSON.parse(await readDoc("package.json")) as {
+    version: string;
+    files?: string[];
+    dependencies?: Record<string, string>;
+  };
+  const shrinkwrap = JSON.parse(await readDoc("npm-shrinkwrap.json")) as {
+    version: string;
+    packages: Record<string, { version?: string; dependencies?: Record<string, string> }>;
+  };
+
+  assert.ok(
+    manifest.files?.includes("npm-shrinkwrap.json"),
+    "the publish allowlist must include npm-shrinkwrap.json",
+  );
+  assert.equal(shrinkwrap.version, manifest.version);
+  assert.equal(shrinkwrap.packages[""]?.version, manifest.version);
+
+  for (const [name, declared] of Object.entries(manifest.dependencies ?? {})) {
+    assert.doesNotMatch(
+      declared,
+      /^[~^]/,
+      `runtime dependency ${name} must be exact for executable-package reproducibility`,
+    );
+    assert.equal(
+      shrinkwrap.packages[""]?.dependencies?.[name],
+      declared,
+      `shrinkwrap root dependency ${name} must match package.json`,
     );
   }
 });
@@ -796,17 +843,15 @@ test("release guidance creates a verified non-draft release after publishing", a
   const releaseHeading = agents.indexOf("## Release discipline");
   assert.ok(releaseHeading >= 0);
   const releaseGuidance = agents.slice(releaseHeading);
-  const agentPublish = releaseGuidance.search(
-    /tag-matching OIDC\s+workflow publish successfully/i,
-  );
+  const agentPublish = releaseGuidance.search(/minimal tarball\s+publish job/i);
   const agentRelease = releaseGuidance.search(/create a non-draft GitHub Release/i);
   assert.ok(agentPublish >= 0 && agentPublish < agentRelease);
-  assert.match(releaseGuidance, /existing remote tag/i);
+  assert.match(releaseGuidance, /existing\s+remote tag/i);
   assert.match(releaseGuidance, /--verify-tag/);
   assert.doesNotMatch(releaseGuidance, /GitHub Release draft|\b--draft\b/i);
   assert.match(
     releaseGuidance,
-    /GitHub Release body transiently[\s\S]*do not commit a separate release body/i,
+    /GitHub Release body\s+transiently[\s\S]*do not commit a separate\s+release body/i,
   );
 });
 

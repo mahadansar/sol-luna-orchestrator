@@ -25,24 +25,53 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write
+  actions: read
 
 jobs:
-  publish:
-    name: npm publish
+  validate:
+    name: validate release
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v7
+      # Third-party actions are pinned to immutable commits. Update these SHAs only
+      # in a reviewed dependency-maintenance change after verifying the upstream tag.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
 
-      - uses: actions/setup-node@v7
+      - name: Verify tagged commit is validated on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAGGED_SHA="$(git rev-parse HEAD)"
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          MAIN_SHA="$(git rev-parse refs/remotes/origin/main)"
+          if [ "$TAGGED_SHA" != "$MAIN_SHA" ]; then
+            echo "::error::Tagged commit $TAGGED_SHA is not the current origin/main commit $MAIN_SHA. Nothing was published."
+            exit 1
+          fi
+
+          CI_RUN_ID="$(gh api --method GET \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
+            -f "head_sha=$TAGGED_SHA" \
+            -f "event=workflow_dispatch" \
+            -f "status=success" \
+            -f "per_page=1" \
+            --jq '.workflow_runs[0].id // empty')"
+          if [ -z "$CI_RUN_ID" ]; then
+            echo "::error::Tagged commit $TAGGED_SHA has no successful manually dispatched CI run. Nothing was published."
+            exit 1
+          fi
+          echo "validated CI run: $CI_RUN_ID"
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           # Active LTS for releases. Node 24 ships npm 11.17+, comfortably above
           # the 11.5.1 that trusted publishing requires.
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
           # No cache in a release build: the artifact that reaches npm should be
-          # built from the lockfile, not from whatever a cache happened to hold.
+          # built from the published shrinkwrap, not from whatever a cache happened to hold.
           package-manager-cache: false
 
       # The tag is the only thing a human types during a release, so it is the
@@ -52,10 +81,13 @@ jobs:
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           PKG_VERSION="$(node -p "JSON.parse(require('node:fs').readFileSync('package.json','utf8')).version")"
+          SHRINKWRAP_VERSION="$(node -p "JSON.parse(require('node:fs').readFileSync('npm-shrinkwrap.json','utf8')).version")"
+          SHRINKWRAP_ROOT_VERSION="$(node -p "JSON.parse(require('node:fs').readFileSync('npm-shrinkwrap.json','utf8')).packages[''].version")"
           echo "tag:        $TAG_VERSION"
           echo "package.json: $PKG_VERSION"
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $PKG_VERSION. Nothing was published."
+          echo "npm-shrinkwrap.json: $SHRINKWRAP_VERSION / root $SHRINKWRAP_ROOT_VERSION"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ] || [ "$TAG_VERSION" != "$SHRINKWRAP_VERSION" ] || [ "$TAG_VERSION" != "$SHRINKWRAP_ROOT_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package/shrinkwrap versions. Nothing was published."
             exit 1
           fi
 
@@ -77,12 +109,40 @@ jobs:
       - name: MCP protocol smoke test
         run: node dist/smoke-protocol.js
 
-      - name: Inspect the package that will be published
-        run: npm pack --dry-run
+      - name: Pack the validated release
+        run: npm pack
 
-      # `prepublishOnly` runs `npm run verify` again here. That repetition is
-      # deliberate: the steps above exist to give a readable failure in the log,
-      # while `prepublishOnly` guarantees that no publish path — including a
-      # manual one from a laptop — can skip verification.
-      - name: Publish to npm
-        run: npm publish
+      - name: Preserve validated package
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: npm-package
+          path: sol-luna-orchestrator-*.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: npm publish
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+
+    steps:
+      # Keep the credential-bearing job minimal: it receives only the tarball
+      # produced by the validated job and never checks out or builds repository code.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      - name: Download validated package
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: npm-package
+          path: package
+
+      - name: Publish validated package to npm
+        run: npm publish package/sol-luna-orchestrator-*.tgz

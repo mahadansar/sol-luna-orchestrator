@@ -5,8 +5,9 @@ server that lets one Codex agent delegate bounded work to another.
 
 ## Getting set up
 
-Node 22.12 or newer. CI runs 24 (active LTS) and 26 (current) on Windows, Ubuntu
-and macOS.
+Node 22.12 or newer. The deterministic CI workflow has one exact Ubuntu 22.12
+minimum-runtime lane plus Node 24 (active LTS) and 26 (current) on Windows,
+Ubuntu and macOS.
 
 ```bash
 npm install
@@ -14,6 +15,12 @@ npm run build
 npm test          # unit, security, parallel and CLI tests; no model calls
 npm run smoke     # MCP protocol handshake, no model calls
 ```
+
+This executable package keeps its published runtime dependency tree reproducible:
+runtime dependencies are exact in `package.json`, and `npm-shrinkwrap.json` is the
+published lockfile. Use `npm ci` for a clean checkout. When dependencies change,
+regenerate the shrinkwrap with the same npm version used for release work and
+review the resulting resolution diff before committing it.
 
 Build, typecheck, formatting, tests, `smoke`, and `smoke:cli` are deterministic
 and make no model calls. Only the explicitly live-model scripts (`smoke:live`,
@@ -248,7 +255,8 @@ affected canonical document in the same change.
 
 1. Bump the version and record what shipped:
    `npm version <x.y.z> --no-git-tag-version`, then add the matching
-   `CHANGELOG.md` entry. Prepare and review the intended GitHub Release body
+   `CHANGELOG.md` entry. Confirm `package.json` and `npm-shrinkwrap.json` carry
+   the same version. Prepare and review the intended GitHub Release body
    transiently from that entry; do not commit a second release-body source.
 2. Commit and push the release candidate to `main`.
 3. While automatic CI is paused, manually dispatch `.github/workflows/ci.yml`
@@ -256,8 +264,12 @@ affected canonical document in the same change.
 4. Create the annotated release tag from that validated commit and push it:
    `git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`.
 5. `.github/workflows/publish.yml` fires on the tag. It refuses to continue if
-   the tag does not match `package.json`, then builds, typechecks, runs the
-   tests and the MCP smoke test, and publishes via OIDC.
+   the tag is not the exact current `origin/main` commit, that SHA has no
+   successful manually dispatched CI run, or the tag/package/shrinkwrap versions
+   disagree. An unprivileged validation job installs from the shrinkwrap, builds,
+   typechecks, formats, tests, runs the MCP smoke test, and packs the tarball. A
+   separate minimal job alone receives OIDC authority and publishes that exact
+   validated tarball without checking out or rebuilding repository code.
 6. npm attaches provenance automatically — the repository and package are both
    public, so `--provenance` is neither passed nor needed.
 7. Only after the tag-triggered publish succeeds and the remote tag exists,

@@ -69,10 +69,12 @@ for broad runtime changes. The deterministic protocol smoke test is
 ## Release discipline
 
 Do not publish from a branch or pull request. Maintainers bump `package.json` and
-the lockfile, update [`CHANGELOG.md`](CHANGELOG.md), and prepare the intended
-GitHub Release body transiently; do not commit a separate release body. After
-green CI on `main`, tag the exact validated commit and let the tag-matching OIDC
-workflow publish successfully. Only then create a non-draft GitHub Release
-against the existing remote tag; CLI automation must use `--verify-tag`. See
+the published `npm-shrinkwrap.json`, update [`CHANGELOG.md`](CHANGELOG.md), and
+prepare the intended GitHub Release body transiently; do not commit a separate
+release body. After green CI on the exact current `main` commit, tag that commit;
+the tag workflow independently verifies the SHA/CI/version relationship, builds
+the tarball without OIDC authority, and gives OIDC only to the minimal tarball
+publish job. Only then create a non-draft GitHub Release against the existing
+remote tag; CLI automation must use `--verify-tag`. See
 [`CONTRIBUTING.md`](CONTRIBUTING.md) for the detailed release workflow. Never add
 npm tokens or publish secrets.

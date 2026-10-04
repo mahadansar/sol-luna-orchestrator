@@ -19,8 +19,11 @@ Everything the orchestrator reads, and how to change it. The
 
 ## Requirements
 
-- **Node.js ≥ 22.12** — tested in CI on 24 (active LTS) and 26 (current). Node 20
-  and earlier are end-of-life and are neither tested nor supported.
+- **Node.js ≥ 22.12** — the CI workflow carries an exact Ubuntu 22.12 minimum
+  lane plus the Node 24 (active LTS) / 26 (current) cross-platform matrix. The
+  released v0.13.0 acceptance record predates the minimum-floor lane and records
+  its actual Node 24/26 evidence separately. Node 20 and earlier are end-of-life
+  and are neither tested nor supported.
 - **OpenAI Codex CLI**, logged in (`codex login`). Built against bundled `codex-cli 0.160.0`.
 - **git ≥ 2.20** — only for parallel batches, which use `git worktree`.
 - Access to a compatible parent Codex model and the configured worker model
@@ -115,7 +118,7 @@ A catalog can be cached or bundled. The newest model in it is not proof of
 account access or global release freshness; a real worker turn checks access.
 Refreshing the catalog or updating the bundled Codex dependency may be needed
 for a new model to appear, even when this package needs no model-name change.
-The package requires SDK `^0.160.0` (lockfile 0.160.0), whose bundled catalog
+The package requires SDK `0.160.0` (published shrinkwrap 0.160.0), whose bundled catalog
 exposes `gpt-6-luna` with the supported effort ladder. Catalog discovery is not
 a live inference run.
 Offline `status` and `doctor` show the configured selector without discovery or
@@ -148,7 +151,9 @@ The instruction file is user-owned. `init` preserves its existing bytes,
 migrates the prior exact managed hint, and is idempotent. A block you edit is
 treated as your content and left alone. `uninstall` removes only recognized
 exact managed blocks from either global instruction file. Use
-`sol-luna-orchestrator init --no-discovery-hint` to opt out. Both
+`sol-luna-orchestrator init --no-discovery-hint` to opt out; on an existing
+installation it also removes any recognized exact managed hint while preserving
+all user-owned instruction bytes. Both
 `init --dry-run` and `uninstall --dry-run` write nothing. `status` reports
 whether the hint is installed, missing or modified; `doctor` checks it and
 prints the command that repairs a missing or incorrect setup.
@@ -296,7 +301,10 @@ registration explicitly has `enabled = false`, a plain `init` repairs it to
 | `SOL_LUNA_ALLOW_DIRTY`             | off                     | `1` permits parallel batches over uncommitted in-scope changes       |
 | `SOL_LUNA_VERIFY_MODE`             | `allowlist`             | `allowlist`, `off`, or `shell` — see [Security](../SECURITY.md)      |
 | `SOL_LUNA_VERIFY_ALLOW`            | —                       | Extra permitted executables, comma separated                         |
+| `SOL_LUNA_VERIFY_DENY`             | —                       | Remove executables from the default verification allowlist           |
+| `SOL_LUNA_VERIFY_ALLOW_ONLY`       | —                       | Replace verification defaults completely; empty means no defaults    |
 | `SOL_LUNA_VERIFY_ENV_PASSTHROUGH`  | off                     | `1` stops withholding credential-shaped env vars                     |
+| `SOL_LUNA_WORKER_ENV_PASSTHROUGH`  | —                       | Extra parent env variable names deliberately exposed to workers      |
 | `SOL_LUNA_ALLOWED_ROOTS`           | —                       | Confine delegation to these directory trees                          |
 | `SOL_LUNA_SERVER_NAME`             | `sol-luna-orchestrator` | **Must match** the name registered in Codex                          |
 | `SOL_LUNA_CONTEXT_MAX_BYTES`       | `50000`                 | Context-policy threshold in exact serialized UTF-8 bytes             |
@@ -355,11 +363,21 @@ environment parser:
   marker flags are opt-ins: only the exact value `1` enables them.
 - `SOL_LUNA_VERIFY_MODE` is case-insensitive but not whitespace-trimmed; an
   unrecognized value falls back to `allowlist` with a warning.
-  `SOL_LUNA_VERIFY_ALLOW` and `SOL_LUNA_WORKTREE_LINK` are comma-separated and
-  trimmed. Extra verification entries may be bare executable names or explicit
-  operator-authorized paths. `SOL_LUNA_WORKTREE_LINK` is the historical setting
-  name; production now uses its entries as dependency **snapshot** directories,
-  not writable links. An empty list disables dependency snapshot provisioning.
+  `SOL_LUNA_VERIFY_ALLOW`, `SOL_LUNA_VERIFY_DENY`,
+  `SOL_LUNA_VERIFY_ALLOW_ONLY`, `SOL_LUNA_WORKER_ENV_PASSTHROUGH`, and
+  `SOL_LUNA_WORKTREE_LINK` are comma-separated and trimmed. Extra verification
+  entries may be bare executable names or explicit operator-authorized paths.
+  `SOL_LUNA_VERIFY_DENY` removes matching defaults; `SOL_LUNA_VERIFY_ALLOW_ONLY`
+  replaces the defaults completely, including an explicitly empty replacement,
+  and `SOL_LUNA_VERIFY_ALLOW` has final additive precedence. Multi-purpose tools
+  that are defaults remain limited to their verification-oriented subcommands;
+  naming one in `SOL_LUNA_VERIFY_ALLOW` or the replacement list is an explicit
+  decision to permit that executable without the default subcommand restriction.
+  Worker environment passthrough entries are exact variable names; unspecified
+  unrelated parent variables stay out of worker processes.
+  `SOL_LUNA_WORKTREE_LINK` is the historical setting name; production now uses
+  its entries as dependency **snapshot** directories, not writable links. An
+  empty list disables dependency snapshot provisioning.
   Entries must stay repository-relative: absolute, drive-qualified, traversal,
   and dot-segment paths are ignored fail-closed and reported through startup
   diagnostics. Source/destination ancestry and dependency-tree symlink/junction
@@ -418,7 +436,12 @@ registration, and reports effective maximum concurrency, maximum workers per
 batch, worker and verification timeouts, sandbox/network policy, worktree
 retention, dirty-base policy, verification mode, and any registered values the
 runtime corrected. `status --json` exposes the same configuration and correction
-diagnostics for scripts. An explicitly empty `LUNA_MODEL` is preserved as an
+diagnostics for scripts. Both human and JSON `status` return non-zero when the
+installation is materially unhealthy (for example an absent/disabled/stale
+registration, invalid required settings, or invalid telemetry paths); use
+`doctor --json` when automation needs the detailed per-check remedies and
+`doctor --json --strict` when warnings should fail as well. An explicitly empty
+`LUNA_MODEL` is preserved as an
 invalid configured value rather than disguised as the default; `doctor` reports
 it as a failure.
 

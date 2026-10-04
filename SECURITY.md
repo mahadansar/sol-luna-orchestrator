@@ -46,7 +46,10 @@ config that launches the server.
   thing.
 - Only executables on an allowlist may launch (`npm`, `pytest`, `cargo`, …). The
   executable may not contain a path, so a repo-local `./npm` cannot hijack the
-  real one.
+  real one. Direct interpreters and ad-hoc package fetchers such as `node`,
+  `python`, `deno`, `npx`, `pnpx` and `bunx` are deliberately **not** in the
+  default set: allowing `node -e` or `python -c` would make the executable-name
+  policy an arbitrary-code launcher by default.
 - The surviving bare name is then resolved to an absolute path **by this
   project, from `PATH` only**. The working directory is never searched, and
   `PATH` entries that mean it — an empty entry, `.`, or anything relative — are
@@ -73,6 +76,15 @@ config that launches the server.
 - Credential-shaped environment variables (matching `KEY`, `TOKEN`, `SECRET`,
   `PASSWORD`, `PASSWD`, `CREDENTIAL`, `SESSION`, `COOKIE`, `AUTH`) are withheld
   from the child process, because its output is fed back into a model transcript.
+
+The operator can narrow the executable policy as well as widen it.
+`SOL_LUNA_VERIFY_DENY` removes named defaults, while
+`SOL_LUNA_VERIFY_ALLOW_ONLY` replaces the default set completely (an explicitly
+empty value starts from no defaults). `SOL_LUNA_VERIFY_ALLOW` then adds explicit
+exceptions and has final precedence. These controls change which executable may
+start; they do not sandbox a permitted tool. Package-manager test scripts,
+Makefiles, Cargo build scripts and similar project-owned code still execute with
+the verification process's user permissions.
 
 `SOL_LUNA_VERIFY_MODE=shell` disables all of the above and hands the raw string
 to a system shell. It exists for people who need it and is logged loudly at
@@ -175,25 +187,32 @@ model's own answer is not evidence.
 `--config mcp_servers={}` does **not** work for this: Codex merges that override
 into the existing table and every server still starts. That merge behavior is why guard 1 is written the way it is.
 
-**The worker inherits your full environment.** The worker's Codex process is
-launched with a copy of the orchestrator's own environment plus
-`SOL_LUNA_WORKER=1`. Nothing is removed from it — the worker needs your provider
-credentials to run at all, so it gets `OPENAI_API_KEY` and everything beside it,
-including variables belonging to unrelated tools.
+**The worker receives a least-privilege environment, not a copy of your full
+environment.** The runtime carries the operating-system variables needed to
+launch tools, Codex home/provider settings, common language-toolchain roots,
+proxy/certificate settings, and `SOL_LUNA_WORKER=1`. Unrelated variables —
+including credential-shaped variables for other cloud, database, GitHub, or
+application tooling — are absent by default.
+
+If an installation genuinely needs another variable, list its exact name in
+`SOL_LUNA_WORKER_ENV_PASSTHROUGH`. This is an explicit trust decision: the worker
+and repository commands it chooses to run can read every passed value. Runtime
+owned environment overrides used for isolated Git evidence are applied after the
+allowlist so caller/process values cannot replace them.
 
 This is **not** the filtered environment described under
 [verification commands](#verification-commands-are-not-shell-strings). Those two
 subprocesses are deliberately different: a verification command is a test suite
 that has no business holding your keys and whose output is fed back into a
 transcript, while the worker is the agent that must authenticate to the model
-provider. Credential-shaped filtering applies to the first and not the second.
+provider. The worker therefore keeps the built-in provider/auth variables it
+needs, but does not receive unrelated parent environment by default.
 
 What follows from that: a worker running under `workspace-write` can read its own
 environment, and a repository whose test or build tooling the worker chooses to
-run inherits it too. If a variable would be damaging in a model transcript or in
-an untrusted repository's hands, do not put it in the environment that launches
-this server. `SOL_LUNA_VERIFY_ENV_PASSTHROUGH` does not affect this path in
-either direction.
+run inherits it too. Treat `SOL_LUNA_WORKER_ENV_PASSTHROUGH` entries as secrets
+you are deliberately making available to that boundary.
+`SOL_LUNA_VERIFY_ENV_PASSTHROUGH` does not affect this path in either direction.
 
 Exploration narrows file admission further before creating its disposable
 surface. In addition to `.git`, `.sol-luna`, and caller-supplied
@@ -264,6 +283,20 @@ Before verification, the orchestrator fingerprints each private dependency
 snapshot. If delegated execution changes those bytes, authoritative verification
 is refused rather than executing worker-authored dependency code. The main
 workspace copy is never the worker's dependency write target.
+
+Parent-side evidence hashing is streamed rather than buffering whole
+worker-controlled files. Each evidence walk also has explicit safety ceilings:
+512 MiB per regular file, 8 GiB aggregate bytes, 250,000 filesystem entries, and
+120 seconds elapsed. The same limits cover ordinary workspace evidence and
+private dependency fingerprints. Exceeding any ceiling fails the evidence step
+closed instead of attempting an unbounded read in the unsandboxed parent.
+
+Filesystem mutations that require pinned-directory authority run in a dedicated
+helper with a five-minute operation bound and inherit the enclosing
+orchestration's cancellation signal. Cancellation or timeout kills and reaps the
+helper before returning; if the protocol cannot prove whether a mutation already
+happened, the result remains conservatively marked as potentially mutated rather
+than assuming rollback safety.
 
 Final worktree deletion does not delegate recursive filesystem removal to Git.
 On Windows, `git worktree remove --force` can traverse an arbitrary junction left
@@ -458,7 +491,12 @@ remains available for normal integration and review.
 
 ### Logs and telemetry
 
-`SOL_LUNA_LOG` and `SOL_LUNA_EVENTS` write plain files with no access control.
+`SOL_LUNA_LOG` and `SOL_LUNA_EVENTS` write plain local files. New/current files
+are created owner-only on POSIX and older files are tightened best-effort; Windows
+inherits its normal ACLs. Each stream is bounded to 16 MiB and keeps at most one
+rotated `.1` predecessor. Rotation is deliberately best-effort: if the current
+file cannot be renamed because another process has it open, that append is
+dropped rather than letting a sensitive telemetry file grow without bound.
 They hold different things, which matters when deciding what is safe to share:
 
 - **`SOL_LUNA_LOG`** is the human-readable diagnostics log. It records
@@ -520,7 +558,9 @@ redaction as a general-purpose data-loss-prevention boundary.
 Current activity writers exclude objectives and task context. Historical JSONL
 retained from pre-hardening versions may still contain older schema fields,
 including objectives; the current reader dropping such fields does not erase
-them from disk. Rotate old files if their contents should no longer be retained.
+them from disk. Delete old or manually retained files if their contents should no
+longer be retained; automatic rotation keeps only the current file and one `.1`
+predecessor going forward.
 Diagnostic logs and tool-result evidence remain more sensitive than current
 activity telemetry.
 
@@ -533,8 +573,8 @@ attaching it to a public issue.
 
 **`init` configures both logs by default**, under your Codex home, because
 `sol-luna-orchestrator activity` cannot work without the event log. Nothing is
-transmitted anywhere — these are local files — but they do accumulate a record
-of what you delegated across every project. To turn either off, delete its key
+transmitted anywhere — these are local files — but they do retain a bounded
+record of what you delegated across projects. To turn either off, delete its key
 from `[mcp_servers.sol-luna-orchestrator.env]`; the server treats an unset value
 as "do not write". `uninstall` removes those keys but deliberately leaves the
 files themselves alone, since the history is yours rather than ours to delete.
@@ -559,9 +599,11 @@ the exact file-selection, ownership, opt-out, and removal behavior.
   _which_ executable runs, not what that executable then does. `npm test`
   executes your project's own test code, which can do anything your user account
   can. If your repository is untrusted, its test suite is untrusted too.
-- **`npm`/`npx` can run arbitrary package code.** Allowlisting `npx` means a
-  model-chosen package name could be fetched and executed. Remove `npx` from the
-  allowlist for stricter setups.
+- **Permitted build/test tools still run project code.** `npm test`, `make`,
+  `cargo test`, and comparable commands can execute repository-controlled code
+  with your user permissions. Ad-hoc fetchers/interpreters such as `npx`, `node`
+  and `python` are no longer defaults; adding one with `SOL_LUNA_VERIFY_ALLOW`
+  is an explicit widening of this boundary.
 - **This is not a sandbox.** It is a set of guardrails that make the common
   failure modes loud instead of silent.
 

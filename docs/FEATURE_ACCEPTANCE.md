@@ -39,6 +39,12 @@ Acceptance evidence below describes the released 0.13.0 behavior. Documentation
 cleanup after release does not retroactively turn a historical run into evidence
 for changed runtime code.
 
+`main` may contain unreleased hardening after the `v0.13.0` tag. Those changes are
+not promoted into the release-source deterministic or live-evidence columns
+below until a future release candidate is validated on its own exact commit.
+Local or focused post-release tests are development evidence only, not a
+replacement for that release gate.
+
 ## Current capability matrix
 
 | Capability                                              | Deterministic | Live evidence | Confidence    |

@@ -1,4 +1,4 @@
-import { appendFileSync } from "node:fs";
+import { appendBoundedPrivateFile } from "./telemetry-file.js";
 
 const CAPABILITY_IDENTIFIER = /\b(?:ctr_|hdf_)[A-Za-z0-9_-]{20,128}\b/g;
 
@@ -43,10 +43,6 @@ export function createLogger(logFile: string | undefined) {
     const line = `[sol-luna-orchestrator] ${sanitizeForLog(message)}\n`;
     process.stderr.write(line);
     if (!logFile) return;
-    try {
-      appendFileSync(logFile, `${new Date().toISOString()} ${line}`);
-    } catch {
-      // Never let logging break the server.
-    }
+    appendBoundedPrivateFile(logFile, `${new Date().toISOString()} ${line}`);
   };
 }

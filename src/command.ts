@@ -10,18 +10,20 @@
  * spawning anything.
  */
 
-/** Executables allowed by default: standard build/test/lint entry points. */
+/**
+ * Executables allowed by default: standard build/test/lint entry points.
+ *
+ * Direct interpreters and ad-hoc package executors are deliberately absent.
+ * Verification commands are model supplied and run with the operator's host
+ * permissions, so `node -e`, `python -c`, `npx`, `pnpx`, `bunx`, and similar
+ * launchers would turn the allowlist into arbitrary code execution. Operators
+ * can still opt into one explicitly through the configured executable policy.
+ */
 export const DEFAULT_ALLOWED_EXECUTABLES = [
   // JS/TS
   "npm",
-  "npx",
   "pnpm",
-  "pnpx",
   "yarn",
-  "bun",
-  "bunx",
-  "deno",
-  "node",
   "tsc",
   "vitest",
   "jest",
@@ -30,9 +32,6 @@ export const DEFAULT_ALLOWED_EXECUTABLES = [
   "prettier",
   "biome",
   // Python
-  "python",
-  "python3",
-  "py",
   "pytest",
   "tox",
   "nox",
@@ -40,8 +39,6 @@ export const DEFAULT_ALLOWED_EXECUTABLES = [
   "mypy",
   "black",
   "flake8",
-  "uv",
-  "poetry",
   // Other ecosystems
   "go",
   "cargo",
@@ -53,10 +50,8 @@ export const DEFAULT_ALLOWED_EXECUTABLES = [
   "just",
   "cmake",
   "ctest",
-  "bundle",
   "rake",
   "rspec",
-  "composer",
   "phpunit",
   "swift",
   "dart",
@@ -177,9 +172,127 @@ const stripExecutableExtension = (name: string): string =>
 const hasPathSeparator = (value: string): boolean =>
   value.includes("/") || value.includes("\\");
 
+const executablePolicyKey = (value: string): string =>
+  hasPathSeparator(value) ? value : stripExecutableExtension(value).toLowerCase();
+
+/**
+ * Compose the operator executable policy without making environment parsing a
+ * concern of the command parser. `replace` is a true replacement, including an
+ * explicit empty list; removals apply next, and additions have final precedence.
+ */
+export function resolveAllowedExecutables(
+  options: {
+    defaults?: readonly string[];
+    add?: readonly string[];
+    remove?: readonly string[];
+    replace?: readonly string[] | null;
+  } = {},
+): string[] {
+  const defaults = options.defaults ?? DEFAULT_ALLOWED_EXECUTABLES;
+  const base =
+    options.replace === null || options.replace === undefined
+      ? defaults
+      : options.replace;
+  const removed = new Set((options.remove ?? []).map(executablePolicyKey));
+  const resolved: string[] = [];
+
+  for (const entry of [...base, ...(options.add ?? [])]) {
+    const key = executablePolicyKey(entry);
+    if (
+      removed.has(key) &&
+      !(options.add ?? []).some((added) => executablePolicyKey(added) === key)
+    ) {
+      continue;
+    }
+    if (!resolved.some((existing) => executablePolicyKey(existing) === key)) {
+      resolved.push(entry);
+    }
+  }
+  return resolved;
+}
+
+/**
+ * Resolve both membership and which entries were explicitly authorised without
+ * the default subcommand restrictions. Entries from `replace` are explicit by
+ * definition; `add` also grants unrestricted use and has final precedence over
+ * a removal of the same executable.
+ */
+export function resolveCommandPolicy(
+  options: {
+    defaults?: readonly string[];
+    add?: readonly string[];
+    remove?: readonly string[];
+    replace?: readonly string[] | null;
+  } = {},
+): CommandPolicy {
+  const allowed = resolveAllowedExecutables(options);
+  const explicit = [
+    ...(options.replace === null || options.replace === undefined ? [] : options.replace),
+    ...(options.add ?? []),
+  ];
+  const unrestrictedKeys = new Set(explicit.map(executablePolicyKey));
+  return {
+    allowed,
+    unrestricted: allowed.filter((entry) =>
+      unrestrictedKeys.has(executablePolicyKey(entry)),
+    ),
+  };
+}
+
+/**
+ * Multi-purpose ecosystem launchers stay useful for ordinary project
+ * verification without exposing their arbitrary-code/fetch subcommands.
+ * Direct project-script entry points (`npm run`, `pnpm run`, `yarn run`) are
+ * intentional: verification necessarily executes repository-owned test/build
+ * code. Ad-hoc executors such as `npm exec`, `pnpm dlx`, `go run`, and
+ * `cargo run` are a different trust decision and are refused here.
+ */
+const SAFE_DEFAULT_SUBCOMMANDS: Readonly<Record<string, ReadonlySet<string>>> = {
+  npm: new Set(["test", "t", "run", "run-script", "--version", "-v"]),
+  pnpm: new Set(["test", "run", "--version", "-v"]),
+  yarn: new Set(["test", "run", "--version", "-v"]),
+  go: new Set(["test", "vet", "build", "fmt", "version"]),
+  cargo: new Set(["test", "check", "build", "clippy", "fmt", "doc", "--version", "-vv"]),
+  dotnet: new Set(["test", "build", "format", "--version"]),
+  swift: new Set(["test", "build", "--version", "-version"]),
+  dart: new Set(["test", "analyze", "format", "compile", "--version"]),
+  flutter: new Set(["test", "analyze", "build", "--version"]),
+};
+
+function assertSafeDefaultInvocation(
+  file: string,
+  args: readonly string[],
+  command: string,
+  policy: CommandPolicy,
+): void {
+  if (hasPathSeparator(file)) return;
+  const executable = stripExecutableExtension(file).toLowerCase();
+  if (
+    (policy.unrestricted ?? []).some(
+      (entry) => !hasPathSeparator(entry) && executablePolicyKey(entry) === executable,
+    )
+  ) {
+    return;
+  }
+  const allowedSubcommands = SAFE_DEFAULT_SUBCOMMANDS[executable];
+  if (!allowedSubcommands) return;
+
+  const subcommand = args[0];
+  if (subcommand && allowedSubcommands.has(subcommand.toLowerCase())) return;
+  throw new CommandPolicyError(
+    `Executable "${file}" is allowlisted only for project verification commands. ` +
+      `Allowed first arguments: ${[...allowedSubcommands].join(", ")}. ` +
+      `Ad-hoc execution or package fetching is not default-safe; explicitly allow ` +
+      `the concrete tool instead.`,
+    command,
+  );
+}
+
 export interface CommandPolicy {
   /** Executable names (no path separators) or exact literal paths. */
   allowed: readonly string[];
+  /** Operator-explicit entries that bypass default subcommand restrictions. */
+  unrestricted?: readonly string[];
 }
 
 export interface ParsedCommand {
@@ -268,6 +381,8 @@ export function parseCommand(command: string, policy: CommandPolicy): ParsedComm
       );
     }
   }
+
+  assertSafeDefaultInvocation(file, rest, command, policy);
 
   return { raw, file, args: rest };
 }

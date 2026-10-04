@@ -32,6 +32,95 @@ test("pinned helper spawn failure settles when its captured parent disappears", 
   );
 });
 
+test("pinned helper abort before dispatch kills the helper without claiming mutation", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-pinned-abort-"));
+  const controller = new AbortController();
+  let entered!: () => void;
+  const enteredBeforeExecute = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  try {
+    const authority = await capturePinnedDirectoryAuthority(root, root);
+    const pending = runPinnedDirectoryMutation(
+      authority,
+      { op: "mkdir", name: "child" },
+      {
+        signal: controller.signal,
+        timeoutMs: 5_000,
+        beforeExecute: async () => {
+          entered();
+          await new Promise<void>(() => undefined);
+        },
+      },
+    );
+    await enteredBeforeExecute;
+    controller.abort();
+
+    await assert.rejects(pending, (error: unknown) => {
+      assert.ok(error instanceof PinnedDirectoryMutationError);
+      assert.equal(error.code, "ABORT_ERR");
+      assert.equal(error.mutated, false);
+      assert.equal(error.mutationProven, true);
+      return true;
+    });
+    assert.equal(await fs.lstat(path.join(root, "child")).catch(() => null), null);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("pinned helper refuses an already elapsed deadline before launch", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-pinned-deadline-"));
+  try {
+    const authority = await capturePinnedDirectoryAuthority(root, root);
+    await assert.rejects(
+      runPinnedDirectoryMutation(
+        authority,
+        { op: "mkdir", name: "child" },
+        { deadlineAt: Date.now() - 1 },
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof PinnedDirectoryMutationError);
+        assert.equal(error.code, "ETIMEDOUT");
+        assert.equal(error.mutated, false);
+        assert.equal(error.mutationProven, true);
+        return true;
+      },
+    );
+    assert.equal(await fs.lstat(path.join(root, "child")).catch(() => null), null);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("pinned helper timeout after dispatch reports possible unproven mutation", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-pinned-timeout-"));
+  try {
+    const authority = await capturePinnedDirectoryAuthority(root, root);
+    await assert.rejects(
+      runPinnedDirectoryMutation(
+        authority,
+        {
+          op: "mkdir",
+          name: "child",
+          testDelayAfterMutationMs: 10_000,
+        },
+        { timeoutMs: 2_000 },
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof PinnedDirectoryMutationError);
+        assert.equal(error.code, "ETIMEDOUT");
+        assert.equal(error.mutated, true);
+        assert.equal(error.mutationProven, false);
+        return true;
+      },
+    );
+    assert.equal((await fs.lstat(path.join(root, "child"))).isDirectory(), true);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("pinned helper rechecks parent authority after asynchronous pre-execution checks", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-pinned-delayed-"));
   const original = path.join(root, "original");
@@ -270,6 +359,69 @@ test("shared dependency fingerprint refuses a configured root redirected outside
   } finally {
     await fs.rm(root, { recursive: true, force: true });
     await fs.rm(outside, { recursive: true, force: true });
+  }
+});
+
+test("shared dependency fingerprint fails closed on file and aggregate evidence budgets", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-shared-budget-"));
+  try {
+    const dependency = path.join(root, "node_modules", "fixture");
+    await fs.mkdir(dependency, { recursive: true });
+    await fs.writeFile(path.join(dependency, "a.bin"), Buffer.alloc(700, 0x61));
+    await fs.writeFile(path.join(dependency, "b.bin"), Buffer.alloc(700, 0x62));
+
+    await assert.rejects(
+      captureSharedDirectoryFingerprint(root, ["node_modules"], {
+        limits: {
+          maxFileBytes: 512,
+          maxTotalBytes: 4096,
+          maxEntries: 20,
+          maxElapsedMs: 10_000,
+        },
+      }),
+      /file exceeds its 512-byte safety budget/i,
+    );
+    await assert.rejects(
+      captureSharedDirectoryFingerprint(root, ["node_modules"], {
+        limits: {
+          maxFileBytes: 1024,
+          maxTotalBytes: 1024,
+          maxEntries: 20,
+          maxElapsedMs: 10_000,
+        },
+      }),
+      /aggregate safety budget/i,
+    );
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("dependency snapshot propagates cancellation through the pinned final rename", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-snapshot-abort-"));
+  const main = path.join(root, "main");
+  const worktree = path.join(root, "worktree");
+  const controller = new AbortController();
+  try {
+    const dependency = path.join(main, "node_modules", "fixture", "index.js");
+    await fs.mkdir(path.dirname(dependency), { recursive: true });
+    await fs.mkdir(worktree, { recursive: true });
+    await fs.writeFile(dependency, "module.exports = 1;\n", "utf8");
+
+    await assert.rejects(
+      snapshotSharedDirectories(main, worktree, ["node_modules"], {
+        signal: controller.signal,
+        mutationTimeoutMs: 5_000,
+        beforeDestinationCommit: () => controller.abort(),
+      }),
+      /cancelled/i,
+    );
+    assert.equal(
+      await fs.lstat(path.join(worktree, "node_modules")).catch(() => null),
+      null,
+    );
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
   }
 });
 

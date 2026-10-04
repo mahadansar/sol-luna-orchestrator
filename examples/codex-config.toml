@@ -5,7 +5,7 @@
 
 # EXAMPLE: creator session choices, not requirements or recommendations.
 # Any compatible parent model and reasoning effort may be used. The creator
-# usually uses GPT-5.6 Sol at Medium and chooses stronger effort when warranted.
+# can use any compatible parent model; choose the reasoning effort the work warrants.
 # `ultra` is a separate Codex multi-agent execution mode, not a reasoning-effort
 # value. Luna worker effort choices are medium, high, xhigh, and max.
 model = "gpt-5.6-sol"

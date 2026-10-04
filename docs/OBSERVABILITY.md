@@ -16,11 +16,21 @@ Two separate local files, holding deliberately different things.
    directories, thread ids, durations, verdicts, and errors. Verification
    command output is returned in tool-result evidence; it is not copied into
    this diagnostic log.
-2. **Activity event stream (`SOL_LUNA_EVENTS`)** — an append-only JSONL file of
+2. **Activity event stream (`SOL_LUNA_EVENTS`)** — a rotating JSONL file of
    structured orchestration records. This is what `sol-luna-orchestrator activity`
    reads.
 
-The event stream is append-only JSONL; the diagnostic log is line-oriented.
+The event stream is append-oriented JSONL; the diagnostic log is line-oriented.
+Each current file is bounded to 16 MiB. Before an append would cross that bound,
+the writer rotates the current file to a single `.1` predecessor and starts a
+new current file. Oversized individual records and appends that cannot rotate
+safely are dropped because observability must remain non-authoritative. New files
+use owner-only permissions on POSIX (Windows uses the account's normal ACLs).
+`activity` also reads at most one 16 MiB current-file window from the tail, so an
+oversized legacy log created before rotation existed cannot force an unbounded
+in-memory history rebuild; a partial first record at the tail boundary is simply
+dropped. Watch mode uses the same bounded catch-up rule before following new
+appends.
 Representation details below describe what each contains and how consumers
 should interpret it. Sensitivity and sharing boundaries are defined in
 [Security](../SECURITY.md#logs-and-telemetry).
@@ -331,7 +341,12 @@ always carried it.
   compact block per worker with its label or safe category fallback, model,
   effort, state, duration, verification outcome, changed-file and check summary,
   and any known failure reason, followed by scope and integration conflicts plus
-  concise integration or retained-worktree warnings. It never prints
+  concise integration or retained-worktree warnings. Because the default event
+  file is shared by Codex sessions under the same Codex home, the human view also
+  prints a small `Source` line: a workspace basename when one can be derived
+  unambiguously plus an eight-character hash of the opaque batch id. This lets
+  concurrent-project terminals distinguish runs without revealing an absolute
+  path or the bearer-like/raw identifier. It never prints
   opaque task, batch or thread ids, absolute/worktree paths or token counts — not
   even on failure. Failure diagnostics redact path-like details while preserving
   their concise reason. Those details exist for machines, and crowding them into

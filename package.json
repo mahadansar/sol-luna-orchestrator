@@ -29,7 +29,8 @@
     "docs/*.md",
     "CHANGELOG.md",
     "LICENSE",
-    "examples/codex-config.toml"
+    "examples/codex-config.toml",
+    "npm-shrinkwrap.json"
   ],
   "repository": {
     "type": "git",
@@ -58,8 +59,8 @@
     "dev": "tsx src/server.ts",
     "format": "prettier --write \"src/**/*.ts\" \"*.md\" \"docs/*.md\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"*.md\" \"docs/*.md\"",
-    "test": "npm run build && node --test dist/selftest.js dist/activity-config.test.js dist/activity-watch.test.js dist/activity.test.js dist/adaptive-routing.test.js dist/capability-lifecycle.test.js dist/cli.test.js dist/context.test.js dist/context-lifecycle.test.js dist/evidence.test.js dist/executable.test.js dist/explore.test.js dist/git-evidence.test.js dist/guidance.test.js dist/parallel.test.js dist/policy.test.js dist/prompt.test.js dist/routing.test.js dist/security.test.js dist/seam-plan.test.js dist/selection.test.js dist/session-handoff.test.js dist/shutdown.test.js dist/workflow.test.js dist/worktree-link.test.js",
-    "coverage": "npm run build && node --experimental-test-coverage --test dist/selftest.js dist/activity-config.test.js dist/activity-watch.test.js dist/activity.test.js dist/adaptive-routing.test.js dist/capability-lifecycle.test.js dist/cli.test.js dist/context.test.js dist/context-lifecycle.test.js dist/evidence.test.js dist/executable.test.js dist/explore.test.js dist/git-evidence.test.js dist/guidance.test.js dist/parallel.test.js dist/policy.test.js dist/prompt.test.js dist/routing.test.js dist/security.test.js dist/seam-plan.test.js dist/selection.test.js dist/session-handoff.test.js dist/shutdown.test.js dist/workflow.test.js dist/worktree-link.test.js",
+    "test": "npm run build && node --test dist/selftest.js dist/activity-config.test.js dist/activity-watch.test.js dist/activity.test.js dist/adaptive-routing.test.js dist/capability-lifecycle.test.js dist/cli.test.js dist/context.test.js dist/context-lifecycle.test.js dist/evidence.test.js dist/executable.test.js dist/explore.test.js dist/git-evidence.test.js dist/guidance.test.js dist/parallel.test.js dist/policy.test.js dist/prompt.test.js dist/routing.test.js dist/security.test.js dist/seam-plan.test.js dist/selection.test.js dist/session-handoff.test.js dist/shutdown.test.js dist/telemetry-file.test.js dist/workflow.test.js dist/worktree-link.test.js",
+    "coverage": "npm run build && node --experimental-test-coverage --test dist/selftest.js dist/activity-config.test.js dist/activity-watch.test.js dist/activity.test.js dist/adaptive-routing.test.js dist/capability-lifecycle.test.js dist/cli.test.js dist/context.test.js dist/context-lifecycle.test.js dist/evidence.test.js dist/executable.test.js dist/explore.test.js dist/git-evidence.test.js dist/guidance.test.js dist/parallel.test.js dist/policy.test.js dist/prompt.test.js dist/routing.test.js dist/security.test.js dist/seam-plan.test.js dist/selection.test.js dist/session-handoff.test.js dist/shutdown.test.js dist/telemetry-file.test.js dist/workflow.test.js dist/worktree-link.test.js",
     "smoke:cli": "npm run build && node dist/smoke-cli.js",
     "smoke": "npm run build && node dist/smoke-protocol.js",
     "smoke:live": "npm run build && node dist/smoke-live.js",
@@ -69,11 +70,11 @@
     "prepublishOnly": "npm run verify"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
-    "@openai/codex-sdk": "^0.160.0",
-    "cross-spawn": "^7.0.6",
-    "picomatch": "^4.0.5",
-    "zod": "^4.4.3"
+    "@modelcontextprotocol/sdk": "1.32.0",
+    "@openai/codex-sdk": "0.160.0",
+    "cross-spawn": "7.0.6",
+    "picomatch": "4.0.7",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/cross-spawn": "^6.0.6",

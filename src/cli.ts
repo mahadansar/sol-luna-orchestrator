@@ -42,7 +42,7 @@ ${bold("Commands")}
   init         Register with Codex and apply the required settings
   doctor       Diagnose the installation and print how to fix it
   status       Short summary of the current configuration
-  uninstall    Remove this project's Codex registration (nothing else)
+  uninstall    Remove this project's Codex registration and managed discovery hint
   version      Print the package version
 
 ${bold("Options")}
@@ -53,7 +53,7 @@ ${bold("Options")}
   init --log <path>        Set the diagnostic log path, replacing any existing one
   init --events <path>     Set the activity event path, replacing any existing one
   init --allow-ephemeral   Permit registering a temporary npx install
-  init --no-discovery-hint Skip the optional fresh-chat discovery hint
+  init --no-discovery-hint Remove or skip the optional fresh-chat discovery hint
   doctor --json            Machine-readable report
   doctor --strict          Treat warnings as a non-zero diagnostic result
   status --json            Machine-readable configuration summary
@@ -61,7 +61,7 @@ ${bold("Options")}
 
 ${bold("After init")}
   Open Codex with any compatible parent model and work normally.
-  No parent model or reasoning effort is required. Creator example: GPT-5.6 Sol at Medium.
+  No parent model or reasoning effort is required.
 
 ${dim("The MCP server itself runs as `sol-luna-orchestrator-mcp` and is launched by Codex.")}`;
 
@@ -121,6 +121,18 @@ function statusCommand(argv: string[]): number {
     registeredEnabled === true &&
     registeredCommand === process.execPath &&
     registeredArgs === toTomlValue([location.serverEntry]);
+  const requiredSettingsHealthy = settings.every(
+    (setting) => !setting.required || setting.state === "ok",
+  );
+  const materiallyHealthy =
+    configured &&
+    location.serverEntryExists &&
+    registrationMatchesCurrentInstall &&
+    requiredSettingsHealthy &&
+    diagnosticLogError === null &&
+    !events.error &&
+    serverConfig.workerModel.trim().length > 0 &&
+    serverConfig.recursionDisableTarget === SERVER_NAME;
 
   if (asJson) {
     out(
@@ -128,6 +140,7 @@ function statusCommand(argv: string[]): number {
         {
           version: packageVersion(),
           configured,
+          healthy: materiallyHealthy,
           mcpName: SERVER_NAME,
           currentInstall: {
             serverEntry: location.serverEntry,
@@ -191,7 +204,7 @@ function statusCommand(argv: string[]): number {
         2,
       ),
     );
-    return configured ? 0 : 1;
+    return materiallyHealthy ? 0 : 1;
   }
 
   out(bold("Sol-Luna Orchestrator"));
@@ -199,6 +212,7 @@ function statusCommand(argv: string[]): number {
   table([
     ["Version", packageVersion()],
     ["Configured", configured ? "yes" : `no  (run: sol-luna-orchestrator init)`],
+    ["Healthy", materiallyHealthy ? "yes" : "no  (run: sol-luna-orchestrator doctor)"],
     ["MCP name", SERVER_NAME],
     [
       "Current server build",
@@ -285,7 +299,7 @@ function statusCommand(argv: string[]): number {
     out(`${symbols.warn} Not configured yet. Run: sol-luna-orchestrator init`);
     return 1;
   }
-  return 0;
+  return materiallyHealthy ? 0 : 1;
 }
 
 async function main(): Promise<number> {

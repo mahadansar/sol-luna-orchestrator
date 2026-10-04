@@ -1,10 +1,11 @@
+import { createHash } from "node:crypto";
 import { createReadStream, statSync, watch, type FSWatcher } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
-import { createInterface } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
 import { readConfig } from "./codex.js";
 import { resolveEventsPath } from "./events-path.js";
+import { TELEMETRY_FILE_MAX_BYTES } from "../telemetry-file.js";
 import {
   type ActivitySnapshot,
   type TimestampedEvent,
@@ -122,6 +123,36 @@ function redactDiagnostic(text: string): string {
     .replace(new RegExp(`(^|[\\s([{:="'])\\/${pathSuffix.source}`, "g"), "$1<path>");
 }
 
+/**
+ * Give the human view enough provenance to distinguish a global CODEX_HOME
+ * stream without exposing the absolute working directory. Parallel workers run
+ * under <project>/.sol-luna/worktrees/<id>, so collapse that internal suffix
+ * back to the project directory name. Other absolute directories use only their
+ * basename. Ambiguous multi-directory batches stay deliberately generic.
+ */
+function workspaceLabel(snapshot: ActivitySnapshot): string | null {
+  const candidates = new Set<string>();
+  for (const worker of snapshot.workers) {
+    const directory = worker.workingDirectory?.trim();
+    if (!directory || !path.isAbsolute(directory)) continue;
+    const segments = directory.split(/[\\/]+/).filter(Boolean);
+    if (segments.length === 0) continue;
+    const solLunaIndex = segments.lastIndexOf(".sol-luna");
+    const label =
+      solLunaIndex > 0 && segments[solLunaIndex + 1] === "worktrees"
+        ? segments[solLunaIndex - 1]
+        : segments.at(-1);
+    if (label) candidates.add(label);
+  }
+  if (candidates.size === 1) return [...candidates][0]!;
+  if (candidates.size > 1) return "multiple workspaces";
+  return null;
+}
+
+function anonymousRunLabel(batchId: string): string {
+  return createHash("sha256").update(batchId).digest("hex").slice(0, 8);
+}
+
 /** Clear screen only when stdout is a TTY. Non-TTY gets a separator instead. */
 function clearScreen(): void {
   if (process.stdout.isTTY) {
@@ -169,6 +200,10 @@ export function renderHumanLines(
   }
   if (snapshot.concurrency.peak > 0) batchParts.push(`peak ${snapshot.concurrency.peak}`);
   lines.push(...wrapParts(batchParts, width), "");
+
+  const workspace = workspaceLabel(snapshot);
+  const source = `${workspace ? `workspace ${workspace} ${symbols.divider} ` : ""}run ${anonymousRunLabel(snapshot.batchId)}`;
+  lines.push(dim(`Source: ${source}`), "");
 
   if (snapshot.reason) {
     const reasonLines = wrapText(`Reason: ${redactDiagnostic(snapshot.reason)}`, width);
@@ -359,37 +394,56 @@ export function renderHuman(snapshot: ActivitySnapshot): void {
   for (const line of renderHumanLines(snapshot)) out(line);
 }
 
+const boundedReadWindow = (value: number | undefined): number =>
+  value !== undefined && Number.isSafeInteger(value) && value > 0
+    ? value
+    : TELEMETRY_FILE_MAX_BYTES;
+
+function trimLeadingPartialRecord(buffer: Buffer, startedBeforeTail: boolean): Buffer {
+  if (!startedBeforeTail || buffer.length === 0) return buffer;
+  if (buffer[0] === 0x0a) return buffer.subarray(1);
+  const newline = buffer.indexOf(0x0a);
+  return newline >= 0 ? buffer.subarray(newline + 1) : Buffer.alloc(0);
+}
+
 /**
- * Read all events from a JSONL file. Each line is parsed independently;
- * invalid events are silently dropped, while malformed optional legacy fields
- * are ignored by the shared parser.
+ * Read only a bounded tail of the JSONL file. Upgraded installations may have
+ * activity files from before writer rotation existed; keeping one current-file
+ * budget avoids retaining an arbitrarily large legacy file in memory.
  */
-async function readEvents(file: string): Promise<TimestampedEvent[]> {
+async function readEvents(
+  file: string,
+  maxBytes: number,
+  readStream: typeof createReadStream,
+): Promise<TimestampedEvent[]> {
   const events: TimestampedEvent[] = [];
+  let size = 0;
   try {
     const s = statSync(file);
     if (!s.isFile()) {
       throw new Error(`Activity log is not a regular file: ${file}`);
     }
+    size = s.size;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return events;
     throw error;
   }
 
-  return new Promise((resolve, reject) => {
-    const rl = createInterface({
-      input: createReadStream(file, { encoding: "utf-8" }),
-      crlfDelay: Infinity,
-    });
+  if (size === 0) return events;
+  const tailStart = Math.max(0, size - maxBytes);
+  const streamStart = tailStart > 0 ? tailStart - 1 : 0;
+  const chunks: Buffer[] = [];
+  const stream = readStream(file, { start: streamStart, end: size - 1 });
+  for await (const chunk of stream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string));
+  }
 
-    rl.on("line", (line) => {
-      const ev = parseEventLine(line);
-      if (ev) events.push(ev);
-    });
-
-    rl.on("close", () => resolve(events));
-    rl.on("error", (err) => reject(err));
-  });
+  const retained = trimLeadingPartialRecord(Buffer.concat(chunks), tailStart > 0);
+  for (const line of retained.toString("utf8").split(/\r?\n/)) {
+    const event = parseEventLine(line);
+    if (event) events.push(event);
+  }
+  return events;
 }
 
 export const ACTIVITY_HISTORY_MAX = 100;
@@ -494,6 +548,7 @@ export async function activityCommand(
     watchFile?: typeof watch;
     readStream?: typeof createReadStream;
     watchHealthIntervalMs?: number;
+    readWindowBytes?: number;
   } = {},
 ): Promise<number> {
   const parsedArgs = parseActivityArgs(argv);
@@ -531,10 +586,11 @@ export async function activityCommand(
   const watchFile = options.watchFile ?? watch;
   const readStream = options.readStream ?? createReadStream;
   const watchHealthIntervalMs = options.watchHealthIntervalMs ?? 1_000;
+  const readWindowBytes = boundedReadWindow(options.readWindowBytes);
   if (!watchMode) {
     let events: TimestampedEvent[];
     try {
-      events = await readEvents(eventsFile);
+      events = await readEvents(eventsFile, readWindowBytes, readStream);
     } catch (error) {
       errOut(
         `${bold(red("Error:"))} Cannot read activity log: ${(error as Error).message}`,
@@ -573,6 +629,7 @@ export async function activityCommand(
     let currentFile: { dev: number; ino: number; mtimeMs: number } | null = null;
     let trailingFragment = "";
     let decoder = new StringDecoder("utf-8");
+    let needsInitialTailRead = true;
     let ready = false;
     let pendingChange = false;
     let pollReadPending = false;
@@ -584,6 +641,7 @@ export async function activityCommand(
       trailingFragment = "";
       decoder = new StringDecoder("utf-8");
       events.length = 0;
+      needsInitialTailRead = true;
     };
 
     const fileInfo = async (): Promise<{
@@ -649,7 +707,8 @@ export async function activityCommand(
       if (info === null) {
         // Once a pathname disappears, any later file at that path is a new
         // stream even if the platform happens to recycle the same inode/mtime.
-        // Reset the byte cursor now so reattachment always reads from byte 0.
+        // Reset the byte cursor now so reattachment reconstructs from a fresh
+        // bounded tail rather than carrying state across file identities.
         resetReadState();
         return { changed: false, snapshots: [], watchTarget: "missing" };
       }
@@ -673,10 +732,17 @@ export async function activityCommand(
       }
 
       let chunks: Buffer[];
+      let streamStart = currentSize;
+      let startedBeforeTail = false;
+      if (needsInitialTailRead && currentSize === 0 && info.size > readWindowBytes) {
+        const tailStart = info.size - readWindowBytes;
+        streamStart = tailStart - 1;
+        startedBeforeTail = true;
+      }
       try {
         chunks = [];
         const stream = readStream(eventsFile, {
-          start: currentSize,
+          start: streamStart,
           end: info.size - 1,
         });
         for await (const chunk of stream) {
@@ -697,9 +763,11 @@ export async function activityCommand(
         throw readError;
       }
 
-      const raw = trailingFragment + decoder.write(Buffer.concat(chunks));
+      const retained = trimLeadingPartialRecord(Buffer.concat(chunks), startedBeforeTail);
+      const raw = trailingFragment + decoder.write(retained);
       currentSize = info.size;
       currentFile = info;
+      needsInitialTailRead = false;
 
       // The last element may be a partial line. Keep it, including a split
       // UTF-8 sequence retained by StringDecoder, until the next append.
@@ -943,7 +1011,7 @@ export async function activityCommand(
       if (!attached) {
         // A configured file may not exist until the first event is emitted.
         // Polling is only for that missing-file case; once it exists, attach
-        // first and then schedule a full catch-up from currentSize.
+        // first and then schedule a bounded catch-up from currentSize.
         startMissingFilePoll();
       }
 

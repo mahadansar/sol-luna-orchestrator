@@ -28,7 +28,23 @@ export interface UninstallOptions {
   dryRun: boolean;
 }
 
+const UNINSTALL_HELP = `${bold("Usage")}
+  sol-luna-orchestrator uninstall [--dry-run]
+
+${bold("Options")}
+  --dry-run    Show what would be removed, write nothing
+  --help, -h   Show this help`;
+
 export async function uninstallCommand(argv: string[]): Promise<number> {
+  if (argv.includes("--help") || argv.includes("-h")) {
+    const unknownWithHelp = argv.filter((arg) => arg !== "--help" && arg !== "-h");
+    if (unknownWithHelp.length > 0) {
+      for (const arg of unknownWithHelp) out(`${symbols.fail} Unknown option: ${arg}`);
+      return 1;
+    }
+    out(UNINSTALL_HELP);
+    return 0;
+  }
   const options: UninstallOptions = { dryRun: argv.includes("--dry-run") };
   const configPath = codexConfigPath();
   const instructionsPaths = discoveryHintPaths();

@@ -531,7 +531,8 @@ test("--help lists the commands and exits 0", async () => {
     /Open Codex with any compatible parent model and work normally\./,
   );
   assert.match(result.stdout, /No parent model or reasoning effort is required\./);
-  assert.match(result.stdout, /Creator example: GPT-5\.6 Sol at Medium\./);
+  assert.doesNotMatch(result.stdout, /GPT-5\.6/i);
+  assert.match(result.stdout, /managed discovery hint/i);
 });
 
 test("no arguments prints help and exits non-zero", async () => {
@@ -591,9 +592,10 @@ test("status reports an unconfigured install without throwing", async () => {
   const result = await runCli(["status"], { CODEX_HOME: emptyCodexHome() });
   assert.equal(result.code, 1);
   assert.match(result.stdout, /Configured:\s*no/);
+  assert.match(result.stdout, /Healthy:\s*no/);
 });
 
-test("status and doctor reject unknown options and expose subcommand help", async () => {
+test("CLI subcommands reject unknown options and expose scoped help", async () => {
   const home = emptyCodexHome();
   const statusUnknown = await runCli(["status", "--jsoon"], { CODEX_HOME: home });
   assert.equal(statusUnknown.code, 1);
@@ -610,6 +612,45 @@ test("status and doctor reject unknown options and expose subcommand help", asyn
   const doctorHelp = await runCli(["doctor", "--help"], { CODEX_HOME: home });
   assert.equal(doctorHelp.code, 0);
   assert.match(doctorHelp.stdout, /doctor \[--json\] \[--strict\]/);
+
+  const initHelp = await runCli(["init", "-h"], { CODEX_HOME: home });
+  assert.equal(initHelp.code, 0);
+  assert.match(initHelp.stdout, /init \[options\]/);
+  assert.match(initHelp.stdout, /--no-discovery-hint/);
+  assert.doesNotMatch(initHelp.stdout, /Codex CLI not found|Planned changes/);
+
+  const uninstallHelp = await runCli(["uninstall", "--help"], { CODEX_HOME: home });
+  assert.equal(uninstallHelp.code, 0);
+  assert.match(uninstallHelp.stdout, /uninstall \[--dry-run\]/);
+  assert.doesNotMatch(uninstallHelp.stdout, /Will remove MCP server/);
+});
+
+test("status JSON stays available but exits non-zero for materially broken config", async () => {
+  const home = emptyCodexHome();
+  try {
+    fs.writeFileSync(
+      path.join(home, "config.toml"),
+      [
+        "[mcp_servers.sol-luna-orchestrator]",
+        'command = "stale-node"',
+        'args = ["stale-server.js"]',
+        "enabled = false",
+      ].join("\n"),
+      "utf8",
+    );
+    const result = await runCli(["status", "--json"], { CODEX_HOME: home });
+    assert.equal(result.code, 1);
+    const parsed = JSON.parse(result.stdout) as {
+      configured: boolean;
+      healthy: boolean;
+      registration: { matchesCurrentInstall: boolean };
+    };
+    assert.equal(parsed.configured, true);
+    assert.equal(parsed.healthy, false);
+    assert.equal(parsed.registration.matchesCurrentInstall, false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("doctor strict mode turns warnings into a non-zero diagnostic result", () => {
@@ -702,6 +743,7 @@ test("doctor reports a missing registration as a failure", async () => {
   const result = await runCli(["doctor"], { CODEX_HOME: emptyCodexHome() });
   assert.equal(result.code, 1);
   assert.match(result.stdout, /MCP server registered/);
+  assert.match(result.stdout, /Follow the remedies above/);
 });
 
 test("init --dry-run writes nothing", async () => {
@@ -838,6 +880,10 @@ const REPO_ROOT = path.resolve(HERE, "..");
 const manifest = JSON.parse(
   fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"),
 ) as { engines: { node: string }; version: string };
+const ciWorkflow = fs.readFileSync(
+  path.join(REPO_ROOT, ".github", "workflows", "ci.yml"),
+  "utf8",
+);
 
 test("doctor reports the same Node range the package declares", () => {
   assert.equal(minimumNode().range, manifest.engines.node);
@@ -853,9 +899,7 @@ test("doctor's runtime check is derived from engines, not a private constant", a
 });
 
 test("every Node version CI tests is at or above the declared minimum", () => {
-  const workflow = path.join(REPO_ROOT, ".github", "workflows", "ci.yml");
-  const text = fs.readFileSync(workflow, "utf8");
-  const line = /^\s*node:\s*\[(.+)\]\s*$/m.exec(text);
+  const line = /^\s*node:\s*\[(.+)\]\s*$/m.exec(ciWorkflow);
   assert.ok(line, "could not find the CI node matrix");
 
   const versions = line[1]!
@@ -869,6 +913,31 @@ test("every Node version CI tests is at or above the declared minimum", () => {
       `CI tests Node ${version}, below the declared minimum ${minimumNode().range}`,
     );
   }
+});
+
+test("CI keeps the broad platform matrix and exercises the exact supported Node floor", () => {
+  assert.match(
+    ciWorkflow,
+    /^\s*os:\s*\[ubuntu-latest, windows-latest, macos-latest\]\s*$/m,
+  );
+  assert.match(ciWorkflow, /^\s*node:\s*\["24", "26"\]\s*$/m);
+
+  const minimum = /^>=(\d+)\.(\d+)\.(\d+)$/.exec(manifest.engines.node);
+  assert.ok(
+    minimum,
+    `expected an exact minimum Node range, got ${manifest.engines.node}`,
+  );
+  const exactMinimum = `${minimum[1]}.${minimum[2]}.${minimum[3]}`;
+  assert.match(
+    ciWorkflow,
+    new RegExp(`node-version:\\s*"${exactMinimum.replace(/\./g, "\\.")}"`),
+    `CI must execute the exact supported minimum Node ${exactMinimum}`,
+  );
+});
+
+test("CI remains manual-only", () => {
+  assert.match(ciWorkflow, /^on:\s*\n\s+workflow_dispatch:\s*$/m);
+  assert.doesNotMatch(ciWorkflow, /^\s+(?:push|pull_request|schedule):/m);
 });
 
 // --- Release workflow -------------------------------------------------------
@@ -898,13 +967,56 @@ test("the publish workflow carries no npm token or secret", () => {
   }
 });
 
-test("the publish workflow requests exactly the OIDC permissions", () => {
+test("the publish workflow requests the read permissions needed for OIDC and CI provenance", () => {
   assert.match(publishWorkflow, /id-token:\s*write/);
   assert.match(publishWorkflow, /contents:\s*read/);
+  assert.match(publishWorkflow, /actions:\s*read/);
   assert.ok(
     !/contents:\s*write/.test(publishWorkflow),
     "the publish job does not need write access to the repository",
   );
+});
+
+test("release workflows pin checkout and setup-node to immutable action commits", () => {
+  for (const [name, workflow] of [
+    ["ci.yml", ciWorkflow],
+    ["publish.yml", publishWorkflow],
+  ] as const) {
+    for (const action of ["actions/checkout", "actions/setup-node"]) {
+      const escaped = action.replace("/", "\\/");
+      const matches = [
+        ...workflow.matchAll(new RegExp(`uses:\\s*${escaped}@([^\\s#]+)`, "g")),
+      ];
+      assert.ok(matches.length > 0, `${name} does not use ${action}`);
+      for (const match of matches) {
+        assert.match(
+          match[1] ?? "",
+          /^[0-9a-f]{40}$/,
+          `${name} must pin ${action} to a full immutable commit SHA`,
+        );
+      }
+    }
+    assert.match(
+      workflow,
+      /Update these SHAs only[\s\S]*reviewed dependency-maintenance change/i,
+      `${name} must document the pinned-action update policy`,
+    );
+  }
+
+  for (const action of ["actions/upload-artifact", "actions/download-artifact"]) {
+    const escaped = action.replace("/", "\\/");
+    const matches = [
+      ...publishWorkflow.matchAll(new RegExp(`uses:\\s*${escaped}@([^\\s#]+)`, "g")),
+    ];
+    assert.ok(matches.length > 0, `publish.yml does not use ${action}`);
+    for (const match of matches) {
+      assert.match(
+        match[1] ?? "",
+        /^[0-9a-f]{40}$/,
+        `publish.yml must pin ${action} to a full immutable commit SHA`,
+      );
+    }
+  }
 });
 
 test("the publish workflow triggers on release tags only", () => {
@@ -915,9 +1027,10 @@ test("the publish workflow triggers on release tags only", () => {
   );
 });
 
-test("the publish workflow guards the tag against package.json", () => {
+test("the publish workflow guards the tag against package and shrinkwrap versions", () => {
   assert.match(publishWorkflow, /GITHUB_REF_NAME#v/);
-  assert.match(publishWorkflow, /does not match package\.json/);
+  assert.match(publishWorkflow, /npm-shrinkwrap\.json/);
+  assert.match(publishWorkflow, /does not match package\/shrinkwrap versions/);
   assert.match(publishWorkflow, /exit 1/);
   // The guard has to come before the publish, or it guards nothing.
   assert.ok(
@@ -925,6 +1038,49 @@ test("the publish workflow guards the tag against package.json", () => {
       publishWorkflow.indexOf("run: npm publish"),
     "the version guard must run before npm publish",
   );
+});
+
+test("the publish workflow requires the exact tagged commit on main with successful manual CI", () => {
+  const guard = publishWorkflow.indexOf("Verify tagged commit is validated on main");
+  const publish = publishWorkflow.indexOf("run: npm publish");
+  assert.ok(
+    guard >= 0 && guard < publish,
+    "release provenance must be checked before publish",
+  );
+  assert.match(publishWorkflow, /TAGGED_SHA="\$\(git rev-parse HEAD\)"/);
+  assert.match(
+    publishWorkflow,
+    /git fetch --no-tags origin main:refs\/remotes\/origin\/main/,
+  );
+  assert.match(
+    publishWorkflow,
+    /MAIN_SHA="\$\(git rev-parse refs\/remotes\/origin\/main\)"/,
+  );
+  assert.match(publishWorkflow, /"\$TAGGED_SHA" != "\$MAIN_SHA"/);
+  assert.match(publishWorkflow, /actions\/workflows\/ci\.yml\/runs/);
+  assert.match(publishWorkflow, /head_sha=\$TAGGED_SHA/);
+  assert.match(publishWorkflow, /event=workflow_dispatch/);
+  assert.match(publishWorkflow, /status=success/);
+  assert.match(publishWorkflow, /GH_TOKEN:\s*\$\{\{ github\.token \}\}/);
+});
+
+test("OIDC is confined to a minimal job that publishes only the validated tarball", () => {
+  const validateStart = publishWorkflow.indexOf("\n  validate:");
+  const publishStart = publishWorkflow.indexOf("\n  publish:", validateStart + 1);
+  assert.ok(validateStart >= 0 && publishStart > validateStart);
+
+  const validateJob = publishWorkflow.slice(validateStart, publishStart);
+  const publishJob = publishWorkflow.slice(publishStart);
+  assert.doesNotMatch(validateJob, /id-token:\s*write/);
+  assert.match(validateJob, /run: npm pack/);
+  assert.match(validateJob, /actions\/upload-artifact@[0-9a-f]{40}/);
+
+  assert.match(publishJob, /needs:\s*validate/);
+  assert.match(publishJob, /id-token:\s*write/);
+  assert.match(publishJob, /actions\/download-artifact@[0-9a-f]{40}/);
+  assert.match(publishJob, /npm publish package\/sol-luna-orchestrator-\*\.tgz/);
+  assert.doesNotMatch(publishJob, /npm ci|npm test|npm run build/);
+  assert.doesNotMatch(publishJob, /actions\/checkout@/);
 });
 
 test("the changelog documents the version being shipped", () => {

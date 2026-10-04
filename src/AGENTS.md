@@ -69,6 +69,7 @@ cross-surface rules.
 - Prompt, evidence compaction, and policy wording: `src/prompt.test.ts`,
   `src/evidence.test.ts`, and `src/guidance.test.ts`.
 
-The package test script enumerates compiled test files explicitly. When adding a new
-test file, add it to `package.json`, or put the cases in an existing suite. CI and the
-publish workflow both use the package test script.
+The package test and coverage scripts enumerate compiled test files explicitly.
+When adding a new test file, add it to both lists, or put the cases in an existing
+suite. `src/guidance.test.ts` fails if either list misses a `*.test.ts` file. CI and
+the publish workflow both use the package test script.

@@ -26,6 +26,7 @@ import {
 } from "./contract.js";
 import { findScopeViolations, toRelativePosix } from "./scope.js";
 import { runVerificationCommand, truncate, type VerificationRun } from "./verify.js";
+import { resolveCommandPolicy } from "./command.js";
 import {
   buildDelegationResult,
   classifyFailureDecision,
@@ -41,6 +42,7 @@ import {
 import type { ThreadEvent } from "@openai/codex-sdk";
 
 const WORKSPACE = path.resolve("/tmp/workspace");
+const NODE_TEST_POLICY = resolveCommandPolicy({ add: ["node"] });
 
 test("effort ladder exposes exactly medium..max with high as default", () => {
   assert.deepEqual([...EFFORTS], ["medium", "high", "xhigh", "max"]);
@@ -144,7 +146,7 @@ test("continuation resumes the exact thread and reruns verification under the or
     forbiddenFiles: ["src/secrets/**"],
     changeIntent: "optional",
     automaticRepair: true,
-    verificationCommands: ["node --version"],
+    verificationCommands: ["npm --version"],
   });
   const report: WorkerReport = {
     status: "PASS",
@@ -562,6 +564,13 @@ test("one automatic repair reuses the thread, passes exact evidence, and reruns 
       path.join(workspace, "repair-check.mjs"),
       "import fs from 'node:fs'; if (!fs.existsSync('fixed.marker')) { console.error('LOCAL_ASSERTION_FAILURE'); process.exit(1); }\n",
     );
+    fs.writeFileSync(
+      path.join(workspace, "package.json"),
+      JSON.stringify({
+        private: true,
+        scripts: { "repair-check": "node repair-check.mjs" },
+      }),
+    );
     const input = delegateTaskInputSchema.parse({
       objective: "Implement the bounded local repair fixture and make its check pass.",
       effortReason: "The fixture exercises one deterministic repair turn.",
@@ -569,7 +578,7 @@ test("one automatic repair reuses the thread, passes exact evidence, and reruns 
       automaticRepair: true,
       changeIntent: "required",
       allowedFiles: ["src/**"],
-      verificationCommands: ["node repair-check.mjs"],
+      verificationCommands: ["npm run repair-check"],
     });
     const report: WorkerReport = {
       status: "PASS",
@@ -665,7 +674,7 @@ test("one automatic repair reuses the thread, passes exact evidence, and reruns 
     });
     assert.equal(verificationStarts, 2);
     assert.equal(repairStarts, 1);
-    assert.match(prompts[1] ?? "", /node repair-check\.mjs/);
+    assert.match(prompts[1] ?? "", /npm run repair-check/);
     assert.match(prompts[1] ?? "", /LOCAL_ASSERTION_FAILURE/);
     assert.match(prompts[1] ?? "", /immutable original contract/i);
     assert.doesNotMatch(prompts[1] ?? "", /src\/\*\*/);
@@ -682,13 +691,20 @@ test("automatic repair stops after its single resumed turn", async () => {
       path.join(workspace, "always-fail.mjs"),
       "console.error('STILL_LOCAL_FAILURE'); process.exit(1);\n",
     );
+    fs.writeFileSync(
+      path.join(workspace, "package.json"),
+      JSON.stringify({
+        private: true,
+        scripts: { "always-fail": "node always-fail.mjs" },
+      }),
+    );
     const input = delegateTaskInputSchema.parse({
       objective: "Exercise the one-turn automatic repair limit deterministically.",
       effortReason: "The persistent local failure proves the hard bound.",
       acceptanceCriteria: ["Only one repair turn is attempted."],
       automaticRepair: true,
       allowedFiles: ["src/**"],
-      verificationCommands: ["node always-fail.mjs"],
+      verificationCommands: ["npm run always-fail"],
     });
     const report: WorkerReport = {
       status: "PASS",
@@ -1038,11 +1054,15 @@ test("unparseable worker output yields null rather than a bogus report", () => {
 });
 
 test("verification captures real exit codes", async () => {
-  const ok = await runVerificationCommand('node -e "process.exit(0)"', process.cwd());
+  const ok = await runVerificationCommand('node -e "process.exit(0)"', process.cwd(), {
+    policy: NODE_TEST_POLICY,
+  });
   assert.equal(ok.exitCode, 0);
   assert.equal(ok.passed, true);
 
-  const bad = await runVerificationCommand('node -e "process.exit(3)"', process.cwd());
+  const bad = await runVerificationCommand('node -e "process.exit(3)"', process.cwd(), {
+    policy: NODE_TEST_POLICY,
+  });
   assert.equal(bad.exitCode, 3);
   assert.equal(bad.passed, false);
 });
@@ -1051,13 +1071,14 @@ test("verification captures output and enforces its timeout", async () => {
   const loud = await runVerificationCommand(
     "node -e \"console.log('hello-from-verify')\"",
     process.cwd(),
+    { policy: NODE_TEST_POLICY },
   );
   assert.match(loud.output, /hello-from-verify/);
 
   const slow = await runVerificationCommand(
     'node -e "setTimeout(()=>{},10000)"',
     process.cwd(),
-    { timeoutSeconds: 1 },
+    { timeoutSeconds: 1, policy: NODE_TEST_POLICY },
   );
   assert.equal(slow.passed, false);
   assert.match(slow.output, /timed out/);
@@ -1091,6 +1112,7 @@ test("verification cancellation kills and awaits the process tree", async (t) =>
   const controller = new AbortController();
   const running = runVerificationCommand(`node ${parentScript}`, root, {
     timeoutSeconds: 1,
+    policy: NODE_TEST_POLICY,
     signal: controller.signal,
   });
   const deadline = Date.now() + 2_000;
@@ -1195,7 +1217,14 @@ test("task cancellation propagates into an already-running authoritative verific
     `require("node:fs").writeFileSync(${JSON.stringify(marker)}, String(process.pid));\n` +
       `setInterval(() => {}, 1000);\n`,
   );
-  const command = `node ${script}`;
+  fs.writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({
+      private: true,
+      scripts: { "verify-cancel": "node verification.cjs" },
+    }),
+  );
+  const command = "npm run verify-cancel";
   const report: WorkerReport = {
     status: "PASS",
     failureCauses: [],
@@ -1235,7 +1264,9 @@ test("task cancellation propagates into an already-running authoritative verific
     { workingDirectory: root, codex, signal: controller.signal },
   );
 
-  const deadline = Date.now() + 2_000;
+  // npm startup can exceed two seconds on a loaded Windows test runner even
+  // though the authoritative verification has started normally.
+  const deadline = Date.now() + 5_000;
   while (!fs.existsSync(marker) && Date.now() < deadline) {
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
@@ -1536,14 +1567,14 @@ test("authoritative PASS narrowly promotes a verification-only worker FAILED", (
 test("a promoted verification contradiction does not start automatic repair", async () => {
   const input = makeTask({
     automaticRepair: true,
-    verificationCommands: ['node -e "process.exit(0)"'],
+    verificationCommands: ["npm --version"],
   });
   const report = makeReport({
     status: "FAILED",
     failureCauses: ["verification"],
     verification: [
       {
-        command: 'node -e "process.exit(0)"',
+        command: "npm --version",
         exitCode: 1,
         passed: false,
         evidence: "worker environment failed",

@@ -4,6 +4,8 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  open,
+  opendir,
   readFile,
   readdir,
   readlink,
@@ -46,6 +48,173 @@ export class GitError extends Error {
 
 export const GIT_TIMEOUT_MS = 120_000;
 export const MAX_GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
+export const DEFAULT_EVIDENCE_READ_LIMITS = {
+  maxFileBytes: 512 * 1024 * 1024,
+  maxTotalBytes: 8 * 1024 * 1024 * 1024,
+  maxEntries: 250_000,
+  maxElapsedMs: 120_000,
+} as const;
+
+export interface EvidenceReadLimits {
+  maxFileBytes?: number;
+  maxTotalBytes?: number;
+  maxEntries?: number;
+  maxElapsedMs?: number;
+}
+
+export class EvidenceReadLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EvidenceReadLimitError";
+  }
+}
+
+class EvidenceReadBudget {
+  private readonly startedAt = Date.now();
+  private readonly maxFileBytes: number;
+  private readonly maxTotalBytes: number;
+  private readonly maxEntries: number;
+  private readonly maxElapsedMs: number;
+  private totalBytes = 0;
+  private entries = 0;
+
+  constructor(limits: EvidenceReadLimits = {}) {
+    this.maxFileBytes = limits.maxFileBytes ?? DEFAULT_EVIDENCE_READ_LIMITS.maxFileBytes;
+    this.maxTotalBytes =
+      limits.maxTotalBytes ?? DEFAULT_EVIDENCE_READ_LIMITS.maxTotalBytes;
+    this.maxEntries = limits.maxEntries ?? DEFAULT_EVIDENCE_READ_LIMITS.maxEntries;
+    this.maxElapsedMs = limits.maxElapsedMs ?? DEFAULT_EVIDENCE_READ_LIMITS.maxElapsedMs;
+  }
+
+  noteEntry(target: string): void {
+    this.assertTime();
+    this.entries += 1;
+    if (this.entries > this.maxEntries) {
+      throw new EvidenceReadLimitError(
+        `Evidence walk exceeded its ${this.maxEntries}-entry safety budget while reading ${target}.`,
+      );
+    }
+  }
+
+  async readDirectoryNames(target: string): Promise<string[]> {
+    this.assertTime();
+    const names: string[] = [];
+    const directory = await opendir(target);
+    try {
+      for await (const entry of directory) {
+        this.assertTime();
+        if (this.entries + names.length + 1 > this.maxEntries) {
+          throw new EvidenceReadLimitError(
+            `Evidence walk exceeded its ${this.maxEntries}-entry safety budget while listing ${target}.`,
+          );
+        }
+        names.push(entry.name);
+      }
+    } finally {
+      await directory.close().catch(() => undefined);
+    }
+    return names.sort();
+  }
+
+  assertFileSize(target: string, size: number): void {
+    this.assertTime();
+    if (!Number.isSafeInteger(size) || size < 0) {
+      throw new EvidenceReadLimitError(
+        `Evidence file has an unsafe size and was not read: ${target}.`,
+      );
+    }
+    if (size > this.maxFileBytes) {
+      throw new EvidenceReadLimitError(
+        `Evidence file exceeds its ${this.maxFileBytes}-byte safety budget: ${target}.`,
+      );
+    }
+    if (this.totalBytes + size > this.maxTotalBytes) {
+      throw new EvidenceReadLimitError(
+        `Evidence walk exceeds its ${this.maxTotalBytes}-byte aggregate safety budget at ${target}.`,
+      );
+    }
+  }
+
+  consumeBytes(target: string, bytes: number, fileBytes: number): void {
+    this.assertTime();
+    if (fileBytes > this.maxFileBytes) {
+      throw new EvidenceReadLimitError(
+        `Evidence file exceeded its ${this.maxFileBytes}-byte safety budget while reading ${target}.`,
+      );
+    }
+    if (this.totalBytes + bytes > this.maxTotalBytes) {
+      throw new EvidenceReadLimitError(
+        `Evidence walk exceeded its ${this.maxTotalBytes}-byte aggregate safety budget at ${target}.`,
+      );
+    }
+    this.totalBytes += bytes;
+  }
+
+  assertTime(): void {
+    if (Date.now() - this.startedAt > this.maxElapsedMs) {
+      throw new EvidenceReadLimitError(
+        `Evidence walk exceeded its ${this.maxElapsedMs}ms safety budget.`,
+      );
+    }
+  }
+}
+
+async function hashFileInto(
+  hash: ReturnType<typeof createHash>,
+  target: string,
+  expected: {
+    size: number | bigint;
+    dev: number | bigint;
+    ino: number | bigint;
+    birthtimeMs: number | bigint;
+  },
+  budget: EvidenceReadBudget,
+): Promise<void> {
+  const expectedSize =
+    typeof expected.size === "bigint" ? Number(expected.size) : expected.size;
+  budget.assertFileSize(target, expectedSize);
+  const expectedIdentity = `${expected.dev}:${expected.ino}:${expected.birthtimeMs}`;
+  const handle = await open(target, "r");
+  try {
+    const opened = await handle.stat();
+    const openedIdentity = `${opened.dev}:${opened.ino}:${opened.birthtimeMs}`;
+    const openedSize =
+      typeof opened.size === "bigint" ? Number(opened.size) : opened.size;
+    if (
+      !opened.isFile() ||
+      openedIdentity !== expectedIdentity ||
+      openedSize !== expectedSize
+    ) {
+      throw new Error(`Evidence file changed identity before hashing: ${target}.`);
+    }
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    let fileBytes = 0;
+    while (fileBytes < expectedSize) {
+      budget.assertTime();
+      const requested = Math.min(buffer.length, expectedSize - fileBytes);
+      const { bytesRead } = await handle.read(buffer, 0, requested, fileBytes);
+      if (bytesRead <= 0) break;
+      fileBytes += bytesRead;
+      budget.consumeBytes(target, bytesRead, fileBytes);
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+    const after = await handle.stat();
+    const afterIdentity = `${after.dev}:${after.ino}:${after.birthtimeMs}`;
+    const afterSize = typeof after.size === "bigint" ? Number(after.size) : after.size;
+    if (
+      fileBytes !== expectedSize ||
+      !after.isFile() ||
+      afterIdentity !== expectedIdentity ||
+      afterSize !== expectedSize
+    ) {
+      throw new Error(
+        `Evidence file changed while being hashed: ${target} (expected ${expectedSize}, read ${fileBytes}).`,
+      );
+    }
+  } finally {
+    await handle.close();
+  }
+}
 const NO_HOOKS_PATH = path.join(
   os.tmpdir(),
   `sol-luna-no-hooks-${process.pid}-${randomBytes(12).toString("hex")}`,
@@ -455,6 +624,7 @@ async function fingerprintGitControlPath(
   relative: string,
   logical = relative,
   rejectRedirects = false,
+  budget: EvidenceReadBudget = new EvidenceReadBudget(),
 ): Promise<void> {
   const absolute = path.join(root, ...relative.split("/"));
   const targetStat = await lstat(absolute).catch(() => null);
@@ -462,6 +632,7 @@ async function fingerprintGitControlPath(
     hash.update(`missing\0${logical}\0`);
     return;
   }
+  budget.noteEntry(absolute);
   if (targetStat.isSymbolicLink()) {
     if (rejectRedirects) {
       throw new GitError(
@@ -473,20 +644,21 @@ async function fingerprintGitControlPath(
   }
   if (targetStat.isDirectory()) {
     hash.update(`dir\0${logical}\0`);
-    for (const name of (await readdir(absolute)).sort()) {
+    for (const name of await budget.readDirectoryNames(absolute)) {
       await fingerprintGitControlPath(
         hash,
         root,
         relative ? `${relative}/${name}` : name,
         logical ? `${logical}/${name}` : name,
         rejectRedirects,
+        budget,
       );
     }
     return;
   }
   if (targetStat.isFile()) {
     hash.update(`file\0${logical}\0`);
-    hash.update(await readFile(absolute));
+    await hashFileInto(hash, absolute, targetStat, budget);
     hash.update("\0");
     return;
   }
@@ -496,6 +668,7 @@ async function fingerprintGitControlPath(
 async function fingerprintSubmoduleGitControl(
   hash: ReturnType<typeof createHash>,
   commonGitDir: string,
+  budget: EvidenceReadBudget,
 ): Promise<void> {
   const modulesRoot = path.join(commonGitDir, "modules");
 
@@ -505,6 +678,7 @@ async function fingerprintSubmoduleGitControl(
       hash.update(`missing\0${logical}\0`);
       return;
     }
+    budget.noteEntry(directory);
     if (directoryStat.isSymbolicLink()) {
       throw new GitError(
         `Git evidence authority cannot trust redirected submodule Git control metadata: ${directory}`,
@@ -528,6 +702,7 @@ async function fingerprintSubmoduleGitControl(
           root,
           `${logical}/${root}`,
           true,
+          budget,
         );
       }
       await visitContainer(path.join(directory, "modules"), `${logical}/modules`);
@@ -535,7 +710,7 @@ async function fingerprintSubmoduleGitControl(
     }
 
     hash.update(`submodule-container\0${logical}\0`);
-    for (const name of (await readdir(directory)).sort()) {
+    for (const name of await budget.readDirectoryNames(directory)) {
       const child = path.join(directory, name);
       const childStat = await lstat(child).catch(() => null);
       if (childStat?.isDirectory() || childStat?.isSymbolicLink()) {
@@ -543,8 +718,9 @@ async function fingerprintSubmoduleGitControl(
         continue;
       }
       if (childStat?.isFile()) {
+        budget.noteEntry(child);
         hash.update(`file\0${logical}/${name}\0`);
-        hash.update(await readFile(child));
+        await hashFileInto(hash, child, childStat, budget);
         hash.update("\0");
         continue;
       }
@@ -559,15 +735,17 @@ async function fingerprintSubmoduleGitControl(
 
 async function fingerprintCommonGitControl(commonGitDir: string): Promise<string> {
   const hash = createHash("sha256");
+  const budget = new EvidenceReadBudget();
   for (const root of commonControlRoots) {
-    await fingerprintGitControlPath(hash, commonGitDir, root);
+    await fingerprintGitControlPath(hash, commonGitDir, root, root, false, budget);
   }
-  await fingerprintSubmoduleGitControl(hash, commonGitDir);
+  await fingerprintSubmoduleGitControl(hash, commonGitDir, budget);
   return hash.digest("hex");
 }
 
 async function fingerprintWorktreeGitControl(gitDir: string): Promise<string> {
   const hash = createHash("sha256");
+  const budget = new EvidenceReadBudget();
   for (const name of worktreeControlRoots) {
     const target = path.join(gitDir, name);
     const targetStat = await lstat(target).catch(() => null);
@@ -575,9 +753,10 @@ async function fingerprintWorktreeGitControl(gitDir: string): Promise<string> {
       hash.update(`missing\0${name}\0`);
       continue;
     }
+    budget.noteEntry(target);
     if (targetStat.isFile()) {
       hash.update(`file\0${name}\0`);
-      hash.update(await readFile(target));
+      await hashFileInto(hash, target, targetStat, budget);
       hash.update("\0");
       continue;
     }
@@ -1273,28 +1452,31 @@ export type TrustedWorkspaceSnapshot = Map<string, string>;
  */
 export async function snapshotFilesystemWorkspaceEvidence(
   workspace: string,
+  limits: EvidenceReadLimits = {},
 ): Promise<TrustedWorkspaceSnapshot> {
   const root = path.resolve(workspace);
   const snapshot: TrustedWorkspaceSnapshot = new Map();
+  const budget = new EvidenceReadBudget(limits);
 
   const walk = async (target: string, relative: string): Promise<void> => {
     const targetStat = await lstat(target).catch(() => null);
     if (!targetStat) return;
+    budget.noteEntry(target);
     const logical = relative.split(path.sep).join("/");
     if (targetStat.isSymbolicLink()) {
       snapshot.set(logical, `link:${await readlink(target)}`);
       return;
     }
     if (targetStat.isFile()) {
-      const digest = createHash("sha256")
-        .update(await readFile(target))
-        .digest("hex");
+      const hash = createHash("sha256");
+      await hashFileInto(hash, target, targetStat, budget);
+      const digest = hash.digest("hex");
       snapshot.set(logical, `file:${targetStat.mode}:${targetStat.size}:${digest}`);
       return;
     }
     if (targetStat.isDirectory()) {
       if (logical) snapshot.set(logical, `dir:${targetStat.mode}`);
-      for (const entry of (await readdir(target)).sort()) {
+      for (const entry of await budget.readDirectoryNames(target)) {
         await walk(
           path.join(target, entry),
           relative ? path.join(relative, entry) : entry,
@@ -1320,16 +1502,21 @@ const workspaceRelativePath = (
     .split(path.sep)
     .join("/");
 
-async function snapshotPathSignature(target: string, status: string): Promise<string> {
+async function snapshotPathSignature(
+  target: string,
+  status: string,
+  budget: EvidenceReadBudget,
+): Promise<string> {
   const targetStat = await lstat(target).catch(() => null);
   if (!targetStat) return `${status}:missing`;
+  budget.noteEntry(target);
   if (targetStat.isSymbolicLink()) {
     return `${status}:link:${await readlink(target)}`;
   }
   if (targetStat.isFile()) {
-    const digest = createHash("sha256")
-      .update(await readFile(target))
-      .digest("hex");
+    const hash = createHash("sha256");
+    await hashFileInto(hash, target, targetStat, budget);
+    const digest = hash.digest("hex");
     return `${status}:file:${digest}`;
   }
   return `${status}:${targetStat.mode}:${targetStat.size}`;
@@ -1344,6 +1531,7 @@ export async function snapshotTrustedWorkspaceEvidence(
   authority: GitEvidenceAuthority,
   workspace: string,
   excludedWorkspacePaths: string[] = [],
+  limits: EvidenceReadLimits = {},
 ): Promise<TrustedWorkspaceSnapshot> {
   const canonicalWorkspace = await realpath(workspace);
   const tracked = await collectTrustedWorktreeChanges(authority);
@@ -1353,6 +1541,7 @@ export async function snapshotTrustedWorkspaceEvidence(
   );
   const ignored = await listTrustedIgnoredFiles(authority, excludedRepoPaths);
   const snapshot: TrustedWorkspaceSnapshot = new Map();
+  const budget = new EvidenceReadBudget(limits);
 
   for (const file of tracked.files) {
     const relative = workspaceRelativePath(
@@ -1361,7 +1550,7 @@ export async function snapshotTrustedWorkspaceEvidence(
       file.path,
     );
     const target = path.join(canonicalWorkspace, ...relative.split("/"));
-    snapshot.set(relative, await snapshotPathSignature(target, file.status));
+    snapshot.set(relative, await snapshotPathSignature(target, file.status, budget));
   }
   for (const repoRelative of ignored) {
     const relative = workspaceRelativePath(
@@ -1370,7 +1559,7 @@ export async function snapshotTrustedWorkspaceEvidence(
       repoRelative,
     );
     const target = path.join(authority.repoRoot, ...repoRelative.split("/"));
-    snapshot.set(relative, await snapshotPathSignature(target, "I"));
+    snapshot.set(relative, await snapshotPathSignature(target, "I", budget));
   }
   return snapshot;
 }

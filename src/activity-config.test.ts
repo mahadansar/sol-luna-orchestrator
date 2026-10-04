@@ -652,7 +652,12 @@ function configuredHome(eventsPath?: string): { home: string; events: string } {
   const events = eventsPath ?? path.join(home, "events.jsonl");
   fs.writeFileSync(
     path.join(home, "config.toml"),
-    applyInitConfig("", { ...INPUT, eventsPath: events }),
+    applyInitConfig("", {
+      ...INPUT,
+      command: process.execPath,
+      serverEntry: path.join(HERE, "server.js"),
+      eventsPath: events,
+    }),
     "utf8",
   );
   return { home, events };
@@ -802,7 +807,7 @@ test("status reports an invalid registered diagnostic log without a shell overri
   const shellLog = path.join(path.parse(process.cwd()).root, "tmp", "shell-only.log");
 
   const human = await runCli(["status"], { CODEX_HOME: home, SOL_LUNA_LOG: shellLog });
-  assert.equal(human.code, 0);
+  assert.equal(human.code, 1);
   assert.match(human.stdout, /Diagnostic log:\s+invalid/i);
   assert.match(human.stdout, /SOL_LUNA_LOG must be a non-empty absolute path/);
   assert.doesNotMatch(
@@ -814,7 +819,7 @@ test("status reports an invalid registered diagnostic log without a shell overri
     CODEX_HOME: home,
     SOL_LUNA_LOG: shellLog,
   });
-  assert.equal(json.code, 0);
+  assert.equal(json.code, 1);
   const status = JSON.parse(json.stdout) as {
     diagnosticLog: { path: string | null; source: string; error: string | null };
   };
@@ -948,11 +953,11 @@ test("status exposes an explicitly disabled registration in human and JSON outpu
   fs.writeFileSync(configPath, disabled, "utf8");
 
   const human = await runCli(["status"], { CODEX_HOME: home });
-  assert.equal(human.code, 0);
+  assert.equal(human.code, 1);
   assert.match(human.stdout, /Registered enabled:\s+no\s+\(run init to reconcile\)/);
 
   const json = await runCli(["status", "--json"], { CODEX_HOME: home });
-  assert.equal(json.code, 0);
+  assert.equal(json.code, 1);
   const status = JSON.parse(json.stdout) as {
     registration: { enabled: boolean | null; matchesCurrentInstall: boolean };
   };

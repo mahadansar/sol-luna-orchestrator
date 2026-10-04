@@ -239,16 +239,44 @@ export const VERIFY_MODE_INVALID =
   process.env.SOL_LUNA_VERIFY_MODE !== undefined &&
   !(VERIFY_MODES as readonly string[]).includes(rawVerifyMode);
 
+/** Comma-only list parsing; executable entries may themselves contain `:` or `;`. */
+export const parseCommaList = (raw: string | null | undefined): string[] =>
+  (raw ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+/** Extra executables the operator explicitly permits. */
+export const EXTRA_ALLOWED_EXECUTABLES = parseCommaList(
+  process.env.SOL_LUNA_VERIFY_ALLOW,
+);
+
+/** Default executables the operator explicitly removes. */
+export const REMOVED_ALLOWED_EXECUTABLES = parseCommaList(
+  process.env.SOL_LUNA_VERIFY_DENY,
+);
+
 /**
- * Extra executables the operator permits, comma separated.
+ * Optional complete replacement for the default executable set.
  *
- * Comma only: an entry may be an exact path, and splitting on `:` or `;` would
- * mangle `C:\tools\runner.exe`.
+ * Undefined means "use defaults"; an explicitly empty value means "start with
+ * no defaults". SOL_LUNA_VERIFY_DENY is then applied and SOL_LUNA_VERIFY_ALLOW
+ * has final additive precedence.
  */
-export const EXTRA_ALLOWED_EXECUTABLES = (process.env.SOL_LUNA_VERIFY_ALLOW ?? "")
-  .split(",")
-  .map((entry) => entry.trim())
-  .filter(Boolean);
+export const REPLACEMENT_ALLOWED_EXECUTABLES: readonly string[] | null =
+  process.env.SOL_LUNA_VERIFY_ALLOW_ONLY === undefined
+    ? null
+    : parseCommaList(process.env.SOL_LUNA_VERIFY_ALLOW_ONLY);
+
+/**
+ * Extra parent environment variable names copied into worker Codex processes.
+ * The worker has a small built-in functional environment; this opt-in list is
+ * for custom provider credentials, corporate toolchain settings, or other
+ * installation-specific variables it genuinely needs.
+ */
+export const WORKER_ENV_PASSTHROUGH = parseCommaList(
+  process.env.SOL_LUNA_WORKER_ENV_PASSTHROUGH,
+);
 
 /**
  * Strip credential-shaped variables from the environment of verification

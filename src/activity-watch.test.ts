@@ -6,6 +6,141 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+test("history reads only a bounded tail and drops a partial leading record", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "luna-history-tail-"));
+  const eventsFile = path.join(root, "events.jsonl");
+  const latest = [
+    {
+      timestamp: "2026-10-04T00:01:00Z",
+      type: "batch.started",
+      batchId: "latest-history",
+      mode: "single",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2026-10-04T00:01:01Z",
+      type: "batch.completed",
+      batchId: "latest-history",
+      durationSeconds: 1,
+      passed: 1,
+      failed: 0,
+    },
+  ];
+  const latestText = `${latest.map((event) => JSON.stringify(event)).join("\n")}\n`;
+  const readWindowBytes = Buffer.byteLength(latestText) + 64;
+  const prefix =
+    `${JSON.stringify({ timestamp: "2026-10-03T00:00:00Z", type: "batch.started", batchId: "old-history", mode: "single", taskCount: 1, maxParallel: 1 })}\n` +
+    `${"x".repeat(readWindowBytes * 2)}\n`;
+  await fs.writeFile(eventsFile, prefix + latestText, "utf8");
+
+  const originalWrite = process.stdout.write;
+  let output = "";
+  let firstStart: number | undefined;
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    output += chunk.toString();
+    return true;
+  }) as typeof process.stdout.write;
+  const trackedRead = ((file: string, options: unknown) => {
+    const typed = options as { start?: number };
+    firstStart ??= typed.start;
+    return createReadStream(file, options as Parameters<typeof createReadStream>[1]);
+  }) as typeof createReadStream;
+
+  try {
+    const { activityCommand } = await import("./cli/activity.js");
+    const code = await activityCommand(["--history", "1", "--json"], {
+      eventsFile,
+      readWindowBytes,
+      readStream: trackedRead,
+    });
+    assert.equal(code, 0);
+    const snapshots = JSON.parse(output) as Array<{ batchId: string | null }>;
+    assert.equal(snapshots[0]?.batchId, "latest-history");
+    assert.ok((firstStart ?? 0) > 0, "oversized history should start from the tail");
+    const size = (await fs.stat(eventsFile)).size;
+    assert.ok(size - (firstStart ?? 0) <= readWindowBytes + 1);
+  } finally {
+    process.stdout.write = originalWrite;
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("watch startup reconstructs an oversized legacy file from a bounded tail", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "luna-watch-tail-"));
+  const eventsFile = path.join(root, "events.jsonl");
+  const latest = [
+    {
+      timestamp: "2026-10-04T00:02:00Z",
+      type: "batch.started",
+      batchId: "latest-watch-tail",
+      mode: "parallel",
+      taskCount: 1,
+      maxParallel: 1,
+    },
+    {
+      timestamp: "2026-10-04T00:02:01Z",
+      type: "worker.started",
+      batchId: "latest-watch-tail",
+      taskId: "tail-task",
+      effort: "high",
+      workingDirectory: "w",
+    },
+  ];
+  const latestText = `${latest.map((event) => JSON.stringify(event)).join("\n")}\n`;
+  const readWindowBytes = Buffer.byteLength(latestText) + 64;
+  await fs.writeFile(
+    eventsFile,
+    `${"y".repeat(readWindowBytes * 2)}\n${latestText}`,
+    "utf8",
+  );
+
+  const originalWrite = process.stdout.write;
+  let output = "";
+  let firstStart: number | undefined;
+  let watchPromise: Promise<number> | undefined;
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    output += chunk.toString();
+    return true;
+  }) as typeof process.stdout.write;
+  const trackedRead = ((file: string, options: unknown) => {
+    const typed = options as { start?: number };
+    firstStart ??= typed.start;
+    return createReadStream(file, options as Parameters<typeof createReadStream>[1]);
+  }) as typeof createReadStream;
+
+  try {
+    const { activityCommand } = await import("./cli/activity.js");
+    watchPromise = activityCommand(["--watch", "--json"], {
+      eventsFile,
+      readWindowBytes,
+      readStream: trackedRead,
+      watchHealthIntervalMs: 20,
+    });
+    const deadline = Date.now() + 5_000;
+    while (!output.includes('"batchId":"latest-watch-tail"') && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.match(output, /"batchId":"latest-watch-tail"/);
+    assert.ok(
+      (firstStart ?? 0) > 0,
+      "oversized watch startup should start from the tail",
+    );
+    const size = (await fs.stat(eventsFile)).size;
+    assert.ok(size - (firstStart ?? 0) <= readWindowBytes + 1);
+    process.emit("SIGINT", "SIGINT");
+    assert.equal(await watchPromise, 0);
+    watchPromise = undefined;
+  } finally {
+    if (watchPromise) {
+      process.emit("SIGINT", "SIGINT");
+      await watchPromise.catch(() => undefined);
+    }
+    process.stdout.write = originalWrite;
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("watch mode recovers from ENOENT during stream iteration and reads recreated history", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "luna-watch-read-race-"));
   const eventsFile = path.join(root, "events.jsonl");
@@ -727,6 +862,7 @@ test("watch mode reattaches after delete/recreate when the old watcher goes sile
     filePresent = true;
 
     await waitFor(() => output.includes('"batchId":"new"'));
+    await waitFor(() => successfulAttachments >= 2);
     assert.ok(
       successfulAttachments >= 2,
       "the recreated pathname should be watched again",

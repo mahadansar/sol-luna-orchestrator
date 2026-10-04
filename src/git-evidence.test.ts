@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  EvidenceReadLimitError,
   MAX_GIT_OUTPUT_BYTES,
   assertGitEvidenceAuthority,
   captureGitEvidenceAuthority,
@@ -13,6 +14,7 @@ import {
   git,
   listTrustedIgnoredFiles,
   runGit,
+  snapshotFilesystemWorkspaceEvidence,
   snapshotTrustedWorkspaceEvidence,
 } from "./git.js";
 import { findScopeViolations } from "./scope.js";
@@ -28,6 +30,84 @@ async function initFixtureRepo(prefix: string): Promise<string> {
 
 const toShellPath = (value: string): string =>
   `"${value.replaceAll("\\", "/").replaceAll('"', '\\"')}"`;
+
+test("filesystem evidence refuses oversized sparse files without buffering them", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-evidence-budget-"));
+  try {
+    const target = path.join(root, "huge.bin");
+    await fs.writeFile(target, "");
+    await fs.truncate(target, 1024 * 1024);
+
+    await assert.rejects(
+      snapshotFilesystemWorkspaceEvidence(root, {
+        maxFileBytes: 1024,
+        maxTotalBytes: 2048,
+        maxEntries: 10,
+        maxElapsedMs: 10_000,
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof EvidenceReadLimitError);
+        assert.match(error.message, /file exceeds its 1024-byte safety budget/i);
+        return true;
+      },
+    );
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("filesystem evidence enforces aggregate byte and entry budgets", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-evidence-aggregate-"));
+  try {
+    await fs.writeFile(path.join(root, "a.bin"), Buffer.alloc(700, 0x61));
+    await fs.writeFile(path.join(root, "b.bin"), Buffer.alloc(700, 0x62));
+    await assert.rejects(
+      snapshotFilesystemWorkspaceEvidence(root, {
+        maxFileBytes: 1024,
+        maxTotalBytes: 1024,
+        maxEntries: 10,
+        maxElapsedMs: 10_000,
+      }),
+      /aggregate safety budget/i,
+    );
+    await assert.rejects(
+      snapshotFilesystemWorkspaceEvidence(root, {
+        maxFileBytes: 1024,
+        maxTotalBytes: 4096,
+        maxEntries: 1,
+        maxElapsedMs: 10_000,
+      }),
+      /entry safety budget/i,
+    );
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("trusted Git evidence applies the same bounded streaming file budget", async () => {
+  const repo = await initFixtureRepo("sol-luna-trusted-budget-");
+  try {
+    await fs.writeFile(path.join(repo, "tracked.txt"), "base\n", "utf8");
+    await runGit(["add", "."], repo);
+    const committed = await runGit(["commit", "-m", "fixture"], repo);
+    assert.equal(committed.code, 0, committed.stderr || committed.stdout);
+    const authority = await captureGitEvidenceAuthority(repo);
+    assert.ok(authority);
+
+    await fs.writeFile(path.join(repo, "tracked.txt"), Buffer.alloc(2048, 0x61));
+    await assert.rejects(
+      snapshotTrustedWorkspaceEvidence(authority, repo, [], {
+        maxFileBytes: 1024,
+        maxTotalBytes: 4096,
+        maxEntries: 10,
+        maxElapsedMs: 10_000,
+      }),
+      /file exceeds its 1024-byte safety budget/i,
+    );
+  } finally {
+    await fs.rm(repo, { recursive: true, force: true });
+  }
+});
 
 test("Git and worktree setup compare canonical workspace aliases before confinement", async (t) => {
   const repo = await initFixtureRepo("sol-luna-git-alias-");

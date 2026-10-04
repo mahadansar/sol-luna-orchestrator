@@ -6,6 +6,7 @@ import {
   CommandPolicyError,
   launchesThroughCmd,
   parseCommand,
+  resolveCommandPolicy,
   unrepresentableCmdArgument,
   type CommandPolicy,
 } from "./command.js";
@@ -17,6 +18,8 @@ import {
 import {
   EXTRA_ALLOWED_EXECUTABLES,
   MAX_OUTPUT_CHARS,
+  REMOVED_ALLOWED_EXECUTABLES,
+  REPLACEMENT_ALLOWED_EXECUTABLES,
   VERIFY_MODE,
   VERIFY_SCRUB_ENV,
   VERIFY_TIMEOUT_SECONDS,
@@ -32,9 +35,12 @@ export interface VerificationRun {
   execution: "argv" | "shell" | "rejected" | "skipped";
 }
 
-export const verificationPolicy: CommandPolicy = {
-  allowed: [...DEFAULT_ALLOWED_EXECUTABLES, ...EXTRA_ALLOWED_EXECUTABLES],
-};
+export const verificationPolicy: CommandPolicy = resolveCommandPolicy({
+  defaults: DEFAULT_ALLOWED_EXECUTABLES,
+  add: EXTRA_ALLOWED_EXECUTABLES,
+  remove: REMOVED_ALLOWED_EXECUTABLES,
+  replace: REPLACEMENT_ALLOWED_EXECUTABLES,
+});
 
 export function truncate(text: string, limit = MAX_OUTPUT_CHARS): string {
   if (text.length <= limit) return text;

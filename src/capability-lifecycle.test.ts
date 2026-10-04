@@ -437,33 +437,55 @@ test("a compute-policy refusal after handoff resolution hands the escalation bac
 });
 
 test("an executor that throws still spends the handoff it was handed", async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-handoff-throws-"));
   const harness = makeDelegateHarness();
-  const task = makeTask();
-  const reference = issueEscalation(harness.handoffStore, task);
+  try {
+    await runGit(["init", "-q"], workspace);
+    const committed = await runGit(
+      [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "--allow-empty",
+        "-qm",
+        "base",
+      ],
+      workspace,
+    );
+    assert.equal(committed.code, 0, committed.stderr || committed.stdout);
 
-  const response = await handleDelegateTask(
-    { ...task, handoffReference: reference },
-    undefined,
-    {
-      handoffStore: harness.handoffStore,
-      continuationStore: harness.continuationStore,
-      contextRegistry: harness.registry,
-      contextStore: harness.contextStore,
-      delegateToLuna: async () => {
-        throw new Error("worker process exited");
+    const task = makeTask({ workingDirectory: workspace });
+    const reference = issueEscalation(harness.handoffStore, task);
+
+    const response = await handleDelegateTask(
+      { ...task, handoffReference: reference },
+      undefined,
+      {
+        handoffStore: harness.handoffStore,
+        continuationStore: harness.continuationStore,
+        contextRegistry: harness.registry,
+        contextStore: harness.contextStore,
+        delegateToLuna: async () => {
+          throw new Error("worker process exited");
+        },
+        emit: (event) => harness.events.push(event),
+        record: () => undefined,
+        makeBatchId: () => "b_threw",
       },
-      emit: (event) => harness.events.push(event),
-      record: () => undefined,
-      makeBatchId: () => "b_threw",
-    },
-  );
+    );
 
-  assert.equal(response.isError, true);
-  assert.equal(
-    harness.handoffStore.status(reference),
-    "consumed",
-    "authority handed to an executor is spent whatever the executor does",
-  );
+    assert.equal(response.isError, true);
+    assert.equal(
+      harness.handoffStore.status(reference),
+      "consumed",
+      "authority handed to an executor is spent whatever the executor does",
+    );
+  } finally {
+    await harness.continuationStore.dispose();
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
 });
 
 test("cancellation before the executor is entered hands the escalation back", async () => {

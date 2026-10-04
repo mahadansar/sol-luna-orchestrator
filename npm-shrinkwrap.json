@@ -9,11 +9,11 @@
       "version": "0.13.0",
       "license": "MIT",
       "dependencies": {
-        "@modelcontextprotocol/sdk": "^1.30.0",
-        "@openai/codex-sdk": "^0.160.0",
-        "cross-spawn": "^7.0.6",
-        "picomatch": "^4.0.5",
-        "zod": "^4.4.3"
+        "@modelcontextprotocol/sdk": "1.32.0",
+        "@openai/codex-sdk": "0.160.0",
+        "cross-spawn": "7.0.6",
+        "picomatch": "4.0.7",
+        "zod": "4.6.5"
       },
       "bin": {
         "sol-luna-orchestrator": "dist/cli.js",

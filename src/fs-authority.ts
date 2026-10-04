@@ -8,7 +8,12 @@ export interface PinnedDirectoryAuthority {
   identity: string;
 }
 
-export type PinnedDirectoryMutation =
+interface PinnedDirectoryMutationTestControls {
+  /** Deterministic test seam: pause after a successful mutation but before reporting it. */
+  testDelayAfterMutationMs?: number;
+}
+
+export type PinnedDirectoryMutation = (
   | {
       op: "mkdir";
       name: string;
@@ -59,7 +64,9 @@ export type PinnedDirectoryMutation =
       expectedIdentity: string;
       /** Deterministic protocol-loss seam before the syscall; production leaves this unset. */
       testExitBeforeMutationWithoutResult?: boolean;
-    };
+    }
+) &
+  PinnedDirectoryMutationTestControls;
 
 export interface PinnedDirectoryMutationResult {
   mutated: boolean;
@@ -79,8 +86,33 @@ const crypto = require("node:crypto");
 
 const identity = (stat) =>
   String(stat.dev) + ":" + String(stat.ino) + ":" + String(stat.birthtimeMs);
-const fileSignature = (bytes) =>
-  "file:" + crypto.createHash("sha256").update(bytes).digest("hex");
+const MAX_PINNED_SNAPSHOT_FILE_BYTES = 512 * 1024 * 1024;
+
+async function fileSignatureFromHandle(handle, expectedSize, name) {
+  if (
+    !Number.isSafeInteger(expectedSize) ||
+    expectedSize < 0 ||
+    expectedSize > MAX_PINNED_SNAPSHOT_FILE_BYTES
+  ) {
+    throw new Error(
+      "Pinned child file exceeds its safe signature budget: " + name + ".",
+    );
+  }
+  const hash = crypto.createHash("sha256");
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  let offset = 0;
+  while (offset < expectedSize) {
+    const requested = Math.min(buffer.length, expectedSize - offset);
+    const { bytesRead } = await handle.read(buffer, 0, requested, offset);
+    if (bytesRead <= 0) break;
+    hash.update(buffer.subarray(0, bytesRead));
+    offset += bytesRead;
+  }
+  if (offset !== expectedSize) {
+    throw new Error("Pinned child changed size while hashing " + name + ".");
+  }
+  return "file:" + hash.digest("hex");
+}
 
 function pathKey(value) {
   const normalized = path.resolve(value);
@@ -308,15 +340,19 @@ async function snapshot(name) {
       if (!opened.isFile() || identity(opened) !== expectedIdentity) {
         throw new Error("Pinned child changed identity while opening " + name + ".");
       }
-      const bytes = await handle.readFile();
+      const signature = await fileSignatureFromHandle(handle, opened.size, name);
       const after = await handle.stat();
-      if (!after.isFile() || identity(after) !== expectedIdentity) {
+      if (
+        !after.isFile() ||
+        identity(after) !== expectedIdentity ||
+        after.size !== opened.size
+      ) {
         throw new Error("Pinned child changed identity while reading " + name + ".");
       }
       return {
         kind: "file",
         identity: expectedIdentity,
-        signature: fileSignature(bytes),
+        signature,
       };
     } finally {
       await handle.close();
@@ -367,6 +403,16 @@ function emit(value) {
   process.stdout.write(JSON.stringify(value) + "\n");
 }
 
+async function emitDone(request, value) {
+  if (
+    Number.isFinite(request.testDelayAfterMutationMs) &&
+    request.testDelayAfterMutationMs > 0
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, request.testDelayAfterMutationMs));
+  }
+  emit(value);
+}
+
 (async () => {
   const cwdStat = await fs.lstat(".");
   emit({
@@ -386,7 +432,11 @@ function emit(value) {
         if (request.testExitBeforeMutationWithoutResult) process.exit(94);
         await fs.mkdir(request.name);
         mutated = true;
-        emit({ type: "done", mutated, snapshot: await snapshot(request.name) });
+        await emitDone(request, {
+          type: "done",
+          mutated,
+          snapshot: await snapshot(request.name),
+        });
         return;
       }
       case "write-file": {
@@ -419,10 +469,14 @@ function emit(value) {
                 "Pinned destination changed identity while opening the write boundary.",
               );
             }
-            const openedBytes = await handle.readFile();
+            const openedSignature = await fileSignatureFromHandle(
+              handle,
+              opened.size,
+              request.name,
+            );
             if (
               request.expectedSignature &&
-              fileSignature(openedBytes) !== request.expectedSignature
+              openedSignature !== request.expectedSignature
             ) {
               throw new Error(
                 "Pinned destination changed bytes while opening the write boundary.",
@@ -446,7 +500,11 @@ function emit(value) {
         } else {
           throw new Error("Unsupported pinned write mode: " + String(request.mode));
         }
-        emit({ type: "done", mutated, snapshot: await snapshot(request.name) });
+        await emitDone(request, {
+          type: "done",
+          mutated,
+          snapshot: await snapshot(request.name),
+        });
         return;
       }
       case "copy-directory": {
@@ -504,7 +562,11 @@ function emit(value) {
           throw error;
         }
         mutated = true;
-        emit({ type: "done", mutated, snapshot: await snapshot(request.name) });
+        await emitDone(request, {
+          type: "done",
+          mutated,
+          snapshot: await snapshot(request.name),
+        });
         return;
       }
       case "rename-verified": {
@@ -526,7 +588,7 @@ function emit(value) {
         await fs.rename(request.sourceName, request.destinationName);
         mutated = true;
         if (request.testExitAfterMutationBeforeResult) process.exit(91);
-        emit({
+        await emitDone(request, {
           type: "done",
           mutated,
           snapshot: await snapshot(request.destinationName),
@@ -548,7 +610,11 @@ function emit(value) {
         await fs.unlink(request.name);
         mutated = true;
         if (request.testExitAfterMutationBeforeResult) process.exit(92);
-        emit({ type: "done", mutated, snapshot: await snapshot(request.name) });
+        await emitDone(request, {
+          type: "done",
+          mutated,
+          snapshot: await snapshot(request.name),
+        });
         return;
       }
       case "rmdir": {
@@ -563,7 +629,11 @@ function emit(value) {
         if (request.testExitBeforeMutationWithoutResult) process.exit(95);
         await fs.rmdir(request.name);
         mutated = true;
-        emit({ type: "done", mutated, snapshot: await snapshot(request.name) });
+        await emitDone(request, {
+          type: "done",
+          mutated,
+          snapshot: await snapshot(request.name),
+        });
         return;
       }
       default:
@@ -673,11 +743,52 @@ export class PinnedDirectoryMutationError extends Error {
   }
 }
 
+export interface PinnedDirectoryMutationOptions {
+  beforeExecute?: () => void | Promise<void>;
+  /** Cancellation owned by the enclosing orchestration operation. */
+  signal?: AbortSignal;
+  /** Relative helper lifetime bound. Production defaults to five minutes. */
+  timeoutMs?: number;
+  /** Optional absolute epoch-millisecond deadline; the earlier bound wins. */
+  deadlineAt?: number;
+}
+
+export const PINNED_DIRECTORY_MUTATION_TIMEOUT_MS = 5 * 60 * 1000;
+const PINNED_DIRECTORY_KILL_GRACE_MS = 5_000;
+
 export async function runPinnedDirectoryMutation(
   authority: PinnedDirectoryAuthority,
   mutation: PinnedDirectoryMutation,
-  options: { beforeExecute?: () => void | Promise<void> } = {},
+  options: PinnedDirectoryMutationOptions = {},
 ): Promise<PinnedDirectoryMutationResult> {
+  if (options.signal?.aborted) {
+    throw new PinnedDirectoryMutationError(
+      "Pinned filesystem mutation was cancelled before helper launch.",
+      false,
+      "ABORT_ERR",
+    );
+  }
+  const configuredTimeout = options.timeoutMs ?? PINNED_DIRECTORY_MUTATION_TIMEOUT_MS;
+  if (!Number.isFinite(configuredTimeout) || configuredTimeout <= 0) {
+    throw new PinnedDirectoryMutationError(
+      "Pinned filesystem mutation requires a positive finite timeout.",
+      false,
+      "EINVAL",
+    );
+  }
+  const deadlineDelay =
+    options.deadlineAt === undefined
+      ? configuredTimeout
+      : options.deadlineAt - Date.now();
+  const timeoutMs = Math.min(configuredTimeout, deadlineDelay);
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new PinnedDirectoryMutationError(
+      "Pinned filesystem mutation deadline elapsed before helper launch.",
+      false,
+      "ETIMEDOUT",
+    );
+  }
+
   const child = spawn(process.execPath, ["-e", CHILD_SOURCE], {
     cwd: authority.directory,
     env: {},
@@ -749,9 +860,11 @@ export async function runPinnedDirectoryMutation(
     }
   });
 
+  let childClosed = false;
   const exitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
     (resolve) => {
       child.once("close", (code, signal) => {
+        childClosed = true;
         if (!readySettled) {
           readySettled = true;
           readyReject(
@@ -775,75 +888,158 @@ export async function runPinnedDirectoryMutation(
   // result (or conservative protocol loss) below instead of crashing the parent.
   child.stdin.on("error", () => undefined);
 
-  let ready: ChildReady;
-  try {
-    ready = await readyPromise;
-  } catch (error) {
-    child.kill();
-    await exitPromise.catch(() => undefined);
-    throw error;
-  }
+  let requestDispatched = false;
+  let cancellation:
+    | { kind: "abort"; code: "ABORT_ERR"; message: string }
+    | { kind: "timeout"; code: "ETIMEDOUT"; message: string }
+    | null = null;
+  let rejectCancellation!: (error: Error) => void;
+  const cancellationPromise = new Promise<never>((_resolve, reject) => {
+    rejectCancellation = reject;
+  });
+  // The rejection is also observed by each active Promise.race below; attaching
+  // this handler prevents a late abort between stages from becoming unhandled.
+  void cancellationPromise.catch(() => undefined);
 
-  if (
-    ready.identity !== authority.identity ||
-    normalizePathKey(ready.canonical) !== normalizePathKey(authority.canonical)
-  ) {
-    child.kill();
-    await exitPromise.catch(() => undefined);
-    throw new PinnedDirectoryMutationError(
-      `Pinned filesystem parent changed before mutation: ${authority.directory}.`,
-      false,
+  const cancellationError = (): PinnedDirectoryMutationError => {
+    const state = cancellation!;
+    return new PinnedDirectoryMutationError(
+      state.message,
+      requestDispatched,
+      state.code,
+      !requestDispatched,
     );
-  }
+  };
+  const requestCancellation = (kind: "abort" | "timeout"): void => {
+    if (cancellation || childClosed) return;
+    cancellation =
+      kind === "abort"
+        ? {
+            kind,
+            code: "ABORT_ERR",
+            message: "Pinned filesystem mutation was cancelled.",
+          }
+        : {
+            kind,
+            code: "ETIMEDOUT",
+            message: `Pinned filesystem mutation timed out after ${Math.ceil(timeoutMs)}ms.`,
+          };
+    child.kill("SIGKILL");
+    rejectCancellation(cancellationError());
+  };
+  const onAbort = (): void => requestCancellation("abort");
+  options.signal?.addEventListener("abort", onAbort, { once: true });
+  const timeout = setTimeout(() => requestCancellation("timeout"), timeoutMs);
+  if (options.signal?.aborted) requestCancellation("abort");
+
+  const stopAndReap = async (): Promise<void> => {
+    if (!childClosed) child.kill("SIGKILL");
+    let grace: NodeJS.Timeout | undefined;
+    const reaped = await Promise.race([
+      exitPromise.then(() => true),
+      new Promise<boolean>((resolve) => {
+        grace = setTimeout(() => resolve(false), PINNED_DIRECTORY_KILL_GRACE_MS);
+      }),
+    ]).catch(() => false);
+    if (grace) clearTimeout(grace);
+    if (!reaped) {
+      child.stdin.destroy();
+      child.stdout.destroy();
+      child.stderr.destroy();
+      child.unref();
+    }
+  };
+
+  const awaitCancellable = async <T>(promise: Promise<T>): Promise<T> =>
+    Promise.race([promise, cancellationPromise]);
 
   try {
-    await options.beforeExecute?.();
-    const current = await capturePinnedDirectoryAuthority(authority.directory);
+    let ready: ChildReady;
+    try {
+      ready = await awaitCancellable(readyPromise);
+    } catch (error) {
+      await stopAndReap();
+      if (cancellation) throw cancellationError();
+      throw error;
+    }
+
     if (
-      current.identity !== authority.identity ||
-      normalizePathKey(current.canonical) !== normalizePathKey(authority.canonical)
+      ready.identity !== authority.identity ||
+      normalizePathKey(ready.canonical) !== normalizePathKey(authority.canonical)
     ) {
+      await stopAndReap();
       throw new PinnedDirectoryMutationError(
         `Pinned filesystem parent changed before mutation: ${authority.directory}.`,
         false,
       );
     }
-    child.stdin.end(JSON.stringify(mutation));
-  } catch (error) {
-    child.kill();
-    await exitPromise.catch(() => undefined);
-    throw error;
-  }
 
-  const { code, signal } = await exitPromise;
-  if (stdout.trim()) lines.push(stdout.trim());
-  const finalLine = lines.at(-1);
-  let result: ChildDone | ChildError | undefined;
-  if (finalLine) {
     try {
-      const parsed = JSON.parse(finalLine) as ChildMessage;
-      if (parsed.type === "done" || parsed.type === "error") result = parsed;
-    } catch {
-      // Fall through to the protocol failure below.
+      if (options.beforeExecute) {
+        await awaitCancellable(Promise.resolve().then(options.beforeExecute));
+      }
+      const current = await awaitCancellable(
+        capturePinnedDirectoryAuthority(authority.directory),
+      );
+      if (
+        current.identity !== authority.identity ||
+        normalizePathKey(current.canonical) !== normalizePathKey(authority.canonical)
+      ) {
+        throw new PinnedDirectoryMutationError(
+          `Pinned filesystem parent changed before mutation: ${authority.directory}.`,
+          false,
+        );
+      }
+      requestDispatched = true;
+      child.stdin.end(JSON.stringify(mutation));
+    } catch (error) {
+      await stopAndReap();
+      if (cancellation) throw cancellationError();
+      throw error;
     }
+
+    let exit: { code: number | null; signal: NodeJS.Signals | null };
+    try {
+      exit = await awaitCancellable(exitPromise);
+      childClosed = true;
+    } catch {
+      await stopAndReap();
+      throw cancellationError();
+    }
+
+    const { code, signal } = exit;
+    if (stdout.trim()) lines.push(stdout.trim());
+    const finalLine = lines.at(-1);
+    let result: ChildDone | ChildError | undefined;
+    if (finalLine) {
+      try {
+        const parsed = JSON.parse(finalLine) as ChildMessage;
+        if (parsed.type === "done" || parsed.type === "error") result = parsed;
+      } catch {
+        // Fall through to the protocol failure below.
+      }
+    }
+    if (!result) {
+      const deterministicPostMutationCrash = code === 91 || code === 92;
+      throw new PinnedDirectoryMutationError(
+        `Pinned filesystem helper exited without a result (code=${String(code)}, signal=${String(signal)}). ${stderr.trim()}`.trim(),
+        true,
+        undefined,
+        deterministicPostMutationCrash,
+      );
+    }
+    if (result.type === "error") {
+      throw new PinnedDirectoryMutationError(result.message, result.mutated, result.code);
+    }
+    if (code !== 0) {
+      throw new PinnedDirectoryMutationError(
+        `Pinned filesystem helper exited with code ${String(code)}. ${stderr.trim()}`.trim(),
+        result.mutated,
+      );
+    }
+    return { mutated: result.mutated, snapshot: result.snapshot };
+  } finally {
+    clearTimeout(timeout);
+    options.signal?.removeEventListener("abort", onAbort);
   }
-  if (!result) {
-    const deterministicPostMutationCrash = code === 91 || code === 92;
-    throw new PinnedDirectoryMutationError(
-      `Pinned filesystem helper exited without a result (code=${String(code)}, signal=${String(signal)}). ${stderr.trim()}`.trim(),
-      true,
-      undefined,
-      deterministicPostMutationCrash,
-    );
-  }
-  if (result.type === "error") {
-    throw new PinnedDirectoryMutationError(result.message, result.mutated, result.code);
-  }
-  if (code !== 0) {
-    throw new PinnedDirectoryMutationError(
-      `Pinned filesystem helper exited with code ${String(code)}. ${stderr.trim()}`.trim(),
-      result.mutated,
-    );
-  }
-  return { mutated: result.mutated, snapshot: result.snapshot };
 }

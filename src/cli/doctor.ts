@@ -537,7 +537,7 @@ export async function doctorCommand(argv: string[]): Promise<number> {
   } else if (failures === 0) {
     out(`${symbols.ok} Ready, with ${warnings} warning(s).`);
   } else {
-    out(`${symbols.fail} ${failures} problem(s) found. Run: sol-luna-orchestrator init`);
+    out(`${symbols.fail} ${failures} problem(s) found. Follow the remedies above.`);
   }
 
   out(
