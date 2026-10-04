@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -18,6 +18,56 @@ function deferred<T = void>(): {
     resolve = done as (value?: T | PromiseLike<T>) => void;
   });
   return { promise, resolve };
+}
+
+/** Bound fixture setup separately so Git startup cannot consume the shutdown bound. */
+function readyChildExit(
+  child: ChildProcess,
+  marker: string,
+): Promise<{
+  code: number | null;
+  stdout: string;
+  stderr: string;
+}> {
+  return new Promise((resolve, reject) => {
+    let stdout = "";
+    let stderr = "";
+    let ready = false;
+    let settled = false;
+    const fail = (): void => {
+      settled = true;
+      child.kill("SIGKILL");
+      reject(
+        new Error(
+          `Child exceeded ${ready ? "shutdown" : "fixture setup"} bound; stdout=${stdout}; stderr=${stderr}`,
+        ),
+      );
+    };
+    let timer = setTimeout(fail, 15_000);
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+      if (!settled && !ready && stdout.includes(marker)) {
+        ready = true;
+        clearTimeout(timer);
+        timer = setTimeout(fail, 3_000);
+      }
+    });
+    child.stderr?.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
+    child.once("error", (error) => {
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once("close", (code) => {
+      settled = true;
+      clearTimeout(timer);
+      if (!ready)
+        reject(
+          new Error(`Child closed before readiness; stdout=${stdout}; stderr=${stderr}`),
+        );
+      else resolve({ code, stdout, stderr });
+    });
+  });
 }
 
 test("shutdown cancels active and queued operations, awaits cleanup, and closes once", async () => {
@@ -275,6 +325,7 @@ test("shutdown timeout force-stops repository operation renewal without reopenin
       },
       (error) => error,
     );
+    console.log("shutdown-operation-ready");
     try {
       await coordinator.shutdown(20);
       process.exitCode = 2;
@@ -307,30 +358,11 @@ test("shutdown timeout force-stops repository operation renewal without reopenin
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
-  let stdout = "";
-  let stderr = "";
-  child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf8")));
-  child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
-  const exit = new Promise<number | null>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      child.kill("SIGKILL");
-      reject(
-        new Error(
-          `child stayed alive after forced repository-operation renewal stop; stdout=${stdout}; stderr=${stderr}`,
-        ),
-      );
-    }, 3_000);
-    child.once("error", (error) => {
-      clearTimeout(timeout);
-      reject(error);
-    });
-    child.once("close", (code) => {
-      clearTimeout(timeout);
-      resolve(code);
-    });
-  });
-
-  assert.equal(await exit, 0, stderr);
+  const { code, stdout, stderr } = await readyChildExit(
+    child,
+    "shutdown-operation-ready",
+  );
+  assert.equal(code, 0, stderr);
   assert.match(stdout, /repository-operation-renewal-and-waiter-force-stopped/);
 });
 
@@ -354,6 +386,7 @@ test("forced shutdown during repository acquisition cannot start an untracked re
     try {
       await acquireRepositoryOperationAuthority(repo, undefined, {
         afterLeaseAcquired: async () => {
+          console.log("shutdown-acquisition-ready");
           seamReached = true;
           await forceStopRepositoryOperationRenewals();
         },
@@ -371,29 +404,10 @@ test("forced shutdown during repository acquisition cannot start an untracked re
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
-  let stdout = "";
-  let stderr = "";
-  child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf8")));
-  child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
-  const exit = new Promise<number | null>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      child.kill("SIGKILL");
-      reject(
-        new Error(
-          `child stayed alive after post-acquire forced shutdown; stdout=${stdout}; stderr=${stderr}`,
-        ),
-      );
-    }, 3_000);
-    child.once("error", (error) => {
-      clearTimeout(timeout);
-      reject(error);
-    });
-    child.once("close", (code) => {
-      clearTimeout(timeout);
-      resolve(code);
-    });
-  });
-
-  assert.equal(await exit, 0, stderr);
+  const { code, stdout, stderr } = await readyChildExit(
+    child,
+    "shutdown-acquisition-ready",
+  );
+  assert.equal(code, 0, stderr);
   assert.match(stdout, /post-acquire-forced-shutdown-released/);
 });
