@@ -138,7 +138,10 @@ ones (including queued worker-slot waits and verification subprocesses), waits
 for bounded cleanup, then closes the transport. Capability stores and context
 registries are disposed only after active calls settle. The shutdown bound is 30
 seconds; exceeding it fails closed and leaves admission closed rather than
-allowing a late success.
+allowing a late success. After timeout, late operation settlement cannot start
+normal store cleanup, and a cleanup already in flight cannot start subsequent
+normal hooks. Already-running hooks cannot be cancelled by Promise.race. Forced
+liveness hooks are attempted independently even if one throws synchronously.
 
 ### Worker isolation
 

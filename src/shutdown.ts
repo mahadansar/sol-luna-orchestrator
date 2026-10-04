@@ -123,8 +123,13 @@ export class ShutdownCoordinator {
       await Promise.race([
         (async () => {
           await Promise.allSettled([...this.settlements.values()]);
+          // If the timeout branch already won Promise.race and transitioned
+          // state to "failed", this dangling IIFE must not run normal cleanups
+          // — forcedCleanups have already executed and process state has moved on.
+          if (this.stateValue !== "shutting-down") return;
           const failures: unknown[] = [];
           for (const cleanup of this.cleanups) {
+            if (this.stateValue !== "shutting-down") return;
             try {
               await cleanup();
             } catch (error) {
@@ -150,7 +155,7 @@ export class ShutdownCoordinator {
         // failed; each hook is attempted so one broken finalizer cannot strand
         // another live timer.
         await Promise.allSettled(
-          this.forcedCleanups.map((cleanup) => Promise.resolve(cleanup())),
+          this.forcedCleanups.map((cleanup) => Promise.resolve().then(cleanup)),
         );
       }
       throw error;

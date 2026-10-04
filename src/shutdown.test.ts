@@ -96,6 +96,74 @@ test("shutdown fails closed when an operation ignores cancellation past the boun
   );
 });
 
+test("shutdown timeout prevents normal cleanup after late operation settlement", async () => {
+  const coordinator = new ShutdownCoordinator();
+  const gate = deferred();
+  const calls: string[] = [];
+  coordinator.registerCleanup(() => {
+    calls.push("normal");
+  });
+  coordinator.registerForcedCleanup(() => {
+    calls.push("forced");
+  });
+  const operation = coordinator.run(undefined, async () => {
+    await gate.promise;
+  });
+  const rejected = assert.rejects(operation, ShutdownInProgressError);
+  await assert.rejects(coordinator.shutdown(20), ShutdownTimeoutError);
+  gate.resolve();
+  await rejected;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["forced"]);
+  assert.equal(coordinator.state, "failed");
+});
+
+test("shutdown timeout during cleanup prevents subsequent normal cleanups", async () => {
+  const coordinator = new ShutdownCoordinator();
+  const gate = deferred();
+  const entered = deferred();
+  const calls: string[] = [];
+  coordinator.registerCleanup(async () => {
+    calls.push("first");
+    entered.resolve();
+    await gate.promise;
+  });
+  coordinator.registerCleanup(() => {
+    calls.push("second");
+  });
+  coordinator.registerForcedCleanup(() => {
+    calls.push("forced");
+  });
+  const shutdown = coordinator.shutdown(20);
+  const rejected = assert.rejects(shutdown, ShutdownTimeoutError);
+  await entered.promise;
+  await rejected;
+  gate.resolve();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["first", "forced"]);
+  assert.equal(coordinator.state, "failed");
+});
+
+test("a synchronous forced cleanup failure cannot skip other liveness finalizers", async () => {
+  const coordinator = new ShutdownCoordinator();
+  const gate = deferred();
+  let finalizerCalls = 0;
+  coordinator.registerForcedCleanup(() => {
+    throw new Error("broken finalizer");
+  });
+  coordinator.registerForcedCleanup(() => {
+    finalizerCalls += 1;
+  });
+  const operation = coordinator.run(undefined, async () => {
+    await gate.promise;
+  });
+  const rejected = assert.rejects(operation, ShutdownInProgressError);
+  await assert.rejects(coordinator.shutdown(20), ShutdownTimeoutError);
+  assert.equal(finalizerCalls, 1);
+  gate.resolve();
+  await rejected;
+});
+
 test("shutdown abort releases referenced worktree lease maintenance so the process can exit", async () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const shutdownModule = pathToFileURL(path.join(here, "shutdown.js")).href;

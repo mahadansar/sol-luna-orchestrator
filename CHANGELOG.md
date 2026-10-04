@@ -8,6 +8,9 @@ All notable changes to this project are documented here. Format follows
 
 ### Fixed
 
+- Shutdown timeout prevents late normal cleanup from starting, including later
+  hooks after an in-flight cleanup settles. Synchronous forced-cleanup errors
+  cannot skip the remaining process-liveness hooks.
 - Continuation references now reserve their single-use authority through
   pre-execution setup, so a retained-worktree lease refresh failure or
   cancellation before worker entry no longer burns an otherwise retryable
