@@ -219,8 +219,11 @@ Windows sandboxed test-runner restrictions produced visible conflicting claims;
 passing outside-sandbox verification was not mislabeled as proof of worker
 test-runner access. No performance/cost benchmark or new cross-platform live
 campaign was run. After reviewing these observations, the user authorized the
-0.13.0 release on 2026-10-04, subject to green exact-main-commit CI and the
-tag-triggered OIDC publication workflow.
+0.13.0 release on 2026-10-04. All six exact-main CI jobs passed at `438cd37`;
+the tag-triggered OIDC workflow published 0.13.0, followed by the non-draft
+[GitHub Release](https://github.com/mahadansar/sol-luna-orchestrator/releases/tag/v0.13.0).
+The acceptance ledger retains the first prepublish failure and successful
+unchanged-workflow retry.
 
 ## Documentation audit findings
 

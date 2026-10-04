@@ -11,18 +11,18 @@ confidence ledger for the repository. The current release baseline is
   `0.13.0`. The main-branch release includes the hardening
   and worker-model changes recorded below and in `CHANGELOG.md`.
 - **Latest exact-source deterministic acceptance:**
-  [CI run 37206738223](https://github.com/mahadansar/sol-luna-orchestrator/actions/runs/37206738223)
-  passed on 2026-10-04 at candidate/source commit `e1bb262` on Windows, Ubuntu,
+  [CI run 37210120543](https://github.com/mahadansar/sol-luna-orchestrator/actions/runs/37210120543)
+  passed on 2026-10-04 at release commit `438cd37` on Windows, Ubuntu,
   and macOS with Node 24 and 26. All six jobs passed typecheck, formatting,
   complete tests, MCP protocol smoke, and all 17 V2/V3 benchmark fixtures;
   Ubuntu/Node 24 also passed packaging validation (104 files). Each job ran 1,290 tests:
   Windows and macOS passed 1,286 with 4 platform skips, Ubuntu passed 1,285
   with 5 platform skips. The gate had no failures and only expected platform-specific skips.
   This gate includes the 0.13.0 version bump, parallel live-smoke initialization
-  correction, and landing-page cleanup. The earlier upgrade gate at `27cea22`
+  correction, landing-page cleanup, live acceptance record, and final release metadata. The earlier upgrade gate at `27cea22`
   remains historical evidence in the model-upgrade plan. Subsequent live-record
   documentation edits leave runtime, tests, fixtures, lockfile, and workflow
-  identical to the accepted `e1bb262` source.
+  identical to the accepted `438cd37` release source.
 - **Worker-model upgrade accepted and merged:** `main` now defaults to
   `gpt-6-luna`, with explicit legacy pins preserved. Opt-in
   `LUNA_MODEL=latest-luna` performs bounded compatible catalog selection once
@@ -37,10 +37,13 @@ confidence ledger for the repository. The current release baseline is
   performance/cost benchmark is claimed. The committed
   [upgrade plan](https://github.com/mahadansar/sol-luna-orchestrator/blob/main/WORKER_MODEL_UPGRADE_PLAN.md) records implementation,
   commit review, and final evidence.
-- **Release authorization:** The user authorized publishing 0.13.0 on 2026-10-04
-  after review of representative live acceptance and its documented limits.
-  All six candidate CI jobs passed at `e1bb262`. Final metadata or source changes
-  still require green CI on their exact final main commit before release.
+- **Publication:** v0.13.0 was published on 2026-10-04 from the annotated tag
+  at `438cd37`, after all six exact-main CI jobs passed.
+  [Publish run 37211401834, attempt 2](https://github.com/mahadansar/sol-luna-orchestrator/actions/runs/37211401834/attempts/2)
+  completed the tag-triggered OIDC workflow. The npm registry reported version
+  and latest tag `0.13.0`, the matching Git head, and SLSA provenance. The
+  [GitHub Release](https://github.com/mahadansar/sol-luna-orchestrator/releases/tag/v0.13.0)
+  was created afterward against the existing remote tag, as a non-draft stable release.
   Local candidate preparation passed typecheck/build, formatting, all 142
   guidance/CLI/catalog tests, MCP protocol smoke, and the 104-file packaging dry
   run. Representative live acceptance and its limits are recorded below.
@@ -135,6 +138,24 @@ transiently. Publication evidence belongs to the
 [npm version history](https://www.npmjs.com/package/sol-luna-orchestrator?activeTab=versions),
 and [GitHub Release](https://github.com/mahadansar/sol-luna-orchestrator/releases/tag/v0.13.0).
 See [the release workflow](../CONTRIBUTING.md#releasing).
+
+### Publication verification and retry (2026-10-04)
+
+The first publish attempt passed its initial suite but stopped during the
+mandatory prepublish rerun: 1,284 passed, 1 failed, and 5 skipped. The failure
+was `an executor that throws still spends the handoff it was handed`, which
+observed an issued reference where it expected consumption. That fixture uses
+the shared repository checkout for setup and did not independently assert that
+executor entry occurred. Production commits the handoff synchronously before
+executor entry; pre-execution refusals deliberately return unspent authority.
+The failed log does not establish the precise setup-refusal cause.
+
+The isolated local case and complete 49-test capability lifecycle suite passed.
+One retry of the unchanged tagged workflow then passed both full suites,
+protocol smoke, prepublish verification/fixture validation, and OIDC publication.
+No source, test, tag, or verification gate was changed to obtain that result.
+The failed attempt remains retained in GitHub Actions; the shared-checkout
+fixture dependency remains a test-isolation follow-up, not a proven runtime defect.
 
 ### Windows live observations (2026-10-04)
 
