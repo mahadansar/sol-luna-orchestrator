@@ -359,7 +359,9 @@ export class ContinuationStore {
     this.leaseReleases = this.leaseReleases.then(async () => {
       // Best effort by construction: the reference is already gone, and a
       // failed release leaves only the lease own bounded filesystem TTL.
-      await Promise.resolve(release(lease)).catch(() => undefined);
+      await Promise.resolve()
+        .then(() => release(lease))
+        .catch(() => undefined);
     });
   }
 

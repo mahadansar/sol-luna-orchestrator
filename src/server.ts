@@ -1617,6 +1617,8 @@ export async function handleDelegateTask(
           null,
           dependencies.continuationStore,
           persistedContextKey,
+          authoritativeWorkspace,
+          gitEvidenceAuthority,
         );
       } catch (error) {
         const detail = `Continuation registration failed after execution: ${(error as Error).message}`;
@@ -1863,10 +1865,27 @@ export async function handleContinueTask(
   const batchId = dependencies.makeBatchId();
   const taskId = "t1";
   const contextKey = entry.contextKey ?? batchId;
-  const lifecycleStore =
-    dependencies.contextStore ?? dependencies.contextRegistry.getOrCreate(contextKey);
   const persistedContextKey = dependencies.contextStore ? null : contextKey;
-  const releaseExecutionLease = lifecycleStore.acquireExecutionLease();
+  let lifecycleStore: ContextLifecycleStore;
+  let releaseExecutionLease: () => void;
+  try {
+    lifecycleStore =
+      dependencies.contextStore ?? dependencies.contextRegistry.getOrCreate(contextKey);
+    releaseExecutionLease = lifecycleStore.acquireExecutionLease();
+  } catch (error) {
+    reservation.release();
+    if (persistedContextKey)
+      dependencies.contextRegistry.releaseIfUnreferenced(persistedContextKey);
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `Continuation lifecycle setup failed before worker start: ${(error as Error).message}`,
+        },
+      ],
+      isError: true,
+    };
+  }
   let executionLeaseActive = true;
   const releaseExecution = (): void => {
     if (!executionLeaseActive) return;
@@ -2073,6 +2092,7 @@ export async function handleContinueTask(
   // Every pre-execution gate has passed. Spending the reservation immediately
   // before entering the executor keeps single-use authority aligned with actual
   // execution: any outcome from this point consumes the continuation.
+  if (signal?.aborted) return cancelBeforeWorkerStart();
   reservation.commit();
   try {
     let result = await dependencies.continueTask(entry.input, {

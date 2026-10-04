@@ -8,6 +8,10 @@ All notable changes to this project are documented here. Format follows
 
 ### Fixed
 
+- Single-task continuations preserve the parent's authoritative workspace and
+  pinned Git evidence. Lifecycle setup failure and cancellation during trust
+  setup restore unspent continuation authority; synchronous expiry-release
+  errors no longer prevent later leases from settling.
 - Activity watch recovers when a file disappears between stat and stream read.
 - Shutdown timeout prevents late normal cleanup from starting, including later
   hooks after an in-flight cleanup settles. Synchronous forced-cleanup errors

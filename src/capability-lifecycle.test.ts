@@ -43,6 +43,8 @@ import {
 } from "./worktree.js";
 import { ShutdownCoordinator } from "./shutdown.js";
 
+import { runGit, type GitEvidenceAuthority } from "./git.js";
+
 const LUNA = "gpt-5.6-luna";
 
 function makeTask(overrides: Partial<DelegateTaskInput> = {}): DelegateTaskInput {
@@ -330,6 +332,66 @@ function makeDelegateHarness(): DelegateHarness {
   });
   return { events, handoffStore, continuationStore, registry, contextStore };
 }
+
+test("single delegation continuation retains the parent workspace and pinned Git authority", async () => {
+  const workspace = await fs.mkdtemp(
+    path.join(os.tmpdir(), "sol-luna-parent-authority-"),
+  );
+  const workerDirectory = path.join(workspace, "src");
+  const harness = makeDelegateHarness();
+  let parentAuthority: GitEvidenceAuthority | null | undefined;
+  try {
+    await fs.mkdir(workerDirectory);
+    await runGit(["init", "-q"], workspace);
+    await runGit(
+      [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "--allow-empty",
+        "-qm",
+        "base",
+      ],
+      workspace,
+    );
+    const response = await handleDelegateTask(
+      makeTask({
+        workingDirectory: workspace,
+        changeIntent: "optional",
+        resultDetail: "full",
+      }),
+      undefined,
+      {
+        handoffStore: harness.handoffStore,
+        continuationStore: harness.continuationStore,
+        contextRegistry: harness.registry,
+        contextStore: harness.contextStore,
+        emit: () => undefined,
+        record: () => undefined,
+        delegateToLuna: async (_input, _signal, hooks) => {
+          parentAuthority = hooks?.gitEvidenceAuthority;
+          hooks?.onStarted?.(workerDirectory);
+          return makePass();
+        },
+      },
+    );
+    assert.ok(parentAuthority, "the parent turn must capture real Git authority");
+    const result = response.structuredContent as DelegateTaskOutput;
+    assert.equal(result.verdict, "PASS");
+    assert.ok(result.continuationReference);
+    const continuation = harness.continuationStore.consume(result.continuationReference);
+    assert.equal(continuation.status, "ready");
+    if (continuation.status !== "ready") return;
+    assert.equal(continuation.entry.workingDirectory, workerDirectory);
+    assert.equal(continuation.entry.authoritativeWorkspace, await fs.realpath(workspace));
+    assert.deepEqual(continuation.entry.gitEvidenceAuthority, parentAuthority);
+  } finally {
+    await harness.continuationStore.dispose();
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
 
 test("a compute-policy refusal after handoff resolution hands the escalation back", async () => {
   const harness = makeDelegateHarness();
@@ -810,6 +872,106 @@ test("a batch that reaches its workers spends every handoff it reserved", async 
 function makeLease(worktreePath: string): WorktreeLease {
   return { worktreePath, ownerToken: `token_${worktreePath}`, expiresAt: 1 };
 }
+
+test("synchronous expiry release failure cannot poison subsequent lease settlements", async () => {
+  let now = 1_000_000;
+  const released: string[] = [];
+  const store = new ContinuationStore({
+    now: () => now,
+    releaseLease: (lease) => {
+      released.push(lease.worktreePath);
+      if (released.length === 1) throw new Error("synchronous release failure");
+    },
+  });
+  store.issue(makeTask(), "first", "/first", true, makeLease("/first"));
+  store.issue(makeTask(), "second", "/second", true, makeLease("/second"));
+  now += CONTINUATION_TTL_MS + 1;
+  assert.deepEqual(store.protectedWorkingDirectories(), []);
+  await store.whenExpiredLeasesReleased();
+  assert.deepEqual(released, ["/first", "/second"]);
+  await store.dispose();
+});
+
+test("continuation lifecycle setup failure restores its reservation before refusing", async () => {
+  const harness = makeDelegateHarness();
+  const reference = harness.continuationStore.issue(
+    makeTask(),
+    "thread-setup",
+    process.cwd(),
+  );
+  harness.contextStore.acquireExecutionLease = () => {
+    throw new Error("injected setup failure");
+  };
+  const response = await handleContinueTask(
+    { continuationReference: reference, instruction: "Continue the task" },
+    undefined,
+    {
+      store: harness.continuationStore,
+      handoffStore: harness.handoffStore,
+      contextRegistry: harness.registry,
+      contextStore: harness.contextStore,
+      operationAuthorityAcquirer: async () => {
+        assert.fail("setup refusal must not acquire authority");
+      },
+      continueTask: async () => {
+        assert.fail("setup refusal must not execute");
+      },
+      emit: () => undefined,
+    },
+  );
+  assert.equal(response.isError, true);
+  assert.match(response.content[0]?.text ?? "", /injected setup failure/);
+  assert.equal(harness.continuationStore.status(reference), "issued");
+});
+
+test("continuation cancellation during trust setup restores unspent authority", async () => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-trust-cancel-"));
+  const harness = makeDelegateHarness();
+  const controller = new AbortController();
+  let healthChecks = 0;
+  let releases = 0;
+  let workerCalls = 0;
+  const reference = harness.continuationStore.issue(
+    makeTask({ workingDirectory: workspace }),
+    "thread-trust",
+    workspace,
+  );
+  try {
+    const response = await handleContinueTask(
+      { continuationReference: reference, instruction: "Continue the task" },
+      controller.signal,
+      {
+        store: harness.continuationStore,
+        handoffStore: harness.handoffStore,
+        contextRegistry: harness.registry,
+        contextStore: harness.contextStore,
+        operationAuthorityAcquirer: async () => ({
+          commonGitDir: workspace,
+          assertHealthy: () => {
+            healthChecks += 1;
+            if (healthChecks === 2) controller.abort();
+          },
+          release: async () => {
+            releases += 1;
+          },
+        }),
+        continueTask: async () => {
+          workerCalls += 1;
+          return makePass();
+        },
+        emit: () => undefined,
+        record: () => undefined,
+      },
+    );
+    assert.equal(healthChecks, 2, "cancellation must arrive inside trust setup");
+    assert.equal(response.isError, true);
+    assert.equal(workerCalls, 0);
+    assert.equal(releases, 1);
+    assert.equal(harness.continuationStore.status(reference), "issued");
+  } finally {
+    await fs.rm(workspace, { recursive: true, force: true });
+  }
+});
 
 test("an expired continuation releases its retained worktree lease exactly once", async () => {
   let now = 5_000_000;
