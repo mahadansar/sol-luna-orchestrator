@@ -752,7 +752,7 @@ real Codex sessions with real parent and Luna turns.
 | **macOS**      | Verified         | Not yet run           | `macos-latest`, GitHub-hosted                                               |
 
 This table summarizes platform coverage. Exact commit, date, skips, and
-unreleased-hardening freshness are recorded in
+v0.13.0 hardening freshness are recorded in
 [`FEATURE_ACCEPTANCE.md`](FEATURE_ACCEPTANCE.md).
 
 Platform-specific behaviour is exercised by real code paths rather than mocked:

@@ -14,7 +14,7 @@ including corrections to the supplied handoff.
 
 Base: `77b42f9` (`v0.12.0`, current `main` at the time of this audit)
 
-This file records the completed unreleased hardening pass and its historical
+This file records the completed v0.13.0 hardening pass and its historical
 recovery sequence. The branch name above identifies the audited branch. It
 records intent, completed work, checkpoint gaps, and acceptance evidence.
 Runtime behavior remains
@@ -63,7 +63,7 @@ platform skips and five Ubuntu skips. All jobs also passed protocol smoke and
 all 17 benchmark fixtures. Hardening was merged into `main` before the separate
 [worker-model upgrade plan](WORKER_MODEL_UPGRADE_PLAN.md) was committed. The
 GPT-6 default and optional automatic mode were implemented on that separate branch
-and have now been merged into `main` for the prepared, unreleased 0.13.0 candidate;
+and have now been merged into `main` for the 0.13.0 release;
 they are outside this accepted hardening checkpoint. The user authorized merging hardening into
 `main`, then creating a new branch and committing a model-upgrade plan before
 model implementation. Existing stashed work remains separate.

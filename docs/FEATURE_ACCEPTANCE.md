@@ -2,13 +2,13 @@
 
 This is the authoritative current capability, evidence, freshness, and
 confidence ledger for the repository. The current release baseline is
-`0.13.0` (prepared and unreleased; latest published release: `0.12.0`). Shipped history belongs in `CHANGELOG.md`; future work belongs in
+`0.13.0`. Shipped history belongs in `CHANGELOG.md`; future work belongs in
 `ROADMAP.md`.
 
 ## Current baseline
 
 - **Runtime baseline:** v0.13.0, with package and lockfile versions set to
-  `0.13.0`. The prepared main-branch candidate includes the unreleased hardening
+  `0.13.0`. The main-branch release includes the hardening
   and worker-model changes recorded below and in `CHANGELOG.md`.
 - **Latest exact-source deterministic acceptance:**
   [CI run 37206738223](https://github.com/mahadansar/sol-luna-orchestrator/actions/runs/37206738223)
@@ -37,12 +37,19 @@ confidence ledger for the repository. The current release baseline is
   performance/cost benchmark is claimed. The committed
   [upgrade plan](https://github.com/mahadansar/sol-luna-orchestrator/blob/main/WORKER_MODEL_UPGRADE_PLAN.md) records implementation,
   commit review, and final evidence.
-- **Release preparation:** 0.13.0 is prepared on `main`, not published or tagged.
+- **Release authorization:** The user authorized publishing 0.13.0 on 2026-10-04
+  after review of representative live acceptance and its documented limits.
   All six candidate CI jobs passed at `e1bb262`. Final metadata or source changes
   still require green CI on their exact final main commit before release.
   Local candidate preparation passed typecheck/build, formatting, all 142
   guidance/CLI/catalog tests, MCP protocol smoke, and the 104-file packaging dry
   run. Representative live acceptance and its limits are recorded below.
+  The 2026-10-04 release documentation audit reconciled README, changelog,
+  roadmap, supervisor rules, security, configuration, troubleshooting,
+  observability, contributor workflow, this ledger, benchmark evidence,
+  repository instructions, and the PR template. Historical GPT-5.6 benchmark
+  identifiers and dated pricing examples remain historical; no new performance
+  or savings claim is attached to GPT-6 Luna.
 - **Earlier local full validation:** `npm run verify` passed on
   2026-10-04 at `a0217f8` on Windows with Node `v22.23.2`: 1,263 tests,
   1,258 passed, 0 failed, and 5 skipped. Typecheck, formatting, the complete
@@ -79,9 +86,9 @@ confidence ledger for the repository. The current release baseline is
   themselves prove the later cancellation, reconciliation, or retention-policy
   semantics. Those changed seams have current deterministic regression evidence.
 
-## 0.13.0 live acceptance and release hold
+## 0.13.0 live acceptance and release authorization
 
-Status: **REPRESENTATIVE LIVE ACCEPTANCE RECORDED; RELEASE ON HOLD**. The user
+Status: **REPRESENTATIVE LIVE ACCEPTANCE RECORDED; RELEASE AUTHORIZED**. The user
 authorized live testing with `gpt-6.1-sol` at Low effort, allowing the parent to
 select Luna effort. Parent-driven acceptance was used instead of the existing
 live-smoke programs, which prescribe worker efforts. Results and untested cases
@@ -118,12 +125,16 @@ follow; this checklist is not a second release-body document.
    then rerun the affected live paths and deterministic gate. Refresh exact
    main-commit CI evidence after any source or candidate metadata changes.
 
-Release remains on hold until the live results are reviewed and all six CI
-jobs pass on the final `main` commit. Then set the actual release date and final
-changelog comparison link, review the GitHub Release body transiently from the
-changelog, and commit any final metadata before its required main-branch CI.
-Tagging, npm publication, and GitHub Release creation require the later release
-instruction and must follow [the release workflow](../CONTRIBUTING.md#releasing).
+The user reviewed the recorded live results and authorized release on 2026-10-04.
+The final release metadata must pass all six CI jobs on its exact `main` commit
+before tagging. Publication uses the tag-triggered OIDC workflow; the GitHub
+Release is created only after npm publication succeeds. The release date and
+comparison link are recorded in `CHANGELOG.md`, and the release body is prepared
+transiently. Publication evidence belongs to the
+[Publish workflow](https://github.com/mahadansar/sol-luna-orchestrator/actions/workflows/publish.yml),
+[npm version history](https://www.npmjs.com/package/sol-luna-orchestrator?activeTab=versions),
+and [GitHub Release](https://github.com/mahadansar/sol-luna-orchestrator/releases/tag/v0.13.0).
+See [the release workflow](../CONTRIBUTING.md#releasing).
 
 ### Windows live observations (2026-10-04)
 
@@ -181,7 +192,8 @@ recorded GPT-6.1 Sol at Low; worker thread
 Medium. Complete reported worker usage was 77,499 input tokens (59,392 cached)
 and 564 output tokens; these are usage observations, not a cost estimate.
 
-Release hold still applies. A substantial unprompted delegation-discovery case,
+Release authorization does not expand the observed coverage. A substantial
+unprompted delegation-discovery case,
 native graceful-shutdown signals during active work, and model-backed coverage
 on Linux/macOS were not rerun in this campaign. Line-ending compatibility and
 the Windows test-runner restriction must remain visible in review; see
@@ -886,7 +898,7 @@ three initial tasks all selected `high`; its explicit same-thread continuation
 preserved `high` but failed on a false-positive scope violation caused by the
 orchestrator-owned shared `node_modules` link. At that time, focused triage
 excluded only links still resolving to the expected dependency source. The
-unreleased hardening replaces that approach with private dependency snapshots;
+v0.13.0 hardening replaces that approach with private dependency snapshots;
 worker-created links remain visible in evidence. Attempt 5 selected one `high`.
 Attempt 6 independently selected `medium` for a mechanical documentation
 inventory and `high` for cross-file coverage judgment; both started as real

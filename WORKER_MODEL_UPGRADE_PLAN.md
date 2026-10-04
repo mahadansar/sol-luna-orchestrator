@@ -58,7 +58,7 @@ is the worker marker; worker execution retains both existing recursion guards.
 The original model-upgrade scope included no version bump, package publication,
 tag, release, or historical benchmark rewrite. The subsequent user instruction
 authorized merging the completed upgrade into `main` and preparing 0.13.0.
-That preparation leaves publication pending live testing; it creates no tag or
+At that preparation checkpoint, publication was pending live testing; it created no tag or
 GitHub Release and does not rewrite historical benchmark evidence.
 
 ## Discovery and authority design
@@ -218,7 +218,9 @@ remaining limits. Initial isolated-home and CRLF setup failures were preserved.
 Windows sandboxed test-runner restrictions produced visible conflicting claims;
 passing outside-sandbox verification was not mislabeled as proof of worker
 test-runner access. No performance/cost benchmark or new cross-platform live
-campaign was run. Release remains on hold; no tag or publication is authorized.
+campaign was run. After reviewing these observations, the user authorized the
+0.13.0 release on 2026-10-04, subject to green exact-main-commit CI and the
+tag-triggered OIDC publication workflow.
 
 ## Documentation audit findings
 

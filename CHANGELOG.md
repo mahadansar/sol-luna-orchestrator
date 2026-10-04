@@ -6,10 +6,7 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
-## [0.13.0] - Unreleased
-
-Prepared release candidate; publication is pending live acceptance and green CI
-on the final `main` commit. The latest published version remains 0.12.0.
+## [0.13.0] - 2026-10-04
 
 ### Added
 
@@ -1070,8 +1067,8 @@ Initial working version, verified end to end.
 development milestones and were never tagged or published, so they have no
 release links.
 
-[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.12.0...HEAD
-[0.13.0]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.12.0...main
+[Unreleased]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/mahadansar/sol-luna-orchestrator/compare/v0.9.1...v0.10.0
