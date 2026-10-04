@@ -137,8 +137,8 @@ instructions now describe private snapshots instead of shared dependency links.
 ## Evidence and remaining boundaries
 
 Focused regression results and complete gate results are recorded in
-`docs/FEATURE_ACCEPTANCE.md` after validation completes. No model-backed smoke
-campaign, publication, merge, or new platform acceptance is implied.
+`docs/FEATURE_ACCEPTANCE.md`. No model-backed smoke campaign or publication
+is implied; native results are limited to the CI runners and commits recorded there.
 
 The first complete post-fix Windows suite recorded 1,263 tests: 1,257 passed,
 one failed, and five skipped. The failure was an existing three-second child
@@ -147,9 +147,13 @@ deadline covering both repository setup and shutdown; it passed in isolation.
 deadline at an explicit readiness marker. All eight shutdown tests pass; full
 The next complete `npm run verify` passed at `a0217f8`: 1,263 tests, 1,258 passed,
 zero failed, five Windows skips, protocol smoke, and all 17 benchmark fixtures.
-After the native-CI follow-ups above, complete acceptance remains pending
+After the native-CI follow-ups above, complete acceptance passed in
 [CI run 37194760358](https://github.com/mahadansar/sol-luna-orchestrator/actions/runs/37194760358)
-at source checkpoint `3224d4a`.
+at source checkpoint `3224d4a`: all six Windows/Ubuntu/macOS jobs on Node 24 and
+26 are green, each with 1,267 tests and zero failures. Windows/macOS skipped four
+platform cases and Ubuntu skipped five. All jobs passed protocol smoke and all
+17 benchmark fixtures. Documentation-only reconciliation does not change the
+accepted runtime/workflow/fixture source.
 
 The Node filesystem helper does not provide atomic directory-handle-relative
 namespace mutation. Rechecking a parent after asynchronous work narrows the

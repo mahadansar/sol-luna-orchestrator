@@ -9,7 +9,17 @@ confidence ledger for the repository. The current release baseline is
 
 - **Runtime baseline:** v0.12.0, with package and lockfile versions set to
   `0.12.0`.
-- **Latest recorded full deterministic validation:** `npm run verify` passed on
+- **Latest exact-source deterministic acceptance:**
+  [CI run 37194760358](https://github.com/mahadansar/sol-luna-orchestrator/actions/runs/37194760358)
+  passed on 2026-10-04 at runtime/source commit `3224d4a` on Windows, Ubuntu,
+  and macOS with Node 24 and 26. All six jobs passed typecheck, formatting,
+  complete tests, MCP protocol smoke, and all 17 V2/V3 benchmark fixtures;
+  Ubuntu/Node 24 also passed packaging validation. Each job ran 1,267 tests:
+  Windows and macOS passed 1,263 with 4 platform skips, Ubuntu passed 1,262
+  with 5 platform skips, and every job had zero failures. Subsequent commits
+  update documentation only; runtime, workflow, and fixture files match that
+  validated source checkpoint.
+- **Earlier local full validation:** `npm run verify` passed on
   2026-10-04 at `a0217f8` on Windows with Node `v22.23.2`: 1,263 tests,
   1,258 passed, 0 failed, and 5 skipped. Typecheck, formatting, the complete
   deterministic suite, MCP protocol smoke, and all 17 V2/V3 benchmark fixtures
@@ -22,7 +32,7 @@ confidence ledger for the repository. The current release baseline is
   deletion, and canonical workspace aliases/evidence projection. Local focused
   validation at `8e1eba5` passed 140 tests (137 passed, 3 Windows skips), followed
   by a passing canonical-alias/evidence regression at `3224d4a` and clean
-  typecheck. Fresh complete cross-platform acceptance is pending
+  typecheck. Fresh complete cross-platform acceptance is supplied by
   [CI run 37194760358](https://github.com/mahadansar/sol-luna-orchestrator/actions/runs/37194760358).
   See the root [audit report](https://github.com/mahadansar/sol-luna-orchestrator/blob/main/phase4-audit-report.md) for commit coverage and
   corrections to the supplied handoff. No model-backed campaign was run.
@@ -32,10 +42,11 @@ confidence ledger for the repository. The current release baseline is
   and `gpt-5.6-sol` at Medium supervising. Both strategies passed every task;
   Adaptive delegated zero workers and was slower and more expensive overall.
   Two repetitions are directional evidence, not statistical significance.
-- **Current native platform evidence:** deterministic CI covers Windows, Linux,
-  and macOS. Focused Linux/POSIX symlink and process-group paths passed natively;
-  the dependency-link run is historical evidence for the former provisioning
-  implementation, not proof of current private dependency snapshots. Live Codex
+- **Current native platform evidence:** the accepted October 4 deterministic CI
+  covers Windows, Linux, and macOS, including private dependency snapshots,
+  canonical workspace aliases, real symlink escape checks, pinned integration,
+  and POSIX process-group cleanup on supported runners. Historical dependency-link
+  runs are not proof of private snapshot behavior. Live Codex
   delegation has representative Windows and
   Linux evidence; the accepted Ubuntu runs used the documented repo-local
   `LUNA_SANDBOX=danger-full-access` trusted-development workaround.
@@ -45,6 +56,12 @@ confidence ledger for the repository. The current release baseline is
   semantics. Those changed seams have current deterministic regression evidence.
 
 ## Current capability matrix
+
+The October 4 platform skips are intentional: Windows skips the pinned-parent
+rename seam, two POSIX file-symlink deletion cases, and process-group cleanup;
+macOS skips four Windows-only path/launcher/junction cases; Ubuntu also skips
+the case-folded integration case. The Windows CI runners did execute the real
+file and directory symlink-escape tests skipped on the local machine.
 
 | Capability                                              | Coverage | Deterministic | Live evidence | Confidence    |
 | ------------------------------------------------------- | -------- | ------------- | ------------- | ------------- |

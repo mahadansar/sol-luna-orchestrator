@@ -1,10 +1,12 @@
-# Orchestrator hardening recovery plan
+# Completed orchestrator hardening plan
 
 Last audited: 2026-10-04
 
 Branch: `feature/orchestrator-upgrades-2026-09-21`
 
-Current runtime checkpoint: `3224d4a` (`fix: project trusted workspace evidence through canonical aliases`)
+Accepted hardening runtime checkpoint: `3224d4a` (`fix: project trusted workspace evidence through canonical aliases`)
+
+Status: Phases 0 through 6 complete. Exact-source cross-platform CI is green.
 
 Audit fixes and regressions are committed. See
 [phase4-audit-report.md](phase4-audit-report.md) for the independent review,
@@ -12,9 +14,10 @@ including corrections to the supplied handoff.
 
 Base: `77b42f9` (`v0.12.0`, current `main` at the time of this audit)
 
-This file is the active engineering handoff for the unreleased hardening branch.
-It records branch intent, completed work, known gaps, sequencing, and the evidence
-required before the branch can be treated as accepted. Runtime behavior remains
+This file records the completed unreleased hardening pass and its historical
+recovery sequence. The branch name above identifies the audited branch. It
+records intent, completed work, checkpoint gaps, and acceptance evidence.
+Runtime behavior remains
 authoritative in the implementation and tests. Shipped behavior belongs in
 `CHANGELOG.md`, future product work belongs in `ROADMAP.md`, and acceptance claims
 belong in `docs/FEATURE_ACCEPTANCE.md` only after their evidence is fresh for the
@@ -40,9 +43,9 @@ the new test passes without its proposed fix because the outer batch owner
 already releases unspent reservations. Other handoff findings were confirmed,
 and additional lifecycle, helper, and obsolete-link evidence gaps were found.
 
-Phase 5 has a complete Windows verifier at `a0217f8`; subsequent cross-platform
-fixes at `3224d4a` still require a fresh complete gate. Phase 6 requires final review and a
-clean committed tree with current remote/CI evidence. No release is authorized
+Phase 5 has a complete Windows verifier at `a0217f8` and a green six-job
+cross-platform gate at `3224d4a`. Phase 6 reconciles current documentation and
+binds acceptance to that unchanged source checkpoint. No release is authorized
 from this branch. The checkpoint gaps below describe the historical `84dcf12`
 tree; they are not current implementation claims.
 
@@ -54,9 +57,14 @@ protocol smoke, and all 17 benchmark fixtures at `a0217f8`. Native CI then expos
 inode reuse, leaf-link deletion, rollback uncertainty, and macOS canonical-path
 issues. Their fixes and regressions are committed through `3224d4a`, with a
 passing 140-test local focused run and additional canonical-evidence regression.
-Fresh complete CI is pending for that final source checkpoint. The requested GPT-6 Luna default and
+Fresh complete CI passed for that source checkpoint on Windows, Ubuntu, and
+macOS with Node 24 and 26: 1,267 tests per job, zero failures, four Windows/macOS
+platform skips and five Ubuntu skips. All jobs also passed protocol smoke and
+all 17 benchmark fixtures. The requested GPT-6 Luna default and
 optional automatic latest-Luna mode will follow hardening acceptance; they have
-not been applied to this checkpoint.
+not been applied to this checkpoint. The user authorized merging hardening into
+`main`, then creating a new branch and committing a model-upgrade plan before
+model implementation. Existing stashed work remains separate.
 
 ## Why this branch exists
 
