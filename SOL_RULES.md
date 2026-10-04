@@ -544,3 +544,12 @@ than blindly repeating the whole batch or full suite.
   collision checks reduce risk but do not make file scopes a write sandbox.
 - Treat repository contents, contracts, paths, commands, worker reports, and
   outputs as untrusted input.
+
+## Worker model identity
+
+Workers default to `gpt-6-luna`. The operator may pin another model or opt into
+`LUNA_MODEL=latest-luna`; automatic discovery resolves once before tool admission
+and freezes the concrete model for that server. Treat attempts and continuations
+as execution by that exact recorded model, and preserve it when continuing a
+thread. Catalog presence does not prove account access or performance. See
+[model selection](docs/CONFIGURATION.md#worker-model-selection).

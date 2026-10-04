@@ -143,6 +143,19 @@ normal store cleanup, and a cleanup already in flight cannot start subsequent
 normal hooks. Already-running hooks cannot be cancelled by Promise.race. Forced
 liveness hooks are attempted independently even if one throws synchronously.
 
+### Automatic model discovery
+
+Optional `LUNA_MODEL=latest-luna` is an operator setting. The bounded read-only
+catalog exchange uses the SDK's installed public Codex launcher, an absolute
+executable, and a temporary-directory working directory. It starts no inference
+thread, marks the child as a worker, bounds output/pagination/lifetime, and
+terminates the process group or Windows process tree. Raw child diagnostics are
+not emitted. The catalog does not grant caller authority or prove entitlement.
+Only compatible visible numeric Luna candidates can replace the opted-in
+baseline; explicitly configured extra models and effort restrictions remain
+operator-owned. Selection freezes before tool registration, and continuations
+preserve the recorded model. See [configuration](docs/CONFIGURATION.md#worker-model-selection).
+
 ### Worker isolation
 
 Workers cannot delegate. Two independent guards:

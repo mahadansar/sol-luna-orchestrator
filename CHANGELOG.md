@@ -6,6 +6,15 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- Optional `LUNA_MODEL=latest-luna` selects the newest visible compatible numeric
+  Luna model from the installed Codex catalog once at startup, freezes the
+  concrete executor across policy/descriptions/continuations, and fails closed
+  on discovery or cleanup failure. Discovery is bounded and performs no
+  inference; offline CLI inspection stays offline. Catalog presence does not
+  establish account access or global freshness.
+
 ### Changed
 
 - The pinned worker default is now `gpt-6-luna`. Explicit `LUNA_MODEL` overrides

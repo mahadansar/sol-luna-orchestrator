@@ -196,6 +196,9 @@ async function runWorkerThread(
     envOverrides?: Record<string, string>;
   } = {},
 ): Promise<ObservedRun> {
+  if ((options.model ?? LUNA_MODEL) === "latest-luna") {
+    throw new Error("Automatic worker model selection must complete before execution.");
+  }
   const observed: ObservedRun = {
     threadId: null,
     finalResponse: "",

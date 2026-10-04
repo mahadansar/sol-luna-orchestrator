@@ -145,3 +145,18 @@ Then run `npm run build` and open a fresh Codex session. Rebuilding `dist/` does
 not restart the MCP process owned by the current session. See
 [Live model-backed acceptance](../CONTRIBUTING.md#live-model-backed-acceptance)
 for the complete deterministic and fresh-client procedure.
+
+## Automatic Luna selection fails at startup
+
+With `LUNA_MODEL=latest-luna`, a missing compatible candidate, malformed catalog,
+protocol/size/pagination limit, timeout, or unconfirmed process cleanup stops
+startup. Check the fatal diagnostic in `SOL_LUNA_LOG`. The selector never falls
+back silently to GPT-5.6 or passes `latest-luna` upstream.
+
+The bundled Codex catalog may lag a release. Refresh/update the installed Codex
+SDK/CLI dependency, or set an explicit `LUNA_MODEL` pin whose account access you
+have checked. A globally installed CLI can differ from the SDK's bundled CLI;
+updating it alone does not necessarily update discovery. Restart the MCP server
+after changing configuration. `doctor` and `status` inspect configuration offline
+and cannot certify catalog freshness or inference access. See
+[model selection](CONFIGURATION.md#worker-model-selection) for exact bounds.

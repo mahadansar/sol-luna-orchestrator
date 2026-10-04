@@ -3,6 +3,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLogger } from "./log.js";
+import { discoverLatestLuna, LATEST_LUNA_SELECTOR } from "./model-catalog.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -16,6 +17,8 @@ import {
   EVENTS_FILE,
   EVENTS_FILE_INVALID,
   IS_WORKER_PROCESS,
+  CONFIGURED_LUNA_MODEL,
+  pinDiscoveredLuna,
   LUNA_MODEL,
   MAX_BATCH_SIZE,
   MAX_PARALLEL,
@@ -98,6 +101,7 @@ import {
   cloneComputePolicy,
   DEFAULT_COMPUTE_POLICY,
   EXECUTOR_ORDER_UNUSABLE,
+  refreshResolvedComputePolicy,
   resolveBaselineExecutor,
   unresolvedExecutorRefusal,
   type ComputePolicy,
@@ -657,7 +661,7 @@ function emitCanonicalAttemptCompletion(
   });
 }
 
-export const TOOL_DESCRIPTION = `Delegate ONE substantial, bounded executable seam to ${LUNA_MODEL}; no second seam is required. Keep small, simple, or tightly coupled work solo. Tasks may be implementation, tests, bug fixing, refactoring, investigation, or chores. The parent owns architecture, decomposition, unresolved design, sequencing, interfaces, scope, acceptance, and final judgement. Luna owns scoped exploration, implementation, verification, and bounded repair; it cannot see the conversation or delegate.
+export let TOOL_DESCRIPTION = `Delegate ONE substantial, bounded executable seam to ${LUNA_MODEL}; no second seam is required. Keep small, simple, or tightly coupled work solo. Tasks may be implementation, tests, bug fixing, refactoring, investigation, or chores. The parent owns architecture, decomposition, unresolved design, sequencing, interfaces, scope, acceptance, and final judgement. Luna owns scoped exploration, implementation, verification, and bounded repair; it cannot see the conversation or delegate.
 
 Provide a self-contained objective, effortReason, acceptanceCriteria, verificationCommands, changeIntent, and honest scopes; add a concise activityLabel when safe and only repository-unavailable context. automaticRepair permits at most one conservative same-thread repair. Results include one evidence-derived failureDecision; parent owns nonautomatic actions. resultDetail=handoff is the default.
 
@@ -984,11 +988,11 @@ export function renderResult(
 }
 
 /** The short general policy sent to the parent during MCP initialization. */
-export const SERVER_INSTRUCTIONS = `Sol-Luna Orchestrator routes bounded ownership from any compatible parent Codex model to ${LUNA_MODEL}; adaptive zero-worker use is valid. Parent owns architecture, decomposition, interfaces, scope, acceptance, and final judgement; Luna owns scoped exploration, implementation, and verification. Before routing_preflight, use cheap bounded repository/test inspection to find delegated leaves; classify leaves, not the whole objective, and defer broad exploration. Use delegate_task for one substantial seam; use delegate_tasks sequentially for shared state or parallel for independent disjoint scopes. More workers are not automatically better or cheaper; raw tokens are not credit cost and savings are parent-conditional. Runtime evidence outranks worker claims. VERIFIED_COMPLETE passed checks: finish without rereading files or rerunning checks unless a listed risk changes architecture. Failures expand for diagnosis. While a call has no meaningful new state, remain silent; do not narrate waiting or polling. Report only a result, error, cancellation, timeout, or actionable state change.`;
+export let SERVER_INSTRUCTIONS = `Sol-Luna Orchestrator routes bounded ownership from any compatible parent Codex model to ${LUNA_MODEL}; adaptive zero-worker use is valid. Parent owns architecture, decomposition, interfaces, scope, acceptance, and final judgement; Luna owns scoped exploration, implementation, and verification. Before routing_preflight, use cheap bounded repository/test inspection to find delegated leaves; classify leaves, not the whole objective, and defer broad exploration. Use delegate_task for one substantial seam; use delegate_tasks sequentially for shared state or parallel for independent disjoint scopes. More workers are not automatically better or cheaper; raw tokens are not credit cost and savings are parent-conditional. Runtime evidence outranks worker claims. VERIFIED_COMPLETE passed checks: finish without rereading files or rerunning checks unless a listed risk changes architecture. Failures expand for diagnosis. While a call has no meaningful new state, remain silent; do not narrate waiting or polling. Report only a result, error, cancellation, timeout, or actionable state change.`;
 
 export const ROUTING_PREFLIGHT_TOOL_DESCRIPTION = `Cheap deterministic check of whether delegating is worthwhile. First use cheap, bounded repository/test inspection to identify candidate delegated leaves; describe those leaves, not the whole objective, and defer broad exploration. The parent may retain shared contracts and final integration. "unknown" biases advice solo but never refuses. Creates no worker, batch, worktree, or thread, refuses nothing, and returns route (solo | either | delegation-plausible), matched rule, explicit/defaulted provenance, signals, and structural parallel eligibility. Advisory only and never required: the parent owns sequential vs parallel, worker count, effort, and final decision; choosing zero workers is normal. either means fixed delegation overhead needs explicit justification, otherwise stay solo.`;
 
-export const EXPLORE_TOOL_DESCRIPTION = `Explicitly explore an admitted repository, API, or documentation scope with ${LUNA_MODEL}; fixed read-only disposable execution returns provenance-marked worker claims, runtime facts, inferences, and unknowns. Implements nothing, cannot delegate, and is never automatic.`;
+export let EXPLORE_TOOL_DESCRIPTION = `Explicitly explore an admitted repository, API, or documentation scope with ${LUNA_MODEL}; fixed read-only disposable execution returns provenance-marked worker claims, runtime facts, inferences, and unknowns. Implements nothing, cannot delegate, and is never automatic.`;
 
 /**
  * Deterministic ceilings for everything the server always advertises.
@@ -1170,7 +1174,7 @@ export function configurationCorrectionWarnings(
   return warnings;
 }
 
-const server = new McpServer(
+let server = new McpServer(
   { name: "sol-luna-orchestrator", version: SERVER_VERSION },
   { instructions: SERVER_INSTRUCTIONS },
 );
@@ -2441,7 +2445,7 @@ function registerContinueTask(): void {
   );
 }
 
-export const BATCH_TOOL_DESCRIPTION = `Delegate a batch intended for two or more owned seams to ${LUNA_MODEL}; one task remains accepted for compatibility, but prefer delegate_task when no scheduling is needed. Use sequential for dependencies/shared workspace state and parallel only for genuinely independent disjoint declared scopes. Do not create artificial seams. At most ${MAX_BATCH_SIZE} tasks are accepted and at most ${MAX_PARALLEL} run concurrently; the rest queue. Each task needs a self-contained contract and a concise activityLabel when a safe label exists. The parent owns architecture/interfaces and exceptional judgement; Luna owns exploration, implementation, verification, and repair. automaticRepair is one bounded task-local turn.
+export let BATCH_TOOL_DESCRIPTION = `Delegate a batch intended for two or more owned seams to ${LUNA_MODEL}; one task remains accepted for compatibility, but prefer delegate_task when no scheduling is needed. Use sequential for dependencies/shared workspace state and parallel only for genuinely independent disjoint declared scopes. Do not create artificial seams. At most ${MAX_BATCH_SIZE} tasks are accepted and at most ${MAX_PARALLEL} run concurrently; the rest queue. Each task needs a self-contained contract and a concise activityLabel when a safe label exists. The parent owns architecture/interfaces and exceptional judgement; Luna owns exploration, implementation, verification, and repair. automaticRepair is one bounded task-local turn.
 
 Parallel same-file edits prevent automatic integration. allowOverlappingScopes:true only accepts the declared overlap; it is not a write sandbox and does not permit same-file integration. integrate=false skips copying and retention follows operator policy. Partial outcomes remain visible. automaticRecovery defaults true: at most one evidence-eligible timeout continuation or exact process-exit retry; a counter alone never authorizes retry. Repair precedes recovery and neither nests. Successes, cancellation, scope/security/evidence failures, refused checks, discrepancies, and conflicts are never retried. Successful streams survive sibling failure.
 
@@ -3281,7 +3285,35 @@ export function renderBatch(batch: BatchOutput): string {
   return lines.join("\n");
 }
 
+let workerModelInitialization: Promise<string> | undefined;
+
+/** Lazy and once-only: imports and offline CLI inspection perform no discovery. */
+export function initializeWorkerModel(
+  discover: typeof discoverLatestLuna = discoverLatestLuna,
+): Promise<string> {
+  workerModelInitialization ??= (async () => {
+    if (CONFIGURED_LUNA_MODEL !== LATEST_LUNA_SELECTOR || IS_WORKER_PROCESS)
+      return LUNA_MODEL;
+    const model = await discover(ALLOWED_EFFORTS);
+    pinDiscoveredLuna(model);
+    refreshResolvedComputePolicy();
+    const resolveDescription = (value: string): string =>
+      value.split(LATEST_LUNA_SELECTOR).join(model);
+    TOOL_DESCRIPTION = resolveDescription(TOOL_DESCRIPTION);
+    SERVER_INSTRUCTIONS = resolveDescription(SERVER_INSTRUCTIONS);
+    EXPLORE_TOOL_DESCRIPTION = resolveDescription(EXPLORE_TOOL_DESCRIPTION);
+    BATCH_TOOL_DESCRIPTION = resolveDescription(BATCH_TOOL_DESCRIPTION);
+    return model;
+  })();
+  return workerModelInitialization;
+}
+
 async function main(): Promise<void> {
+  await initializeWorkerModel();
+  server = new McpServer(
+    { name: "sol-luna-orchestrator", version: SERVER_VERSION },
+    { instructions: SERVER_INSTRUCTIONS },
+  );
   assertMetadataBudgets();
   if (IS_WORKER_PROCESS) {
     log(

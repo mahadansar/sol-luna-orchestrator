@@ -19,7 +19,11 @@ in sequence, or independent workers in parallel.
 Prerequisites: Node.js 22.12 or newer and a logged-in
 [OpenAI Codex CLI](https://developers.openai.com/codex).
 
-Any compatible parent model may supervise.
+Any compatible parent model may supervise. Workers default to `gpt-6-luna`;
+explicit model pins remain supported. Optional `LUNA_MODEL=latest-luna` discovers
+and freezes the newest compatible Luna exposed by the installed Codex catalog
+at startup. See [model selection](docs/CONFIGURATION.md#worker-model-selection)
+for setup, startup bounds, and catalog availability limits.
 
 ```bash
 npm install -g sol-luna-orchestrator

@@ -6,10 +6,12 @@
  * see `command.ts`, where model-supplied input is checked against these values.
  */
 import path from "node:path";
+import { LATEST_LUNA_SELECTOR } from "./model-catalog.js";
 
 /** Pinned worker model; explicit operator overrides remain authoritative. */
 export const DEFAULT_LUNA_MODEL = "gpt-6-luna";
-export const LUNA_MODEL = process.env.LUNA_MODEL ?? DEFAULT_LUNA_MODEL;
+export const CONFIGURED_LUNA_MODEL = process.env.LUNA_MODEL ?? DEFAULT_LUNA_MODEL;
+export let LUNA_MODEL = CONFIGURED_LUNA_MODEL;
 
 /**
  * The name this server is registered under in Codex's config.toml.
@@ -395,7 +397,7 @@ export function parseAllowedModels(
   return [...new Set([baselineModel, ...entries])];
 }
 
-export const ALLOWED_MODELS: readonly string[] = parseAllowedModels(
+export let ALLOWED_MODELS: readonly string[] = parseAllowedModels(
   process.env.SOL_LUNA_ALLOWED_MODELS,
   LUNA_MODEL,
 );
@@ -415,9 +417,30 @@ export function parseExecutorOrder(raw: string | null | undefined): readonly str
     .filter(Boolean);
 }
 
-export const EXECUTOR_ORDER: readonly string[] = parseExecutorOrder(
+export let EXECUTOR_ORDER: readonly string[] = parseExecutorOrder(
   process.env.SOL_LUNA_EXECUTOR_ORDER,
 );
+
+/** Startup-only resolution; the package selector is never an upstream model ID. */
+export function pinDiscoveredLuna(model: string): void {
+  if (
+    CONFIGURED_LUNA_MODEL !== LATEST_LUNA_SELECTOR ||
+    LUNA_MODEL !== LATEST_LUNA_SELECTOR
+  ) {
+    throw new Error("Worker model selection is already pinned.");
+  }
+  if (
+    !/^gpt-[1-9]\d{0,3}(?:\.(?:0|[1-9]\d{0,3})){0,3}-luna$/.test(model) ||
+    Number(model.split("-")[1]!.split(".")[0]) < 6
+  ) {
+    throw new Error("Discovery must resolve a concrete GPT-6-or-newer Luna model.");
+  }
+  LUNA_MODEL = model;
+  const substitute = (value: string): string =>
+    value === LATEST_LUNA_SELECTOR ? model : value;
+  ALLOWED_MODELS = [...new Set(ALLOWED_MODELS.map(substitute))];
+  EXECUTOR_ORDER = EXECUTOR_ORDER.map(substitute);
+}
 
 /**
  * Directory holding per-task git worktrees, relative to the repository root.

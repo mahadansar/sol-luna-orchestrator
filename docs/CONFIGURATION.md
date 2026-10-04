@@ -5,6 +5,7 @@ Everything the orchestrator reads, and how to change it. The
 
 - [Requirements](#requirements)
 - [Advanced installation](#advanced-installation)
+- [Worker model selection](#worker-model-selection)
 - [Discovery hint and adaptive routing](#discovery-hint-and-adaptive-routing)
 - [Cheap routing preflight](#cheap-routing-preflight)
 - [Codex settings and environment variables](#codex-settings-and-environment-variables)
@@ -76,6 +77,49 @@ they accumulate across projects rather than inside whichever repository you ran
 a plain `init` never overwrites a path you set.
 
 A fully annotated example is in [`examples/codex-config.toml`](../examples/codex-config.toml).
+
+### Worker model selection
+
+The default is the explicit pin `gpt-6-luna`. Any other explicit `LUNA_MODEL`
+value stays unchanged, including legacy pins. To opt into discovery, set the
+exact package selector in your registered MCP environment:
+
+```toml
+[mcp_servers.sol-luna-orchestrator.env]
+LUNA_MODEL = "latest-luna"
+```
+
+Before registering tools, automatic mode queries the installed Codex app-server
+catalog once and freezes the newest compatible numeric `gpt-<version>-luna`
+model for that server process. It requires every effort allowed by
+`SOL_LUNA_ALLOWED_EFFORTS`, excludes hidden, preview, dated, and unrelated
+models, and refuses to select anything older than GPT-6. Versions are compared
+numerically: 6.10 sorts after 6.2. Failure stops startup with an actionable
+message; there is no silent fallback. Restart the MCP server to discover again.
+
+`latest-luna` is a package selector, not an OpenAI model alias. In automatic
+mode, the same token in `SOL_LUNA_ALLOWED_MODELS` or `SOL_LUNA_EXECUTOR_ORDER`
+is replaced by the selected concrete model; other pins and the declared
+ordering remain unchanged. The existing complete-ladder requirements still
+apply. Workers, attempt evidence, and continuations use the concrete model;
+continuations retain their original executor and thread.
+
+Discovery launches the public CLI entrypoint bundled with the installed Codex
+SDK using an absolute Node executable, outside the repository working directory.
+It sends only `initialize`, `initialized`, and paginated `model/list` messages.
+It starts no thread or inference turn, sets the worker recursion marker, and
+never prints raw catalog-process diagnostics. Startup is bounded to 10 seconds,
+50 pages of 20 entries, and 4 MiB of combined output, with up to two additional
+2-second cleanup waits. Keep the normal 30-second MCP startup timeout.
+
+A catalog can be cached or bundled. The newest model in it is not proof of
+account access or global release freshness; a real worker turn checks access.
+Refreshing the catalog or updating the bundled Codex dependency may be needed
+for a new model to appear, even when this package needs no model-name change.
+A read-only check on 2026-10-04 with bundled Codex 0.147.0 listed GPT-5.6 Luna
+only, so automatic mode refused to downgrade. No live GPT-6 run is claimed.
+Offline `status` and `doctor` show the configured selector without discovery or
+model calls; the running server's diagnostic log reports its concrete model.
 
 ### Discovery hint and adaptive routing
 
@@ -235,35 +279,35 @@ registration explicitly has `enabled = false`, a plain `init` repairs it to
 
 ### Environment variables
 
-| Variable                           | Default                 | Purpose                                                         |
-| ---------------------------------- | ----------------------- | --------------------------------------------------------------- |
-| `LUNA_MODEL`                       | `gpt-6-luna`            | Worker model                                                    |
-| `LUNA_TIMEOUT_SECONDS`             | `1800`                  | Wall-clock budget per worker turn                               |
-| `LUNA_VERIFY_TIMEOUT_SECONDS`      | `600`                   | Wall-clock budget per independently rerun verification command  |
-| `LUNA_SANDBOX`                     | `workspace-write`       | Codex sandbox mode for workers                                  |
-| `LUNA_NETWORK_ACCESS`              | off                     | `1` allows workers network access                               |
-| `SOL_LUNA_MAX_PARALLEL`            | `3`                     | Concurrent workers; hard ceiling 8                              |
-| `SOL_LUNA_MAX_WORKERS_PER_BATCH`   | `12`                    | Workers one batch may enlist, either mode; hard ceiling 12      |
-| `SOL_LUNA_ALLOWED_MODELS`          | `LUNA_MODEL`            | Additional authorised worker models, comma separated            |
-| `SOL_LUNA_ALLOWED_EFFORTS`         | all four                | Permitted efforts, comma separated, e.g. `medium,high`          |
-| `SOL_LUNA_ALLOW_EFFORT_ESCALATION` | on                      | `0` stops the runtime recommending a higher effort              |
-| `SOL_LUNA_ALLOW_STRONGER_FALLBACK` | on                      | `0` stops the runtime recommending a stronger executor          |
-| `SOL_LUNA_EXECUTOR_ORDER`          | —                       | Complete executor hierarchy, weakest to strongest               |
-| `SOL_LUNA_WORKTREE_LINK`           | `node_modules`          | Dependency directories privately snapshotted per worktree       |
-| `SOL_LUNA_KEEP_WORKTREES`          | `onFailure`             | Parallel-task retention: `always`, `never`, or `onFailure`      |
-| `SOL_LUNA_ALLOW_DIRTY`             | off                     | `1` permits parallel batches over uncommitted in-scope changes  |
-| `SOL_LUNA_VERIFY_MODE`             | `allowlist`             | `allowlist`, `off`, or `shell` — see [Security](../SECURITY.md) |
-| `SOL_LUNA_VERIFY_ALLOW`            | —                       | Extra permitted executables, comma separated                    |
-| `SOL_LUNA_VERIFY_ENV_PASSTHROUGH`  | off                     | `1` stops withholding credential-shaped env vars                |
-| `SOL_LUNA_ALLOWED_ROOTS`           | —                       | Confine delegation to these directory trees                     |
-| `SOL_LUNA_SERVER_NAME`             | `sol-luna-orchestrator` | **Must match** the name registered in Codex                     |
-| `SOL_LUNA_CONTEXT_MAX_BYTES`       | `50000`                 | P1.3B policy threshold in exact serialized UTF-8 bytes          |
-| `SOL_LUNA_CONTEXT_MAX_TURNS`       | `20`                    | P1.3B total-turn threshold                                      |
-| `SOL_LUNA_CONTEXT_MAX_CLEAN_TURNS` | `5`                     | P1.3B clean PASS accumulation threshold                         |
-| `SOL_LUNA_CONTEXT_COOLDOWN_TURNS`  | `2`                     | P1.3B authoritative turns required between compact projections  |
-| `SOL_LUNA_WORKER`                  | set per worker          | Internal marker; a server seeing it registers zero tools        |
-| `SOL_LUNA_EVENTS`                  | set by `init`           | Absolute path to the structured JSONL activity log              |
-| `SOL_LUNA_LOG`                     | set by `init`           | Absolute path to the human-readable diagnostics log             |
+| Variable                           | Default                 | Purpose                                                              |
+| ---------------------------------- | ----------------------- | -------------------------------------------------------------------- |
+| `LUNA_MODEL`                       | `gpt-6-luna`            | Explicit worker pin, or `latest-luna` for optional startup discovery |
+| `LUNA_TIMEOUT_SECONDS`             | `1800`                  | Wall-clock budget per worker turn                                    |
+| `LUNA_VERIFY_TIMEOUT_SECONDS`      | `600`                   | Wall-clock budget per independently rerun verification command       |
+| `LUNA_SANDBOX`                     | `workspace-write`       | Codex sandbox mode for workers                                       |
+| `LUNA_NETWORK_ACCESS`              | off                     | `1` allows workers network access                                    |
+| `SOL_LUNA_MAX_PARALLEL`            | `3`                     | Concurrent workers; hard ceiling 8                                   |
+| `SOL_LUNA_MAX_WORKERS_PER_BATCH`   | `12`                    | Workers one batch may enlist, either mode; hard ceiling 12           |
+| `SOL_LUNA_ALLOWED_MODELS`          | `LUNA_MODEL`            | Additional authorised worker models, comma separated                 |
+| `SOL_LUNA_ALLOWED_EFFORTS`         | all four                | Permitted efforts, comma separated, e.g. `medium,high`               |
+| `SOL_LUNA_ALLOW_EFFORT_ESCALATION` | on                      | `0` stops the runtime recommending a higher effort                   |
+| `SOL_LUNA_ALLOW_STRONGER_FALLBACK` | on                      | `0` stops the runtime recommending a stronger executor               |
+| `SOL_LUNA_EXECUTOR_ORDER`          | —                       | Complete executor hierarchy, weakest to strongest                    |
+| `SOL_LUNA_WORKTREE_LINK`           | `node_modules`          | Dependency directories privately snapshotted per worktree            |
+| `SOL_LUNA_KEEP_WORKTREES`          | `onFailure`             | Parallel-task retention: `always`, `never`, or `onFailure`           |
+| `SOL_LUNA_ALLOW_DIRTY`             | off                     | `1` permits parallel batches over uncommitted in-scope changes       |
+| `SOL_LUNA_VERIFY_MODE`             | `allowlist`             | `allowlist`, `off`, or `shell` — see [Security](../SECURITY.md)      |
+| `SOL_LUNA_VERIFY_ALLOW`            | —                       | Extra permitted executables, comma separated                         |
+| `SOL_LUNA_VERIFY_ENV_PASSTHROUGH`  | off                     | `1` stops withholding credential-shaped env vars                     |
+| `SOL_LUNA_ALLOWED_ROOTS`           | —                       | Confine delegation to these directory trees                          |
+| `SOL_LUNA_SERVER_NAME`             | `sol-luna-orchestrator` | **Must match** the name registered in Codex                          |
+| `SOL_LUNA_CONTEXT_MAX_BYTES`       | `50000`                 | P1.3B policy threshold in exact serialized UTF-8 bytes               |
+| `SOL_LUNA_CONTEXT_MAX_TURNS`       | `20`                    | P1.3B total-turn threshold                                           |
+| `SOL_LUNA_CONTEXT_MAX_CLEAN_TURNS` | `5`                     | P1.3B clean PASS accumulation threshold                              |
+| `SOL_LUNA_CONTEXT_COOLDOWN_TURNS`  | `2`                     | P1.3B authoritative turns required between compact projections       |
+| `SOL_LUNA_WORKER`                  | set per worker          | Internal marker; a server seeing it registers zero tools             |
+| `SOL_LUNA_EVENTS`                  | set by `init`           | Absolute path to the structured JSONL activity log                   |
+| `SOL_LUNA_LOG`                     | set by `init`           | Absolute path to the human-readable diagnostics log                  |
 
 The three context thresholds must be positive safe integers; the cooldown must
 be a non-negative safe integer. Invalid values fail startup instead of silently
@@ -336,7 +380,8 @@ environment parser:
   root-relative paths such as `\logs\events.jsonl` are also rejected because
   they still depend on the receiving process's current drive; use a drive-qualified
   path or UNC path instead.
-- `LUNA_MODEL` and `SOL_LUNA_SERVER_NAME` remain literal strings. `init` supplies
+- `SOL_LUNA_SERVER_NAME` and explicit `LUNA_MODEL` pins remain literal strings;
+  the exact `latest-luna` selector is resolved only at server startup. `init` supplies
   non-empty defaults and the registered server name; a hand-written empty or
   incorrect model/server value can cause execution or recursion-isolation setup
   to fail.

@@ -222,14 +222,25 @@ export const DEFAULT_COMPUTE_POLICY_ENVIRONMENT: ComputePolicyEnvironment = {
   executorOrder: EXECUTOR_ORDER,
 };
 
-export const DEFAULT_COMPUTE_POLICY: ComputePolicy = buildComputePolicy(
+export let DEFAULT_COMPUTE_POLICY: ComputePolicy = buildComputePolicy(
   DEFAULT_COMPUTE_POLICY_ENVIRONMENT,
 );
 
 /** Whether SOL_LUNA_EXECUTOR_ORDER named a ladder this installation cannot use. */
-export const EXECUTOR_ORDER_UNUSABLE = executorOrderDeclaredButUnusable(
+export let EXECUTOR_ORDER_UNUSABLE = executorOrderDeclaredButUnusable(
   DEFAULT_COMPUTE_POLICY_ENVIRONMENT,
 );
+
+/** Rebuild derived policy once after automatic startup model resolution. */
+export function refreshResolvedComputePolicy(): void {
+  DEFAULT_COMPUTE_POLICY_ENVIRONMENT.model = LUNA_MODEL;
+  DEFAULT_COMPUTE_POLICY_ENVIRONMENT.allowedModels = ALLOWED_MODELS;
+  DEFAULT_COMPUTE_POLICY_ENVIRONMENT.executorOrder = EXECUTOR_ORDER;
+  DEFAULT_COMPUTE_POLICY = buildComputePolicy(DEFAULT_COMPUTE_POLICY_ENVIRONMENT);
+  EXECUTOR_ORDER_UNUSABLE = executorOrderDeclaredButUnusable(
+    DEFAULT_COMPUTE_POLICY_ENVIRONMENT,
+  );
+}
 
 /**
  * The one executor an envelope resolves to when no execution is being continued.

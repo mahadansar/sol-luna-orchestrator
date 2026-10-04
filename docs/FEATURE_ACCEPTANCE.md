@@ -22,8 +22,8 @@ confidence ledger for the repository. The current release baseline is
 - **Worker-model upgrade in progress:** the new branch defaults to
   `gpt-6-luna`, with explicit legacy pins preserved. Typecheck/build,
   configuration/CLI/policy/guidance tests, and a focused continuation-authority
-  regression pass. Automatic discovery and complete upgrade acceptance are
-  pending; no live GPT-6 inference run is claimed.
+  regression pass. Bounded optional automatic discovery and its focused regressions are implemented;
+  complete upgrade acceptance remains pending; no live GPT-6 inference run is claimed.
 - **Earlier local full validation:** `npm run verify` passed on
   2026-10-04 at `a0217f8` on Windows with Node `v22.23.2`: 1,263 tests,
   1,258 passed, 0 failed, and 5 skipped. Typecheck, formatting, the complete
