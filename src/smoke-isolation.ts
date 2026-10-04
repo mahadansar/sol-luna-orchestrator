@@ -22,6 +22,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { WORKER_MARKER_ENV } from "./config.js";
 import { delegateTaskInputSchema } from "./contract.js";
 import { delegateToLuna } from "./worker.js";
+import { initializeWorkerModel } from "./server.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const serverEntry = path.join(here, "server.js");
@@ -149,6 +150,7 @@ async function testWorkerCannotStartOrchestrator(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  await initializeWorkerModel();
   await testEnvBackstop();
   await testWorkerCannotStartOrchestrator();
 

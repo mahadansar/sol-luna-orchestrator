@@ -11,6 +11,8 @@ import os from "node:os";
 import path from "node:path";
 import { delegateTaskInputSchema } from "./contract.js";
 import { delegateToLuna } from "./worker.js";
+import { LUNA_MODEL } from "./config.js";
+import { initializeWorkerModel } from "./server.js";
 
 const TEST_FILE = `import assert from "node:assert/strict";
 import { slugify } from "./slugify.mjs";
@@ -22,6 +24,7 @@ console.log("all slugify tests passed");
 `;
 
 async function main(): Promise<void> {
+  await initializeWorkerModel();
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "luna-smoke-"));
   console.log(`Workspace: ${workspace}\n`);
 
@@ -61,9 +64,9 @@ async function main(): Promise<void> {
       () => assert.ok(result.workerThreadId, "no thread id"),
     ],
     [
-      "worker ran as gpt-5.6-luna at the requested effort",
+      `worker ran as ${LUNA_MODEL} at the requested effort`,
       () => {
-        assert.match(result.model, /luna/);
+        assert.equal(result.model, LUNA_MODEL);
         assert.equal(result.effort, "medium");
       },
     ],

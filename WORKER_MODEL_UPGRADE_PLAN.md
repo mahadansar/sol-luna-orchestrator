@@ -127,6 +127,17 @@ format/link checks, and packaging validation. Any read-only real catalog check
 must be labeled separately from deterministic tests. Do not claim live GPT-6
 worker acceptance without an actual model-backed run.
 
+## Documentation audit findings
+
+The committed hardening plan now names the completed merge and the separate
+upgrade branch rather than describing model work as future work. The benchmark
+results summary names the routing corrections as shipped in v0.12.0. Historical
+campaign IDs, prices, model pins, and the content-addressed pre-results V3
+methodology stay unchanged; the results document explains its preserved status
+language. Direct live smoke helpers now resolve optional automatic mode before
+worker execution and check the selected exact model. They were typechecked,
+not run against a live model.
+
 ## Exit criteria
 
 - The default worker is `gpt-6-luna`; explicit pins remain honored.

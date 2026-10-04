@@ -60,9 +60,10 @@ passing 140-test local focused run and additional canonical-evidence regression.
 Fresh complete CI passed for that source checkpoint on Windows, Ubuntu, and
 macOS with Node 24 and 26: 1,267 tests per job, zero failures, four Windows/macOS
 platform skips and five Ubuntu skips. All jobs also passed protocol smoke and
-all 17 benchmark fixtures. The requested GPT-6 Luna default and
-optional automatic latest-Luna mode will follow hardening acceptance; they have
-not been applied to this checkpoint. The user authorized merging hardening into
+all 17 benchmark fixtures. Hardening was merged into `main` before the separate
+[worker-model upgrade plan](WORKER_MODEL_UPGRADE_PLAN.md) was committed. The
+GPT-6 default and optional automatic mode now exist on that separate branch;
+they are outside this accepted hardening checkpoint. The user authorized merging hardening into
 `main`, then creating a new branch and committing a model-upgrade plan before
 model implementation. Existing stashed work remains separate.
 
@@ -134,7 +135,7 @@ contained the incomplete seams listed below.
 
 ## Confirmed gaps at the recovered checkpoint
 
-### 1. Parallel integration cannot yet safely create missing destination ancestry
+### 1. Parallel integration could not safely create missing destination ancestry
 
 `src/worktree.ts` exports `ensureConfinedDirectoryChain(...)`, which creates missing
 directory segments one at a time beneath pinned parent authority and returns the
@@ -182,14 +183,15 @@ Required closure:
   cleanup failure, partial authoritative mutation, symlink/junction, and retained
   recovery behavior with focused tests.
 
-### 3. Acceptance freshness had drifted and is not yet re-established
+### 3. Acceptance freshness had drifted and was not re-established
 
 `docs/FEATURE_ACCEPTANCE.md` records a full `npm run verify` from 2026-09-21 and
 previously described it as evidence for the current hardening tree. The later
 checkpoint handoff states that this full run predates the newest filesystem-authority
 work and must not be treated as fresh evidence for the exact checkpoint. The
 2026-09-27 recovery audit corrected that top-level freshness claim. Exact-tree
-acceptance remains pending a fresh full verifier run on the finished branch.
+acceptance was pending a fresh full verifier run at recovery; the completed
+October 4 acceptance above closes this gap.
 
 ### 4. Platform boundary for destructive namespace mutation remains explicit
 

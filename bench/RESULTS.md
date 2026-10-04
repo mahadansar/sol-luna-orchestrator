@@ -9,7 +9,7 @@ speed, and `gpt-5.6-sol` at Medium supervising the v0.11.0 production baseline.
 
 Both strategies passed every task. v0.11.0 Adaptive delegated zero workers in
 all of its runs and was slower and more expensive overall than Solo in this
-campaign. The result led to the post-V3 routing corrections intended for
+campaign. The result led to the post-V3 routing corrections shipped in
 v0.12.0. Those corrections have not been evaluated by another full campaign,
 so this evidence supports no claim that v0.12.0 is faster, cheaper, or better
 than v0.11.0.
