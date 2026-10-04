@@ -373,10 +373,10 @@ check that mutates workspace bytes, ignored/protected control state, Git
 authority, or dependencies forces supervisor review instead of publishing
 `verified-complete`.
 
+Workspace containment, dirty-scope checks, and trusted evidence projection
+compare canonical paths, including platform directory aliases such as macOS
+`/var` and `/private/var`.
 Parallel integration is not a blind copy. While holding the common-Git
-authority, workspace containment and dirty-scope checks compare canonical paths,
-including platform directory aliases such as macOS `/var` and `/private/var`.
-While holding the common-Git
 authority, the runtime revalidates the pinned repository, compares the current
 authoritative workspace with the pre-worker baseline, and refuses conflicting
 operator or peer-batch drift. Each isolated worktree is re-read and compared

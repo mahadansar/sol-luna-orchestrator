@@ -13,6 +13,7 @@ import {
   git,
   listTrustedIgnoredFiles,
   runGit,
+  snapshotTrustedWorkspaceEvidence,
 } from "./git.js";
 import { findScopeViolations } from "./scope.js";
 import { prepareWorktreeBase } from "./worktree.js";
@@ -59,6 +60,9 @@ test("Git and worktree setup compare canonical workspace aliases before confinem
     );
 
     await fs.writeFile(path.join(nested, "tracked.txt"), "dirty\n");
+    const evidence = await snapshotTrustedWorkspaceEvidence(authority, workspace);
+    assert.deepEqual([...evidence.keys()], ["tracked.txt"]);
+    assert.match(evidence.get("tracked.txt")!, /^M:file:/);
     await assert.rejects(
       prepareWorktreeBase(workspace, [["tracked.txt"]]),
       /uncommitted changes inside the file scopes/,

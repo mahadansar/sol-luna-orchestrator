@@ -1346,8 +1346,9 @@ export async function snapshotTrustedWorkspaceEvidence(
   workspace: string,
   excludedWorkspacePaths: string[] = [],
 ): Promise<TrustedWorkspaceSnapshot> {
+  const canonicalWorkspace = await realpath(workspace);
   const tracked = await collectTrustedWorktreeChanges(authority);
-  const workspacePrefix = path.relative(authority.repoRoot, workspace);
+  const workspacePrefix = path.relative(authority.repoRoot, canonicalWorkspace);
   const excludedRepoPaths = excludedWorkspacePaths.map((entry) =>
     path.join(workspacePrefix, ...entry.split("/")),
   );
@@ -1355,12 +1356,20 @@ export async function snapshotTrustedWorkspaceEvidence(
   const snapshot: TrustedWorkspaceSnapshot = new Map();
 
   for (const file of tracked.files) {
-    const relative = workspaceRelativePath(authority.repoRoot, workspace, file.path);
-    const target = path.join(workspace, ...relative.split("/"));
+    const relative = workspaceRelativePath(
+      authority.repoRoot,
+      canonicalWorkspace,
+      file.path,
+    );
+    const target = path.join(canonicalWorkspace, ...relative.split("/"));
     snapshot.set(relative, await snapshotPathSignature(target, file.status));
   }
   for (const repoRelative of ignored) {
-    const relative = workspaceRelativePath(authority.repoRoot, workspace, repoRelative);
+    const relative = workspaceRelativePath(
+      authority.repoRoot,
+      canonicalWorkspace,
+      repoRelative,
+    );
     const target = path.join(authority.repoRoot, ...repoRelative.split("/"));
     snapshot.set(relative, await snapshotPathSignature(target, "I"));
   }
