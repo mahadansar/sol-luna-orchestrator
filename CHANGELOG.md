@@ -16,6 +16,9 @@ All notable changes to this project are documented here. Format follows
   cannot survive as stale package contents.
 - New cross-session handoff exports identify `0.13.0` as their default source
   version.
+- The lockfile now resolves current compatible dependency versions, including
+  `@modelcontextprotocol/sdk` `1.32.0`, clearing the repository's npm audit
+  findings without widening declared dependency ranges.
 
 ## [0.13.0] - 2026-10-04
 

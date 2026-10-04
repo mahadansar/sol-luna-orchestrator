@@ -258,6 +258,8 @@ test("shutdown abort releases referenced worktree lease maintenance so the proce
   child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf8")));
   child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
   const exit = new Promise<number | null>((resolve, reject) => {
+    // Loaded Windows runners need scheduling headroom here; five seconds remains
+    // tiny compared with the five-minute lease horizon this test must release.
     const timeout = setTimeout(() => {
       child.kill("SIGKILL");
       reject(
@@ -265,7 +267,7 @@ test("shutdown abort releases referenced worktree lease maintenance so the proce
           `child stayed alive past shutdown bound; stdout=${stdout}; stderr=${stderr}`,
         ),
       );
-    }, 2_000);
+    }, 5_000);
     child.once("error", (error) => {
       clearTimeout(timeout);
       reject(error);
