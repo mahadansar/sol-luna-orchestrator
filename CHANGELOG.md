@@ -8,6 +8,8 @@ All notable changes to this project are documented here. Format follows
 
 ### Fixed
 
+- Parallel integration deletes an admitted symbolic-link entry without
+  following its target; the canonical parent and the leaf scope remain checked.
 - Confined parent rollback now reports displaced or replaced created-directory
   identities as uncertain rather than claiming their removal.
 - Activity watch now reattaches after same-size rewrites, including

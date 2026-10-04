@@ -387,6 +387,10 @@ rechecks source, destination, parent, and recovery-backup evidence, and unlinks
 that tombstone. A raced or cancelled deletion restores the exact original by
 renaming the tombstone back when safe. Otherwise recovery state is retained for
 review; newer authoritative state is never overwritten by an unsafe rollback.
+Deletion checks the leaf entry's scope beneath its canonical parent rather than
+following a leaf symbolic link. The link target is never read, removed, or
+rewritten by this deletion, even when it lies outside the workspace. Copies still
+resolve the complete destination path before scope checks.
 
 Cancellation observed before the first authoritative integration write performs
 no authoritative write. If cancellation is observed after earlier writes, no

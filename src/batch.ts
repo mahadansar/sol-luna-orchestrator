@@ -3749,12 +3749,28 @@ async function integrateWorktrees(
             // baseline by the global drift check above. Capture its exact path
             // identity/content now so a deterministic or external mutation in
             // the validation-to-write window cannot be overwritten invisibly.
-            const validatedDestination = defaultRealPathResolver(destination);
+            // Deletion removes the leaf entry itself. Resolve its parent so
+            // ancestor links cannot escape confinement, but do not follow a
+            // leaf symlink into bytes that this operation never touches.
+            const resolveDestination = (): string =>
+              expectedSourceSignature === "missing"
+                ? path.join(
+                    defaultRealPathResolver(path.dirname(destination)),
+                    path.basename(destination),
+                  )
+                : defaultRealPathResolver(destination);
+            const destinationResolver = (target: string): string =>
+              expectedSourceSignature === "missing" &&
+              path.resolve(target) === path.resolve(destination)
+                ? resolveDestination()
+                : defaultRealPathResolver(target);
+            const validatedDestination = resolveDestination();
             const destinationScopeViolations = findScopeViolations(
               [validatedDestination],
               task.input.allowedFiles,
               task.input.forbiddenFiles,
               workspace,
+              destinationResolver,
             );
             if (destinationScopeViolations.length > 0) {
               warnings.push(
@@ -3784,12 +3800,13 @@ async function integrateWorktrees(
               break;
             }
 
-            const resolvedDestination = defaultRealPathResolver(destination);
+            const resolvedDestination = resolveDestination();
             const finalDestinationScopeViolations = findScopeViolations(
               [resolvedDestination],
               task.input.allowedFiles,
               task.input.forbiddenFiles,
               workspace,
+              destinationResolver,
             );
             const currentDestination = await snapshotIntegrationPath(resolvedDestination);
             if (
@@ -3853,7 +3870,7 @@ async function integrateWorktrees(
             }
 
             if (currentSource.kind === "missing") {
-              const finalDestination = defaultRealPathResolver(destination);
+              const finalDestination = resolveDestination();
               const finalSnapshot = await snapshotIntegrationPath(finalDestination);
               const finalSourceSnapshot = await snapshotIntegrationPath(source);
               if (

@@ -4446,7 +4446,11 @@ test("parallel integration refuses a destination redirected outside the workspac
 
     assert.equal(result.integrated, false, describeBatch(result));
     assert.ok(
-      result.warnings.some((warning) => /destination resolves outside/i.test(warning)),
+      result.warnings.some((warning) =>
+        /destination resolves outside|authoritative workspace changed after parallel admission/i.test(
+          warning,
+        ),
+      ),
       describeBatch(result),
     );
     await assert.rejects(fs.stat(path.join(outside, "payload.ts")));
@@ -6062,72 +6066,89 @@ test("parallel deletion refuses a recovery backup replaced before tombstone unli
   }
 });
 
-test("parallel deletion removes only a symbolic link and never its target", async (t) => {
-  if (process.platform === "win32") {
-    t.skip(
-      "symbolic-link creation is not reliable on Windows CI without developer privileges",
+for (const externalTarget of [false, true]) {
+  test(`parallel deletion removes only a symbolic link and never its ${externalTarget ? "external" : "in-workspace"} target`, async (t) => {
+    if (process.platform === "win32") {
+      t.skip(
+        "symbolic-link creation is not reliable on Windows CI without developer privileges",
+      );
+      return;
+    }
+    const repo = await makeRepo();
+    const outside = await fs.mkdtemp(
+      path.join(os.tmpdir(), "sol-luna-delete-link-target-"),
     );
-    return;
-  }
-  const repo = await makeRepo();
-  const target = path.join(repo, "src", "delete-link-target.txt");
-  const link = path.join(repo, "src", "delete-link.txt");
-  const quarantineRoot = path.join(repo, ".sol-luna", "integration-delete");
-  let recoveryMetadataObserved = false;
-  try {
-    await fs.writeFile(target, "target-must-survive\n", "utf8");
-    await fs.symlink("delete-link-target.txt", link, "file");
-    await runGit(["add", "src/delete-link-target.txt", "src/delete-link.txt"], repo);
-    await runGit(["commit", "-m", "add symlink deletion fixture"], repo);
-
-    const result = await runProductionBatch(
-      [makeTask({ allowedFiles: ["src/delete-link.txt"] })],
-      {
-        mode: "parallel",
-        batchId: "bintegration-delete-link",
-        workingDirectory: repo,
-        keepWorktrees: "never",
-        integrationBeforeDelete: async ({ file, phase }) => {
-          if (file !== "src/delete-link.txt" || phase !== "validated") return;
-          const [backup] = await fs.readdir(quarantineRoot);
-          assert.ok(backup);
-          const backupPath = path.join(quarantineRoot, backup);
-          const backupStat = await fs.lstat(backupPath);
-          assert.equal(backupStat.isFile(), true);
-          assert.equal(backupStat.isSymbolicLink(), false);
-          assert.deepEqual(JSON.parse(await fs.readFile(backupPath, "utf8")), {
-            version: 1,
-            kind: "link",
-            target: "delete-link-target.txt",
-            signature: "link:delete-link-target.txt",
-          });
-          recoveryMetadataObserved = true;
-        },
-        executor: async (input, options) => {
-          await fs.unlink(path.join(options.workingDirectory, "src", "delete-link.txt"));
-          return makeOutput({
-            effort: input.effort,
-            filesChanged: [
-              {
-                path: "src/delete-link.txt",
-                kind: "delete",
-                why: "test",
-                observed: true,
-              },
-            ],
-          });
-        },
-      },
+    const target = path.join(
+      externalTarget ? outside : path.join(repo, "src"),
+      "delete-link-target.txt",
     );
+    const linkTarget = externalTarget ? target : "delete-link-target.txt";
+    const link = path.join(repo, "src", "delete-link.txt");
+    const quarantineRoot = path.join(repo, ".sol-luna", "integration-delete");
+    let recoveryMetadataObserved = false;
+    try {
+      await fs.writeFile(target, "target-must-survive\n", "utf8");
+      await fs.symlink(linkTarget, link, "file");
+      await runGit(["add", "src"], repo);
+      await runGit(["commit", "-m", "add symlink deletion fixture"], repo);
 
-    assert.equal(result.integrated, true, describeBatch(result));
-    assert.equal(recoveryMetadataObserved, true);
-    await assert.rejects(fs.lstat(link));
-    assert.equal(await fs.readFile(target, "utf8"), "target-must-survive\n");
-  } finally {
-    await cleanupRepo(repo);
-  }
-});
+      const result = await runProductionBatch(
+        [
+          makeTask({
+            allowedFiles: ["src/delete-link.txt"],
+            forbiddenFiles: ["**/delete-link-target.txt"],
+          }),
+        ],
+        {
+          mode: "parallel",
+          batchId: "bintegration-delete-link",
+          workingDirectory: repo,
+          keepWorktrees: "never",
+          integrationBeforeDelete: async ({ file, phase }) => {
+            if (file !== "src/delete-link.txt" || phase !== "validated") return;
+            const [backup] = await fs.readdir(quarantineRoot);
+            assert.ok(backup);
+            const backupPath = path.join(quarantineRoot, backup);
+            const backupStat = await fs.lstat(backupPath);
+            assert.equal(backupStat.isFile(), true);
+            assert.equal(backupStat.isSymbolicLink(), false);
+            assert.deepEqual(JSON.parse(await fs.readFile(backupPath, "utf8")), {
+              version: 1,
+              kind: "link",
+              target: linkTarget,
+              signature: `link:${linkTarget}`,
+            });
+            recoveryMetadataObserved = true;
+          },
+          executor: async (input, options) => {
+            await fs.unlink(
+              path.join(options.workingDirectory, "src", "delete-link.txt"),
+            );
+            return makeOutput({
+              effort: input.effort,
+              filesChanged: [
+                {
+                  path: "src/delete-link.txt",
+                  kind: "delete",
+                  why: "test",
+                  observed: true,
+                },
+              ],
+            });
+          },
+        },
+      );
+
+      assert.equal(result.integrated, true, describeBatch(result));
+      assert.equal(recoveryMetadataObserved, true);
+      await assert.rejects(fs.lstat(link));
+      assert.equal(await fs.readFile(target, "utf8"), "target-must-survive\n");
+    } finally {
+      await cleanupRepo(repo);
+      await fs.rm(outside, { recursive: true, force: true });
+    }
+  });
+}
 
 test("link deletion recovery metadata carries no link type or recreation requirement", () => {
   const target =
