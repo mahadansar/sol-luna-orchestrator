@@ -133,7 +133,8 @@ export async function prepareWorktreeBase(
   }
 
   const dirtyPaths = await listDirtyPaths(repoRoot);
-  const workspaceRelativePath = path.relative(repoRoot, workspace);
+  const canonicalWorkspace = await fs.realpath(workspace);
+  const workspaceRelativePath = path.relative(repoRoot, canonicalWorkspace);
   if (
     workspaceRelativePath.startsWith(`..${path.sep}`) ||
     workspaceRelativePath === ".." ||
@@ -148,7 +149,7 @@ export async function prepareWorktreeBase(
   const workspaceDirtyPaths = dirtyPaths
     .map((dirty) => {
       const absolute = path.join(repoRoot, ...dirty.split("/"));
-      const relative = path.relative(workspace, absolute);
+      const relative = path.relative(canonicalWorkspace, absolute);
       if (
         relative === "" ||
         relative === ".." ||

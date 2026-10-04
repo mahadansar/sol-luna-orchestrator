@@ -1003,7 +1003,7 @@ export async function createIsolatedWorkerGitEnvironment(
   await validateGitEvidenceAuthority(authority);
   const workspaceRelative = path.relative(
     authority.repoRoot,
-    path.resolve(workingDirectory),
+    await realpath(workingDirectory),
   );
   if (
     workspaceRelative === ".." ||

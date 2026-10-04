@@ -8,6 +8,8 @@ All notable changes to this project are documented here. Format follows
 
 ### Fixed
 
+- Git isolation and worktree setup canonicalize workspace aliases before
+  containment and dirty-scope comparisons, including macOS temporary paths.
 - Parallel integration deletes an admitted symbolic-link entry without
   following its target; the canonical parent and the leaf scope remain checked.
 - Confined parent rollback now reports displaced or replaced created-directory

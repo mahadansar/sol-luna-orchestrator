@@ -15,6 +15,7 @@ import {
   runGit,
 } from "./git.js";
 import { findScopeViolations } from "./scope.js";
+import { prepareWorktreeBase } from "./worktree.js";
 
 async function initFixtureRepo(prefix: string): Promise<string> {
   const repo = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -26,6 +27,50 @@ async function initFixtureRepo(prefix: string): Promise<string> {
 
 const toShellPath = (value: string): string =>
   `"${value.replaceAll("\\", "/").replaceAll('"', '\\"')}"`;
+
+test("Git and worktree setup compare canonical workspace aliases before confinement", async (t) => {
+  const repo = await initFixtureRepo("sol-luna-git-alias-");
+  const alias = `${repo}-alias`;
+  let isolated:
+    Awaited<ReturnType<typeof createIsolatedWorkerGitEnvironment>> | undefined;
+  try {
+    const nested = path.join(repo, "packages", "app");
+    await fs.mkdir(nested, { recursive: true });
+    await fs.writeFile(path.join(nested, "tracked.txt"), "before\n");
+    await runGit(["add", "."], repo);
+    await runGit(["commit", "-m", "alias fixture"], repo);
+    try {
+      await fs.symlink(repo, alias, process.platform === "win32" ? "junction" : "dir");
+    } catch {
+      t.skip("directory links are not permitted on this machine");
+      return;
+    }
+    const workspace = path.join(alias, "packages", "app");
+    const authority = await captureGitEvidenceAuthority(workspace);
+    assert.ok(authority);
+    isolated = await createIsolatedWorkerGitEnvironment(authority, workspace);
+    assert.equal(
+      (await git(["status", "--porcelain"], workspace, isolated.env)).trim(),
+      "",
+    );
+    assert.equal(
+      (await prepareWorktreeBase(workspace, [["tracked.txt"]])).workspaceRelativePath,
+      path.join("packages", "app"),
+    );
+
+    await fs.writeFile(path.join(nested, "tracked.txt"), "dirty\n");
+    await assert.rejects(
+      prepareWorktreeBase(workspace, [["tracked.txt"]]),
+      /uncommitted changes inside the file scopes/,
+    );
+    const allowedDirty = await prepareWorktreeBase(workspace, [["other.txt"]]);
+    assert.deepEqual(allowedDirty.workspaceDirtyPaths, ["tracked.txt"]);
+  } finally {
+    await isolated?.cleanup();
+    await fs.rm(alias, { force: true }).catch(() => undefined);
+    await fs.rm(repo, { recursive: true, force: true });
+  }
+});
 
 test("porcelain -z rename and copy records preserve destination and source evidence", async () => {
   const calls: string[][] = [];
@@ -123,7 +168,7 @@ test("isolated Git metadata preserves nested workspace semantics and local confi
       path.normalize(
         (await git(["rev-parse", "--show-toplevel"], nested, isolated.env)).trim(),
       ),
-      path.normalize(repo),
+      path.normalize(await fs.realpath(repo)),
     );
 
     await git(
