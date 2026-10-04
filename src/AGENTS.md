@@ -24,8 +24,9 @@ These instructions apply to the TypeScript runtime, smoke programs, and tests un
   separate worktrees, require non-overlapping declared scopes by default, and integrate
   only when observed changed-file sets do not collide.
 - Worktree metadata mutations (add/remove/prune) must remain serialized. Workers run
-  concurrently only after setup. Production dependencies are private snapshots; exclude only actually provisioned
-  snapshots from ordinary evidence. Worker-created links must remain observable.
+  concurrently only after setup. Production dependencies are private snapshots;
+  exclude only actually provisioned snapshots from ordinary evidence.
+  Worker-created links must remain observable.
   Cleanup must not traverse junctions/symlinks into external directories.
 - Parallel integration is a file copy, not a git merge. Dirty in-scope work is refused
   unless the operator explicitly opts into the risk. Partial success is retained.

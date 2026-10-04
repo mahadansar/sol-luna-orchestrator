@@ -4,7 +4,7 @@ Last audited: 2026-10-04
 
 Branch: `feature/orchestrator-upgrades-2026-09-21`
 
-Current runtime checkpoint: `90b7441` (`test: separate shutdown bounds from fixture startup`)
+Current runtime checkpoint: `3224d4a` (`fix: project trusted workspace evidence through canonical aliases`)
 
 Audit fixes and regressions are committed. See
 [phase4-audit-report.md](phase4-audit-report.md) for the independent review,
@@ -28,7 +28,7 @@ release documentation by accident.
 ## Current recovery status (2026-10-04)
 
 The original audit covered nine commits through `338ed69` after `77b42f9`.
-Seven focused audit commits now follow that checkpoint. Phases 0 through 3 are implemented:
+Twelve focused audit commits now follow that checkpoint. Phases 0 through 4 are implemented:
 `6be2557` restored documentation freshness, `5dafae3` isolated routing fixtures,
 `c70a7d4` provisioned integration parents, `eb54447` consolidated pinned deletion
 and filesystem authority, and `338ed69` bound dependency snapshots to content.
@@ -40,8 +40,8 @@ the new test passes without its proposed fix because the outer batch owner
 already releases unspent reservations. Other handoff findings were confirmed,
 and additional lifecycle, helper, and obsolete-link evidence gaps were found.
 
-Phase 5 requires a complete verifier run and acceptance-ledger refresh followed
-by a verifier rerun on the documented tree. Phase 6 requires final review and a
+Phase 5 has a complete Windows verifier at `a0217f8`; subsequent cross-platform
+fixes at `3224d4a` still require a fresh complete gate. Phase 6 requires final review and a
 clean committed tree with current remote/CI evidence. No release is authorized
 from this branch. The checkpoint gaps below describe the historical `84dcf12`
 tree; they are not current implementation claims.
@@ -49,7 +49,12 @@ tree; they are not current implementation claims.
 The first full post-fix test run reached 1,263 tests with one shutdown-fixture
 deadline failure. The isolated case passed; `90b7441` separates fixture setup
 from the existing shutdown liveness bound, and its full eight-test suite passes.
-Fresh whole-tree verification is pending. The requested GPT-6 Luna default and
+The next Windows verifier passed all 1,263 tests (1,258 passed, five skipped),
+protocol smoke, and all 17 benchmark fixtures at `a0217f8`. Native CI then exposed
+inode reuse, leaf-link deletion, rollback uncertainty, and macOS canonical-path
+issues. Their fixes and regressions are committed through `3224d4a`, with a
+passing 140-test local focused run and additional canonical-evidence regression.
+Fresh complete CI is pending for that final source checkpoint. The requested GPT-6 Luna default and
 optional automatic latest-Luna mode will follow hardening acceptance; they have
 not been applied to this checkpoint.
 
@@ -71,8 +76,10 @@ lease settlement, and cleanup boundaries.
 
 ## Recovered branch history
 
-The branch is three commits ahead of `v0.12.0`/`main` and was clean and synchronized
-with `origin/feature/orchestrator-upgrades-2026-09-21` when this recovery audit began.
+At the recovered `84dcf12` checkpoint, the branch was three commits ahead of
+`v0.12.0`/`main` and clean and synchronized with
+`origin/feature/orchestrator-upgrades-2026-09-21`. The sections below describe
+that historical checkpoint, not the current branch tip.
 
 ### `16e607a` - operator diagnostics and activity
 
@@ -115,7 +122,7 @@ This checkpoint substantially expanded the branch. It added or strengthened:
 
 This commit is a checkpoint rather than completed acceptance. The original
 `HARDENING_CHECKPOINT_2026-09-21.md` explicitly recorded that fact, and current code
-still contains the incomplete seams listed below.
+contained the incomplete seams listed below.
 
 ## Confirmed gaps at the recovered checkpoint
 
@@ -329,8 +336,10 @@ After implementation and adversarial review are complete:
 2. run `npm run verify` on the exact finished tree;
 3. update `docs/FEATURE_ACCEPTANCE.md` from that run, including date, commit,
    platform, totals, skips, and the specific seams whose evidence is refreshed;
-4. run `npm run verify` again after the acceptance-ledger edit so the documented
-   accepted tree itself is green; and
+4. validate the documented source checkpoint with the complete gate, locally
+   with `npm run verify` or the equivalent CI steps (typecheck, formatting,
+   complete tests, MCP protocol smoke, and fixture validation), and check the
+   ledger/documentation edits with formatting and `git diff --check`; and
 5. run `git diff --check` and a mechanical changed-file/scope review.
 
 Do not copy the September 21 counts forward as current evidence and do not promote

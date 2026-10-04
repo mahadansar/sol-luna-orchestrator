@@ -2,7 +2,7 @@
 
 Reviewed 2026-10-04 on Windows. Base: `77b42f9` (v0.12.0). Committed tip:
 `338ed69`; nine original commits. Fixes and tests described here are committed
-through runtime checkpoint `90b7441`.
+through runtime checkpoint `3224d4a`.
 The supplied Opus report was treated as a hypothesis, not acceptance evidence.
 
 ## Commit coverage
@@ -34,6 +34,11 @@ line was independently inspected or that races have been formally eliminated.
 | `13a35a7` | Helper spawn/closure settlement and authority recheck after awaited setup                                      |
 | `843520f` | Original private snapshot authority across retained continuations; removal of obsolete link exemptions/helpers |
 | `90b7441` | Separate child fixture setup deadlines from shutdown liveness bounds                                           |
+| `3bff404` | Reattach silent activity watchers after same-size rewrites/inode reuse                                         |
+| `32c7522` | Preserve unknown rollback state when a created directory's pathname is replaced                                |
+| `e2f2d71` | Scope and delete the admitted leaf link without following its target; update drift-refusal assertion           |
+| `8e1eba5` | Canonicalize workspace aliases before Git/worktree confinement and dirty-scope checks                          |
+| `3224d4a` | Canonicalize trusted workspace evidence projection, with a real junction regression                            |
 
 ## Supplied findings independently checked
 
@@ -96,6 +101,30 @@ forged tree. Trusted collection's `git read-tree` refused the object with a hash
 mismatch (exit 128). This specific hypothesis did not hide evidence; it does not
 establish a general guarantee against arbitrary same-user Git-object attacks.
 
+## Native CI follow-up
+
+The initial complete Windows gate passed at `a0217f8`, but native CI exposed
+additional issues. Acceptance remained open rather than treating the local
+platform's skips as proof:
+
+- Linux recycled an inode after same-size delete/recreate. History recovered,
+  but the stale watcher was not reattached. Same-size rewrites now rebind it;
+  deterministic tests cover both recreation and overwrite without callbacks.
+- A redirected-destination test expected a later refusal diagnostic even
+  though the earlier workspace-drift gate already blocked the mutation. Its
+  refusal and untouched outside-target assertions remain intact.
+- Deletion followed a leaf link during scope validation, incorrectly refusing
+  an admitted unlink and snapshotting target bytes. Deletion now canonicalizes
+  the parent while preserving the leaf entry, with in-workspace and external
+  target regressions proving the targets survive.
+- Rollback interpreted a replacement pathname as proof that a created directory
+  had been removed. It now reports uncertainty and leaves the replacement
+  untouched; a real moved-directory regression runs on Windows too.
+- macOS temporary paths use `/var` and `/private/var` aliases. Git/worktree
+  confinement, dirty-scope comparison, and trusted evidence projection now use
+  canonical workspace paths. A real directory-link regression proves setup,
+  dirty-scope refusal, and correct changed-file attribution.
+
 ## Documentation reconciliation
 
 `SECURITY.md` and `CHANGELOG.md` previously still required all parents to exist
@@ -116,7 +145,11 @@ one failed, and five skipped. The failure was an existing three-second child
 deadline covering both repository setup and shutdown; it passed in isolation.
 `90b7441` separately bounds setup and starts the same three-second liveness
 deadline at an explicit readiness marker. All eight shutdown tests pass; full
-exact-tree acceptance remains pending the fresh verifier rerun.
+The next complete `npm run verify` passed at `a0217f8`: 1,263 tests, 1,258 passed,
+zero failed, five Windows skips, protocol smoke, and all 17 benchmark fixtures.
+After the native-CI follow-ups above, complete acceptance remains pending
+[CI run 37194760358](https://github.com/mahadansar/sol-luna-orchestrator/actions/runs/37194760358)
+at source checkpoint `3224d4a`.
 
 The Node filesystem helper does not provide atomic directory-handle-relative
 namespace mutation. Rechecking a parent after asynchronous work narrows the

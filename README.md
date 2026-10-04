@@ -112,7 +112,7 @@ v0.11.0 production baseline: both Solo Medium and Adaptive Medium passed all
 nine tasks across two repetitions, but Adaptive delegated zero workers and was
 slower and more expensive overall. The two-repetition result is directional,
 not statistically significant. It motivated the post-V3 routing corrections
-intended for v0.12.0; those corrections have not been evaluated by another full
+shipped in v0.12.0; those corrections have not been evaluated by another full
 campaign, so no v0.12.0 performance improvement is claimed.
 
 ## Documentation

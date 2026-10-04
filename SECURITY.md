@@ -419,8 +419,9 @@ move are themselves authoritative mutation boundaries: short writes are retried
 until every accepted byte is written, and an unexpected later
 write/sync/snapshot/unlink failure either proves a safe rollback or counts that
 path as applied before integration stops. A deletion whose namespace move cannot
-be safely rolled back likewise counts as applied and preserves its quarantined
-bytes. These checks make concurrent
+be safely rolled back likewise counts as applied when that move is confirmed
+and preserves recovery state. Protocol loss with an unproven mutation remains
+unknown, separately from confirmed applied-file counts. These checks make concurrent
 batches, cancellation, and late operator/source edits fail closed instead of
 last-writer-wins or falsely reporting a zero-write outcome.
 

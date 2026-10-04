@@ -10,16 +10,22 @@ confidence ledger for the repository. The current release baseline is
 - **Runtime baseline:** v0.12.0, with package and lockfile versions set to
   `0.12.0`.
 - **Latest recorded full deterministic validation:** `npm run verify` passed on
-  2026-09-21 with no failures and only expected platform-specific skips: 1,187
-  tests, 1,184 passed, 0 failed, and 3 skipped on that Windows run. The gate
-  included typecheck, format, the complete deterministic test suite, the MCP
-  protocol smoke test and benchmark fixture validation. That run predates
-  filesystem-authority and
-  integration changes included in the later `84dcf12` hardening checkpoint, so it
-  is historical regression evidence rather than fresh exact-tree acceptance for
-  the current unreleased branch. The branch remains pending a new full verifier
-  run after the known hardening gaps in `HARDENING_PLAN.md` are closed, followed by
-  a ledger refresh and verifier rerun on the documented final tree.
+  2026-10-04 at `a0217f8` on Windows with Node `v22.23.2`: 1,263 tests,
+  1,258 passed, 0 failed, and 5 skipped. Typecheck, formatting, the complete
+  deterministic suite, MCP protocol smoke, and all 17 V2/V3 benchmark fixtures
+  passed. The skips covered a pinned-parent rename unavailable on Windows,
+  file-symlink deletion, two symlink-escape cases without creation privileges,
+  and POSIX process-group cleanup. Later native CI exposed additional issues;
+  this run is evidence for `a0217f8`, not acceptance of the subsequent fixes.
+- **Unreleased hardening checkpoint:** source commit `3224d4a` adds inode-reuse
+  watcher recovery, displaced-directory rollback uncertainty, leaf-link
+  deletion, and canonical workspace aliases/evidence projection. Local focused
+  validation at `8e1eba5` passed 140 tests (137 passed, 3 Windows skips), followed
+  by a passing canonical-alias/evidence regression at `3224d4a` and clean
+  typecheck. Fresh complete cross-platform acceptance is pending
+  [CI run 37194760358](https://github.com/mahadansar/sol-luna-orchestrator/actions/runs/37194760358).
+  See the root [audit report](https://github.com/mahadansar/sol-luna-orchestrator/blob/main/phase4-audit-report.md) for commit coverage and
+  corrections to the supplied handoff. No model-backed campaign was run.
 - **Benchmark V3 baseline evidence:** campaign `2026-08-30T04-26-16-817Z`
   completed 36/36 valid runs against the v0.11.0 production baseline at standard
   Codex speed: nine tasks, Solo Medium versus Adaptive Medium, two repetitions,
@@ -728,9 +734,10 @@ and dedicated MCP connection logs; delegated attempts additionally have typed
 queued, started, completed, worktree, integration, and batch events. Attempt 4's
 three initial tasks all selected `high`; its explicit same-thread continuation
 preserved `high` but failed on a false-positive scope violation caused by the
-orchestrator-owned shared `node_modules` link. Focused triage now excludes only a
-link that still resolves to the expected dependency source and continues to fail
-closed for a replaced directory or retargeted link. Attempt 5 selected one `high`.
+orchestrator-owned shared `node_modules` link. At that time, focused triage
+excluded only links still resolving to the expected dependency source. The
+unreleased hardening replaces that approach with private dependency snapshots;
+worker-created links remain visible in evidence. Attempt 5 selected one `high`.
 Attempt 6 independently selected `medium` for a mechanical documentation
 inventory and `high` for cross-file coverage judgment; both started as real
 GPT-5.6 Luna tasks and passed with no observed edits. The effort variation is
@@ -1263,7 +1270,7 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   non-finite totals), freshness/effective bounds, and no inferred prices. Live
   acceptance is **N/A** for these pure post-hoc primitives: real campaign usage
   was observed, but no production rate-card lookup, billing-account consumer,
-  routing consumer, or cost-calculation API exists.
+  cost-based routing consumer, or cost-calculation API exists.
 - **Attempt-evidence hardening:** Targeted deterministic execution **DEEP PASS**
   on 2026-08-26 for authoritative success usage; `turn.failed`; stream and
   abnormal-process errors; failure before `thread.started`; timeout and external
@@ -1277,10 +1284,11 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   usage projection, attempt/result/event schema, worker lifecycle, repair,
   continuation, recovery, activity reduction, identity provenance, or any future
   routing/policy consumer.
-  **Gap:** no retrieval, account lookup, prediction, routing, or measured saving
-  is implemented; the foundation remains limited to post-hoc evidence.
-- **Confidence:** **Strong** for the shipped bounded foundation, not future P1.1
-  policy or pricing services.
+  **Gap:** this foundation implements no price retrieval, account lookup,
+  prediction, cost-based routing, or measured saving; it remains limited to
+  post-hoc evidence. Adaptive compute policy is recorded separately above.
+- **Confidence:** **Strong** for the shipped bounded foundation. P1.1 policy
+  evidence is recorded separately above; pricing services remain future work.
 
 ### Worker `failureCauses` and authoritative-verification contradiction handling
 
@@ -1299,8 +1307,8 @@ The 2026-08-22 v0.8.0 acceptance run is retained as historical evidence:
   discrepancy/provenance, and activity `claimed: FAILED` versus `verdict: PASS`.
 - **Dependencies/retest triggers:** external worker schema, verification
   authority/equivalence, final Git evidence, repair classifier, or failure
-  rendering changes. **Gap:** this is evidence for future P1.1 classification,
-  not the future classifier itself; deterministic negative controls remain the
+  rendering changes. **Gap:** this historical run proves the contradiction
+  boundary, not the later P1.1 classifier; deterministic negative controls remain the
   authority for malformed and veto cases.
 - **Confidence:** **Strong**.
 

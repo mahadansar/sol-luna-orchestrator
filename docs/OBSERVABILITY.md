@@ -382,8 +382,10 @@ the terminal integration events above rather than projecting
 `integration.blocked` itself. For `integration.partial`, `appliedFiles` is the
 number of authoritative paths that were actually changed before integration
 stopped; later cancellation does not reset it to zero. A deletion namespace move
-also counts as applied when rollback cannot safely restore it, with the warning
-record preserving that the moved bytes remain in orchestrator quarantine.
+also counts as applied when the move is confirmed and rollback cannot safely
+restore it. Warnings identify retained recovery backups or tombstones. An
+unacknowledged helper outcome is reported as unknown and is excluded from
+confirmed `appliedFiles` rather than silently counted as zero mutation.
 
 Typed `integration.verification.started` and
 `integration.verification.completed` events are reduced into a separate final

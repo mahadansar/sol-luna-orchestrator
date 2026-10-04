@@ -94,7 +94,8 @@ All notable changes to this project are documented here. Format follows
   identity across linked worktrees/processes. Integration revalidates
   authoritative destination state and sealed source evidence under that
   authority, binds final copies to the accepted source bytes and destination
-  state, and moves proven deletions through a confined quarantine before unlink.
+  state, and moves proven deletions through a same-parent tombstone before unlink,
+  with a separate confined recovery backup.
   Cancellation observed before the first write produces no authoritative write;
   later observed cancellation stops further writes and reports already-applied
   changes truthfully, preserving quarantined deletion bytes when rollback is
@@ -116,7 +117,7 @@ All notable changes to this project are documented here. Format follows
   the filesystem tree junction-safely before pruning Git metadata, so
   worker-created links cannot redirect cleanup outside the isolated worktree.
 - Integration now treats exclusive create, existing-file truncate, and deletion
-  quarantine rename as authoritative mutation boundaries. Short writes are
+  tombstone rename as authoritative mutation boundaries. Short writes are
   completed in a loop; a later write/sync/snapshot/unlink failure either proves a
   safe rollback or is counted truthfully as an applied partial mutation before
   integration stops, so telemetry cannot report zero after authoritative bytes or

@@ -703,6 +703,10 @@ real Codex sessions with real parent and Luna turns.
 | **Linux**      | Verified         | **Verified**          | Ubuntu acceptance used the trusted-development sandbox workaround below     |
 | **macOS**      | Verified         | Not yet run           | `macos-latest`, GitHub-hosted                                               |
 
+This table summarizes platform coverage. Exact commit, date, skips, and
+unreleased-hardening freshness are recorded in
+[`FEATURE_ACCEPTANCE.md`](FEATURE_ACCEPTANCE.md).
+
 Platform-specific behaviour is exercised by real code paths rather than mocked:
 worktree tests create actual git worktrees and directory links, and the CLI tests
 spawn the real binary, so each runner tests its own filesystem and process

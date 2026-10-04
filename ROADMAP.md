@@ -443,7 +443,7 @@ repetitions at standard Codex speed with `gpt-5.6-sol` Medium supervising the
 v0.11.0 production baseline. Both strategies passed every task. Adaptive
 delegated zero workers and was slower and more expensive overall. Two
 repetitions are directional evidence, not statistical significance. The result
-led to the post-V3 routing corrections intended for v0.12.0; no full campaign
+led to the post-V3 routing corrections shipped in v0.12.0; no full campaign
 has measured those corrections, so it supports no post-v0.11 performance claim.
 
 ## Research and platform work
