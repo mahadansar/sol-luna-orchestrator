@@ -373,23 +373,31 @@ operator or peer-batch drift. Each isolated worktree is re-read and compared
 with its sealed evidence digest immediately before integration. At the actual
 write boundary, a copied file is bound to the exact accepted source bytes plus
 the revalidated destination identity/content rather than a stale pathname
-snapshot. A proven deletion first renames that exact destination into the
-confined `.sol-luna/integration-delete` quarantine, rechecks both the source and
-quarantined destination, and only then unlinks the random quarantine name. A
-raced or cancelled deletion is restored when that is still safe; otherwise the
-quarantined bytes are preserved for review rather than deleting newer
-authoritative state.
+snapshot. A deletion first saves accepted file bytes (or link-target metadata)
+in the confined `.sol-luna/integration-delete` recovery directory. It then
+renames the exact destination to a random tombstone in the same pinned parent,
+rechecks source, destination, parent, and recovery-backup evidence, and unlinks
+that tombstone. A raced or cancelled deletion restores the exact original by
+renaming the tombstone back when safe. Otherwise recovery state is retained for
+review; newer authoritative state is never overwritten by an unsafe rollback.
 
 Cancellation observed before the first authoritative integration write performs
 no authoritative write. If cancellation is observed after earlier writes, no
 further write begins and the result truthfully reports those already-applied paths.
-Authoritative integration and private dependency provisioning never create a
-missing destination parent through a pathname boundary. Node does not expose a
-cross-platform directory-handle-relative mkdir primitive, so every required parent
-segment must already exist as a real, canonically confined directory. Missing,
-replaced, non-directory, or symlink/junction ancestry is refused before the file or
-snapshot mutation begins, eliminating the final identity-check-to-mkdir escape
-window instead of trying to repair an out-of-workspace namespace mutation later.
+Authoritative integration and private dependency provisioning create missing
+parent segments individually beneath captured parent authority. Each helper
+proves its CWD identity before receiving a mutation; the parent rechecks the
+pathname identity after asynchronous pre-execution checks. Created directories
+are recorded by identity and rolled back in reverse order only while identical
+and empty. Replaced, non-directory, or redirected ancestry is refused. Residual
+namespace mutation is reported as proven or unknown rather than silently
+claiming complete rollback.
+
+These checks do not provide an atomic filesystem sandbox. Standard Node lacks
+portable directory-handle-relative mkdir/unlink/rename primitives. A concurrent
+namespace change after the final identity check remains possible, particularly
+when POSIX permits moving a helper's bound directory. File scopes remain
+detective; operator-controlled repository permissions are the stronger boundary.
 Exclusive new-file creation, existing-file truncation, and the deletion namespace
 move are themselves authoritative mutation boundaries: short writes are retried
 until every accepted byte is written, and an unexpected later

@@ -781,7 +781,17 @@ export async function runPinnedDirectoryMutation(
 
   const exitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
     (resolve) => {
-      child.once("exit", (code, signal) => resolve({ code, signal }));
+      child.once("close", (code, signal) => {
+        if (!readySettled) {
+          readySettled = true;
+          readyReject(
+            new Error(
+              "Pinned filesystem helper closed before establishing directory authority.",
+            ),
+          );
+        }
+        resolve({ code, signal });
+      });
     },
   );
   child.once("error", (error) => {
@@ -790,6 +800,10 @@ export async function runPinnedDirectoryMutation(
       readyReject(error);
     }
   });
+  // A helper that closes while an asynchronous pre-execution check is pending
+  // can leave a broken stdin pipe. Handle its error and use the closed helper's
+  // result (or conservative protocol loss) below instead of crashing the parent.
+  child.stdin.on("error", () => undefined);
 
   let ready: ChildReady;
   try {
@@ -814,6 +828,16 @@ export async function runPinnedDirectoryMutation(
 
   try {
     await options.beforeExecute?.();
+    const current = await capturePinnedDirectoryAuthority(authority.directory);
+    if (
+      current.identity !== authority.identity ||
+      normalizePathKey(current.canonical) !== normalizePathKey(authority.canonical)
+    ) {
+      throw new PinnedDirectoryMutationError(
+        `Pinned filesystem parent changed before mutation: ${authority.directory}.`,
+        false,
+      );
+    }
     child.stdin.end(JSON.stringify(mutation));
   } catch (error) {
     child.kill();

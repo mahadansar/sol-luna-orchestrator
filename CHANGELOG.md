@@ -9,6 +9,8 @@ All notable changes to this project are documented here. Format follows
 ### Fixed
 
 - Metadata cancellation after lease acquisition releases its persistent owner.
+  Pinned filesystem helpers settle spawn/pre-ready failures, drain result output
+  before interpreting closure, and recheck parents after awaited setup hooks.
 - Single-task continuations preserve the parent's authoritative workspace and
   pinned Git evidence. Lifecycle setup failure and cancellation during trust
   setup restore unspent continuation authority; synchronous expiry-release

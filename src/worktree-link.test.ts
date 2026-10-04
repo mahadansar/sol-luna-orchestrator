@@ -24,6 +24,58 @@ import {
 } from "./worktree.js";
 import { runGit } from "./git.js";
 
+test("pinned helper spawn failure settles when its captured parent disappears", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-pinned-spawn-"));
+  const authority = await capturePinnedDirectoryAuthority(root, root);
+  await fs.rmdir(root);
+  await assert.rejects(
+    runPinnedDirectoryMutation(authority, { op: "mkdir", name: "child" }),
+    { code: "ENOENT" },
+  );
+});
+
+test("pinned helper rechecks parent authority after asynchronous pre-execution checks", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-pinned-delayed-"));
+  const original = path.join(root, "original");
+  const replacement = path.join(root, "replacement");
+  const route = path.join(root, "route");
+  const parent = path.join(route, "parent");
+  const linkType = process.platform === "win32" ? "junction" : "dir";
+  try {
+    await fs.mkdir(path.join(original, "parent"), { recursive: true });
+    await fs.mkdir(path.join(replacement, "parent"), { recursive: true });
+    try {
+      await fs.symlink(original, route, linkType);
+    } catch {
+      t.skip("directory links are not permitted on this machine");
+      return;
+    }
+    const authority = await capturePinnedDirectoryAuthority(parent, root);
+    await assert.rejects(
+      runPinnedDirectoryMutation(
+        authority,
+        { op: "mkdir", name: "child" },
+        {
+          beforeExecute: async () => {
+            await fs.unlink(route);
+            await fs.symlink(replacement, route, linkType);
+          },
+        },
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof PinnedDirectoryMutationError);
+        assert.equal(error.mutated, false);
+        assert.match(error.message, /parent changed before mutation/i);
+        return true;
+      },
+    );
+    assert.deepEqual(await fs.readdir(parent), []);
+    assert.deepEqual(await fs.readdir(path.join(original, "parent")), []);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("failed pinned unlink does not report mutation merely because its target still exists", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-pinned-unlink-"));
   const target = path.join(root, "target.txt");
