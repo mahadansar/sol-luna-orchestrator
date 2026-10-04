@@ -5,6 +5,7 @@ import {
   type ThreadOptions,
   type TurnOptions,
 } from "@openai/codex-sdk";
+import { LATEST_LUNA_SELECTOR } from "./model-catalog.js";
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import {
@@ -196,7 +197,7 @@ async function runWorkerThread(
     envOverrides?: Record<string, string>;
   } = {},
 ): Promise<ObservedRun> {
-  if ((options.model ?? LUNA_MODEL) === "latest-luna") {
+  if ((options.model ?? LUNA_MODEL) === LATEST_LUNA_SELECTOR) {
     throw new Error("Automatic worker model selection must complete before execution.");
   }
   const observed: ObservedRun = {

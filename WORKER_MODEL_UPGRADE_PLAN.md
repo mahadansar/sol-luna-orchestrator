@@ -149,6 +149,10 @@ the legitimate intermediate empty file and recover by shrinking the cursor,
 without the reattachment that this fixture asserted. The equal-size case now
 writes through an `r+` handle without truncating, preserving the intended
 regression seam. These are test corrections; the watcher runtime is unchanged.
+All 66 exploration/session-handoff/activity-watch cases pass after those
+corrections. Final review also removes the unused pre-startup MCP instance:
+the server is constructed only after selection, before tools are registered.
+The worker's unresolved-selector guard shares the canonical selector constant.
 Full acceptance is pending the corrected source gate.
 
 ## Documentation audit findings

@@ -1174,10 +1174,8 @@ export function configurationCorrectionWarnings(
   return warnings;
 }
 
-let server = new McpServer(
-  { name: "sol-luna-orchestrator", version: SERVER_VERSION },
-  { instructions: SERVER_INSTRUCTIONS },
-);
+// Construct only after model resolution, before registering or connecting tools.
+let server: McpServer;
 
 // Backstop against recursive delegation: if this process was launched from
 // inside a Luna worker, do not advertise the delegation tool at all. Workers
