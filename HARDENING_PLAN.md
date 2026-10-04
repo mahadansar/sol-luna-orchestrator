@@ -1,10 +1,14 @@
 # Orchestrator hardening recovery plan
 
-Last audited: 2026-09-27
+Last audited: 2026-10-04
 
 Branch: `feature/orchestrator-upgrades-2026-09-21`
 
-Current checkpoint: `84dcf12` (`chore: checkpoint orchestrator hardening work`)
+Current runtime checkpoint: `90b7441` (`test: separate shutdown bounds from fixture startup`)
+
+Audit fixes and regressions are committed. See
+[phase4-audit-report.md](phase4-audit-report.md) for the independent review,
+including corrections to the supplied handoff.
 
 Base: `77b42f9` (`v0.12.0`, current `main` at the time of this audit)
 
@@ -20,6 +24,34 @@ Both this plan and the preserved September 21 checkpoint live at the repository
 root intentionally. `npm pack --dry-run` on the recovery tree confirms they are
 not included in the published package, avoiding a branch-internal handoff becoming
 release documentation by accident.
+
+## Current recovery status (2026-10-04)
+
+The original audit covered nine commits through `338ed69` after `77b42f9`.
+Seven focused audit commits now follow that checkpoint. Phases 0 through 3 are implemented:
+`6be2557` restored documentation freshness, `5dafae3` isolated routing fixtures,
+`c70a7d4` provisioned integration parents, `eb54447` consolidated pinned deletion
+and filesystem authority, and `338ed69` bound dependency snapshots to content.
+`11888df` additionally hardened continuation lease settlement.
+
+Phase 4 reviewed all nine commits by ownership boundary and added focused fixes
+and regressions. The supplied F2 permanent-reservation-leak claim was disproved:
+the new test passes without its proposed fix because the outer batch owner
+already releases unspent reservations. Other handoff findings were confirmed,
+and additional lifecycle, helper, and obsolete-link evidence gaps were found.
+
+Phase 5 requires a complete verifier run and acceptance-ledger refresh followed
+by a verifier rerun on the documented tree. Phase 6 requires final review and a
+clean committed tree with current remote/CI evidence. No release is authorized
+from this branch. The checkpoint gaps below describe the historical `84dcf12`
+tree; they are not current implementation claims.
+
+The first full post-fix test run reached 1,263 tests with one shutdown-fixture
+deadline failure. The isolated case passed; `90b7441` separates fixture setup
+from the existing shutdown liveness bound, and its full eight-test suite passes.
+Fresh whole-tree verification is pending. The requested GPT-6 Luna default and
+optional automatic latest-Luna mode will follow hardening acceptance; they have
+not been applied to this checkpoint.
 
 ## Why this branch exists
 
@@ -266,7 +298,7 @@ cleanup failure accounting.
 
 ### Phase 4 - adversarial whole-branch review
 
-Audit the entire three-commit delta from `77b42f9` with emphasis on authority
+Audit the entire branch delta from `77b42f9` with emphasis on authority
 lifetime and duplicate implementations rather than adding new product scope.
 
 Review at minimum:
