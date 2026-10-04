@@ -11,6 +11,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
+import { LUNA_MODEL } from "./config.js";
 import {
   exploreInputSchema,
   exploreMcpInputShape,
@@ -703,7 +704,7 @@ test("handleExplore executes exploration, records turn, and emits lifecycle even
       verdict: "PASS",
       workerClaimedStatus: "PASS",
       trustworthy: true,
-      model: "gpt-5.6-luna",
+      model: LUNA_MODEL,
       effort: inp.effort,
       effortReason: inp.effortReason,
       durationSeconds: 4,
@@ -792,9 +793,9 @@ test("handleExplore executes exploration, records turn, and emits lifecycle even
   const completed = events.find((e) => e.type === "explore.completed");
   assert.ok(started);
   assert.ok(completed);
-  assert.equal(started.requestedModel, "gpt-5.6-luna");
-  assert.equal(started.selectedModel, "gpt-5.6-luna");
-  assert.equal(completed.executedModel, "gpt-5.6-luna");
+  assert.equal(started.requestedModel, LUNA_MODEL);
+  assert.equal(started.selectedModel, LUNA_MODEL);
+  assert.equal(completed.executedModel, LUNA_MODEL);
   assert.equal(completed.workerGroundedClaimsCount, 1);
   assert.doesNotMatch(JSON.stringify(events), /payment gateway|Stripe webhook/i);
 

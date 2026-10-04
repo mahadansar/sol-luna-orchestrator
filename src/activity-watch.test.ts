@@ -896,8 +896,23 @@ for (const rotation of ["delete/recreate", "same-size rewrite"] as const) {
       await waitFor(() => output.includes('"batchId":"old"'));
       assert.equal(attachments, 1);
 
-      if (rotation === "delete/recreate") await fs.rm(eventsPath);
-      await fs.writeFile(eventsPath, encodeBatch("new"), "utf8");
+      if (rotation === "delete/recreate") {
+        await fs.rm(eventsPath);
+        await fs.writeFile(eventsPath, encodeBatch("new"), "utf8");
+      } else {
+        // Overwrite without truncation: writeFile(path) briefly exposes a zero-
+        // length file, which tests shrink recovery rather than this equal-size seam.
+        assert.equal(
+          Buffer.byteLength(encodeBatch("old")),
+          Buffer.byteLength(encodeBatch("new")),
+        );
+        const handle = await fs.open(eventsPath, "r+");
+        try {
+          await handle.writeFile(encodeBatch("new"), "utf8");
+        } finally {
+          await handle.close();
+        }
+      }
       await waitFor(() => output.includes('"batchId":"new"'));
       await waitFor(() => attachments >= 2);
 

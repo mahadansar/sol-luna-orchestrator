@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { LUNA_MODEL } from "./config.js";
 import * as assert from "node:assert/strict";
 import {
   exportSessionHandoff,
@@ -736,7 +737,7 @@ test("restart/new process fails closed: in-memory stores reject prior session re
 
   // New session cannot escalate based on old token
   const computeAdmit = admitCompute({
-    model: "gpt-5.6-luna",
+    model: LUNA_MODEL,
     efforts: ["high"],
     workerCount: 1,
     baseline: DEFAULT_COMPUTE_POLICY,

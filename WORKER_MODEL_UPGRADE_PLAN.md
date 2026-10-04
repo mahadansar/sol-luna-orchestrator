@@ -138,6 +138,19 @@ format/link checks, and packaging validation. Any read-only real catalog check
 must be labeled separately from deterministic tests. Do not claim live GPT-6
 worker acceptance without an actual model-backed run.
 
+## Full-gate corrections
+
+The first complete upgrade gate at `7aed90d` exposed two runtime-default fixtures
+that still expected/authorized GPT-5.6 despite the new default. Only those
+fixtures now use the configured baseline; explicit legacy pins and historical
+records remain unchanged. It also exposed a watcher fixture that used truncating
+`writeFile(path)` to simulate an equal-size overwrite. A health poll could see
+the legitimate intermediate empty file and recover by shrinking the cursor,
+without the reattachment that this fixture asserted. The equal-size case now
+writes through an `r+` handle without truncating, preserving the intended
+regression seam. These are test corrections; the watcher runtime is unchanged.
+Full acceptance is pending the corrected source gate.
+
 ## Documentation audit findings
 
 The committed hardening plan now names the completed merge and the separate
