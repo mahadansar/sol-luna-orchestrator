@@ -68,9 +68,10 @@ absolute `dist/server.js` path, not a path under a global `node_modules`.
 
 **Verify against the real thing, not the documentation.** Several behaviours in
 this project contradict what the docs imply — `mcp_servers={}` not isolating
-workers, `default_tools_approval_mode = "auto"` cancelling every call, the SDK's
-`ModelReasoningEffort` type omitting `max` that the CLI accepts. Each was found
-by running it. If you change something in that area, run it.
+workers, `default_tools_approval_mode = "auto"` cancelling every call, and older
+SDK effort types omitting `max` that the CLI accepted. Each was found by running
+it. The current SDK types `max` directly. If you change something in that area,
+run it.
 
 **Don't let a model's self-report be the test.** A low-effort model will happily
 claim it has a tool it does not have. The isolation test asserts against the

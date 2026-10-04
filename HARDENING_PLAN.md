@@ -62,7 +62,8 @@ macOS with Node 24 and 26: 1,267 tests per job, zero failures, four Windows/macO
 platform skips and five Ubuntu skips. All jobs also passed protocol smoke and
 all 17 benchmark fixtures. Hardening was merged into `main` before the separate
 [worker-model upgrade plan](WORKER_MODEL_UPGRADE_PLAN.md) was committed. The
-GPT-6 default and optional automatic mode now exist on that separate branch;
+GPT-6 default and optional automatic mode were implemented on that separate branch
+and have now been merged into `main` for the prepared, unreleased 0.13.0 candidate;
 they are outside this accepted hardening checkpoint. The user authorized merging hardening into
 `main`, then creating a new branch and committing a model-upgrade plan before
 model implementation. Existing stashed work remains separate.

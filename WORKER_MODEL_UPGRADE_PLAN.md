@@ -55,8 +55,11 @@ is the worker marker; worker execution retains both existing recursion guards.
 5. Keep documentation current in each implementation commit, including the
    limitations of model discovery and any untested live behavior.
 
-No version bump, package publication, tag, release, or historical benchmark
-rewrite is included in this work.
+The original model-upgrade scope included no version bump, package publication,
+tag, release, or historical benchmark rewrite. The subsequent user instruction
+authorized merging the completed upgrade into `main` and preparing 0.13.0.
+That preparation leaves publication pending live testing; it creates no tag or
+GitHub Release and does not rewrite historical benchmark evidence.
 
 ## Discovery and authority design
 
@@ -191,9 +194,12 @@ All upgrade-branch commits through the accepted checkpoint were reviewed:
 Read-only catalog discovery and a real MCP handshake selected/advertised GPT-6
 Luna. No live GPT-6 inference or new performance/cost benchmark was run. This
 acceptance certifies deterministic runtime behavior and catalog/protocol
-integration, not account entitlement or model quality. The upgrade remains on
-its separate branch; package publication and merging this branch are outside
-the completed hardening merge.
+integration, not account entitlement or model quality. The completed upgrade
+was subsequently merged into `main` as `0c0c52d`, following the user's release
+preparation instruction. The 0.13.0 candidate adds version/documentation metadata
+and a parallel live-smoke initialization correction; its new main-branch CI
+must pass before release. Live acceptance remains pending in the
+[acceptance ledger](docs/FEATURE_ACCEPTANCE.md).
 
 ## Documentation audit findings
 

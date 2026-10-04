@@ -1,6 +1,7 @@
 # sol-luna-orchestrator
 
 [![npm](https://img.shields.io/npm/v/sol-luna-orchestrator)](https://www.npmjs.com/package/sol-luna-orchestrator)
+[![npm downloads](https://img.shields.io/npm/dt/sol-luna-orchestrator?logo=npm&label=downloads)](https://www.npmjs.com/package/sol-luna-orchestrator)
 [![CI](https://github.com/mahadansar/sol-luna-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/mahadansar/sol-luna-orchestrator/actions/workflows/ci.yml)
 [![M8ven Verified](https://m8ven.ai/badge/mcp/mahadansar-sol-luna-orchestrator-1k52hj)](https://m8ven.ai/mcp/mahadansar-sol-luna-orchestrator-1k52hj) <!-- m8ven-verify: 11a42c6cbe4b21f5016f5899ac006562 -->
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.12-brightgreen)](docs/CONFIGURATION.md#requirements)
@@ -15,6 +16,11 @@ For each task, the supervisor can stay solo or use one worker, dependent workers
 in sequence, or independent workers in parallel.
 
 ## Quick start
+
+`main` contains the prepared 0.13.0 candidate, pending live testing. npm still
+provides 0.12.0; the GPT-6 default and automatic model selection below are
+candidate behavior until 0.13.0 is published. For candidate testing, use the
+[local development setup](CONTRIBUTING.md#developing-the-mcp-locally).
 
 Prerequisites: Node.js 22.12 or newer and a logged-in
 [OpenAI Codex CLI](https://developers.openai.com/codex).

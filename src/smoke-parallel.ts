@@ -21,6 +21,8 @@ process.env.SOL_LUNA_EVENTS = eventsPath;
 const { runBatch } = await import("./batch.js");
 const { delegateTaskInputSchema } = await import("./contract.js");
 const { runGit } = await import("./git.js");
+const { initializeWorkerModel } = await import("./server.js");
+const workerConfig = await import("./config.js");
 
 const MODULES = [
   { name: "add", op: "+", effort: "medium" as const, expected: 7 },
@@ -65,6 +67,7 @@ async function readEvents(): Promise<EventRecord[]> {
 }
 
 async function main(): Promise<void> {
+  await initializeWorkerModel();
   const repo = path.join(workRoot, "repo");
   await fs.mkdir(path.join(repo, "src"), { recursive: true });
   await fs.mkdir(path.join(repo, "test"), { recursive: true });
@@ -188,7 +191,11 @@ async function main(): Promise<void> {
 
   check("each worker's model and effort are recorded alongside usage", () => {
     for (const event of completed) {
-      assert.match(event.model ?? "", /luna/, `${event.taskId}: model missing`);
+      assert.equal(
+        event.model,
+        workerConfig.LUNA_MODEL,
+        `${event.taskId}: model mismatch`,
+      );
       assert.ok(
         ["medium", "high", "xhigh"].includes(event.effort ?? ""),
         `${event.taskId}: effort missing (got ${event.effort})`,

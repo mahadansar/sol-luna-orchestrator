@@ -2,13 +2,13 @@
 
 This is the authoritative current capability, evidence, freshness, and
 confidence ledger for the repository. The current release baseline is
-`0.12.0`. Shipped history belongs in `CHANGELOG.md`; future work belongs in
+`0.13.0` (prepared and unreleased; latest published release: `0.12.0`). Shipped history belongs in `CHANGELOG.md`; future work belongs in
 `ROADMAP.md`.
 
 ## Current baseline
 
-- **Runtime baseline:** v0.12.0, with package and lockfile versions set to
-  `0.12.0`. The current branch additionally includes the unreleased hardening
+- **Runtime baseline:** v0.13.0, with package and lockfile versions set to
+  `0.13.0`. The prepared main-branch candidate includes the unreleased hardening
   and worker-model changes recorded below and in `CHANGELOG.md`.
 - **Latest exact-source deterministic acceptance:**
   [CI run 37204196400](https://github.com/mahadansar/sol-luna-orchestrator/actions/runs/37204196400)
@@ -18,10 +18,10 @@ confidence ledger for the repository. The current release baseline is
   Ubuntu/Node 24 also passed packaging validation (104 files). Each job ran 1,290 tests:
   Windows and macOS passed 1,286 with 4 platform skips, Ubuntu passed 1,285
   with 5 platform skips. The gate had no failures and only expected platform-specific skips.
-  Subsequent acceptance-record edits change only the plan and this ledger;
+  The subsequent `0c0c52d` acceptance-record edits changed only the plan and this ledger;
   runtime, tests, fixtures, dependency lockfile, and workflow remain identical
   to that accepted source.
-- **Worker-model upgrade accepted:** the separate upgrade branch defaults to
+- **Worker-model upgrade accepted and merged:** `main` now defaults to
   `gpt-6-luna`, with explicit legacy pins preserved. Opt-in
   `LUNA_MODEL=latest-luna` performs bounded compatible catalog selection once
   before admission and freezes the concrete model for the server lifetime.
@@ -34,6 +34,13 @@ confidence ledger for the repository. The current release baseline is
   run or updated performance/cost benchmark is claimed. The committed
   [upgrade plan](https://github.com/mahadansar/sol-luna-orchestrator/blob/feature/luna-model-upgrade-2026-10-04/WORKER_MODEL_UPGRADE_PLAN.md) records implementation,
   commit review, and final evidence.
+- **Release preparation:** 0.13.0 is prepared on `main`, not published or tagged.
+  New candidate CI is required after the version bump and parallel live-smoke
+  initialization correction. The six-job `27cea22` result above remains evidence
+  for that exact earlier source; it does not claim acceptance of the new candidate.
+  Local candidate preparation passed typecheck/build, formatting, all 142
+  guidance/CLI/catalog tests, MCP protocol smoke, and the 104-file packaging dry
+  run. Live acceptance below is still pending.
 - **Earlier local full validation:** `npm run verify` passed on
   2026-10-04 at `a0217f8` on Windows with Node `v22.23.2`: 1,263 tests,
   1,258 passed, 0 failed, and 5 skipped. Typecheck, formatting, the complete
@@ -69,6 +76,50 @@ confidence ledger for the repository. The current release baseline is
   remain historical evidence. They support unchanged behavior, but do not by
   themselves prove the later cancellation, reconciliation, or retention-policy
   semantics. Those changed seams have current deterministic regression evidence.
+
+## 0.13.0 live acceptance and release hold
+
+Status: **PENDING**. Candidate preparation is authorized; no live inference has
+been run for this candidate. This checklist records pending acceptance work,
+not a second release-body document.
+
+1. Build the exact candidate, confirm the repo-local MCP registration launches
+   this checkout's absolute `dist/server.js`, and restart the Codex client.
+   Record the commit, package/SDK/client versions, platform, requested model
+   mode, resolved model, and configured policy. See
+   [the acceptance procedure](../CONTRIBUTING.md#acceptance-procedure).
+2. With `LUNA_MODEL=gpt-6-luna`, run `npm run smoke:live`,
+   `npm run smoke:isolation`, and `npm run smoke:parallel`. Retain command exits
+   and diagnostic/event evidence outside tracked source. Verify real worker
+   model/effort, independent verification, unchanged forbidden files, recursion
+   prevention, separate worktrees, integration, and cleanup. The parallel smoke
+   now initializes automatic selection before workers and checks exact model
+   telemetry; this correction was not part of the earlier accepted checkpoint.
+3. In a separate fresh process, opt into `LUNA_MODEL=latest-luna` and rerun a
+   live delegation and parallel smoke. Record the concrete selected model and
+   verify descriptions, policy, results, and events agree. Do not assume the
+   catalog grants access. Restore the pinned setting when that run ends.
+4. Exercise a retained-worktree continuation through the MCP: record the exact
+   model/thread, original dependency evidence, follow-up verification, lease
+   settlement, and replay refusal. Exercise cancellation and shutdown while
+   work is active; inspect terminal results, descendant cleanup, and worktree
+   ownership rather than accepting worker claims.
+5. Run a genuine substantial task in a fresh parent session without mentioning
+   orchestration. Record natural discovery/routing and independent parent
+   review. Inspect activity during a batch and after log rotation for recovery
+   and privacy. Record failures and unsupported platform cases explicitly.
+6. Add dated observations using
+   [the recording template](../CONTRIBUTING.md#recording-a-run), including evidence
+   locations and unavailable usage. Fix any defects with focused regressions,
+   then rerun the affected live paths and deterministic gate. Refresh exact
+   main-commit CI evidence after any source or candidate metadata changes.
+
+Release remains on hold until the live results are reviewed and all six CI
+jobs pass on the final `main` commit. Then set the actual release date and final
+changelog comparison link, review the GitHub Release body transiently from the
+changelog, and commit any final metadata before its required main-branch CI.
+Tagging, npm publication, and GitHub Release creation require the later release
+instruction and must follow [the release workflow](../CONTRIBUTING.md#releasing).
 
 ## Current capability matrix
 
