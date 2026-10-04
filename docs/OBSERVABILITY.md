@@ -406,6 +406,11 @@ The snapshot also carries a legacy `objective` field. It is always `null`:
 objectives are not persisted, and the field survives only so that older readers
 do not break.
 
+Activity watch also recovers if deletion races the stream open/read after a
+successful stat. It discards partial read and decoder state, reattaches or polls,
+and reads replacement history from byte zero. Other read failures still terminate
+with a diagnostic.
+
 ## Usage data
 
 Authoritative worker usage comes only from an observed Codex SDK

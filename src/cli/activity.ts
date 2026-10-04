@@ -492,6 +492,7 @@ export async function activityCommand(
   options: {
     eventsFile?: string;
     watchFile?: typeof watch;
+    readStream?: typeof createReadStream;
     watchHealthIntervalMs?: number;
   } = {},
 ): Promise<number> {
@@ -528,6 +529,7 @@ export async function activityCommand(
 
   const eventsFile = resolved.path;
   const watchFile = options.watchFile ?? watch;
+  const readStream = options.readStream ?? createReadStream;
   const watchHealthIntervalMs = options.watchHealthIntervalMs ?? 1_000;
   if (!watchMode) {
     let events: TimestampedEvent[];
@@ -670,13 +672,29 @@ export async function activityCommand(
         };
       }
 
-      const chunks: Buffer[] = [];
-      const stream = createReadStream(eventsFile, {
-        start: currentSize,
-        end: info.size - 1,
-      });
-      for await (const chunk of stream) {
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string));
+      let chunks: Buffer[];
+      try {
+        chunks = [];
+        const stream = readStream(eventsFile, {
+          start: currentSize,
+          end: info.size - 1,
+        });
+        for await (const chunk of stream) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string));
+        }
+      } catch (readError) {
+        // The file may have been deleted or atomically rotated between the stat
+        // check and the stream read. Recover the same way as an explicit ENOENT
+        // stat result: reset byte state and let the watcher reattach later.
+        if (
+          readError instanceof Error &&
+          "code" in readError &&
+          (readError as NodeJS.ErrnoException).code === "ENOENT"
+        ) {
+          resetReadState();
+          return { changed: false, snapshots: [], watchTarget: "missing" as const };
+        }
+        throw readError;
       }
 
       const raw = trailingFragment + decoder.write(Buffer.concat(chunks));

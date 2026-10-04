@@ -8,6 +8,7 @@ All notable changes to this project are documented here. Format follows
 
 ### Fixed
 
+- Activity watch recovers when a file disappears between stat and stream read.
 - Shutdown timeout prevents late normal cleanup from starting, including later
   hooks after an in-flight cleanup settles. Synchronous forced-cleanup errors
   cannot skip the remaining process-liveness hooks.

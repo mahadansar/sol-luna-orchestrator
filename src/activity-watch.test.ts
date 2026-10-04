@@ -1,10 +1,61 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { renameSync, rmSync, writeFileSync } from "node:fs";
+import { createReadStream, renameSync, rmSync, writeFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+
+test("watch mode recovers from ENOENT during stream iteration and reads recreated history", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "luna-watch-read-race-"));
+  const eventsFile = path.join(root, "events.jsonl");
+  const encode = (batchId: string) =>
+    `${JSON.stringify({ timestamp: "2026-10-04T00:00:00Z", type: "batch.started", batchId, mode: "parallel", taskCount: 1, maxParallel: 1 })}\n`;
+  await fs.writeFile(eventsFile, encode("old"));
+  const originalWrite = process.stdout.write;
+  let output = "";
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    output += chunk.toString();
+    return true;
+  }) as typeof process.stdout.write;
+  let reads = 0;
+  let watchPromise: Promise<number> | undefined;
+  try {
+    const { activityCommand } = await import("./cli/activity.js");
+    watchPromise = activityCommand(["--watch", "--json"], {
+      eventsFile,
+      watchHealthIntervalMs: 20,
+      readStream: (file, options) => {
+        reads += 1;
+        if (reads === 1) {
+          // Delete only after fileInfo succeeded; the real stream emits ENOENT asynchronously.
+          rmSync(eventsFile);
+          const stream = createReadStream(file, options);
+          stream.once("error", () => writeFileSync(eventsFile, encode("recreated")));
+          return stream;
+        }
+        return createReadStream(file, options);
+      },
+    });
+    const deadline = Date.now() + 5_000;
+    while (!output.includes('"batchId":"recreated"') && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.ok(reads >= 2, "recreated file must be read again from byte zero");
+    assert.match(output, /"batchId":"recreated"/);
+    assert.doesNotMatch(output, /"batchId":"old"/);
+    process.emit("SIGINT", "SIGINT");
+    assert.equal(await watchPromise, 0);
+    watchPromise = undefined;
+  } finally {
+    if (watchPromise) {
+      process.emit("SIGINT", "SIGINT");
+      await watchPromise.catch(() => undefined);
+    }
+    process.stdout.write = originalWrite;
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
 
 test("watch mode refuses a directory activity target instead of streaming empty state", async () => {
   const workRoot = await fs.mkdtemp(path.join(os.tmpdir(), "luna-watch-directory-"));
