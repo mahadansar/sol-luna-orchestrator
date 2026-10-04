@@ -8,26 +8,32 @@ confidence ledger for the repository. The current release baseline is
 ## Current baseline
 
 - **Runtime baseline:** v0.12.0, with package and lockfile versions set to
-  `0.12.0`.
+  `0.12.0`. The current branch additionally includes the unreleased hardening
+  and worker-model changes recorded below and in `CHANGELOG.md`.
 - **Latest exact-source deterministic acceptance:**
-  [CI run 37194760358](https://github.com/mahadansar/sol-luna-orchestrator/actions/runs/37194760358)
-  passed on 2026-10-04 at runtime/source commit `3224d4a` on Windows, Ubuntu,
+  [CI run 37204196400](https://github.com/mahadansar/sol-luna-orchestrator/actions/runs/37204196400)
+  passed on 2026-10-04 at runtime/source commit `27cea22` on Windows, Ubuntu,
   and macOS with Node 24 and 26. All six jobs passed typecheck, formatting,
   complete tests, MCP protocol smoke, and all 17 V2/V3 benchmark fixtures;
-  Ubuntu/Node 24 also passed packaging validation. Each job ran 1,267 tests:
-  Windows and macOS passed 1,263 with 4 platform skips, Ubuntu passed 1,262
+  Ubuntu/Node 24 also passed packaging validation (104 files). Each job ran 1,290 tests:
+  Windows and macOS passed 1,286 with 4 platform skips, Ubuntu passed 1,285
   with 5 platform skips. The gate had no failures and only expected platform-specific skips.
-  This is the accepted hardening checkpoint; it does not certify subsequent
-  worker-model changes on the upgrade branch.
-- **Worker-model upgrade in progress:** the new branch defaults to
-  `gpt-6-luna`, with explicit legacy pins preserved. Typecheck/build,
-  configuration/CLI/policy/guidance tests, and a focused continuation-authority
-  regression pass. Bounded optional automatic discovery and its focused regressions are implemented;
-  complete upgrade acceptance remains pending. The SDK/lockfile now use 0.160.0:
-  a read-only real catalog probe selected `gpt-6-luna` with all four allowed efforts.
-  A real MCP handshake in automatic mode advertised that concrete model in
-  instructions/tools; 168 focused tests and the continuation/offline CLI checks pass.
-  No live GPT-6 inference run is claimed.
+  Subsequent acceptance-record edits change only the plan and this ledger;
+  runtime, tests, fixtures, dependency lockfile, and workflow remain identical
+  to that accepted source.
+- **Worker-model upgrade accepted:** the separate upgrade branch defaults to
+  `gpt-6-luna`, with explicit legacy pins preserved. Opt-in
+  `LUNA_MODEL=latest-luna` performs bounded compatible catalog selection once
+  before admission and freezes the concrete model for the server lifetime.
+  Deterministic regressions cover protocol bounds, cancellation/process cleanup,
+  policy agreement, offline CLI inspection, session freezing, and exact-model
+  continuation. The SDK/lockfile use 0.160.0. A read-only real catalog probe
+  selected `gpt-6-luna` with all four allowed efforts; a real MCP handshake
+  advertised that concrete model in instructions/tools. Local CLI lifecycle
+  smoke passed all 11 groups with isolated Codex homes. No live GPT-6 inference
+  run or updated performance/cost benchmark is claimed. The committed
+  [upgrade plan](https://github.com/mahadansar/sol-luna-orchestrator/blob/feature/luna-model-upgrade-2026-10-04/WORKER_MODEL_UPGRADE_PLAN.md) records implementation,
+  commit review, and final evidence.
 - **Earlier local full validation:** `npm run verify` passed on
   2026-10-04 at `a0217f8` on Windows with Node `v22.23.2`: 1,263 tests,
   1,258 passed, 0 failed, and 5 skipped. Typecheck, formatting, the complete
@@ -75,6 +81,7 @@ file and directory symlink-escape tests skipped on the local machine.
 | Capability                                              | Coverage | Deterministic | Live evidence | Confidence    |
 | ------------------------------------------------------- | -------- | ------------- | ------------- | ------------- |
 | Zero-worker/adaptive delegation                         | PASS     | PASS          | PASS          | Strong        |
+| Pinned/default and optional automatic Luna selection    | PASS     | DEEP PASS     | NOT TESTED    | Strong        |
 | Single delegation                                       | PASS     | PASS          | PASS          | Strong        |
 | Sequential batches                                      | PASS     | PASS          | PASS          | Strong        |
 | Parallel batches                                        | PASS     | DEEP PASS     | DEEP PASS     | Battle-tested |

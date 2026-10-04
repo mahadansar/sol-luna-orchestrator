@@ -9,7 +9,8 @@ Hardening runtime source `3224d4a` passed all six Windows/Ubuntu/macOS CI jobs
 on Node 24 and 26; see [FEATURE_ACCEPTANCE.md](docs/FEATURE_ACCEPTANCE.md).
 The existing stash is unrelated and must remain untouched.
 
-Status: steps 1 and 2 implemented; full upgrade acceptance remains pending. This plan was first committed as `7a507bc` before
+Status: all three steps complete; deterministic cross-platform acceptance passed
+at source `27cea22`. This plan was first committed as `7a507bc` before
 model implementation. The subsequent `main` ledger-wording fix `4a535f2` was
 merged into this branch before the default-change commit.
 The current implementation defaults to `gpt-6-luna`.
@@ -153,7 +154,46 @@ All 66 exploration/session-handoff/activity-watch cases pass after those
 corrections. Final review also removes the unused pre-startup MCP instance:
 the server is constructed only after selection, before tools are registered.
 The worker's unresolved-selector guard shares the canonical selector constant.
-Full acceptance is pending the corrected source gate.
+The corrected source gate passed all six jobs; see the final acceptance below.
+
+## Final acceptance and commit review
+
+[CI run 37204196400](https://github.com/mahadansar/sol-luna-orchestrator/actions/runs/37204196400)
+passed on 2026-10-04 at exact source
+`27cea2283079a43a65e650366befcd37f33786a4`. Windows, Ubuntu, and macOS each
+passed on Node 24 and 26. Every job ran 1,290 tests with zero failures:
+Windows/macOS passed 1,286 with four expected platform skips; Ubuntu passed
+1,285 with five. All jobs passed build, typecheck, formatting, the complete
+test suite, MCP protocol smoke, and all 17 benchmark fixtures. Ubuntu/Node 24
+also passed the 104-file packaging dry run. Platform skip details are recorded
+in [FEATURE_ACCEPTANCE.md](docs/FEATURE_ACCEPTANCE.md).
+
+Local CLI lifecycle smoke also passed all 11 groups using isolated temporary
+Codex homes. The documentation audit checked all 57 tracked Markdown files for
+relative file targets and heading anchors. Final acceptance-record edits change
+only this plan and the ledger; runtime, tests, fixtures, dependency lockfile,
+and CI workflow remain identical to the accepted source checkpoint.
+
+All upgrade-branch commits through the accepted checkpoint were reviewed:
+
+| Commit    | Reviewed outcome                                                          |
+| --------- | ------------------------------------------------------------------------- |
+| `7a507bc` | Committed the authorized plan before implementation.                      |
+| `5ece91e` | Merged the accepted main-branch ledger wording correction.                |
+| `8740499` | Changed the default to GPT-6 Luna while retaining explicit pins.          |
+| `3902608` | Added bounded catalog discovery and one-time startup selection.           |
+| `01959a5` | Added frozen-model, protocol, and process-tree cleanup regressions.       |
+| `7aed90d` | Updated live smoke helpers and canonical model documentation.             |
+| `b9bb376` | Updated the SDK/catalog dependency and removed the obsolete effort cast.  |
+| `25a6ba2` | Corrected active-default and equal-size watcher test fixtures.            |
+| `27cea22` | Constructed the MCP server after selection and shared the selector guard. |
+
+Read-only catalog discovery and a real MCP handshake selected/advertised GPT-6
+Luna. No live GPT-6 inference or new performance/cost benchmark was run. This
+acceptance certifies deterministic runtime behavior and catalog/protocol
+integration, not account entitlement or model quality. The upgrade remains on
+its separate branch; package publication and merging this branch are outside
+the completed hardening merge.
 
 ## Documentation audit findings
 
