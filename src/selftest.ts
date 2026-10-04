@@ -156,6 +156,8 @@ test("continuation resumes the exact thread and reruns verification under the or
     followUps: [],
   };
   let resumedThreadId: string | null = null;
+  let resumedModel: string | undefined;
+  const exactModel = "gpt-7-luna";
   let prompt = "";
   let verificationExecutionId: string | null = null;
   const attemptStarts: string[] = [];
@@ -189,8 +191,9 @@ test("continuation resumes the exact thread and reruns verification under the or
     startThread: () => {
       throw new Error("continuation must not start a fresh thread");
     },
-    resumeThread: (threadId) => {
+    resumeThread: (threadId, options) => {
       resumedThreadId = threadId;
+      resumedModel = options.model;
       return {
         id: threadId,
         runStreamed: async (inputPrompt) => {
@@ -206,18 +209,28 @@ test("continuation resumes the exact thread and reruns verification under the or
     threadId: "thread-original",
     instruction: "Re-check the upload notes and record the remaining evidence.",
     codex: fakeCodex,
+    model: exactModel,
     predecessorExecutionId: "exec-predecessor",
     logicalAttempt: 4,
     hooks: {
       onVerificationStart: (_count, attribution) => {
         verificationExecutionId = attribution.executionId;
       },
-      onAttemptStart: (evidence) => attemptStarts.push(evidence.executionId),
-      onAttemptComplete: (evidence) => attemptCompletions.push(evidence.executionId),
+      onAttemptStart: (evidence) => {
+        assert.equal(evidence.requestedModel, exactModel);
+        attemptStarts.push(evidence.executionId);
+      },
+      onAttemptComplete: (evidence) => {
+        assert.equal(evidence.requestedModel, exactModel);
+        attemptCompletions.push(evidence.executionId);
+      },
     },
   });
 
   assert.equal(resumedThreadId, "thread-original");
+  assert.equal(resumedModel, exactModel);
+  assert.equal(result.model, exactModel);
+  assert.equal(result.attempts?.[0]?.requestedModel, exactModel);
   assert.equal(result.workerThreadId, "thread-original");
   assert.deepEqual(result.workerClaimedFailureCauses, []);
   assert.equal(result.changeIntent, "optional");

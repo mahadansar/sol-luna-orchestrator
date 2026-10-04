@@ -15,6 +15,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import {
   installedCodexCatalogCommand,
   readCodexModelCatalog,
@@ -454,4 +457,95 @@ test("pinned startup and offline config inspection never discover a catalog", as
     { env: { ...process.env, LUNA_MODEL: "latest-luna" }, timeout: 10000 },
   );
   assert.match(stdout, /latest-luna/);
+});
+
+test("catalog cancellation terminates the launcher descendant as well as its parent", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-catalog-tree-"));
+  const heartbeat = path.join(root, "heartbeat.txt");
+  const descendant = `const fs=require('node:fs');let tick=0;setInterval(()=>fs.writeFileSync(${JSON.stringify(heartbeat)},String(++tick)),30);`;
+  const controller = new AbortController();
+  const pending = readCodexModelCatalog({
+    command: [
+      process.execPath,
+      "-e",
+      `
+    require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:'inherit',windowsHide:true});
+    setInterval(()=>{},1000);
+  `,
+    ],
+    signal: controller.signal,
+    timeoutMs: 10000,
+  });
+  const refused = assert.rejects(pending, /cancelled/);
+  try {
+    const deadline = Date.now() + 8000;
+    while (true) {
+      try {
+        if ((await fs.readFile(heartbeat, "utf8")).length) break;
+      } catch {}
+      assert.ok(Date.now() < deadline, "catalog descendant never became ready");
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    controller.abort();
+    await refused;
+    const stopped = await fs.readFile(heartbeat, "utf8");
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.equal(
+      await fs.readFile(heartbeat, "utf8"),
+      stopped,
+      "descendant kept executing after cleanup",
+    );
+  } finally {
+    controller.abort();
+    await refused;
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("failed automatic startup is not retried or replaced by a silent default", async () => {
+  const run = promisify(execFile);
+  const server = new URL("./server.js", import.meta.url).href;
+  const { stdout } = await run(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+    import {initializeWorkerModel} from ${JSON.stringify(server)};
+    let calls=0;
+    const failure=new Error('catalog unavailable');
+    let original;
+    try{await initializeWorkerModel(async()=>{calls++;throw failure;});}catch(error){original=error;}
+    try{await initializeWorkerModel(async()=>{calls++;return 'gpt-6-luna';});process.exitCode=2;}
+    catch(error){console.log(JSON.stringify({calls,same:error===original,message:error.message}));}
+  `,
+    ],
+    {
+      env: { ...process.env, SOL_LUNA_WORKER: "0", LUNA_MODEL: "latest-luna" },
+      timeout: 10000,
+    },
+  );
+  assert.deepEqual(JSON.parse(stdout), {
+    calls: 1,
+    same: true,
+    message: "catalog unavailable",
+  });
+});
+
+test("catalog rejects malformed initialization before requesting a model page", async () => {
+  await assert.rejects(
+    readCodexModelCatalog({
+      command: [
+        process.execPath,
+        "-e",
+        `
+    require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+      const msg=JSON.parse(line);
+      process.stdout.write(JSON.stringify({id:msg.id,result:null})+'\\n');
+    });
+  `,
+      ],
+    }),
+    /malformed/,
+  );
 });

@@ -246,6 +246,13 @@ export async function readCodexModelCatalog(options: CatalogOptions): Promise<un
             )
               throw new Error();
             if (requestId === 0) {
+              if (
+                !message.result ||
+                typeof message.result !== "object" ||
+                Array.isArray(message.result)
+              ) {
+                throw new Error();
+              }
               send({ method: "initialized", params: {} });
               requestPage();
               continue;

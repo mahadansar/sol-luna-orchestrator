@@ -954,3 +954,25 @@ function emptyCodexHome(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sol-luna-cli-"));
   return dir;
 }
+
+test("status and doctor report automatic mode offline without trying catalog discovery", async () => {
+  const home = emptyCodexHome();
+  try {
+    fs.writeFileSync(
+      path.join(home, "config.toml"),
+      '[mcp_servers.sol-luna-orchestrator.env]\nLUNA_MODEL = "latest-luna"\n',
+      "utf8",
+    );
+    const status = await runCli(["status", "--json"], { CODEX_HOME: home });
+    assert.match(status.stdout, /latest-luna/);
+    const doctor = await runCli(["doctor", "--json"], { CODEX_HOME: home });
+    const report = JSON.parse(doctor.stdout);
+    const model = report.checks.find(
+      (check: { name: string }) => check.name === "Worker model",
+    );
+    assert.equal(model.detail, "latest-luna");
+    assert.doesNotMatch(doctor.stderr, /catalog discovery/);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});

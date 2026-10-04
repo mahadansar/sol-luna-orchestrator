@@ -18,9 +18,14 @@ Step 1 validation: typecheck and build pass; 151 configuration/CLI/policy cases
 passed, followed by all 44 guidance cases after correcting the ledger wording.
 The single-delegation continuation-authority regression also passes with GPT-6
 selected. These are deterministic tests with injected workers, not live GPT-6
-inference evidence. Automatic discovery is implemented with 32 passing executable/catalog cases,
+inference evidence. Automatic discovery is implemented with 35 passing executable/catalog cases,
 including selection, protocol bounds, startup cancellation, policy agreement,
 session freezing, pinned-mode bypass, and offline configuration inspection.
+The broader focused configuration/policy/guidance/capability gate passed all
+214 cases before the additional execution/cleanup regressions. A continuation
+fixture now proves a recorded future model (`gpt-7-luna`) reaches SDK thread
+options, the result, and both attempt hooks unchanged. Offline CLI status/doctor
+and descendant process-tree cancellation have dedicated regressions.
 A real read-only Codex 0.147.0 catalog exchange completed but exposed only
 GPT-5.6 Luna; automatic mode correctly refused to downgrade. It is not live
 GPT-6 inference evidence. Discovery starts no thread, so its recursion backstop
