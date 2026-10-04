@@ -427,11 +427,11 @@ export const EXECUTOR_ORDER: readonly string[] = parseExecutorOrder(
 export const WORKTREE_DIR = ".sol-luna/worktrees";
 
 /**
- * Directories linked from the main workspace into each worktree.
+ * Directories copied privately from the main workspace into each worktree.
  *
  * A git worktree contains tracked files only, so `node_modules` is absent and
- * every verification command would fail with "module not found". Linking is the
- * difference between worktrees being usable and being a curiosity.
+ * dependency-dependent verification would fail with "module not found".
+ * The historical link configuration name now selects private snapshots.
  */
 export interface WorktreeLinkDirectoryConfig {
   dirs: string[];

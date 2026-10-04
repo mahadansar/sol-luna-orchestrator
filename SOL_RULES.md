@@ -328,6 +328,9 @@ remain refused throughout the reservation, and worker entry commits the one
 allowed use. A retained-worktree reference is not restored when its persistent
 owner-token protection has already disappeared, because that workspace can no
 longer be treated as safely reserved across processes.
+Retained references also preserve the original private dependency-snapshot
+authority. Dependency changes before or during the resumed turn fail trust
+checks, including when the original contract declares no verification commands.
 
 The continuation resumes the exact Luna thread with the same worker isolation
 guards. Its original objective, `allowedFiles`, `forbiddenFiles`,

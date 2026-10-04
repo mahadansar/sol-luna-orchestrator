@@ -23,6 +23,7 @@ import {
 } from "./contract.js";
 import { MAX_OUTPUT_CHARS } from "./config.js";
 import { truncate } from "./verify.js";
+import { captureSharedDirectoryFingerprint } from "./worktree.js";
 
 function mockResult(): DelegateTaskOutput {
   return {
@@ -393,7 +394,7 @@ test("retained-worktree continuations reconcile the complete final Git snapshot"
   );
 });
 
-test("retained continuations ignore only unchanged orchestrator dependency links", async () => {
+test("retained continuations report dependency links even when their target matches the operator workspace", async () => {
   const repo = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-retained-link-"));
   const worktree = path.join(repo, ".sol-luna", "worktrees", "continued");
   const source = path.join(repo, "node_modules");
@@ -410,7 +411,7 @@ test("retained continuations ignore only unchanged orchestrator dependency links
   const input = delegateTaskInputSchema.parse({
     objective: "Continue the retained read-only review.",
     effortReason: "The same bounded review needs one follow-up.",
-    acceptanceCriteria: ["Orchestrator setup is not attributed to the worker."],
+    acceptanceCriteria: ["Unprovisioned dependency links remain observable."],
     allowedFiles: ["src/**"],
     changeIntent: "forbidden",
   });
@@ -426,8 +427,9 @@ test("retained continuations ignore only unchanged orchestrator dependency links
       worktree,
       async () => ({ files: [{ path: "node_modules", status: "??" }], diff: "" }),
     );
-    assert.equal(unchanged.verdict, "PASS");
-    assert.deepEqual(unchanged.filesChanged, []);
+    assert.equal(unchanged.verdict, "FAILED");
+    assert.ok(unchanged.scopeViolations.length > 0);
+    assert.ok(unchanged.filesChanged.some((file) => file.observed));
 
     await fs.unlink(destination);
     await fs.symlink(
@@ -450,7 +452,7 @@ test("retained continuations ignore only unchanged orchestrator dependency links
   }
 });
 
-test("retained continuations preserve a nested authoritative workspace as the shared-link source", async () => {
+test("a nested authoritative workspace does not authorize hiding a dependency link", async () => {
   const repo = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-retained-nested-"));
   const authoritativeWorkspace = path.join(repo, "packages", "app");
   const worktree = path.join(repo, ".sol-luna", "worktrees", "continued");
@@ -469,7 +471,7 @@ test("retained continuations preserve a nested authoritative workspace as the sh
     const input = delegateTaskInputSchema.parse({
       objective: "Continue the nested retained read-only review.",
       effortReason: "The same bounded review needs one follow-up.",
-      acceptanceCriteria: ["Nested orchestrator setup is not attributed to the worker."],
+      acceptanceCriteria: ["Unprovisioned nested dependency links remain observable."],
       allowedFiles: ["src/**"],
       changeIntent: "forbidden",
     });
@@ -492,11 +494,62 @@ test("retained continuations preserve a nested authoritative workspace as the sh
       authoritativeWorkspace,
     );
 
-    assert.equal(reconciled.verdict, "PASS");
-    assert.deepEqual(reconciled.filesChanged, []);
+    assert.equal(reconciled.verdict, "FAILED");
+    assert.ok(reconciled.scopeViolations.length > 0);
+    assert.ok(reconciled.filesChanged.some((file) => file.observed));
   } finally {
     await fs.unlink(destination).catch(() => undefined);
     await fs.rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("retained continuation excludes only unchanged pinned private snapshots", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-retained-snapshot-"));
+  try {
+    const dependency = path.join(root, "node_modules", "fixture.js");
+    await fs.mkdir(path.dirname(dependency), { recursive: true });
+    await fs.writeFile(dependency, "trusted\n");
+    const baseline = await captureSharedDirectoryFingerprint(root, ["node_modules"]);
+    const input = delegateTaskInputSchema.parse({
+      objective: "Review the retained snapshot.",
+      effortReason: "Bounded read-only follow-up.",
+      acceptanceCriteria: ["Only proven setup is excluded."],
+      allowedFiles: ["src/**"],
+      changeIntent: "forbidden",
+    });
+    const result = mockResult();
+    result.changeIntent = "forbidden";
+    result.filesChanged = [];
+    const collect = async () => ({
+      files: [{ path: "node_modules/fixture.js", status: "??" }],
+      diff: "",
+    });
+    const unchanged = await reconcileRetainedContinuationEvidence(
+      input,
+      result,
+      root,
+      collect,
+      root,
+      null,
+      baseline,
+    );
+    assert.equal(unchanged.verdict, "PASS");
+    assert.deepEqual(unchanged.filesChanged, []);
+    await fs.writeFile(dependency, "worker-authored\n");
+    const changed = await reconcileRetainedContinuationEvidence(
+      input,
+      result,
+      root,
+      collect,
+      root,
+      null,
+      baseline,
+    );
+    assert.equal(changed.verdict, "FAILED");
+    assert.equal(changed.trustworthy, false);
+    assert.match(changed.errors.join("\n"), /shared dependency state changed/i);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
   }
 });
 

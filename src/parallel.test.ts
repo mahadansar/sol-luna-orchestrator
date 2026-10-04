@@ -19,6 +19,8 @@ import {
   ContextLifecycleRegistry,
   handleContinueTask,
   handleDelegateTask,
+  handleDelegateTasks,
+  reconcileRetainedContinuationEvidence,
   refuseSingleDelegation,
   renderBatch,
   routingAdvisoryLine,
@@ -45,6 +47,7 @@ import type { OrchestratorEvent } from "./events.js";
 import { reduceEvents, type TimestampedEvent } from "./cli/activity-reducer.js";
 import {
   delegateTaskInputSchema,
+  delegateTasksInputSchema,
   type BatchOutput,
   type DelegateTaskInput,
   type DelegateTaskOutput,
@@ -60,22 +63,24 @@ import {
 } from "./overlap.js";
 import {
   acquireRepositoryOperationAuthority,
+  captureSharedDirectoryFingerprint,
   cleanupWorktree,
   createTaskWorktree,
   continuationLeasePath,
-  linkSharedDirectories,
   prepareWorktreeBase,
   pruneStaleWorktrees,
   refreshWorktreeLease,
   releaseWorktreeLease,
   releaseWorktreeOwnership,
   shouldRetainWorktree,
+  snapshotSharedDirectories,
   sweepExpiredWorktreeLeases,
   WORKTREE_LEASE_GRACE_MS,
   WorktreeLeaseOwnershipError,
   WorktreeLeaseRenewalError,
   WorktreeLeaseStore,
   worktreeMetadataQueue,
+  withWorktreeMetadataAuthority,
   WorktreeUnavailableError,
   type RepositoryOperationAuthority,
 } from "./worktree.js";
@@ -380,6 +385,45 @@ const makeOutput = (overrides: Partial<DelegateTaskOutput> = {}): DelegateTaskOu
     errors: [],
     ...overrides,
   }) as DelegateTaskOutput;
+
+test("retained continuation evidence does not hide a forged operator-dependency link", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-retained-forged-link-"));
+  const operator = path.join(root, "operator");
+  const worker = path.join(root, "worker");
+  try {
+    await fs.mkdir(path.join(operator, "node_modules"), { recursive: true });
+    await fs.mkdir(worker);
+    try {
+      await fs.symlink(
+        path.join(operator, "node_modules"),
+        path.join(worker, "node_modules"),
+        process.platform === "win32" ? "junction" : "dir",
+      );
+    } catch {
+      t.skip("directory links are not permitted on this machine");
+      return;
+    }
+    const result = await reconcileRetainedContinuationEvidence(
+      makeTask({ allowedFiles: ["src/**"], changeIntent: "optional" }),
+      makeOutput({ changeIntent: "optional" }),
+      worker,
+      async () => ({ files: [{ path: "node_modules", status: "??" }], diff: "" }),
+      operator,
+    );
+    assert.equal(result.verdict, "FAILED");
+    assert.ok(
+      result.scopeViolations.some((violation) => /node_modules/i.test(violation)),
+      JSON.stringify(result),
+    );
+    assert.ok(
+      result.filesChanged.some(
+        (file) => /node_modules/i.test(file.path) && file.observed,
+      ),
+    );
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
 
 /**
  * The module a task owns, taken from its declared scope: `src/auth/**` -> auth.
@@ -741,6 +785,68 @@ test("dependency directories are privately snapshotted and cleanup never eats th
       "module.exports=1;\n",
     );
   } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("batch-issued retained continuations preserve private snapshot authority", async () => {
+  const repo = await makeRepo();
+  const store = new ContinuationStore();
+  const handoffStore = new HandoffStore();
+  const registry = new ContextLifecycleRegistry({
+    handoffStore,
+    continuationStore: store,
+  });
+  try {
+    await fs.mkdir(path.join(repo, "node_modules"));
+    await fs.writeFile(path.join(repo, "node_modules", "fixture.js"), "trusted\n");
+    const response = await handleDelegateTasks(
+      delegateTasksInputSchema.parse({
+        mode: "parallel",
+        workingDirectory: repo,
+        integrate: false,
+        tasks: [makeTask({ allowedFiles: ["src/**"], changeIntent: "optional" })],
+      }),
+      undefined,
+      {
+        continuationStore: store,
+        handoffStore,
+        contextRegistry: registry,
+        emit: () => undefined,
+        makeBatchId: () => "b_snapshot_continuation",
+        runBatch: (tasks, options) =>
+          runBatch(tasks, {
+            ...options,
+            keepWorktrees: "always",
+            executor: async (input) =>
+              makeOutput({
+                changeIntent: input.changeIntent,
+                effort: input.effort,
+              }),
+          }),
+      },
+    );
+    assert.equal(response.isError, undefined, response.content[0]?.text ?? "");
+    const reference = response.structuredContent?.tasks[0]?.result?.continuationReference;
+    assert.ok(reference, response.content[0]?.text ?? "");
+    const reserved = store.reserve(reference);
+    assert.equal(reserved.status, "ready");
+    if (reserved.status !== "ready") return;
+    assert.ok(reserved.reservation.entry.sharedDirectoryBaseline);
+    reserved.reservation.entry.sharedDirectoryBaseline.dirs.push("forged");
+    reserved.reservation.release();
+    const consumed = store.consume(reference);
+    assert.equal(consumed.status, "ready");
+    if (consumed.status !== "ready") return;
+    assert.deepEqual(
+      consumed.entry.sharedDirectoryBaseline,
+      await captureSharedDirectoryFingerprint(consumed.entry.workingDirectory, [
+        "node_modules",
+      ]),
+    );
+    store.release(reference);
+  } finally {
+    await store.dispose();
     await cleanupRepo(repo);
   }
 });
@@ -4216,7 +4322,9 @@ test("partial integration retains truthful evidence after an earlier file applie
     assert.match(result.integrationSummary, /incomplete after copying 1 file/i);
     assert.ok(
       result.warnings.some((warning) =>
-        /Could not integrate src\/integration-blocker\/later\.txt from t1/.test(warning),
+        /Refused to integrate src\/integration-blocker\/later\.txt from t1: destination parent ancestry could not be safely prepared/.test(
+          warning,
+        ),
       ),
       describeBatch(result),
     );
@@ -7233,10 +7341,10 @@ test("parallel batch with partial failure retains deeper review guidance", async
   }
 });
 
-test("linking is a no-op when there is nothing to link", async () => {
+test("dependency snapshots are a no-op when no configured source exists", async () => {
   const repo = await makeRepo();
   try {
-    const warnings = await linkSharedDirectories(repo, repo, ["does-not-exist"]);
+    const { warnings } = await snapshotSharedDirectories(repo, repo, ["does-not-exist"]);
     assert.deepEqual(warnings, []);
   } finally {
     await cleanupRepo(repo);

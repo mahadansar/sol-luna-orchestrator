@@ -38,11 +38,11 @@ import type { OrchestratorEvent } from "./events.js";
 import { allowedEffortsInvalid, parseAllowedEfforts } from "./config.js";
 import {
   WorktreeLeaseOwnershipError,
+  captureSharedDirectoryFingerprint,
   type RepositoryOperationAuthority,
   type WorktreeLease,
 } from "./worktree.js";
 import { ShutdownCoordinator } from "./shutdown.js";
-
 import { runGit, type GitEvidenceAuthority } from "./git.js";
 
 const LUNA = "gpt-5.6-luna";
@@ -1352,73 +1352,153 @@ test("shared-workspace continuation cannot keep a trustworthy PASS after an unre
   }
 });
 
-test("shared-workspace continuation rejects a no-verification dependency mutation before completion telemetry", async () => {
-  const plain = await fs.mkdtemp(
-    path.join(os.tmpdir(), "sol-luna-continuation-dependency-evidence-"),
+test("retained continuation refuses dependency drift before worker entry", async () => {
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "sol-luna-retained-dependency-drift-"),
   );
-  const workspace = await fs.realpath(plain);
-  const dependency = path.join(workspace, "node_modules", "fixture-package", "index.js");
-  await fs.mkdir(path.dirname(dependency), { recursive: true });
-  await fs.writeFile(dependency, "module.exports = 'operator';\n", "utf8");
-  const continuationStore = new ContinuationStore();
+  const store = new ContinuationStore();
   const handoffStore = new HandoffStore();
-  const registry = new ContextLifecycleRegistry({ handoffStore, continuationStore });
-  const task = makeTask({
-    workingDirectory: workspace,
-    allowedFiles: ["allowed/**"],
-    changeIntent: "optional",
-    verificationCommands: [],
+  const registry = new ContextLifecycleRegistry({
+    handoffStore,
+    continuationStore: store,
   });
-  const reference = continuationStore.issue(
-    task,
-    "th_shared_dependency_side_effect",
-    workspace,
-  );
-  const events: OrchestratorEvent[] = [];
-
   try {
+    const dependency = path.join(root, "node_modules", "fixture.js");
+    await fs.mkdir(path.dirname(dependency), { recursive: true });
+    await fs.writeFile(dependency, "trusted\n");
+    const baseline = await captureSharedDirectoryFingerprint(root, ["node_modules"]);
+    const reference = store.issue(
+      makeTask({ workingDirectory: root, changeIntent: "optional" }),
+      "th_retained_dependency",
+      root,
+      true,
+      null,
+      null,
+      2,
+      LUNA,
+      null,
+      root,
+      null,
+      baseline,
+    );
+    baseline.dirs.length = 0;
+    await fs.writeFile(dependency, "replaced\n");
+    let executions = 0;
     const response = await handleContinueTask(
-      {
-        continuationReference: reference,
-        instruction: "Continue without changing the operator dependency tree.",
-        resultDetail: "full",
-      },
+      { continuationReference: reference, instruction: "Continue the review." },
       undefined,
       {
-        store: continuationStore,
+        store,
         handoffStore,
         contextRegistry: registry,
-        continueTask: async (input) => {
-          await fs.writeFile(dependency, "module.exports = 'worker';\n", "utf8");
-          return makePass({
-            effort: input.effort,
-            effortReason: input.effortReason,
-            changeIntent: input.changeIntent,
-            workerThreadId: "th_shared_dependency_side_effect",
-          });
+        continueTask: async () => {
+          executions += 1;
+          return makePass();
         },
-        emit: (event) => events.push(event),
+        emit: () => undefined,
         record: () => undefined,
-        makeBatchId: () => "b_continuation_dependency_evidence",
+        makeBatchId: () => "b_retained_dependency_drift",
       },
     );
-
-    const result = response.structuredContent;
-    assert.ok(result, "full detail must expose dependency evidence");
-    assert.equal(result.verdict, "FAILED");
-    assert.equal(result.trustworthy, false);
+    assert.equal(response.isError, true);
     assert.match(
-      [...result.errors, ...result.discrepancies].join("\n"),
-      /dependency evidence.*shared dependency state changed/i,
+      response.content[0]?.text ?? "",
+      /trust setup.*shared dependency state changed/i,
     );
-    const completions = events.filter((event) => event.type === "worker.completed");
-    assert.equal(completions.length, 1, JSON.stringify(events));
-    assert.equal(completions[0]?.verdict, "FAILED", JSON.stringify(completions));
-    assert.equal(continuationStore.status(reference), "consumed");
+    assert.equal(executions, 0);
+    assert.equal(store.status(reference), "issued");
   } finally {
-    await fs.rm(workspace, { recursive: true, force: true });
+    await store.dispose();
+    await fs.rm(root, { recursive: true, force: true });
   }
 });
+
+for (const retained of [false, true]) {
+  test(`${retained ? "retained" : "shared-workspace"} continuation rejects a no-verification dependency mutation before completion telemetry`, async () => {
+    const plain = await fs.mkdtemp(
+      path.join(os.tmpdir(), "sol-luna-continuation-dependency-evidence-"),
+    );
+    const workspace = await fs.realpath(plain);
+    const dependency = path.join(
+      workspace,
+      "node_modules",
+      "fixture-package",
+      "index.js",
+    );
+    await fs.mkdir(path.dirname(dependency), { recursive: true });
+    await fs.writeFile(dependency, "module.exports = 'operator';\n", "utf8");
+    const continuationStore = new ContinuationStore();
+    const handoffStore = new HandoffStore();
+    const registry = new ContextLifecycleRegistry({ handoffStore, continuationStore });
+    const task = makeTask({
+      workingDirectory: workspace,
+      allowedFiles: ["allowed/**"],
+      changeIntent: "optional",
+      verificationCommands: [],
+    });
+    const reference = continuationStore.issue(
+      task,
+      "th_shared_dependency_side_effect",
+      workspace,
+      retained,
+      null,
+      null,
+      2,
+      LUNA,
+      null,
+      workspace,
+      null,
+      retained
+        ? await captureSharedDirectoryFingerprint(workspace, ["node_modules"])
+        : null,
+    );
+    const events: OrchestratorEvent[] = [];
+
+    try {
+      const response = await handleContinueTask(
+        {
+          continuationReference: reference,
+          instruction: "Continue without changing the operator dependency tree.",
+          resultDetail: "full",
+        },
+        undefined,
+        {
+          store: continuationStore,
+          handoffStore,
+          contextRegistry: registry,
+          reconcile: async (_input, result) => result,
+          continueTask: async (input) => {
+            await fs.writeFile(dependency, "module.exports = 'worker';\n", "utf8");
+            return makePass({
+              effort: input.effort,
+              effortReason: input.effortReason,
+              changeIntent: input.changeIntent,
+              workerThreadId: "th_shared_dependency_side_effect",
+            });
+          },
+          emit: (event) => events.push(event),
+          record: () => undefined,
+          makeBatchId: () => "b_continuation_dependency_evidence",
+        },
+      );
+
+      const result = response.structuredContent;
+      assert.ok(result, "full detail must expose dependency evidence");
+      assert.equal(result.verdict, "FAILED");
+      assert.equal(result.trustworthy, false);
+      assert.match(
+        [...result.errors, ...result.discrepancies].join("\n"),
+        /dependency evidence.*shared dependency state changed/i,
+      );
+      const completions = events.filter((event) => event.type === "worker.completed");
+      assert.equal(completions.length, 1, JSON.stringify(events));
+      assert.equal(completions[0]?.verdict, "FAILED", JSON.stringify(completions));
+      assert.equal(continuationStore.status(reference), "consumed");
+    } finally {
+      await fs.rm(workspace, { recursive: true, force: true });
+    }
+  });
+}
 
 test("configuration correction warnings report only effective runtime values", () => {
   const warnings = configurationCorrectionWarnings({

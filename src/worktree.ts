@@ -625,8 +625,6 @@ export interface TaskWorktree {
   repoRoot: string;
   /** Requested task workspace projected into this isolated repository worktree. */
   workingDirectory?: string;
-  /** Main requested workspace used to resolve configured shared-link sources. */
-  sharedLinkRoot?: string;
   /** Dependency/setup directories privately snapshotted into this worktree. */
   sharedSnapshotDirs?: string[];
   /** Private dependency bytes captured after setup and before delegated execution. */
@@ -2122,7 +2120,6 @@ async function createTaskWorktreeUnsynchronized(
     path: target,
     repoRoot: base.repoRoot,
     workingDirectory,
-    sharedLinkRoot: mainWorkspace,
     sharedSnapshotDirs,
     sharedDirectoryBaseline,
     gitEvidenceAuthority,
@@ -2221,76 +2218,6 @@ async function provisionSharedDestination(
     parent: chain.authority,
     chain,
   };
-}
-
-export async function linkSharedDirectories(
-  mainWorkspace: string,
-  worktreePath: string,
-  dirs: string[] = WORKTREE_LINK_DIRS,
-): Promise<string[]> {
-  const warnings: string[] = [];
-  const parsed = parseWorktreeLinkDirectories(dirs.join(","));
-  for (const invalid of parsed.invalid) {
-    warnings.push(`Skipped unsafe shared worktree link path: ${invalid}`);
-  }
-
-  for (const dir of parsed.dirs) {
-    const sourceCandidate = path.resolve(mainWorkspace, dir);
-    const sourceEntry = await fs.lstat(sourceCandidate).catch((error) => {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-      throw error;
-    });
-    if (!sourceEntry) continue;
-    if (sourceEntry.isSymbolicLink()) {
-      warnings.push(
-        `Skipped shared worktree link outside the workspace or through a linked root: ${dir}`,
-      );
-      continue;
-    }
-    if (!sourceEntry.isDirectory()) continue;
-    const source = await confinedSharedSource(mainWorkspace, dir);
-    if (!source) {
-      warnings.push(
-        `Skipped shared worktree link outside the workspace or through a linked root: ${dir}`,
-      );
-      continue;
-    }
-    let destination: ProvisionedSharedDestination;
-    try {
-      destination = await provisionSharedDestination(worktreePath, dir);
-    } catch (error) {
-      warnings.push(
-        `Skipped shared worktree link with unsafe destination ancestry: ${dir} (${(error as Error).message})`,
-      );
-      continue;
-    }
-
-    try {
-      await runPinnedDirectoryMutation(destination.parent, {
-        op: "symlink",
-        name: destination.name,
-        target: source,
-        type: process.platform === "win32" ? "junction" : "dir",
-      });
-    } catch (error) {
-      const rollbackOutcome = await destination.chain.rollback();
-      const rollbackComplete = rollbackOutcome === "complete";
-      if (error instanceof PinnedDirectoryMutationError && error.code === "EEXIST") {
-        if (!rollbackComplete) {
-          warnings.push(
-            `Could not fully roll back parent directories after ${dir} appeared concurrently.`,
-          );
-        }
-        continue;
-      }
-      warnings.push(
-        `Could not link ${dir} into the worktree (${(error as Error).message}). ` +
-          `Verification commands that need it will fail.${rollbackComplete ? "" : " Parent rollback could not be proven complete."}`,
-      );
-    }
-  }
-
-  return warnings;
 }
 
 export interface SharedDirectorySnapshotResult {
@@ -2482,49 +2409,6 @@ export async function snapshotSharedDirectories(
   return { warnings, provisioned, rollbackComplete };
 }
 
-/**
- * Remove only dependency-link entries that still match orchestrator setup.
- *
- * Git reports an untracked directory symlink as a changed top-level path. That
- * link is setup state, not worker work, but a worker-replaced directory or link
- * must remain visible and fail the normal scope checks.
- */
-export async function filterOrchestratorOwnedSharedLinks(
-  repoRoot: string,
-  worktreePath: string,
-  files: WorktreeChanges["files"],
-  dirs: string[] = WORKTREE_LINK_DIRS,
-): Promise<WorktreeChanges["files"]> {
-  const unchangedLinks = new Set<string>();
-  const parsed = parseWorktreeLinkDirectories(dirs.join(","));
-  for (const dir of parsed.dirs) {
-    const source = await confinedSharedSource(repoRoot, dir);
-    const destination = await confinedSharedDestination(worktreePath, dir);
-    if (!source || !destination) continue;
-    const stat = await fs.lstat(destination).catch(() => null);
-    if (!stat?.isSymbolicLink()) continue;
-
-    const [sourceTarget, destinationTarget] = await Promise.all([
-      fs.realpath(source).catch(() => null),
-      fs.realpath(destination).catch(() => null),
-    ]);
-    if (
-      sourceTarget &&
-      destinationTarget &&
-      worktreePathKey(sourceTarget) === worktreePathKey(destinationTarget)
-    ) {
-      unchangedLinks.add(dir.split(path.sep).join("/"));
-    }
-  }
-
-  return files.filter(
-    (file) =>
-      ![...unchangedLinks].some(
-        (link) => file.path === link || file.path.startsWith(`${link}/`),
-      ),
-  );
-}
-
 function filterProvisionedSharedSnapshots(
   files: WorktreeChanges["files"],
   dirs: string[] = [],
@@ -2566,16 +2450,11 @@ export async function readWorktreeOutcome(
       ...trusted,
       files: [...trusted.files, ...ignored.map((file) => ({ path: file, status: "I" }))],
     });
-    const withoutLegacyLinks = await filterOrchestratorOwnedSharedLinks(
-      worktree.sharedLinkRoot ?? worktree.repoRoot,
-      workingDirectory,
-      changes.files,
-    );
     return {
       changes: {
         ...changes,
         files: filterProvisionedSharedSnapshots(
-          withoutLegacyLinks,
+          changes.files,
           worktree.sharedSnapshotDirs,
         ),
       },
@@ -2679,7 +2558,8 @@ async function cleanupWorktreeUnsynchronized(
 }
 
 /**
- * Remove the links created by `linkSharedDirectories`.
+ * Remove selected dependency-directory links, including legacy setup links
+ * and links left by delegated execution.
  *
  * `fs.rm` on a junction removes the link, not the target, but only when the
  * junction itself is the target of the call — which is why this runs before any

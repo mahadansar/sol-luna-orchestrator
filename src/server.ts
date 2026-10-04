@@ -121,7 +121,6 @@ import {
   assertSharedDirectoryFingerprint,
   forceStopRepositoryOperationRenewals,
   captureSharedDirectoryFingerprint,
-  filterOrchestratorOwnedSharedLinks,
   projectWorktreeChangesToWorkspace,
   refreshWorktreeLease,
   releaseWorktreeLease,
@@ -267,6 +266,9 @@ function registerContinuation(
   contextKey: string | null = null,
   authoritativeWorkspace: string = workingDirectory,
   gitEvidenceAuthority: GitEvidenceAuthority | null = null,
+  sharedDirectoryBaseline: Awaited<
+    ReturnType<typeof captureSharedDirectoryFingerprint>
+  > | null = null,
 ): string | null {
   if (!result.workerThreadId) {
     result.continuationState = {
@@ -297,6 +299,7 @@ function registerContinuation(
     contextKey,
     authoritativeWorkspace,
     gitEvidenceAuthority,
+    sharedDirectoryBaseline,
   );
   result.continuationState = {
     status: "issued",
@@ -331,10 +334,16 @@ export async function reconcileRetainedContinuationEvidence(
   collect: (
     workingDirectory: string,
   ) => Promise<WorktreeChanges> = collectWorktreeChanges,
-  sharedLinkRoot?: string,
+  _authoritativeWorkspace?: string,
   gitEvidenceAuthority?: GitEvidenceAuthority | null,
+  sharedDirectoryBaseline?: Awaited<
+    ReturnType<typeof captureSharedDirectoryFingerprint>
+  > | null,
 ): Promise<DelegateTaskOutput> {
   try {
+    if (sharedDirectoryBaseline) {
+      await assertSharedDirectoryFingerprint(sharedDirectoryBaseline);
+    }
     const repoRoot = gitEvidenceAuthority
       ? gitEvidenceAuthority.repoRoot
       : path.resolve(
@@ -350,7 +359,9 @@ export async function reconcileRetainedContinuationEvidence(
       );
       const ignored = await listTrustedIgnoredFiles(
         gitEvidenceAuthority,
-        WORKTREE_LINK_DIRS.map((dir) => path.join(workspacePrefix, ...dir.split("/"))),
+        (sharedDirectoryBaseline?.dirs ?? []).map((dir) =>
+          path.join(workspacePrefix, ...dir.split("/")),
+        ),
       );
       rawChanges = {
         ...trusted,
@@ -365,12 +376,13 @@ export async function reconcileRetainedContinuationEvidence(
     const changes = gitEvidenceAuthority
       ? projectWorktreeChangesToWorkspace(repoRoot, workingDirectory, rawChanges)
       : rawChanges;
-    const files = await filterOrchestratorOwnedSharedLinks(
-      sharedLinkRoot ?? repoRoot,
-      workingDirectory,
-      changes.files,
+    const mutations = changes.files.filter(
+      (file) =>
+        file.status !== "C-source" &&
+        !(sharedDirectoryBaseline?.dirs ?? []).some(
+          (dir) => file.path === dir || file.path.startsWith(`${dir}/`),
+        ),
     );
-    const mutations = files.filter((file) => file.status !== "C-source");
     return reconcileParallelWorktreeEvidence(
       input,
       result,
@@ -2046,6 +2058,9 @@ export async function handleContinueTask(
     if (continuationGitAuthority) {
       await assertGitEvidenceAuthority(continuationGitAuthority);
     }
+    if (entry.sharedDirectoryBaseline) {
+      await assertSharedDirectoryFingerprint(entry.sharedDirectoryBaseline);
+    }
     if (!entry.reconcileFinalGit) {
       continuationWorkspaceBaseline = continuationGitAuthority
         ? await snapshotTrustedWorkspaceEvidence(
@@ -2152,6 +2167,7 @@ export async function handleContinueTask(
           undefined,
           entry.authoritativeWorkspace,
           entry.gitEvidenceAuthority,
+          entry.sharedDirectoryBaseline,
         );
       } catch (error) {
         const detail = `Continuation evidence reconciliation failed after execution: ${(error as Error).message}`;
@@ -2188,10 +2204,15 @@ export async function handleContinueTask(
         result.discrepancies.push(detail);
       }
     }
-    if (!entry.reconcileFinalGit && continuationSharedBaseline) {
+    if (continuationSharedBaseline || entry.sharedDirectoryBaseline) {
       try {
         operationAuthority?.assertHealthy();
-        await assertSharedDirectoryFingerprint(continuationSharedBaseline);
+        if (entry.sharedDirectoryBaseline) {
+          await assertSharedDirectoryFingerprint(entry.sharedDirectoryBaseline);
+        }
+        if (continuationSharedBaseline) {
+          await assertSharedDirectoryFingerprint(continuationSharedBaseline);
+        }
       } catch (error) {
         const detail = `Continuation dependency evidence failed: ${(error as Error).message}`;
         result.verdict = "FAILED";
@@ -2533,6 +2554,7 @@ export async function handleDelegateTasks(
         lease,
         authoritativeCwd,
         gitEvidenceAuthority,
+        sharedDirectoryBaseline,
       ) =>
         registerContinuation(
           input,
@@ -2544,6 +2566,7 @@ export async function handleDelegateTasks(
           persistedContextKey,
           authoritativeCwd ?? cwd,
           gitEvidenceAuthority,
+          sharedDirectoryBaseline,
         ),
       handoffStore: dependencies.handoffStore,
       handoffContextKey: persistedContextKey,

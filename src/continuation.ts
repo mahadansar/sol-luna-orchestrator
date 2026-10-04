@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { ContinuationState, DelegateTaskInput } from "./contract.js";
 import { LUNA_MODEL } from "./config.js";
 import type { GitEvidenceAuthority } from "./git.js";
-import type { WorktreeLease } from "./worktree.js";
+import type { SharedDirectoryFingerprint, WorktreeLease } from "./worktree.js";
 
 /** How long an unused continuation remains valid in one server process. */
 export const CONTINUATION_TTL_MS = 15 * 60 * 1000;
@@ -26,6 +26,7 @@ interface ContinuationRecord {
   reconcileFinalGit: boolean;
   worktreeLease: WorktreeLease | null;
   gitEvidenceAuthority: GitEvidenceAuthority | null;
+  sharedDirectoryBaseline: SharedDirectoryFingerprint | null;
   predecessorExecutionId: string | null;
   logicalAttempt: number;
   model: string;
@@ -51,6 +52,8 @@ export interface ContinuationEntry {
   worktreeLease: WorktreeLease | null;
   /** Git identity/base pinned before the retained worker was allowed to execute. */
   gitEvidenceAuthority: GitEvidenceAuthority | null;
+  /** Exact private snapshots provisioned before the retained worker started. */
+  sharedDirectoryBaseline: SharedDirectoryFingerprint | null;
   /** Factual in-process lineage; never persisted across server sessions. */
   predecessorExecutionId: string | null;
   logicalAttempt: number;
@@ -142,6 +145,7 @@ export class ContinuationStore {
     contextKey: string | null = null,
     authoritativeWorkspace: string = workingDirectory,
     gitEvidenceAuthority: GitEvidenceAuthority | null = null,
+    sharedDirectoryBaseline: SharedDirectoryFingerprint | null = null,
   ): string {
     if (this.disposed) throw new Error("Continuation store is shut down.");
     const now = this.now();
@@ -166,6 +170,9 @@ export class ContinuationStore {
       worktreeLease: worktreeLease ? { ...worktreeLease } : null,
       gitEvidenceAuthority: gitEvidenceAuthority
         ? structuredClone(gitEvidenceAuthority)
+        : null,
+      sharedDirectoryBaseline: sharedDirectoryBaseline
+        ? structuredClone(sharedDirectoryBaseline)
         : null,
       predecessorExecutionId,
       logicalAttempt,
@@ -395,6 +402,9 @@ export class ContinuationStore {
           worktreeLease: record.worktreeLease ? { ...record.worktreeLease } : null,
           gitEvidenceAuthority: record.gitEvidenceAuthority
             ? structuredClone(record.gitEvidenceAuthority)
+            : null,
+          sharedDirectoryBaseline: record.sharedDirectoryBaseline
+            ? structuredClone(record.sharedDirectoryBaseline)
             : null,
           predecessorExecutionId: record.predecessorExecutionId,
           logicalAttempt: record.logicalAttempt,

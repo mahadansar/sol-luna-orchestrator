@@ -8,17 +8,10 @@ All notable changes to this project are documented here. Format follows
 
 ### Fixed
 
-- Metadata cancellation after lease acquisition releases its persistent owner.
-  Pinned filesystem helpers settle spawn/pre-ready failures, drain result output
-  before interpreting closure, and recheck parents after awaited setup hooks.
-- Single-task continuations preserve the parent's authoritative workspace and
-  pinned Git evidence. Lifecycle setup failure and cancellation during trust
-  setup restore unspent continuation authority; synchronous expiry-release
-  errors no longer prevent later leases from settling.
-- Activity watch recovers when a file disappears between stat and stream read.
-- Shutdown timeout prevents late normal cleanup from starting, including later
-  hooks after an in-flight cleanup settles. Synchronous forced-cleanup errors
-  cannot skip the remaining process-liveness hooks.
+- Retained continuations now carry the original private dependency-snapshot
+  fingerprint, exclude only proven setup directories from change attribution,
+  and check dependency integrity before and after resuming, including turns
+  with no verification commands.
 - Continuation references now reserve their single-use authority through
   pre-execution setup, so a retained-worktree lease refresh failure or
   cancellation before worker entry no longer burns an otherwise retryable
@@ -33,7 +26,7 @@ All notable changes to this project are documented here. Format follows
   allowed destination path during reconciliation.
 - Shared worktree-link configuration now rejects paths that could escape the
   repository/worktree roots, reports the effective safe link set at startup,
-  and filters nested orchestrator-owned links without hiding sibling edits.
+  and preserves worker-created link effects in independent evidence.
 - Bounded shutdown now keeps its timeout authority alive until settlement, so
   an operation that ignores cancellation fails closed with `ShutdownTimeoutError`
   instead of leaving the shutdown promise pending while the event loop drains.
@@ -120,10 +113,28 @@ All notable changes to this project are documented here. Format follows
   integration stops, so telemetry cannot report zero after authoritative bytes or
   namespace state changed.
 - Missing destination ancestry for authoritative integration and private
-  dependency snapshots now fails closed instead of being created through a
-  pathname race. Every required parent segment must already exist as a real,
-  canonically confined directory; missing, replaced, non-directory, or
-  symlink/junction ancestry is rejected before any file/snapshot mutation.
+  dependency snapshots is provisioned segment by segment beneath captured parent
+  authority. Identity-aware rollback removes only identical empty directories;
+  proven residual mutation counts as applied, while protocol loss reports an
+  unknown outcome separately from confirmed applied files.
+- Deletion integration now saves a private recovery backup, moves the exact
+  original to a verified same-parent tombstone, and restores it by rename when
+  safe. Backup cleanup failure and unknown helper outcomes preserve truthful
+  mutation counts and retained recovery evidence.
+- Single-task continuations preserve the parent's authoritative workspace and
+  pinned Git evidence. Lifecycle setup failure and cancellation during trust
+  setup restore unspent continuation authority; synchronous expiry-release
+  errors no longer prevent later leases from settling.
+- Shutdown timeout prevents late normal cleanup from starting, including later
+  hooks after an in-flight cleanup settles. Synchronous forced-cleanup errors
+  cannot skip the remaining process-liveness hooks.
+- Metadata cancellation after lease acquisition releases its persistent owner.
+  Pinned filesystem helpers settle spawn/pre-ready failures, drain result output
+  before interpreting closure, and recheck parents after awaited setup hooks.
+- Activity watch recovers when a file disappears between stat and stream read.
+- Removed unused writable dependency-link provisioning and unchecked mutation
+  helper operations. Worker-created links to operator dependencies remain
+  visible in worktree and retained-continuation evidence.
 - Final integrated verification is enclosed by fresh trusted workspace/Git and
   dependency evidence, and private worktree dependency snapshots are
   fingerprinted again after each worker verification turn. A passing verifier can

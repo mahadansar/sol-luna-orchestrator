@@ -238,9 +238,11 @@ production parallel worktrees no longer create writable links back into the
 operator workspace. The configured directories (default `node_modules`) are
 copied into a **private per-worktree snapshot** before delegated execution. A
 worker may mutate that copy, but cannot thereby alter the authoritative
-dependency tree or inject code that a later parent-side verification command
-will execute. Snapshot entries are normalized as repository-relative paths;
+dependency tree through that snapshot. Fingerprint checks refuse parent-side
+verification after detected dependency drift. Snapshot entries are normalized as repository-relative paths;
 absolute, drive-qualified, traversal, and dot-segment entries are rejected.
+The removed writable-link setup path does not authorize worker-created links;
+evidence excludes only snapshots actually provisioned by setup.
 Source and destination ancestry are canonically confined, and a symlink/junction
 inside a selected dependency tree must resolve inside that tree or the snapshot
 is refused without traversing the external target. Only directories actually
@@ -256,10 +258,15 @@ On Windows, `git worktree remove --force` can traverse an arbitrary junction lef
 inside the worktree and delete its external target. Cleanup therefore removes the
 worktree tree with Node filesystem semantics, which unlink directory links rather
 than traversing them, and then asks Git only to prune the now-stale administrative
-record. The same safe removal path is used by stale-worktree reclamation. Retained
-continuation evidence also carries the original authoritative workspace through
-reconciliation, so a nested requested workspace validates dependency links
-against the same source root used when those links were created.
+record. The same safe removal path is used by stale-worktree reclamation.
+Only dependency snapshots actually provisioned by the orchestrator are excluded
+from worktree change attribution, with their fingerprints independently checked.
+A worker-created dependency link remains observable even if it targets the
+original authoritative workspace.
+Retained continuation references preserve the original private-snapshot
+fingerprint. Setup and completion recheck it even without verification commands;
+dependency integrity failure prevents a trustworthy completion. Already-running
+worker or verification commands retain the permissions described above.
 
 Worktrees are created, removed, integrated and pruned under one authority keyed
 by the repository's canonical **common Git directory**, including across MCP

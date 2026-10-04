@@ -225,6 +225,8 @@ export async function runBatch(
       authoritativeWorkspace: string,
       /** Pinned Git identity for a retained isolated worktree continuation. */
       gitEvidenceAuthority: GitEvidenceAuthority | null,
+      /** Private snapshot authority retained from worktree provisioning. */
+      sharedDirectoryBaseline: SharedDirectoryFingerprint | null,
     ) => string | null | Promise<string | null>;
     /**
      * Register an eligible result for server-authoritative next-action handoff
@@ -720,8 +722,8 @@ export async function runBatch(
   }
 
   try {
-    // Worker-visible dependency links may resolve to the authoritative workspace.
-    // Pin their content before any worker starts so neither per-turn verification
+    // Shared-workspace turns and final integration verification use operator
+    // dependencies. Pin their content before any worker starts so verification
     // nor final integrated verification can execute dependency code authored by a
     // delegated worker during this batch.
     let sharedDependencyBaseline: SharedDirectoryFingerprint | null = null;
@@ -1161,6 +1163,7 @@ export async function runBatch(
                 null,
                 workspace,
                 null,
+                null,
               );
           } catch (error) {
             const detail = `Continuation registration failed after execution: ${(error as Error).message}`;
@@ -1295,6 +1298,9 @@ export async function runBatch(
                   continuationInWorkspace
                     ? null
                     : (task.worktree.gitEvidenceAuthority ?? null),
+                  continuationInWorkspace
+                    ? null
+                    : (task.worktree.sharedDirectoryBaseline ?? null),
                 );
                 task.result.result.continuationReference = reference;
                 retainedLease = Boolean(reference && worktreeLease);

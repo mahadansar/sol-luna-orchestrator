@@ -15,8 +15,6 @@ import {
   ConfinedDirectoryChainError,
   createTaskWorktree,
   ensureConfinedDirectoryChain,
-  filterOrchestratorOwnedSharedLinks,
-  linkSharedDirectories,
   prepareWorktreeBase,
   readWorktreeOutcome,
   snapshotSharedDirectories,
@@ -225,38 +223,6 @@ test("confined parent rollback distinguishes unknown protocol loss from proven r
       await fs.readFile(path.join(root, "proven", "sentinel.txt"), "utf8"),
       "keep\n",
     );
-  } finally {
-    await fs.rm(root, { recursive: true, force: true });
-  }
-});
-
-test("pinned recovery symlink creation supports Windows junction targets", async (t) => {
-  if (process.platform !== "win32") {
-    t.skip("junction backup semantics are Windows-specific");
-    return;
-  }
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-pinned-junction-"));
-  try {
-    const target = path.join(root, "target-dir");
-    const original = path.join(root, "original-junction");
-    await fs.mkdir(target);
-    await fs.symlink(target, original, "junction");
-    const authority = await capturePinnedDirectoryAuthority(root, root);
-    const linkTarget = await fs.readlink(original);
-
-    const result = await runPinnedDirectoryMutation(authority, {
-      op: "symlink",
-      name: "backup-junction",
-      target: linkTarget,
-      type: "junction",
-    });
-
-    assert.equal(result.mutated, true);
-    assert.equal(
-      (await fs.lstat(path.join(root, "backup-junction"))).isSymbolicLink(),
-      true,
-    );
-    assert.equal((await fs.stat(path.join(root, "backup-junction"))).isDirectory(), true);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -519,7 +485,7 @@ test("shared worktree link configuration keeps only confined relative paths", ()
   ]);
 });
 
-test("shared worktree link setup and cleanup ignore unsafe caller paths", async () => {
+test("dependency snapshot setup and legacy-link cleanup ignore unsafe caller paths", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-links-"));
   const main = path.join(root, "main");
   const worktree = path.join(root, "worktree");
@@ -530,9 +496,9 @@ test("shared worktree link setup and cleanup ignore unsafe caller paths", async 
     await fs.mkdir(sibling, { recursive: true });
     await fs.writeFile(path.join(sibling, "sentinel.txt"), "keep\n", "utf8");
 
-    const warnings = await linkSharedDirectories(main, worktree, ["../outside"]);
+    const { warnings } = await snapshotSharedDirectories(main, worktree, ["../outside"]);
     assert.ok(
-      warnings.some((warning) => /unsafe shared worktree link path/i.test(warning)),
+      warnings.some((warning) => /unsafe shared worktree snapshot path/i.test(warning)),
     );
     await unlinkSharedDirectories(worktree, ["../outside"]);
 
@@ -542,41 +508,7 @@ test("shared worktree link setup and cleanup ignore unsafe caller paths", async 
   }
 });
 
-test("nested orchestrator-owned links are filtered exactly from worktree evidence", async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-nested-link-"));
-  const main = path.join(root, "main");
-  const worktree = path.join(root, "worktree");
-  const nested = "packages/a/node_modules";
-  try {
-    await fs.mkdir(path.join(main, nested), { recursive: true });
-    await fs.mkdir(worktree, { recursive: true });
-    const warnings = await linkSharedDirectories(main, worktree, [nested]);
-    assert.deepEqual(warnings, []);
-
-    const filtered = await filterOrchestratorOwnedSharedLinks(
-      main,
-      worktree,
-      [
-        { path: nested, status: "??" },
-        { path: `${nested}/dep.js`, status: "??" },
-        { path: "packages/a/src/worker.ts", status: "M" },
-        { path: "packages/a/node_modules-shadow", status: "??" },
-      ],
-      [nested],
-    );
-
-    assert.deepEqual(filtered, [
-      { path: "packages/a/src/worker.ts", status: "M" },
-      { path: "packages/a/node_modules-shadow", status: "??" },
-    ]);
-    await unlinkSharedDirectories(worktree, [nested]);
-    assert.ok(await fs.stat(path.join(main, nested)));
-  } finally {
-    await fs.rm(root, { recursive: true, force: true });
-  }
-});
-
-test("a destination symlink ancestor cannot redirect shared-link setup or cleanup", async (t) => {
+test("a destination symlink ancestor cannot redirect dependency snapshot setup or legacy-link cleanup", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-destination-escape-"));
   const main = path.join(root, "main");
   const worktree = path.join(root, "worktree");
@@ -598,7 +530,7 @@ test("a destination symlink ancestor cannot redirect shared-link setup or cleanu
       return;
     }
 
-    const warnings = await linkSharedDirectories(main, worktree, [nested]);
+    const { warnings } = await snapshotSharedDirectories(main, worktree, [nested]);
     assert.ok(warnings.some((warning) => /unsafe destination ancestry/i.test(warning)));
     assert.equal(
       await fs.stat(path.join(outside, "a", "node_modules")).catch(() => null),
@@ -771,7 +703,7 @@ test("a source symlink ancestor cannot expose a directory outside the workspace"
       return;
     }
 
-    const warnings = await linkSharedDirectories(main, worktree, [nested]);
+    const { warnings } = await snapshotSharedDirectories(main, worktree, [nested]);
     assert.ok(warnings.some((warning) => /outside the workspace/i.test(warning)));
     assert.equal(await fs.lstat(path.join(worktree, nested)).catch(() => null), null);
   } finally {
@@ -814,6 +746,45 @@ test("production worktrees snapshot dependencies privately from worker mutations
   } finally {
     if (worktree)
       await cleanupWorktree(worktree, "success", "never").catch(() => undefined);
+    await fs.rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("worker-created links to the operator dependencies are never treated as setup evidence", async (t) => {
+  const repo = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-forged-setup-link-"));
+  let worktree: Awaited<ReturnType<typeof createTaskWorktree>> | undefined;
+  try {
+    await initializeFixtureRepository(repo, "Forged Setup Link Test");
+    const base = await prepareWorktreeBase(repo, [["base.txt"]]);
+    worktree = await createTaskWorktree(base, "forged-setup-link", repo);
+    assert.deepEqual(worktree.sharedSnapshotDirs, []);
+    const dependencies = path.join(repo, "node_modules");
+    await fs.mkdir(dependencies);
+    await fs.writeFile(path.join(dependencies, "sentinel.js"), "operator bytes\n");
+    try {
+      await fs.symlink(
+        dependencies,
+        path.join(worktree.path, "node_modules"),
+        process.platform === "win32" ? "junction" : "dir",
+      );
+    } catch {
+      t.skip("directory links are not permitted on this machine");
+      return;
+    }
+    const outcome = await readWorktreeOutcome(worktree);
+    assert.equal(outcome.error, undefined, outcome.warnings.join("\n"));
+    assert.ok(
+      outcome.changes.files.some(
+        (file) => file.path === "node_modules" || file.path.startsWith("node_modules/"),
+      ),
+      JSON.stringify(outcome.changes.files),
+    );
+    assert.equal(
+      await fs.readFile(path.join(dependencies, "sentinel.js"), "utf8"),
+      "operator bytes\n",
+    );
+  } finally {
+    if (worktree) await cleanupWorktree(worktree, "success", "never");
     await fs.rm(repo, { recursive: true, force: true });
   }
 });
@@ -992,7 +963,6 @@ test("nested requested workspaces provision dependency snapshots at the nested w
 
     const base = await prepareWorktreeBase(requestedWorkspace, [["src/**"]]);
     worktree = await createTaskWorktree(base, "nested-workspace", requestedWorkspace);
-    assert.equal(worktree.sharedLinkRoot, requestedWorkspace);
     assert.equal(worktree.workingDirectory, path.join(worktree.path, "packages", "app"));
     assert.deepEqual(worktree.sharedSnapshotDirs, ["node_modules"]);
     const nestedSnapshot = path.join(worktree.path, "packages", "app", "node_modules");

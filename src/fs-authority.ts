@@ -34,17 +34,6 @@ export type PinnedDirectoryMutation =
       finalName?: string;
     }
   | {
-      op: "symlink";
-      name: string;
-      target: string;
-      type: "file" | "dir" | "junction";
-    }
-  | {
-      op: "rename";
-      sourceName: string;
-      destinationName: string;
-    }
-  | {
       op: "rename-verified";
       sourceName: string;
       destinationName: string;
@@ -518,25 +507,6 @@ function emit(value) {
         emit({ type: "done", mutated, snapshot: await snapshot(request.name) });
         return;
       }
-      case "symlink": {
-        assertChildName(request.name);
-        await fs.symlink(request.target, request.name, request.type);
-        mutated = true;
-        emit({ type: "done", mutated, snapshot: await snapshot(request.name) });
-        return;
-      }
-     case "rename": {
-       assertChildName(request.sourceName);
-       assertChildName(request.destinationName);
-       await fs.rename(request.sourceName, request.destinationName);
-       mutated = true;
-       emit({
-         type: "done",
-         mutated,
-         snapshot: await snapshot(request.destinationName),
-       });
-       return;
-     }
       case "rename-verified": {
         assertChildName(request.sourceName);
         assertChildName(request.destinationName);
