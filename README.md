@@ -7,29 +7,22 @@
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.12-brightgreen)](docs/CONFIGURATION.md#requirements)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Bounded delegation for OpenAI Codex. Sol remains the supervisor and architect;
-Luna workers execute well-defined tasks and cannot delegate further. The runtime
-admits compute under operator policy, checks observed changes against declared
-scope, isolates parallel work, and independently verifies outcomes.
+Give Codex a team of workers for substantial tasks, with clear scopes and
+independently checked results.
 
-For each task, the supervisor can stay solo or use one worker, dependent workers
-in sequence, or independent workers in parallel.
+Sol plans the work and reviews the outcome. Luna workers handle bounded tasks,
+with parallel work isolated in separate Git worktrees. The orchestrator checks
+what actually changed, reruns verification, and returns evidence for the parent
+to review. Workers cannot delegate further.
+
+Use one worker for a focused task, sequential workers for dependent steps, or
+parallel workers for independent work. Codex can also stay solo when delegation
+would add more overhead than value.
 
 ## Quick start
 
-`main` contains the prepared 0.13.0 candidate, pending live testing. npm still
-provides 0.12.0; the GPT-6 default and automatic model selection below are
-candidate behavior until 0.13.0 is published. For candidate testing, use the
-[local development setup](CONTRIBUTING.md#developing-the-mcp-locally).
-
-Prerequisites: Node.js 22.12 or newer and a logged-in
+You need Node.js 22.12 or newer and a logged-in
 [OpenAI Codex CLI](https://developers.openai.com/codex).
-
-Any compatible parent model may supervise. Workers default to `gpt-6-luna`;
-explicit model pins remain supported. Optional `LUNA_MODEL=latest-luna` discovers
-and freezes the newest compatible Luna exposed by the installed Codex catalog
-at startup. See [model selection](docs/CONFIGURATION.md#worker-model-selection)
-for setup, startup bounds, and catalog availability limits.
 
 ```bash
 npm install -g sol-luna-orchestrator
@@ -37,15 +30,19 @@ sol-luna-orchestrator init
 sol-luna-orchestrator doctor
 ```
 
-Open Codex and work normally. It can discover the orchestrator and decide
-whether delegation is useful; you do not need to select workers or call MCP
-tools yourself. For clone installs, platform requirements, and advanced setup,
-see [Configuration](docs/CONFIGURATION.md).
+Start a fresh Codex session and work normally. Codex can discover the
+orchestrator and choose when to delegate; you do not need to select workers or
+call MCP tools yourself.
 
-The most useful CLI commands are `init` to register or reconcile the server,
-`doctor` to diagnose setup, `status` for a runtime summary, and `activity` for
-recent orchestration activity. See [Configuration](docs/CONFIGURATION.md) for
-the remaining lifecycle commands and options.
+Watch task progress in another terminal:
+
+```bash
+sol-luna-orchestrator activity --watch
+```
+
+Use `status` to inspect setup and `doctor` to diagnose problems. For clone
+installs, model settings, and advanced options, see
+[Configuration](docs/CONFIGURATION.md).
 
 ## How it works
 
@@ -75,18 +72,23 @@ declared checks, including a final deduplicated batch check after integration.
 See [discovery and adaptive routing](docs/CONFIGURATION.md#discovery-hint-and-adaptive-routing)
 for the fresh-session setup and routing guidance.
 
+Any compatible parent model may supervise. You can pin a worker model or opt
+into automatic Luna selection, which freezes the chosen model for each server
+session. See [model selection](docs/CONFIGURATION.md#worker-model-selection)
+for defaults, configuration, and availability limits.
+
 ## Features
 
-| Capability                                 | What it provides                                                                                                                                             |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Adaptive orchestration                     | Solo, single, sequential, or parallel execution, with semantic routing and operator-bounded model, effort, worker-count, and concurrency policy.             |
-| Isolated parallel execution                | Independent workers use separate worktrees, bounded concurrency, conservative integration, and conflict and scope checks; sequential tasks can share state.  |
-| Authoritative verification                 | Observed changes and independently rerun checks determine trust, including final workspace verification after batch integration.                             |
-| Bounded repair and recovery                | Evidence can authorize one eligible task-local repair or one bounded parallel recovery attempt, without uncontrolled retry chains.                           |
-| Continuations and next actions             | Eligible work can resume under its original contract, while single-use handoffs preserve only execution authority earned from authoritative evidence.        |
-| Context lifecycle management               | Model-facing context and routine results stay compact while authoritative evidence, diagnostics, and execution lineage remain available for review.          |
-| Read-only exploration and portable context | Optional exploration runs in a read-only disposable surface; cross-session handoffs carry informational history without importing execution authority.       |
-| Observability and diagnostics              | Structured activity, execution evidence, status, and diagnostic tooling make orchestration inspectable without exposing task prompts in the activity stream. |
+| Capability                                 | What it provides                                                                                      |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| Adaptive orchestration                     | Choose solo, single, sequential, or parallel work within your model, effort, and concurrency limits.  |
+| Isolated parallel execution                | Give independent workers separate worktrees, then check scopes and conflicts before integration.      |
+| Authoritative verification                 | Check observed edits and rerun declared checks, including final batch verification after integration. |
+| Bounded repair and recovery                | Allow an eligible repair or recovery attempt without uncontrolled retry chains.                       |
+| Continuations and next actions             | Resume eligible work under its original contract and single-use execution authority.                  |
+| Context lifecycle management               | Keep routine handoffs compact while preserving evidence and execution history for review.             |
+| Read-only exploration and portable context | Investigate an admitted scope and carry informational history across sessions.                        |
+| Observability and diagnostics              | Inspect progress, results, and setup without exposing task prompts in the activity stream.            |
 
 ## MCP surface
 
