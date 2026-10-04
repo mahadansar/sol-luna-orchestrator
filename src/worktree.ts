@@ -1952,8 +1952,6 @@ async function withPersistentMetadataLease<T>(
     }
   }
 
-  throwIfAborted();
-
   const renewal = worktreeLeaseStore.maintain(
     lease,
     METADATA_LEASE_WINDOW_MS,

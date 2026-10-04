@@ -2741,6 +2741,143 @@ test("sequential cancellation removes a task queued for a worker slot", async ()
   }
 });
 
+test("parallel cancellation during worker slot acquisition restores an unspent handoff", async () => {
+  const repo = await makeRepo();
+  const handoffs = new HandoffStore();
+  const input = makeTask({
+    workingDirectory: repo,
+    allowedFiles: ["src/queued.ts"],
+    effort: "medium",
+  });
+  const reference = handoffs.issue(
+    input,
+    makeOutput({
+      verdict: "FAILED",
+      effort: "medium",
+      failureDecision: {
+        classification: "effort",
+        action: "effort-escalation",
+        reason: "Needs more compute",
+        evidenceExecutionIds: ["exec-queued"],
+        nextEffort: "high",
+        automaticHandler: null,
+        automaticRetryCount: 0,
+        automaticRetryLimit: 1,
+      },
+    }),
+    "exec-queued",
+  );
+  const releases = await Promise.all(
+    Array.from({ length: MAX_PARALLEL }, () => workerSlots.acquire()),
+  );
+  const controller = new AbortController();
+  const originalAcquire = workerSlots.acquire;
+  let attempted!: () => void;
+  const queued = new Promise<void>((resolve) => {
+    attempted = resolve;
+  });
+  let calls = 0;
+  try {
+    workerSlots.acquire = async (signal) => {
+      const pending = originalAcquire.call(workerSlots, signal);
+      attempted();
+      return pending;
+    };
+    const pending = runBatch([{ ...input, handoffReference: reference }], {
+      mode: "parallel",
+      workingDirectory: repo,
+      handoffStore: handoffs,
+      signal: controller.signal,
+      keepWorktrees: "never",
+      executor: async () => {
+        calls += 1;
+        return makeOutput();
+      },
+    });
+    await Promise.race([
+      queued,
+      pending.then(() => {
+        throw new Error("batch finished before queuing");
+      }),
+    ]);
+    assert.equal(
+      handoffs.status(reference),
+      "consumed",
+      "reservation is unavailable while queued",
+    );
+    controller.abort();
+    const result = await pending;
+    assert.equal(calls, 0, describeBatch(result));
+    assert.equal(result.tasks[0]?.state, "cancelled", describeBatch(result));
+    assert.equal(handoffs.status(reference), "issued");
+    const restored = handoffs.consume(reference);
+    assert.equal(restored.status, "ready");
+    if (restored.status === "ready")
+      assert.equal(restored.entry.predecessorExecutionId, "exec-queued");
+  } finally {
+    workerSlots.acquire = originalAcquire;
+    for (const release of releases) release();
+    await cleanupRepo(repo);
+  }
+});
+
+test("metadata cancellation immediately after acquisition releases the persistent owner", async (t) => {
+  const repo = await makeRepo();
+  const controller = new AbortController();
+  const originalAcquire = WorktreeLeaseStore.prototype.acquire;
+  let metadataAcquired = false;
+  let calls = 0;
+  const mocked = t.mock.method(
+    WorktreeLeaseStore.prototype,
+    "acquire",
+    async function (
+      this: WorktreeLeaseStore,
+      ...args: Parameters<WorktreeLeaseStore["acquire"]>
+    ) {
+      const lease = await originalAcquire.apply(this, args);
+      if (args[2] === "metadata") {
+        metadataAcquired = true;
+        controller.abort();
+      }
+      return lease;
+    },
+  );
+  try {
+    await assert.rejects(
+      withWorktreeMetadataAuthority(
+        repo,
+        async () => {
+          calls += 1;
+        },
+        controller.signal,
+      ),
+      { name: "AbortError" },
+    );
+    assert.equal(metadataAcquired, true);
+    assert.equal(calls, 0);
+    const artifact = path.join(
+      repo,
+      ".git",
+      "sol-luna-orchestrator",
+      "continuation-leases",
+      ".metadata.lease",
+    );
+    await assert.rejects(fs.stat(artifact), { code: "ENOENT" });
+    mocked.mock.restore();
+    await withWorktreeMetadataAuthority(repo, async () => {
+      calls += 1;
+    });
+    assert.equal(
+      calls,
+      1,
+      "a subsequent metadata operation must acquire without waiting for expiry",
+    );
+  } finally {
+    mocked.mock.restore();
+    await cleanupRepo(repo);
+  }
+});
+
 test("sequential evidence-scan failure cannot overwrite authoritative cancellation", async () => {
   const repo = await makeRepo();
   const events: Array<Record<string, unknown>> = [];
