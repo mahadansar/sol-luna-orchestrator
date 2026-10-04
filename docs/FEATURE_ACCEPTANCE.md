@@ -16,7 +16,8 @@ confidence ledger for the repository. The current release baseline is
   complete tests, MCP protocol smoke, and all 17 V2/V3 benchmark fixtures;
   Ubuntu/Node 24 also passed packaging validation. Each job ran 1,267 tests:
   Windows and macOS passed 1,263 with 4 platform skips, Ubuntu passed 1,262
-  with 5 platform skips, and every job had zero failures. Subsequent commits
+  with 5 platform skips. The gate had no failures and only expected platform-specific skips.
+  Subsequent commits
   update documentation only; runtime, workflow, and fixture files match that
   validated source checkpoint.
 - **Earlier local full validation:** `npm run verify` passed on
