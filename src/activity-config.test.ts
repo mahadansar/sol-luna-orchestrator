@@ -67,6 +67,17 @@ startup_timeout_sec = 15
 CONTEXT7_TOKEN = "keep-me"
 `;
 
+test("registered configuration defaults to GPT-6 Luna and preserves explicit legacy pins", () => {
+  const defaults = resolveRegisteredServerConfig(REALISTIC);
+  assert.equal(defaults.workerModel, "gpt-6-luna");
+  assert.deepEqual(defaults.computePolicy.allowedModels, ["gpt-6-luna"]);
+  const pinned = resolveRegisteredServerConfig(
+    upsertKey(REALISTIC, serverEnvTable(), "LUNA_MODEL", "gpt-5.6-luna"),
+  );
+  assert.equal(pinned.workerModel, "gpt-5.6-luna");
+  assert.deepEqual(pinned.computePolicy.allowedModels, ["gpt-5.6-luna"]);
+});
+
 test("registered policy keeps model authorization separate from executor order", () => {
   let config = REALISTIC;
   config = upsertKey(config, serverEnvTable(), "LUNA_MODEL", "base-model");

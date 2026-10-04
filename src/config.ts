@@ -7,8 +7,8 @@
  */
 import path from "node:path";
 
-/** Worker model. Verified present in the local Codex model cache. */
-export const DEFAULT_LUNA_MODEL = "gpt-5.6-luna";
+/** Pinned worker model; explicit operator overrides remain authoritative. */
+export const DEFAULT_LUNA_MODEL = "gpt-6-luna";
 export const LUNA_MODEL = process.env.LUNA_MODEL ?? DEFAULT_LUNA_MODEL;
 
 /**
@@ -38,7 +38,7 @@ export const IS_WORKER_PROCESS = process.env[WORKER_MARKER_ENV] === "1";
 /**
  * Reasoning efforts the parent orchestrator may select for a delegated task.
  *
- * `gpt-5.6-luna` advertises low|medium|high|xhigh|max. We deliberately expose
+ * `gpt-6-luna` supports none|low|medium|high|xhigh|max. We deliberately expose
  * only the top four: delegation always carries a fixed handoff cost, so a
  * `low`-effort worker is never the right trade against the parent doing it.
  */

@@ -23,8 +23,8 @@ Everything the orchestrator reads, and how to change it. The
 - **OpenAI Codex CLI**, logged in (`codex login`). Built against `codex-cli 0.147.0`.
 - **git ≥ 2.20** — only for parallel batches, which use `git worktree`.
 - Access to a compatible parent Codex model and the configured worker model
-  `gpt-5.6-luna`. The creator's examples are `gpt-5.6-sol` for the parent and
-  `gpt-5.6-luna` for workers; compatible parent models are allowed.
+  `gpt-6-luna`. Compatible parent models are allowed; the creator's historical
+  GPT-5.6 examples below are experience reports, not current worker defaults.
 
 `sol-luna-orchestrator doctor` checks the supported Node range, git and Codex
 availability, the presence of Codex's local authentication file, registration,
@@ -237,7 +237,7 @@ registration explicitly has `enabled = false`, a plain `init` repairs it to
 
 | Variable                           | Default                 | Purpose                                                         |
 | ---------------------------------- | ----------------------- | --------------------------------------------------------------- |
-| `LUNA_MODEL`                       | `gpt-5.6-luna`          | Worker model                                                    |
+| `LUNA_MODEL`                       | `gpt-6-luna`            | Worker model                                                    |
 | `LUNA_TIMEOUT_SECONDS`             | `1800`                  | Wall-clock budget per worker turn                               |
 | `LUNA_VERIFY_TIMEOUT_SECONDS`      | `600`                   | Wall-clock budget per independently rerun verification command  |
 | `LUNA_SANDBOX`                     | `workspace-write`       | Codex sandbox mode for workers                                  |
@@ -632,7 +632,7 @@ and operators must re-check official sources before relying on this example.
 ## Parent model and effort
 
 The parent model is yours to choose; the orchestrator does not require a
-particular model. Creator experience, documented as examples rather than
+particular model. Historical GPT-5.6 creator experience, documented as examples rather than
 requirements: `gpt-5.6-sol` at `medium` is commonly sufficient for substantial
 repository work, while `gpt-5.6-luna` at `high` has successfully handled simpler
 docs and maintenance work and can delegate bounded Luna work. The effort is

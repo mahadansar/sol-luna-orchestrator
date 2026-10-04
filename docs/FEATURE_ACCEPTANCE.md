@@ -17,9 +17,13 @@ confidence ledger for the repository. The current release baseline is
   Ubuntu/Node 24 also passed packaging validation. Each job ran 1,267 tests:
   Windows and macOS passed 1,263 with 4 platform skips, Ubuntu passed 1,262
   with 5 platform skips. The gate had no failures and only expected platform-specific skips.
-  Subsequent commits
-  update documentation only; runtime, workflow, and fixture files match that
-  validated source checkpoint.
+  This is the accepted hardening checkpoint; it does not certify subsequent
+  worker-model changes on the upgrade branch.
+- **Worker-model upgrade in progress:** the new branch defaults to
+  `gpt-6-luna`, with explicit legacy pins preserved. Typecheck/build,
+  configuration/CLI/policy/guidance tests, and a focused continuation-authority
+  regression pass. Automatic discovery and complete upgrade acceptance are
+  pending; no live GPT-6 inference run is claimed.
 - **Earlier local full validation:** `npm run verify` passed on
   2026-10-04 at `a0217f8` on Windows with Node `v22.23.2`: 1,263 tests,
   1,258 passed, 0 failed, and 5 skipped. Typecheck, formatting, the complete

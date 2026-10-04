@@ -58,7 +58,7 @@ SOL_LUNA_EVENTS = "/home/you/.codex/sol-luna-orchestrator.events.jsonl"
 # SOL_LUNA_VERIFY_ALLOW = "./gradlew,rspec"
 
 # DEFAULT: more implementation defaults shown explicitly and safe to omit.
-# LUNA_MODEL = "gpt-5.6-luna"
+# LUNA_MODEL = "gpt-6-luna"
 # LUNA_TIMEOUT_SECONDS = "1800"
 # Per-command wall-clock budget for independently rerun verification commands.
 # LUNA_VERIFY_TIMEOUT_SECONDS = "600"

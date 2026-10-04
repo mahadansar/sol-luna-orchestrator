@@ -35,7 +35,7 @@ import type {
   FailureDecision,
 } from "./contract.js";
 import type { OrchestratorEvent } from "./events.js";
-import { allowedEffortsInvalid, parseAllowedEfforts } from "./config.js";
+import { LUNA_MODEL, allowedEffortsInvalid, parseAllowedEfforts } from "./config.js";
 import {
   WorktreeLeaseOwnershipError,
   captureSharedDirectoryFingerprint,
@@ -45,7 +45,7 @@ import {
 import { ShutdownCoordinator } from "./shutdown.js";
 import { runGit, type GitEvidenceAuthority } from "./git.js";
 
-const LUNA = "gpt-5.6-luna";
+const LUNA = LUNA_MODEL;
 
 function makeTask(overrides: Partial<DelegateTaskInput> = {}): DelegateTaskInput {
   return {

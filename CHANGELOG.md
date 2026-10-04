@@ -6,6 +6,11 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The pinned worker default is now `gpt-6-luna`. Explicit `LUNA_MODEL` overrides
+  remain honored, and historical benchmark/rate-card model IDs are unchanged.
+
 ### Fixed
 
 - Git isolation, worktree setup, and trusted evidence projection canonicalize

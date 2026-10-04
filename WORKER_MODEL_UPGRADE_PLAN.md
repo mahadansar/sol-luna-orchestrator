@@ -9,8 +9,17 @@ Hardening runtime source `3224d4a` passed all six Windows/Ubuntu/macOS CI jobs
 on Node 24 and 26; see [FEATURE_ACCEPTANCE.md](docs/FEATURE_ACCEPTANCE.md).
 The existing stash is unrelated and must remain untouched.
 
-Status: planned; this document is committed before model implementation.
-The current implementation still defaults to `gpt-5.6-luna`.
+Status: step 1 implemented; optional automatic discovery and full upgrade
+acceptance remain pending. This plan was first committed as `7a507bc` before
+model implementation. The subsequent `main` ledger-wording fix `4a535f2` was
+merged into this branch before the default-change commit.
+The current implementation defaults to `gpt-6-luna`.
+
+Step 1 validation: typecheck and build pass; 151 configuration/CLI/policy cases
+passed, followed by all 44 guidance cases after correcting the ledger wording.
+The single-delegation continuation-authority regression also passes with GPT-6
+selected. These are deterministic tests with injected workers, not live GPT-6
+inference evidence. Automatic discovery has not yet been implemented.
 
 ## Authorized outcome
 
