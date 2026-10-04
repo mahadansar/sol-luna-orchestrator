@@ -82,7 +82,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "@openai/codex-sdk": "^0.147.0",
+    "@openai/codex-sdk": "^0.160.0",
     "cross-spawn": "^7.0.6",
     "picomatch": "^4.0.5",
     "zod": "^4.4.3"

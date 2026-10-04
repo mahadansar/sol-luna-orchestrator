@@ -28,7 +28,18 @@ options, the result, and both attempt hooks unchanged. Offline CLI status/doctor
 and descendant process-tree cancellation have dedicated regressions.
 A real read-only Codex 0.147.0 catalog exchange completed but exposed only
 GPT-5.6 Luna; automatic mode correctly refused to downgrade. It is not live
-GPT-6 inference evidence. Discovery starts no thread, so its recursion backstop
+GPT-6 inference evidence. A temporary isolated SDK 0.160.0 probe then exposed
+GPT-6 Luna with medium/high/xhigh/max and selected it successfully. This proved
+a current compatibility blocker in the bundled catalog, so the package SDK and
+lockfile were upgraded to 0.160.0 rather than leaving automatic mode unusable
+with the installed dependency. SDK 0.160.0 also natively types `max`, so the old
+unsafe widening cast was removed. Historical SDK-version fixtures remain intact.
+After the dependency update, typecheck/build and all 168 catalog/configuration/
+policy/guidance cases passed, followed by the exact-model continuation and
+offline CLI regressions. A real MCP handshake using automatic mode advertised
+GPT-6 Luna in server instructions and all three model-bearing tools, with no
+unresolved selector. This was a catalog/protocol check with no inference turn.
+Discovery starts no thread, so its recursion backstop
 is the worker marker; worker execution retains both existing recursion guards.
 
 ## Authorized outcome

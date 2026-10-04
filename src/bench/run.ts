@@ -103,7 +103,7 @@ const ORCHESTRATOR_NAME = process.env.SOL_LUNA_SERVER_NAME ?? "sol-luna-orchestr
 const TASK_TIMEOUT_SECONDS = Number(process.env.BENCH_TASK_TIMEOUT ?? 1500);
 
 /**
- * Codex SDK 0.147.0 exposes no supported speed/service-tier thread option.
+ * The installed Codex SDK exposes no supported speed/service-tier thread option.
  * Live entry points therefore require an operator acknowledgement that Fast
  * mode is disabled for the ChatGPT/Codex account before any turn starts.
  */

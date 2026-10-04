@@ -6,6 +6,7 @@
  * see `command.ts`, where model-supplied input is checked against these values.
  */
 import path from "node:path";
+import type { ModelReasoningEffort } from "@openai/codex-sdk";
 import { LATEST_LUNA_SELECTOR } from "./model-catalog.js";
 
 /** Pinned worker model; explicit operator overrides remain authoritative. */
@@ -105,15 +106,9 @@ export const DEFAULT_EFFORT: Effort = ALLOWED_EFFORTS.includes("high")
   ? "high"
   : (ALLOWED_EFFORTS[0] as Effort);
 
-/**
- * The Codex TypeScript SDK types `modelReasoningEffort` as
- * "minimal"|"low"|"medium"|"high"|"xhigh" — its type list predates `max`.
- * The SDK forwards the value verbatim as `--config model_reasoning_effort="…"`,
- * and the CLI accepts `max` for Luna (verified against codex-cli 0.147.0), so
- * widening the type here is safe rather than speculative.
- */
-export type SdkEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
-export const asSdkEffort = (effort: Effort): SdkEffort => effort as SdkEffort;
+/** The installed SDK supports every effort admitted by this package. */
+export type SdkEffort = ModelReasoningEffort;
+export const asSdkEffort = (effort: Effort): SdkEffort => effort;
 
 /**
  * Seconds budgets, read the same way every other operator bound here is.

@@ -21,7 +21,7 @@ Everything the orchestrator reads, and how to change it. The
 
 - **Node.js ≥ 22.12** — tested in CI on 24 (active LTS) and 26 (current). Node 20
   and earlier are end-of-life and are neither tested nor supported.
-- **OpenAI Codex CLI**, logged in (`codex login`). Built against `codex-cli 0.147.0`.
+- **OpenAI Codex CLI**, logged in (`codex login`). Built against bundled `codex-cli 0.160.0`.
 - **git ≥ 2.20** — only for parallel batches, which use `git worktree`.
 - Access to a compatible parent Codex model and the configured worker model
   `gpt-6-luna`. Compatible parent models are allowed; the creator's historical
@@ -35,7 +35,7 @@ credentials are currently usable.
 
 Some required Codex behaviors are experimental surfaces established by testing
 rather than documented stable APIs. This release was built against
-`codex-cli 0.147.0`; upstream changes may require a compatibility update even
+`codex-cli 0.160.0`; upstream changes may require a compatibility update even
 when the local Node.js and git requirements are satisfied.
 
 ## Advanced installation
@@ -117,7 +117,10 @@ account access or global release freshness; a real worker turn checks access.
 Refreshing the catalog or updating the bundled Codex dependency may be needed
 for a new model to appear, even when this package needs no model-name change.
 A read-only check on 2026-10-04 with bundled Codex 0.147.0 listed GPT-5.6 Luna
-only, so automatic mode refused to downgrade. No live GPT-6 run is claimed.
+only, so automatic mode refused to downgrade. A second read-only check with
+Codex 0.160.0 exposed `gpt-6-luna` with all four allowed efforts and selected it.
+The package now requires SDK `^0.160.0` (lockfile 0.160.0), which bundles that CLI.
+Neither catalog check is a live GPT-6 inference run.
 Offline `status` and `doctor` show the configured selector without discovery or
 model calls; the running server's diagnostic log reports its concrete model.
 

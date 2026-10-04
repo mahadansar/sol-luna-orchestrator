@@ -17,6 +17,8 @@ All notable changes to this project are documented here. Format follows
 
 ### Changed
 
+- The Codex SDK dependency is now `^0.160.0` (lockfile 0.160.0), whose bundled
+  catalog exposes GPT-6 Luna. Native SDK effort types replace the old `max` cast.
 - The pinned worker default is now `gpt-6-luna`. Explicit `LUNA_MODEL` overrides
   remain honored, and historical benchmark/rate-card model IDs are unchanged.
 
