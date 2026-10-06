@@ -1264,9 +1264,10 @@ test("task cancellation propagates into an already-running authoritative verific
     { workingDirectory: root, codex, signal: controller.signal },
   );
 
-  // npm startup can exceed two seconds on a loaded Windows test runner even
-  // though the authoritative verification has started normally.
-  const deadline = Date.now() + 5_000;
+  // npm startup can be heavily delayed by the rest of the full Windows suite.
+  // This is only a fixture-start watchdog; the authoritative command keeps its
+  // own 10-second task timeout above, so production cancellation stays bounded.
+  const deadline = Date.now() + 30_000;
   while (!fs.existsSync(marker) && Date.now() < deadline) {
     await new Promise<void>((resolve) => setImmediate(resolve));
   }

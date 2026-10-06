@@ -3,13 +3,10 @@
 # Merge this into ~/.codex/config.toml (or %USERPROFILE%\.codex\config.toml).
 # Replace /absolute/path/to with wherever you cloned this repository.
 
-# EXAMPLE: creator session choices, not requirements or recommendations.
-# Any compatible parent model and reasoning effort may be used. The creator
-# can use any compatible parent model; choose the reasoning effort the work warrants.
+# Parent session choices are intentionally omitted here. Any compatible parent
+# model may use this MCP; choose the reasoning effort the work warrants.
 # `ultra` is a separate Codex multi-agent execution mode, not a reasoning-effort
 # value. Luna worker effort choices are medium, high, xhigh, and max.
-model = "gpt-5.6-sol"
-model_reasoning_effort = "medium"
 
 # REQUIRED: integration does not work without this registration and these two
 # MCP settings.

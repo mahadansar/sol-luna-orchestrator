@@ -43,3 +43,16 @@ test("new telemetry files are owner-only on POSIX", async () => {
     assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   });
 });
+
+test("rotation tightens an older permissive predecessor on POSIX", async () => {
+  if (process.platform === "win32") return;
+  await withTempDir((directory) => {
+    const file = path.join(directory, "events.jsonl");
+    fs.writeFileSync(file, "12345\n", { encoding: "utf8", mode: 0o644 });
+    fs.chmodSync(file, 0o644);
+
+    assert.equal(appendBoundedPrivateFile(file, "67890\n", { maxBytes: 10 }), true);
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+    assert.equal(fs.statSync(`${file}${TELEMETRY_ROTATED_SUFFIX}`).mode & 0o777, 0o600);
+  });
+});

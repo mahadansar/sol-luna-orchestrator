@@ -7,7 +7,6 @@ import {
   open,
   opendir,
   readFile,
-  readdir,
   readlink,
   realpath,
   rm,
@@ -48,6 +47,7 @@ export class GitError extends Error {
 
 export const GIT_TIMEOUT_MS = 120_000;
 export const MAX_GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
+const MAX_GIT_CONTROL_FILE_BYTES = 64 * 1024;
 export const DEFAULT_EVIDENCE_READ_LIMITS = {
   maxFileBytes: 512 * 1024 * 1024,
   maxTotalBytes: 8 * 1024 * 1024 * 1024,
@@ -876,11 +876,18 @@ async function inspectUninitializedGitlinkPath(
     }
 
     const identity = gitlinkDirectoryIdentity(currentStat);
-    const entries = await readdir(current).catch((error: NodeJS.ErrnoException) => {
+    let populated = false;
+    let directory: Awaited<ReturnType<typeof opendir>> | undefined;
+    try {
+      directory = await opendir(current);
+      populated = (await directory.read()) !== null;
+    } catch (error) {
       throw new GitError(
-        `Git evidence authority could not inspect uninitialized submodule worktree ${repoRelativePath}: ${error.message}`,
+        `Git evidence authority could not inspect uninitialized submodule worktree ${repoRelativePath}: ${(error as Error).message}`,
       );
-    });
+    } finally {
+      await directory?.close().catch(() => undefined);
+    }
     const after = await lstat(current, { bigint: true }).catch(() => null);
     if (
       !after ||
@@ -892,7 +899,7 @@ async function inspectUninitializedGitlinkPath(
         `Git evidence authority changed while inspecting uninitialized submodule worktree: ${repoRelativePath}`,
       );
     }
-    if (entries.length !== 0) {
+    if (populated) {
       throw new GitError(
         `Git evidence authority cannot trust populated uninitialized submodule worktree: ${repoRelativePath}`,
       );
@@ -901,6 +908,62 @@ async function inspectUninitializedGitlinkPath(
   }
 
   return { kind: "missing" };
+}
+
+async function readPinnedGitControlFile(controlPath: string): Promise<string> {
+  const entry = await lstat(controlPath).catch(() => null);
+  if (!entry || !entry.isFile()) {
+    throw new GitError(`Git control metadata is not a regular file: ${controlPath}`);
+  }
+  if (
+    !Number.isSafeInteger(entry.size) ||
+    entry.size < 0 ||
+    entry.size > MAX_GIT_CONTROL_FILE_BYTES
+  ) {
+    throw new GitError(
+      `Git control metadata exceeds its ${MAX_GIT_CONTROL_FILE_BYTES}-byte safety budget: ${controlPath}`,
+    );
+  }
+
+  const expectedIdentity = `${entry.dev}:${entry.ino}:${entry.birthtimeMs}`;
+  const expectedSize = entry.size;
+  const handle = await open(controlPath, "r");
+  try {
+    const opened = await handle.stat();
+    if (
+      !opened.isFile() ||
+      `${opened.dev}:${opened.ino}:${opened.birthtimeMs}` !== expectedIdentity ||
+      opened.size !== expectedSize
+    ) {
+      throw new GitError(`Git control metadata changed while opening: ${controlPath}`);
+    }
+
+    const bytes = Buffer.allocUnsafe(expectedSize);
+    let offset = 0;
+    while (offset < expectedSize) {
+      const { bytesRead } = await handle.read(
+        bytes,
+        offset,
+        expectedSize - offset,
+        offset,
+      );
+      if (bytesRead <= 0) break;
+      offset += bytesRead;
+    }
+
+    const after = await handle.stat();
+    if (
+      offset !== expectedSize ||
+      !after.isFile() ||
+      `${after.dev}:${after.ino}:${after.birthtimeMs}` !== expectedIdentity ||
+      after.size !== expectedSize
+    ) {
+      throw new GitError(`Git control metadata changed while reading: ${controlPath}`);
+    }
+    return bytes.toString("utf8");
+  } finally {
+    await handle.close();
+  }
 }
 
 interface PinnedGitlink {
@@ -952,7 +1015,7 @@ async function captureSingleGitEvidenceAuthority(
   const pinnedBaseCommit = baseCommit ?? (await currentHead(repoRoot));
 
   if (control.isFile()) {
-    const gitFileContent = await readFile(controlPath, "utf8");
+    const gitFileContent = await readPinnedGitControlFile(controlPath);
     const gitDir = await realpath(gitdirFromControlFile(gitFileContent, controlPath));
     return {
       repoRoot,
@@ -1090,7 +1153,7 @@ async function validateGitEvidenceAuthority(
         "Git evidence authority changed: worktree .git is no longer a file.",
       );
     }
-    const current = await readFile(controlPath, "utf8");
+    const current = await readPinnedGitControlFile(controlPath);
     if (current !== authority.gitFileContent) {
       throw new GitError("Git evidence authority changed: worktree .git was modified.");
     }

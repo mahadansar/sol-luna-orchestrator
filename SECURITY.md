@@ -287,16 +287,25 @@ workspace copy is never the worker's dependency write target.
 Parent-side evidence hashing is streamed rather than buffering whole
 worker-controlled files. Each evidence walk also has explicit safety ceilings:
 512 MiB per regular file, 8 GiB aggregate bytes, 250,000 filesystem entries, and
-120 seconds elapsed. The same limits cover ordinary workspace evidence and
-private dependency fingerprints. Exceeding any ceiling fails the evidence step
-closed instead of attempting an unbounded read in the unsandboxed parent.
+120 seconds elapsed. The same limits cover ordinary workspace evidence, private
+dependency fingerprints, and the per-path signature rechecks used by parallel
+integration. Integration only retains file bytes when they must cross a pinned
+write/recovery boundary, and a single buffered integration payload is capped at
+64 MiB. Larger changed files can still be hashed as streamed evidence, but they
+are refused for integration rather than being buffered in the unsandboxed parent.
+Exceeding any ceiling fails the evidence step closed.
 
 Filesystem mutations that require pinned-directory authority run in a dedicated
 helper with a five-minute operation bound and inherit the enclosing
-orchestration's cancellation signal. Cancellation or timeout kills and reaps the
-helper before returning; if the protocol cannot prove whether a mutation already
-happened, the result remains conservatively marked as potentially mutated rather
-than assuming rollback safety.
+orchestration's cancellation signal. Parallel integration and deletion thread
+that signal into their authoritative helpers as well, so cancellation can stop a
+mutation that is already in flight instead of waiting for the helper deadline.
+The helper's own cancellation/deadline signal also aborts parent-side
+pre-execution evidence rechecks. Cancellation or timeout force-kills the helper
+and waits for its close/reap event for a bounded grace period before returning;
+if the protocol cannot prove whether a mutation already happened, the result
+remains conservatively marked as potentially mutated rather than assuming
+rollback safety.
 
 Final worktree deletion does not delegate recursive filesystem removal to Git.
 On Windows, `git worktree remove --force` can traverse an arbitrary junction left

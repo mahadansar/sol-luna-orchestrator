@@ -6,7 +6,7 @@
  * deferred promises and injected clocks rather than by sleeping, so a slow
  * machine cannot turn a race assertion into a flake.
  */
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -46,6 +46,12 @@ import { ShutdownCoordinator } from "./shutdown.js";
 import { runGit, type GitEvidenceAuthority } from "./git.js";
 
 const LUNA = LUNA_MODEL;
+const DEFAULT_TEST_WORKSPACE = await fs.mkdtemp(
+  path.join(os.tmpdir(), "sol-luna-capability-lifecycle-"),
+);
+after(async () => {
+  await fs.rm(DEFAULT_TEST_WORKSPACE, { recursive: true, force: true });
+});
 
 function makeTask(overrides: Partial<DelegateTaskInput> = {}): DelegateTaskInput {
   return {
@@ -60,6 +66,7 @@ function makeTask(overrides: Partial<DelegateTaskInput> = {}): DelegateTaskInput
     automaticRepair: false,
     resultDetail: "handoff",
     previousAttempts: [],
+    workingDirectory: DEFAULT_TEST_WORKSPACE,
     routingPreflight: {
       seams: ["parser-seam"],
       seamSize: "substantial",
@@ -595,7 +602,7 @@ test("single lifecycle setup failure releases repository operation authority bef
       contextRegistry: harness.registry,
       contextStore: harness.contextStore,
       operationAuthorityAcquirer: async () => ({
-        commonGitDir: process.cwd(),
+        commonGitDir: DEFAULT_TEST_WORKSPACE,
         assertHealthy: () => undefined,
         release: async () => {
           authorityReleases += 1;
@@ -792,6 +799,7 @@ function batchOptionsFor(
 ): BatchOptions {
   return {
     mode: "parallel",
+    workingDirectory: DEFAULT_TEST_WORKSPACE,
     handoffStore,
     eventEmitter: () => undefined,
     batchId: "b_batch",
@@ -817,7 +825,11 @@ test("an invalid sibling handoff cannot burn a valid sibling's handoff", async (
       ],
       batchOptionsFor(handoffStore),
     ),
-    BatchRejectedError,
+    (error: unknown) => {
+      assert.ok(error instanceof BatchRejectedError);
+      assert.match(error.message, /Unknown handoff reference/i);
+      return true;
+    },
   );
 
   assert.equal(
@@ -841,7 +853,11 @@ test("an overlapping-scope refusal hands every reserved batch handoff back", asy
       ],
       batchOptionsFor(handoffStore),
     ),
-    BatchRejectedError,
+    (error: unknown) => {
+      assert.ok(error instanceof BatchRejectedError);
+      assert.match(error.message, /overlapping file scopes/i);
+      return true;
+    },
   );
 
   assert.equal(handoffStore.status(first), "issued");
@@ -850,16 +866,23 @@ test("an overlapping-scope refusal hands every reserved batch handoff back", asy
 
 test("parallel worktree setup refusal restores a reserved handoff before worker entry", async () => {
   const handoffStore = new HandoffStore();
-  const task = makeTask({ allowedFiles: ["src/only.ts"] });
-  const reference = issueEscalation(handoffStore, task);
   const plain = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-handoff-setup-"));
   try {
+    const task = makeTask({
+      allowedFiles: ["src/only.ts"],
+      workingDirectory: plain,
+    });
+    const reference = issueEscalation(handoffStore, task);
     await assert.rejects(
       runBatch(
         [{ ...task, handoffReference: reference }],
         batchOptionsFor(handoffStore, { workingDirectory: plain }),
       ),
-      BatchRejectedError,
+      (error: unknown) => {
+        assert.ok(error instanceof BatchRejectedError);
+        assert.match(error.message, /not inside a git repository/i);
+        return true;
+      },
     );
     assert.equal(
       handoffStore.status(reference),
@@ -880,6 +903,7 @@ test("a batch that reaches its workers spends every handoff it reserved", async 
     [{ ...task, handoffReference: reference }],
     batchOptionsFor(handoffStore, {
       mode: "sequential",
+      workingDirectory: DEFAULT_TEST_WORKSPACE,
       executor: async () => makeFailure({ failureDecision: undefined }),
     }),
   );
@@ -919,7 +943,7 @@ test("continuation lifecycle setup failure restores its reservation before refus
   const reference = harness.continuationStore.issue(
     makeTask(),
     "thread-setup",
-    process.cwd(),
+    DEFAULT_TEST_WORKSPACE,
   );
   harness.contextStore.acquireExecutionLease = () => {
     throw new Error("injected setup failure");
@@ -1280,7 +1304,11 @@ test("lost retained-worktree ownership consumes the continuation instead of rest
 test("pre-execution continuation cancellation restores authority and never enters executor", async () => {
   const continuationStore = new ContinuationStore();
   const registry = new ContextLifecycleRegistry({ continuationStore });
-  const reference = continuationStore.issue(makeTask(), "th_cancelled", process.cwd());
+  const reference = continuationStore.issue(
+    makeTask(),
+    "th_cancelled",
+    DEFAULT_TEST_WORKSPACE,
+  );
   const controller = new AbortController();
   controller.abort();
   let executions = 0;
@@ -1697,6 +1725,7 @@ test("single and batch delegation name the same executor for one envelope", asyn
   const observed: Array<string | undefined> = [];
   await runBatch([makeTask({ allowedFiles: ["src/one.ts"] })], {
     mode: "sequential",
+    workingDirectory: DEFAULT_TEST_WORKSPACE,
     computePolicy: policy,
     batchId: "b_executor",
     eventEmitter: () => undefined,
@@ -1715,6 +1744,7 @@ test("an envelope with no declared executor choice refuses instead of picking on
   await assert.rejects(
     runBatch([makeTask()], {
       mode: "sequential",
+      workingDirectory: DEFAULT_TEST_WORKSPACE,
       computePolicy: policyWith({ allowedModels: ["alpha", "beta"] }),
       batchId: "b_ambiguous",
       eventEmitter: () => undefined,
@@ -1740,7 +1770,7 @@ test("a late failure after a published result does not publish a second outcome"
     contextRegistry: harness.registry,
     contextStore: harness.contextStore,
     delegateToLuna: async (_task, _signal, hooks) => {
-      hooks?.onStarted?.(process.cwd());
+      hooks?.onStarted?.(DEFAULT_TEST_WORKSPACE);
       return makeFailure({ failureDecision: undefined });
     },
     emit: (event) => events.push(event),
@@ -1946,7 +1976,7 @@ test("a long continuation lineage expires and reclaims without resurrection or e
     const reference = continuationStore.issue(
       task,
       "thread-long-chain",
-      process.cwd(),
+      DEFAULT_TEST_WORKSPACE,
       false,
       null,
       turn === 1 ? null : `exec_${turn - 1}`,
@@ -2062,7 +2092,7 @@ test("shutdown invalidates capability stores and releases retained continuation 
   assert.equal(continuationStore.consume(continuation).status, "unknown");
   assert.equal(handoffStore.consume(handoff).status, "unknown");
   assert.throws(
-    () => continuationStore.issue(makeTask(), "thread-new", process.cwd()),
+    () => continuationStore.issue(makeTask(), "thread-new", DEFAULT_TEST_WORKSPACE),
     /shut down/,
   );
   assert.throws(() => issueEscalation(handoffStore, makeTask()), /shut down/);

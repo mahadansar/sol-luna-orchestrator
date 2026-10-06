@@ -30,6 +30,7 @@ All notable changes to this project are documented here. Format follows
   immutable commits, and tagged publishing now requires the exact current `main`
   commit plus a successful manual CI run for that SHA before packaging. OIDC
   authority is isolated to a minimal job that publishes the already-validated tarball.
+  Dependabot now opens weekly npm and GitHub Actions update PRs.
 - Local diagnostics and activity files are owner-only on POSIX where supported,
   bounded to 16 MiB with one rotated predecessor, and activity reads use bounded
   tail windows for oversized legacy files.
@@ -39,15 +40,28 @@ All notable changes to this project are documented here. Format follows
 - Parent-side workspace and dependency evidence hashing now streams file content
   under explicit per-file, aggregate-byte, entry-count, and elapsed-time budgets,
   preventing worker-controlled files from forcing unbounded parent memory use.
+  Parallel-integration signature rechecks now use the same bounded streaming
+  discipline, and file bytes retained for an authoritative integration write or
+  deletion recovery are capped at 64 MiB per payload. Git control-file reads are
+  capped and identity-pinned, uninitialized gitlinks are probed without materializing
+  whole directories, and dependency evidence walks now observe orchestration aborts.
 - Pinned filesystem mutation helpers now inherit orchestration cancellation and a
   finite deadline, are killed/reaped on cancellation or timeout, and preserve
   conservative mutation evidence when interruption happens after dispatch.
-- The previously shared-checkout throwing-executor lifecycle fixture now runs in
-  an isolated temporary Git repository, removing the demonstrated release-gate flake.
+  Integration writes/deletions now propagate the batch cancellation signal into
+  helpers already in flight, and helper deadlines also abort parent-side
+  pre-execution evidence validation. Deletion recovery-backup protocol loss and
+  cancellation now preserve truthful residue/rollback accounting without counting
+  recovery-control artifacts as applied user files.
+- Capability/context lifecycle fixtures now use isolated temporary workspaces
+  instead of the live checkout, removing release-gate timing and state contamination.
 - `init --no-discovery-hint` now removes exact managed discovery hints from an
   existing install while preserving user instructions. CLI help, uninstall scope,
   `status` health exit codes, doctor remedies, and parent-model onboarding copy are
-  aligned with current product behavior.
+  aligned with current product behavior; the shipped Codex example no longer pins
+  a parent model and uninstall output includes the global npm removal command.
+- Legacy single-result telemetry now uses the same bounded private writer as typed
+  events, and rotated POSIX predecessors are tightened best-effort before retention.
 - Human activity output now includes a privacy-safe workspace/run discriminator
   so concurrent projects sharing one Codex home are distinguishable without
   exposing absolute paths or raw batch identifiers.

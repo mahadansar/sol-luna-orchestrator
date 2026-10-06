@@ -30,6 +30,8 @@ export type PinnedDirectoryMutation = (
       testMaxWriteBytes?: number;
       testFailAfterTruncate?: boolean;
       testFailAfterBytes?: number;
+      /** Deterministic protocol-crash seam after the write is durable. */
+      testExitAfterMutationBeforeResult?: boolean;
     }
   | {
       op: "copy-directory";
@@ -500,6 +502,7 @@ async function emitDone(request, value) {
         } else {
           throw new Error("Unsupported pinned write mode: " + String(request.mode));
         }
+        if (request.testExitAfterMutationBeforeResult) process.exit(90);
         await emitDone(request, {
           type: "done",
           mutated,
@@ -744,7 +747,8 @@ export class PinnedDirectoryMutationError extends Error {
 }
 
 export interface PinnedDirectoryMutationOptions {
-  beforeExecute?: () => void | Promise<void>;
+  /** Parent-side boundary validation. The signal is aborted on helper timeout/cancellation. */
+  beforeExecute?: (signal: AbortSignal) => void | Promise<void>;
   /** Cancellation owned by the enclosing orchestration operation. */
   signal?: AbortSignal;
   /** Relative helper lifetime bound. Production defaults to five minutes. */
@@ -889,6 +893,7 @@ export async function runPinnedDirectoryMutation(
   child.stdin.on("error", () => undefined);
 
   let requestDispatched = false;
+  const beforeExecuteController = new AbortController();
   let cancellation:
     | { kind: "abort"; code: "ABORT_ERR"; message: string }
     | { kind: "timeout"; code: "ETIMEDOUT"; message: string }
@@ -924,6 +929,7 @@ export async function runPinnedDirectoryMutation(
             code: "ETIMEDOUT",
             message: `Pinned filesystem mutation timed out after ${Math.ceil(timeoutMs)}ms.`,
           };
+    beforeExecuteController.abort();
     child.kill("SIGKILL");
     rejectCancellation(cancellationError());
   };
@@ -976,7 +982,11 @@ export async function runPinnedDirectoryMutation(
 
     try {
       if (options.beforeExecute) {
-        await awaitCancellable(Promise.resolve().then(options.beforeExecute));
+        await awaitCancellable(
+          Promise.resolve().then(() =>
+            options.beforeExecute!(beforeExecuteController.signal),
+          ),
+        );
       }
       const current = await awaitCancellable(
         capturePinnedDirectoryAuthority(authority.directory),
@@ -1020,7 +1030,7 @@ export async function runPinnedDirectoryMutation(
       }
     }
     if (!result) {
-      const deterministicPostMutationCrash = code === 91 || code === 92;
+      const deterministicPostMutationCrash = code === 90 || code === 91 || code === 92;
       throw new PinnedDirectoryMutationError(
         `Pinned filesystem helper exited without a result (code=${String(code)}, signal=${String(signal)}). ${stderr.trim()}`.trim(),
         true,
@@ -1039,6 +1049,7 @@ export async function runPinnedDirectoryMutation(
     }
     return { mutated: result.mutated, snapshot: result.snapshot };
   } finally {
+    beforeExecuteController.abort();
     clearTimeout(timeout);
     options.signal?.removeEventListener("abort", onAbort);
   }

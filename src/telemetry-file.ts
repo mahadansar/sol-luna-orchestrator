@@ -12,6 +12,15 @@ export interface BoundedAppendOptions {
   maxBytes?: number;
 }
 
+function tightenPrivateMode(file: string): void {
+  if (process.platform === "win32") return;
+  try {
+    chmodSync(file, 0o600);
+  } catch {
+    // Best-effort only: telemetry must never become execution authority.
+  }
+}
+
 /**
  * Best-effort append for sensitive local telemetry.
  *
@@ -35,23 +44,19 @@ export function appendBoundedPrivateFile(
   try {
     const existing = statSync(file, { throwIfNoEntry: false });
     if (existing && !existing.isFile()) return false;
+    if (existing) tightenPrivateMode(file);
 
     if (existing && existing.size + recordBytes > maxBytes) {
       const rotated = `${file}${TELEMETRY_ROTATED_SUFFIX}`;
       rmSync(rotated, { force: true });
       renameSync(file, rotated);
+      tightenPrivateMode(rotated);
     }
 
     appendFileSync(file, record, { encoding: "utf8", mode: 0o600 });
-    if (process.platform !== "win32") {
-      // `mode` applies only at creation time. Tighten an older permissive file
-      // as well, but keep this best-effort so diagnostics never break runtime.
-      try {
-        chmodSync(file, 0o600);
-      } catch {
-        // Ignore unsupported/read-only permission changes.
-      }
-    }
+    // `mode` applies only at creation time. Tighten an older permissive current
+    // file as well, while keeping telemetry best-effort.
+    tightenPrivateMode(file);
     return true;
   } catch {
     return false;

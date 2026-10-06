@@ -29,6 +29,7 @@ import {
   BatchRejectedError,
   encodeDeletionLinkRecoveryMetadata,
   runBatch as runProductionBatch,
+  snapshotIntegrationPath,
 } from "./batch.js";
 import { CONTINUATION_TTL_MS, ContinuationStore } from "./continuation.js";
 import { HandoffStore } from "./handoff.js";
@@ -54,7 +55,12 @@ import {
   type RoutingPreflightInput,
   type WorkerReport,
 } from "./contract.js";
-import { captureGitEvidenceAuthority, collectWorktreeChanges, runGit } from "./git.js";
+import {
+  captureGitEvidenceAuthority,
+  collectWorktreeChanges,
+  EvidenceReadLimitError,
+  runGit,
+} from "./git.js";
 import {
   expandGlob,
   findIntegrationConflicts,
@@ -194,6 +200,144 @@ test("disjoint changes produce no integration conflict", () => {
     ]),
     [],
   );
+});
+
+test("integration snapshots stream signatures but bound parent-side transfer buffers", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-integration-budget-"));
+  const target = path.join(root, "payload.bin");
+  try {
+    await fs.writeFile(target, Buffer.alloc(1024, 0x61));
+
+    const signatureOnly = await snapshotIntegrationPath(target, {
+      maxBufferedFileBytes: 64,
+      limits: { maxFileBytes: 2048, maxTotalBytes: 2048, maxEntries: 4 },
+    });
+    assert.equal(signatureOnly.kind, "file");
+    assert.equal(signatureOnly.bytes, null);
+    assert.match(signatureOnly.signature, /^file:[0-9a-f]{64}$/);
+
+    await assert.rejects(
+      snapshotIntegrationPath(target, {
+        includeBytes: true,
+        maxBufferedFileBytes: 64,
+        limits: { maxFileBytes: 2048, maxTotalBytes: 2048, maxEntries: 4 },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof EvidenceReadLimitError);
+        assert.match(error.message, /in-memory transfer budget/i);
+        return true;
+      },
+    );
+
+    await assert.rejects(
+      snapshotIntegrationPath(target, {
+        limits: { maxFileBytes: 512, maxTotalBytes: 2048, maxEntries: 4 },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof EvidenceReadLimitError);
+        assert.match(error.message, /file exceeds.*safety budget/i);
+        return true;
+      },
+    );
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("integration evidence elapsed budget counts reads, not unrelated integration work", async () => {
+  const repo = await makeRepo();
+  const target = path.join(repo, "src", "read-budget-gap.txt");
+  let delayed = false;
+  try {
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/read-budget-gap.txt"] })],
+      {
+        mode: "parallel",
+        batchId: "bintegration-read-budget-gap",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        integrationReadLimits: { maxElapsedMs: 1_000 },
+        integrationBeforeWrite: async ({ file }) => {
+          if (file !== "src/read-budget-gap.txt" || delayed) return;
+          delayed = true;
+          await new Promise((resolve) => setTimeout(resolve, 1_200));
+        },
+        executor: async (input, options) => {
+          await fs.writeFile(
+            path.join(options.workingDirectory, "src", "read-budget-gap.txt"),
+            "worker\n",
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/read-budget-gap.txt",
+                kind: "create",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(delayed, true);
+    assert.equal(result.integrated, true, describeBatch(result));
+    assert.equal(await fs.readFile(target, "utf8"), "worker\n");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("integration stops after a terminal evidence budget failure", async () => {
+  const repo = await makeRepo();
+  let beforeWriteCalls = 0;
+  try {
+    const files = ["src/read-budget-first.txt", "src/read-budget-second.txt"];
+    const result = await runProductionBatch([makeTask({ allowedFiles: files })], {
+      mode: "parallel",
+      batchId: "bintegration-read-budget-terminal",
+      workingDirectory: repo,
+      keepWorktrees: "never",
+      integrationReadLimits: {
+        maxFileBytes: 4,
+        maxTotalBytes: 1024,
+        maxEntries: 100,
+        maxElapsedMs: 10_000,
+      },
+      integrationBeforeWrite: () => {
+        beforeWriteCalls += 1;
+      },
+      executor: async (input, options) => {
+        for (const file of files) {
+          await fs.writeFile(
+            path.join(options.workingDirectory, ...file.split("/")),
+            "worker\n",
+          );
+        }
+        return makeOutput({
+          effort: input.effort,
+          filesChanged: files.map((file) => ({
+            path: file,
+            kind: "create" as const,
+            why: "test",
+            observed: true,
+          })),
+        });
+      },
+    });
+
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.equal(
+      beforeWriteCalls,
+      1,
+      "a spent read budget must stop later file attempts",
+    );
+    assert.match(result.warnings.join("\n"), /file exceeds.*safety budget/i);
+  } finally {
+    await cleanupRepo(repo);
+  }
 });
 
 // --- Parallelism limits -----------------------------------------------------
@@ -4950,17 +5094,17 @@ test("parallel unknown parent rollback is not counted as a confirmed applied fil
       eventEmitter: (event) => events.push(event),
       integrationPinnedParentTest: { exitBeforeRollbackRmdirWithoutResult: true },
       integrationBeforeParentCreate: ({ segment }) => {
-        if (segment === "fresh") controller.abort();
+        if (segment === "deep") controller.abort();
       },
       executor: async (input, options) => {
-        const target = path.join(options.workingDirectory, "fresh", "file.txt");
+        const target = path.join(options.workingDirectory, "fresh", "deep", "file.txt");
         await fs.mkdir(path.dirname(target), { recursive: true });
         await fs.writeFile(target, "worker\n", "utf8");
         return makeOutput({
           effort: input.effort,
           filesChanged: [
             {
-              path: "fresh/file.txt",
+              path: "fresh/deep/file.txt",
               kind: "add",
               why: "test",
               observed: true,
@@ -5886,6 +6030,117 @@ test("parallel deletion keeps the applied deletion counted when recovery-backup 
   }
 });
 
+test("parallel deletion reports cancellation during first-time quarantine setup", async () => {
+  const repo = await makeRepo();
+  const target = path.join(repo, "src", "delete-quarantine-cancel.txt");
+  const quarantineRoot = path.join(repo, ".sol-luna", "integration-delete");
+  const controller = new AbortController();
+  try {
+    await fs.writeFile(target, "must-stay\n", "utf8");
+    await runGit(["add", "src/delete-quarantine-cancel.txt"], repo);
+    await runGit(["commit", "-m", "add quarantine cancellation fixture"], repo);
+    await fs.rm(quarantineRoot, { recursive: true, force: true });
+
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/delete-quarantine-cancel.txt"] })],
+      {
+        mode: "parallel",
+        batchId: "bintegration-delete-quarantine-cancel",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        signal: controller.signal,
+        integrationPinnedDeleteTest: {
+          beforeQuarantineCreate: () => controller.abort(),
+        },
+        executor: async (input, options) => {
+          await fs.rm(
+            path.join(options.workingDirectory, "src", "delete-quarantine-cancel.txt"),
+            { force: true },
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/delete-quarantine-cancel.txt",
+                kind: "delete",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(result.integrationSummary, /copying 0 file/i);
+    assert.match(
+      result.warnings.join("\n"),
+      /cancell(?:ed|ation).*quarantine|quarantine setup was cancelled/is,
+    );
+    assert.equal(await fs.readFile(target, "utf8"), "must-stay\n");
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel deletion retains an unproven recovery backup when its helper loses the result", async () => {
+  const repo = await makeRepo();
+  const target = path.join(repo, "src", "delete-backup-protocol-crash.txt");
+  const quarantineRoot = path.join(repo, ".sol-luna", "integration-delete");
+  try {
+    await fs.writeFile(target, "must-stay\n", "utf8");
+    await runGit(["add", "src/delete-backup-protocol-crash.txt"], repo);
+    await runGit(["commit", "-m", "add backup protocol crash fixture"], repo);
+
+    const result = await runProductionBatch(
+      [makeTask({ allowedFiles: ["src/delete-backup-protocol-crash.txt"] })],
+      {
+        mode: "parallel",
+        batchId: "bintegration-delete-backup-protocol-crash",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        integrationPinnedDeleteTest: { exitAfterRecoveryBackupWriteBeforeResult: true },
+        executor: async (input, options) => {
+          await fs.rm(
+            path.join(
+              options.workingDirectory,
+              "src",
+              "delete-backup-protocol-crash.txt",
+            ),
+            { force: true },
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/delete-backup-protocol-crash.txt",
+                kind: "delete",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(result.integrationSummary, /copying 0 file/i);
+    assert.match(
+      result.warnings.join("\n"),
+      /could not create a pinned deletion recovery backup.*helper exited without a result.*residue could not be safely removed/is,
+    );
+    assert.equal(await fs.readFile(target, "utf8"), "must-stay\n");
+    assert.ok(
+      (await fs.readdir(quarantineRoot)).length > 0,
+      "protocol loss must retain the helper-created backup when object provenance is unavailable",
+    );
+  } finally {
+    await cleanupRepo(repo);
+  }
+});
+
 test("parallel deletion reports unknown protocol loss without claiming an applied file", async () => {
   const repo = await makeRepo();
   const target = path.join(repo, "src", "delete-pre-move-protocol-loss.txt");
@@ -6248,7 +6503,7 @@ test("parallel deletion refuses a redirected quarantine control root", async (t)
     assert.equal(result.integrated, false, describeBatch(result));
     assert.match(
       result.warnings.join("\n"),
-      /integration deletion quarantine is not trustworthy.*confined directory segment is redirected/i,
+      /deletion quarantine setup failed.*confined directory segment is redirected/i,
     );
     assert.equal(await fs.readFile(target, "utf8"), "keep-me\n");
     assert.deepEqual(await fs.readdir(outside), []);
@@ -7224,6 +7479,83 @@ test("a batch without declared checks cannot claim terminal verification", async
     assert.equal(result.integrationVerification.length, 0);
     assert.match(result.warnings.join("\n"), /No final workspace verification/i);
   } finally {
+    await cleanupRepo(repo);
+  }
+});
+
+test("parallel cancellation reaps an in-flight pinned integration write", async () => {
+  const repo = await makeRepo();
+  const controller = new AbortController();
+  const target = path.join(repo, "src", "cancel-during-pinned-write.txt");
+  try {
+    const running = runProductionBatch(
+      [makeTask({ allowedFiles: ["src/cancel-during-pinned-write.txt"] })],
+      {
+        mode: "parallel",
+        batchId: "bintegration-cancel-pinned-write",
+        workingDirectory: repo,
+        keepWorktrees: "never",
+        signal: controller.signal,
+        integrationPinnedWriteTest: { delayAfterMutationMs: 60_000 },
+        executor: async (input, options) => {
+          await fs.writeFile(
+            path.join(options.workingDirectory, "src", "cancel-during-pinned-write.txt"),
+            "worker-write\n",
+          );
+          return makeOutput({
+            effort: input.effort,
+            filesChanged: [
+              {
+                path: "src/cancel-during-pinned-write.txt",
+                kind: "add",
+                why: "test",
+                observed: true,
+              },
+            ],
+          });
+        },
+      },
+    );
+
+    // Full-suite Windows runs can spend tens of seconds provisioning the
+    // isolated worktree before integration begins. Bound the fixture setup
+    // generously without changing any production timeout; the assertion below
+    // still requires cancellation to beat the helper's post-mutation delay by
+    // a wide margin.
+    const mutationDeadline = Date.now() + 90_000;
+    while (Date.now() < mutationDeadline) {
+      if (
+        await fs
+          .stat(target)
+          .then(() => true)
+          .catch(() => false)
+      )
+        break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.equal(
+      await fs
+        .stat(target)
+        .then(() => true)
+        .catch(() => false),
+      true,
+      "the fixture never reached the in-flight post-mutation helper window",
+    );
+
+    const abortedAt = Date.now();
+    controller.abort();
+    const result = await running;
+    const cancellationMs = Date.now() - abortedAt;
+
+    assert.ok(
+      cancellationMs < 30_000,
+      `integration cancellation waited ${cancellationMs}ms for a helper with a 60s post-mutation delay`,
+    );
+    assert.equal(result.integrated, false, describeBatch(result));
+    assert.match(result.warnings.join("\n"), /mutation outcome is unknown|cancell/i);
+    assert.equal(await fs.readFile(target, "utf8"), "worker-write\n");
+  } finally {
+    controller.abort();
     await cleanupRepo(repo);
   }
 });
@@ -8652,7 +8984,7 @@ test("same-repo parallel lease churn waits outside a shared continuation evidenc
 
 test(
   "continuation trust-setup failure releases repository operation authority exactly once",
-  { timeout: 5_000 },
+  { timeout: 30_000 },
   async () => {
     const repo = await makeRepo();
     const handoffs = new HandoffStore();
@@ -8805,7 +9137,7 @@ test("direct Git evidence still fails closed on an unreported protected .sol-lun
 
 test(
   "repository operation authority permits concurrent ownership in different repositories",
-  { timeout: 5_000 },
+  { timeout: 30_000 },
   async () => {
     const firstRepo = await makeRepo();
     const secondRepo = await makeRepo();

@@ -815,6 +815,25 @@ test("trusted evidence rejects real submodule Git control mutation after authori
       }
     });
 
+    await t.test("oversized post-capture submodule gitfile fails closed", async () => {
+      const authority = await captureGitEvidenceAuthority(repo);
+      assert.ok(authority);
+      const controlPath = path.join(submodulePath, ".git");
+      const savedControlPath = `${controlPath}.saved`;
+      await fs.rename(controlPath, savedControlPath);
+      try {
+        await fs.writeFile(controlPath, "");
+        await fs.truncate(controlPath, 128 * 1024);
+        await assert.rejects(
+          () => collectTrustedWorktreeChanges(authority),
+          /Git control metadata exceeds its 65536-byte safety budget/,
+        );
+      } finally {
+        await fs.rm(controlPath, { force: true });
+        await fs.rename(savedControlPath, controlPath);
+      }
+    });
+
     await t.test(
       "redirected submodule worktree is rejected before traversal",
       async (redirectTest) => {

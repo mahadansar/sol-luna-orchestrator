@@ -673,7 +673,7 @@ test("batch input descriptions qualify overlap and integration", () => {
   );
 });
 
-test("parent model and effort guidance stays example-only across surfaces", async () => {
+test("parent model and effort guidance stays model-neutral across surfaces", async () => {
   const [readme, rules, configuration, example] = await Promise.all([
     readDoc("README.md"),
     readDoc("SOL_RULES.md"),
@@ -694,12 +694,14 @@ test("parent model and effort guidance stays example-only across surfaces", asyn
     assert.doesNotMatch(document, /high[^\n]{0,80}recommended/i);
     assert.doesNotMatch(document, /recommended[^\n]{0,80}high/i);
   }
-  for (const category of ["REQUIRED", "DEFAULT", "OPTIONAL", "EXAMPLE"]) {
+  for (const category of ["REQUIRED", "DEFAULT", "OPTIONAL"]) {
     assert.match(example, new RegExp(`\\b${category}:`, "i"));
   }
-  assert.match(example, /model_reasoning_effort\s*=\s*"medium"/i);
-  assert.match(example, /creator session choices, not requirements or recommendations/i);
-  assert.match(example, /any compatible parent model and reasoning effort may be used/i);
+  assert.doesNotMatch(example, /^\s*model\s*=/m);
+  assert.doesNotMatch(example, /^\s*model_reasoning_effort\s*=/m);
+  assert.match(example, /parent session choices are intentionally omitted/i);
+  assert.match(example, /any compatible parent[\s\S]{0,20}model may use this MCP/i);
+  assert.doesNotMatch(example, /GPT-5\.6/i);
   assert.doesNotMatch(example, /\bRECOMMENDED\b/i);
 
   const rulesCost = rules.slice(
@@ -872,7 +874,7 @@ test("current documentation distinguishes diagnostics, activity privacy, and leg
   }
   assert.match(
     observability,
-    /normally returned `delegate_task` result[\s\S]*written \*\*twice\*\*/i,
+    /normally returned `delegate_task` or `continue_task` result[\s\S]*written \*\*twice\*\*/i,
   );
   assert.match(observability, /failure before a normal result[\s\S]*typed/i);
 });

@@ -1004,8 +1004,13 @@ async function captureSharedDirectoryFingerprintWithBudget(
 
 export async function assertSharedDirectoryFingerprint(
   baseline: SharedDirectoryFingerprint,
+  options: SharedDirectoryFingerprintOptions = {},
 ): Promise<void> {
-  const current = await captureSharedDirectoryFingerprint(baseline.root, baseline.dirs);
+  const current = await captureSharedDirectoryFingerprint(
+    baseline.root,
+    baseline.dirs,
+    options,
+  );
   if (current.digest !== baseline.digest) {
     throw new Error(
       "Shared dependency state changed during delegated execution; the result is not trustworthy.",
@@ -2479,8 +2484,9 @@ export async function snapshotSharedDirectories(
   const warnings: string[] = [];
   const provisioned: string[] = [];
   let rollbackComplete = true;
-  const newHashBudget = (): SharedHashBudget =>
-    new SharedHashBudget({ limits: options.hashLimits, signal: options.signal });
+  const newHashBudget = (
+    signal: AbortSignal | undefined = options.signal,
+  ): SharedHashBudget => new SharedHashBudget({ limits: options.hashLimits, signal });
   const parsed = parseWorktreeLinkDirectories(dirs.join(","));
   for (const invalid of parsed.invalid) {
     warnings.push(`Skipped unsafe shared worktree snapshot path: ${invalid}`);
@@ -2591,7 +2597,7 @@ export async function snapshotSharedDirectories(
         {
           signal: options.signal,
           timeoutMs: options.mutationTimeoutMs,
-          beforeExecute: async () => {
+          beforeExecute: async (mutationSignal) => {
             await options.beforeDestinationCommit?.({
               parent: destination.parent,
               destination: destination.destination,
@@ -2599,12 +2605,17 @@ export async function snapshotSharedDirectories(
               dir,
             });
             const [currentSourceDigest, privateSnapshotDigest] = await Promise.all([
-              captureSnapshotSemanticDigest(source, dir, undefined, newHashBudget()),
+              captureSnapshotSemanticDigest(
+                source,
+                dir,
+                undefined,
+                newHashBudget(mutationSignal),
+              ),
               captureSnapshotSemanticDigest(
                 path.join(destination.parent.directory, stagingName),
                 dir,
                 process.platform === "win32" ? destination.destination : undefined,
-                newHashBudget(),
+                newHashBudget(mutationSignal),
               ),
             ]);
             if (

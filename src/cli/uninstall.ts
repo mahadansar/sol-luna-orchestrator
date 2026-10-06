@@ -11,11 +11,13 @@ import { findTable, listSubTables, removeTable } from "./toml-edit.js";
 import { bold, dim, out, symbols } from "./ui.js";
 
 /**
- * Remove this project's Codex registration and nothing else.
+ * Remove this project's Codex registration and exact managed discovery hints.
  *
- * Scope is deliberately tiny: one MCP table and its sub-tables. It never
- * touches other servers, other settings, the Codex installation, or anything on
- * disk that belongs to the user. Idempotent — running it twice is a no-op.
+ * Scope is deliberately tiny: one MCP table and its sub-tables plus the exact
+ * managed hint blocks owned by this project. It never touches other servers,
+ * other settings, the Codex installation/package, telemetry history, or user
+ * instruction bytes outside those managed blocks. Idempotent — running it twice
+ * is a no-op.
  *
  * Like `init`, this does the edit itself rather than calling `codex mcp remove`.
  * That command rewrites the whole config: it was measured deleting the comment
@@ -30,6 +32,9 @@ export interface UninstallOptions {
 
 const UNINSTALL_HELP = `${bold("Usage")}
   sol-luna-orchestrator uninstall [--dry-run]
+
+Removes this MCP registration and its managed discovery hint. Other Codex
+configuration, telemetry history, and the installed npm package are left in place.
 
 ${bold("Options")}
   --dry-run    Show what would be removed, write nothing
@@ -172,7 +177,8 @@ export async function uninstallCommand(argv: string[]): Promise<number> {
   }
   if (backupPath) out(dim(`Previous config backed up to ${backupPath}`));
   out();
-  out(dim("The package itself is still installed; remove it with npm if you want."));
+  out(dim("The package itself is still installed."));
+  out(dim("If installed globally: npm uninstall -g sol-luna-orchestrator"));
 
   return 0;
 }

@@ -622,6 +622,8 @@ test("CLI subcommands reject unknown options and expose scoped help", async () =
   const uninstallHelp = await runCli(["uninstall", "--help"], { CODEX_HOME: home });
   assert.equal(uninstallHelp.code, 0);
   assert.match(uninstallHelp.stdout, /uninstall \[--dry-run\]/);
+  assert.match(uninstallHelp.stdout, /managed discovery hint/i);
+  assert.match(uninstallHelp.stdout, /installed npm package/i);
   assert.doesNotMatch(uninstallHelp.stdout, /Will remove MCP server/);
 });
 

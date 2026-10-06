@@ -15,9 +15,10 @@ must never accidentally start the MCP server.
   servers. Keep the editor intentionally narrow rather than turning it into a general
   TOML serializer.
 - Writes go through `writeConfig`: same-directory temporary file, atomic rename, and a
-  `.sol-luna-backup` of an existing config. `uninstall` removes only this server table
-  and its subtables; it leaves logs, activity history, the package, and other config
-  untouched.
+  `.sol-luna-backup` of an existing config. `uninstall` removes this server table and
+  its subtables plus exact managed discovery-hint blocks; it leaves logs, activity
+  history, the package, other config, and user instruction bytes outside those managed
+  blocks untouched.
 - `init` is idempotent. A plain rerun repairs missing required values but preserves
   custom log/event paths; explicit `--log` or `--events` replaces the corresponding
   value. Dry runs write nothing.

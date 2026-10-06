@@ -22,6 +22,7 @@ import {
   type BatchOutput,
 } from "./contract.js";
 import { MAX_OUTPUT_CHARS } from "./config.js";
+import { TELEMETRY_FILE_MAX_BYTES, TELEMETRY_ROTATED_SUFFIX } from "./telemetry-file.js";
 import { truncate } from "./verify.js";
 import { captureSharedDirectoryFingerprint } from "./worktree.js";
 
@@ -854,6 +855,24 @@ test("single-task delegation records its result exactly once with the existing s
     ]);
     assert.equal(event.workerThreadId, "thread_123");
     assert.equal(event.verdict, "PASS");
+  } finally {
+    await fs.rm(workRoot, { recursive: true, force: true });
+  }
+});
+
+test("legacy delegation records use the bounded rotating telemetry writer", async () => {
+  const workRoot = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-bounded-event-"));
+  const eventsPath = path.join(workRoot, "events.jsonl");
+  try {
+    await fs.writeFile(eventsPath, "x", "utf8");
+    await fs.truncate(eventsPath, TELEMETRY_FILE_MAX_BYTES);
+
+    recordEvent(mockResult(), eventsPath);
+
+    const current = await fs.stat(eventsPath);
+    const rotated = await fs.stat(`${eventsPath}${TELEMETRY_ROTATED_SUFFIX}`);
+    assert.ok(current.size > 0 && current.size < TELEMETRY_FILE_MAX_BYTES);
+    assert.equal(rotated.size, TELEMETRY_FILE_MAX_BYTES);
   } finally {
     await fs.rm(workRoot, { recursive: true, force: true });
   }

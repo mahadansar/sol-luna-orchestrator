@@ -110,8 +110,11 @@ import {
   assertGitEvidenceAuthority,
   captureGitEvidenceAuthority,
   changedTrustedWorkspacePaths,
+  DEFAULT_EVIDENCE_READ_LIMITS,
+  EvidenceReadLimitError,
   snapshotFilesystemWorkspaceEvidence,
   snapshotTrustedWorkspaceEvidence,
+  type EvidenceReadLimits,
   type GitEvidenceAuthority,
 } from "./git.js";
 import {
@@ -202,7 +205,7 @@ export async function runBatch(
     /** Final verifier for the integrated/shared workspace. */
     integrationVerifier?: IntegrationVerifier;
     /**
-     * Per-run event sink. Production uses the append-only configured emitter;
+     * Per-run event sink. Production uses the bounded rotating configured emitter;
      * deterministic callers inject an isolated sink without mutating process env.
      */
     eventEmitter?: EventEmitter;
@@ -252,6 +255,8 @@ export async function runBatch(
     keepWorktrees?: WorktreeRetentionPolicy;
     /** Deterministic dirty-base seam; production uses SOL_LUNA_ALLOW_DIRTY. */
     allowDirtyWorktreeBase?: boolean;
+    /** Deterministic integration evidence-budget seam; production uses defaults. */
+    integrationReadLimits?: EvidenceReadLimits;
     /**
      * Deterministic integration race seam. Production leaves this unset; tests
      * use it to mutate/cancel after admission validation but before the final
@@ -283,13 +288,17 @@ export async function runBatch(
       maxWriteBytes?: number;
       failAfterTruncate?: boolean;
       failAfterBytes?: number;
+      delayAfterMutationMs?: number;
     };
     /** Deterministic pinned-deletion cleanup seam; production leaves this unset. */
     integrationPinnedDeleteTest?: {
       failQuarantineCleanup?: boolean;
       failTombstoneCleanup?: boolean;
+      exitAfterRecoveryBackupWriteBeforeResult?: boolean;
       exitBeforeNamespaceMoveWithoutResult?: boolean;
       exitAfterTombstoneUnlinkBeforeResult?: boolean;
+      /** Deterministic cancellation race seam during first-time quarantine setup. */
+      beforeQuarantineCreate?: () => void | Promise<void>;
     };
     /**
      * Deterministic deletion-boundary seam. Production leaves this unset; tests
@@ -732,7 +741,11 @@ export async function runBatch(
       running.some((task) => task.input.verificationCommands.length > 0)
     ) {
       try {
-        sharedDependencyBaseline = await captureSharedDirectoryFingerprint(workspace);
+        sharedDependencyBaseline = await captureSharedDirectoryFingerprint(
+          workspace,
+          undefined,
+          { signal: options.signal },
+        );
         for (const task of running)
           task.sharedDependencyBaseline = sharedDependencyBaseline;
       } catch (error) {
@@ -984,6 +997,7 @@ export async function runBatch(
         workspace,
         emit,
         options.signal,
+        options.integrationReadLimits,
         options.integrationBeforeWrite,
         options.integrationBeforeDelete,
         options.integrationBeforeParentCreate,
@@ -1036,7 +1050,9 @@ export async function runBatch(
       });
       try {
         if (sharedDependencyBaseline) {
-          await assertSharedDirectoryFingerprint(sharedDependencyBaseline);
+          await assertSharedDirectoryFingerprint(sharedDependencyBaseline, {
+            signal: options.signal,
+          });
         }
         finalVerificationAuthority = await captureGitEvidenceAuthority(workspace);
         finalVerificationBaseline = finalVerificationAuthority
@@ -1099,7 +1115,9 @@ export async function runBatch(
             );
           }
           if (sharedDependencyBaseline) {
-            await assertSharedDirectoryFingerprint(sharedDependencyBaseline);
+            await assertSharedDirectoryFingerprint(sharedDependencyBaseline, {
+              signal: options.signal,
+            });
           }
         } catch (error) {
           finalVerificationEvidenceError = `Final verification evidence changed after execution: ${(error as Error).message}`;
@@ -1479,7 +1497,11 @@ async function runSequential(
     }
     const authority = await captureGitEvidenceAuthority(workspace);
     const before = await snapshotSequentialEvidence(workspace, authority);
-    const dependencyBaseline = await captureSharedDirectoryFingerprint(workspace);
+    const dependencyBaseline = await captureSharedDirectoryFingerprint(
+      workspace,
+      undefined,
+      { signal },
+    );
     task.sharedDependencyBaseline = dependencyBaseline;
     let release: (() => void) | null = null;
     try {
@@ -1543,7 +1565,7 @@ async function runSequential(
       }
       if (task.result.result) {
         try {
-          await assertSharedDirectoryFingerprint(dependencyBaseline);
+          await assertSharedDirectoryFingerprint(dependencyBaseline, { signal });
         } catch (error) {
           const detail = `Sequential dependency evidence failed: ${(error as Error).message}`;
           task.result.result.verdict = "FAILED";
@@ -2596,7 +2618,9 @@ async function runOne(
       beforeVerification: async () => {
         if (gitEvidenceAuthority) await assertGitEvidenceAuthority(gitEvidenceAuthority);
         if (task.sharedDependencyBaseline) {
-          await assertSharedDirectoryFingerprint(task.sharedDependencyBaseline);
+          await assertSharedDirectoryFingerprint(task.sharedDependencyBaseline, {
+            signal,
+          });
         }
       },
       resumeThreadId: attemptOptions.resumeThreadId,
@@ -2657,7 +2681,7 @@ async function runOne(
     // inherit the poisoned dependency state.
     if (task.worktree && task.sharedDependencyBaseline) {
       try {
-        await assertSharedDirectoryFingerprint(task.sharedDependencyBaseline);
+        await assertSharedDirectoryFingerprint(task.sharedDependencyBaseline, { signal });
       } catch (error) {
         const detail = `Post-verification dependency evidence failed: ${(error as Error).message}`;
         task.worktreeOutcomeError = detail;
@@ -2874,12 +2898,119 @@ function markCancelled(batchId: string, task: RunningTask, emit: EventEmitter): 
 }
 
 const MAX_DIFF_CHARS = 20_000;
+const INTEGRATION_BUFFER_MAX_BYTES = 64 * 1024 * 1024;
 interface IntegrationPathSnapshot {
   signature: string;
   bytes: Buffer | null;
   kind: "missing" | "file" | "link" | "directory" | "other";
   identity: string | null;
   linkTarget?: string;
+}
+
+class IntegrationReadBudget {
+  private readonly maxFileBytes: number;
+  private readonly maxTotalBytes: number;
+  private readonly maxEntries: number;
+  private readonly maxElapsedMs: number;
+  private readonly signal?: AbortSignal;
+  private totalBytes = 0;
+  private entries = 0;
+  private elapsedReadMs = 0;
+  private activeReadStartedAt: number | null = null;
+  private activeReadDepth = 0;
+
+  constructor(limits: EvidenceReadLimits = {}, signal?: AbortSignal) {
+    this.maxFileBytes = limits.maxFileBytes ?? DEFAULT_EVIDENCE_READ_LIMITS.maxFileBytes;
+    this.maxTotalBytes =
+      limits.maxTotalBytes ?? DEFAULT_EVIDENCE_READ_LIMITS.maxTotalBytes;
+    this.maxEntries = limits.maxEntries ?? DEFAULT_EVIDENCE_READ_LIMITS.maxEntries;
+    this.maxElapsedMs = limits.maxElapsedMs ?? DEFAULT_EVIDENCE_READ_LIMITS.maxElapsedMs;
+    this.signal = signal;
+  }
+
+  beginRead(): () => void {
+    this.assertActive();
+    if (this.activeReadDepth === 0) this.activeReadStartedAt = Date.now();
+    this.activeReadDepth += 1;
+    let finished = false;
+    return () => {
+      if (finished) return;
+      finished = true;
+      this.activeReadDepth = Math.max(0, this.activeReadDepth - 1);
+      if (this.activeReadDepth === 0 && this.activeReadStartedAt !== null) {
+        this.elapsedReadMs += Math.max(0, Date.now() - this.activeReadStartedAt);
+        this.activeReadStartedAt = null;
+      }
+    };
+  }
+
+  noteEntry(target: string): void {
+    this.assertActive();
+    this.entries += 1;
+    if (this.entries > this.maxEntries) {
+      throw new EvidenceReadLimitError(
+        `Integration evidence exceeded its ${this.maxEntries}-entry safety budget while reading ${target}.`,
+      );
+    }
+  }
+
+  assertFileSize(target: string, size: number): void {
+    this.assertActive();
+    if (!Number.isSafeInteger(size) || size < 0) {
+      throw new EvidenceReadLimitError(
+        `Integration file has an unsafe size and was not read: ${target}.`,
+      );
+    }
+    if (size > this.maxFileBytes) {
+      throw new EvidenceReadLimitError(
+        `Integration file exceeds its ${this.maxFileBytes}-byte safety budget: ${target}.`,
+      );
+    }
+    if (this.totalBytes + size > this.maxTotalBytes) {
+      throw new EvidenceReadLimitError(
+        `Integration evidence exceeds its ${this.maxTotalBytes}-byte aggregate safety budget at ${target}.`,
+      );
+    }
+  }
+
+  consumeBytes(target: string, bytes: number, fileBytes: number): void {
+    this.assertActive();
+    if (fileBytes > this.maxFileBytes) {
+      throw new EvidenceReadLimitError(
+        `Integration file exceeded its ${this.maxFileBytes}-byte safety budget while reading ${target}.`,
+      );
+    }
+    if (this.totalBytes + bytes > this.maxTotalBytes) {
+      throw new EvidenceReadLimitError(
+        `Integration evidence exceeded its ${this.maxTotalBytes}-byte aggregate safety budget at ${target}.`,
+      );
+    }
+    this.totalBytes += bytes;
+  }
+
+  assertActive(): void {
+    if (this.signal?.aborted) {
+      const error = new Error("Integration evidence was cancelled.");
+      error.name = "AbortError";
+      throw error;
+    }
+    const activeElapsedMs =
+      this.activeReadStartedAt === null
+        ? 0
+        : Math.max(0, Date.now() - this.activeReadStartedAt);
+    if (this.elapsedReadMs + activeElapsedMs > this.maxElapsedMs) {
+      throw new EvidenceReadLimitError(
+        `Integration evidence exceeded its ${this.maxElapsedMs}ms safety budget.`,
+      );
+    }
+  }
+}
+
+export interface IntegrationSnapshotReadOptions {
+  includeBytes?: boolean;
+  maxBufferedFileBytes?: number;
+  limits?: EvidenceReadLimits;
+  signal?: AbortSignal;
 }
 
 const integrationFileSignature = (bytes: Uint8Array): string =>
@@ -2891,11 +3022,46 @@ const integrationStatIdentity = (entry: {
   birthtimeMs: number;
 }): string => `${entry.dev}:${entry.ino}:${entry.birthtimeMs}`;
 
-async function snapshotIntegrationPath(target: string): Promise<IntegrationPathSnapshot> {
+async function snapshotIntegrationPathWithBudget(
+  target: string,
+  budget: IntegrationReadBudget,
+  options: Pick<
+    IntegrationSnapshotReadOptions,
+    "includeBytes" | "maxBufferedFileBytes" | "signal"
+  > = {},
+): Promise<IntegrationPathSnapshot> {
+  const endRead = budget.beginRead();
+  try {
+    const snapshot = await snapshotIntegrationPathWithinBudget(target, budget, options);
+    budget.assertActive();
+    return snapshot;
+  } finally {
+    endRead();
+  }
+}
+
+async function snapshotIntegrationPathWithinBudget(
+  target: string,
+  budget: IntegrationReadBudget,
+  options: Pick<
+    IntegrationSnapshotReadOptions,
+    "includeBytes" | "maxBufferedFileBytes" | "signal"
+  > = {},
+): Promise<IntegrationPathSnapshot> {
+  const assertActive = (): void => {
+    if (options.signal?.aborted) {
+      const error = new Error("Integration evidence was cancelled.");
+      error.name = "AbortError";
+      throw error;
+    }
+    budget.assertActive();
+  };
+  assertActive();
   const entry = await fs.lstat(target).catch(() => null);
   if (!entry) {
     return { signature: "missing", bytes: null, kind: "missing", identity: null };
   }
+  budget.noteEntry(target);
   if (entry.isSymbolicLink()) {
     const linkTarget = await fs.readlink(target);
     return {
@@ -2908,19 +3074,56 @@ async function snapshotIntegrationPath(target: string): Promise<IntegrationPathS
   }
   if (entry.isFile()) {
     const expectedIdentity = integrationStatIdentity(entry);
+    const expectedSize = entry.size;
+    budget.assertFileSize(target, expectedSize);
+    const includeBytes = options.includeBytes ?? false;
+    const maxBufferedFileBytes =
+      options.maxBufferedFileBytes ?? INTEGRATION_BUFFER_MAX_BYTES;
+    if (
+      includeBytes &&
+      (!Number.isSafeInteger(maxBufferedFileBytes) ||
+        maxBufferedFileBytes <= 0 ||
+        expectedSize > maxBufferedFileBytes)
+    ) {
+      throw new EvidenceReadLimitError(
+        `Integration file exceeds its ${maxBufferedFileBytes}-byte in-memory transfer budget: ${target}.`,
+      );
+    }
     const handle = await fs.open(target, "r");
     try {
       const opened = await handle.stat();
-      if (!opened.isFile() || integrationStatIdentity(opened) !== expectedIdentity) {
+      if (
+        !opened.isFile() ||
+        integrationStatIdentity(opened) !== expectedIdentity ||
+        opened.size !== expectedSize
+      ) {
         throw new Error(`Integration path changed identity while opening ${target}.`);
       }
-      const bytes = await readAllIntegrationBytes(handle);
+      const hash = createHash("sha256");
+      const bytes = includeBytes ? Buffer.allocUnsafe(expectedSize) : null;
+      const chunk = Buffer.allocUnsafe(64 * 1024);
+      let position = 0;
+      while (position < expectedSize) {
+        assertActive();
+        const requested = Math.min(chunk.length, expectedSize - position);
+        const { bytesRead } = await handle.read(chunk, 0, requested, position);
+        if (bytesRead <= 0) break;
+        hash.update(chunk.subarray(0, bytesRead));
+        if (bytes) chunk.copy(bytes, position, 0, bytesRead);
+        position += bytesRead;
+        budget.consumeBytes(target, bytesRead, position);
+      }
       const after = await handle.stat();
-      if (!after.isFile() || integrationStatIdentity(after) !== expectedIdentity) {
+      if (
+        position !== expectedSize ||
+        !after.isFile() ||
+        integrationStatIdentity(after) !== expectedIdentity ||
+        after.size !== expectedSize
+      ) {
         throw new Error(`Integration path changed identity while reading ${target}.`);
       }
       return {
-        signature: integrationFileSignature(bytes),
+        signature: `file:${hash.digest("hex")}`,
         bytes,
         kind: "file",
         identity: expectedIdentity,
@@ -2945,19 +3148,16 @@ async function snapshotIntegrationPath(target: string): Promise<IntegrationPathS
   };
 }
 
-async function readAllIntegrationBytes(
-  handle: Awaited<ReturnType<typeof fs.open>>,
-): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  let position = 0;
-  while (true) {
-    const chunk = Buffer.allocUnsafe(64 * 1024);
-    const { bytesRead } = await handle.read(chunk, 0, chunk.length, position);
-    if (bytesRead === 0) break;
-    chunks.push(chunk.subarray(0, bytesRead));
-    position += bytesRead;
-  }
-  return Buffer.concat(chunks);
+/** @internal Focused security/regression surface for bounded integration reads. */
+export async function snapshotIntegrationPath(
+  target: string,
+  options: IntegrationSnapshotReadOptions = {},
+): Promise<IntegrationPathSnapshot> {
+  return snapshotIntegrationPathWithBudget(
+    target,
+    new IntegrationReadBudget(options.limits, options.signal),
+    options,
+  );
 }
 
 interface DeletionLinkRecoveryMetadata {
@@ -3003,6 +3203,8 @@ interface IntegrationDeleteQuarantineRoot {
 
 async function ensureIntegrationDeleteQuarantineRoot(
   repoRoot: string,
+  signal?: AbortSignal,
+  beforeCreate?: () => void | Promise<void>,
 ): Promise<IntegrationDeleteQuarantineRoot> {
   const canonicalRepo = await fs.realpath(repoRoot);
   const target = path.join(canonicalRepo, ".sol-luna", "integration-delete");
@@ -3014,7 +3216,10 @@ async function ensureIntegrationDeleteQuarantineRoot(
       rollbackCreated: async () => true,
     };
   } catch {
-    const chain = await ensureConfinedDirectoryChain(canonicalRepo, target);
+    const chain = await ensureConfinedDirectoryChain(canonicalRepo, target, {
+      signal,
+      beforeCreate: beforeCreate ? () => beforeCreate() : undefined,
+    });
     return {
       authority: chain.authority,
       created: chain.created.length > 0,
@@ -3042,12 +3247,15 @@ async function performPinnedIntegrationDeletion(options: {
   source: string;
   expectedDestination: IntegrationPathSnapshot;
   expectedSourceSignature: string;
+  readBudget: IntegrationReadBudget;
   signal?: AbortSignal;
   beforeDelete?: (phase: PinnedDeletionPhase) => void | Promise<void>;
   failQuarantineCleanup?: boolean;
   failTombstoneCleanup?: boolean;
+  exitAfterRecoveryBackupWriteBeforeResult?: boolean;
   exitBeforeNamespaceMoveWithoutResult?: boolean;
   exitAfterTombstoneUnlinkBeforeResult?: boolean;
+  beforeQuarantineCreate?: () => void | Promise<void>;
 }): Promise<PinnedDeletionResult> {
   const {
     repoRoot,
@@ -3056,12 +3264,15 @@ async function performPinnedIntegrationDeletion(options: {
     source,
     expectedDestination,
     expectedSourceSignature,
+    readBudget,
     signal,
     beforeDelete,
     failQuarantineCleanup,
     failTombstoneCleanup,
+    exitAfterRecoveryBackupWriteBeforeResult,
     exitBeforeNamespaceMoveWithoutResult,
     exitAfterTombstoneUnlinkBeforeResult,
+    beforeQuarantineCreate,
   } = options;
   if (
     (expectedDestination.kind !== "file" || expectedDestination.bytes === null) &&
@@ -3076,7 +3287,31 @@ async function performPinnedIntegrationDeletion(options: {
     };
   }
 
-  const quarantine = await ensureIntegrationDeleteQuarantineRoot(repoRoot);
+  let quarantine: IntegrationDeleteQuarantineRoot;
+  try {
+    quarantine = await ensureIntegrationDeleteQuarantineRoot(
+      repoRoot,
+      signal,
+      beforeQuarantineCreate,
+    );
+  } catch (error) {
+    const rollbackOutcome =
+      error instanceof ConfinedDirectoryChainError ? error.rollbackOutcome : "complete";
+    const cancelled = signal?.aborted || (error as Error).name === "AbortError";
+    const residueDetail =
+      rollbackOutcome === "residual-proven"
+        ? "; quarantine namespace residue remains after rollback"
+        : rollbackOutcome === "residual-unknown"
+          ? "; quarantine namespace rollback outcome is unknown"
+          : "";
+    return {
+      status: cancelled ? "cancelled" : "blocked",
+      authoritativeMutation: false,
+      restored: false,
+      warning: `${cancelled ? "deletion quarantine setup was cancelled" : "deletion quarantine setup failed"} (${(error as Error).message})${residueDetail}`,
+      reason: "workspace-drift",
+    };
+  }
   const quarantineAuthority = quarantine.authority;
   const quarantineName = `delete-${randomBytes(24).toString("hex")}`;
   const recoveryBackupBytes =
@@ -3089,23 +3324,55 @@ async function performPinnedIntegrationDeletion(options: {
   const recoveryBackupSignature = integrationFileSignature(recoveryBackupBytes);
   let backupResult: Awaited<ReturnType<typeof runPinnedDirectoryMutation>>;
   try {
-    backupResult = await runPinnedDirectoryMutation(quarantineAuthority, {
-      op: "write-file",
-      name: quarantineName,
-      bytesBase64: recoveryBackupBytes.toString("base64"),
-      mode: "exclusive",
-    });
+    backupResult = await runPinnedDirectoryMutation(
+      quarantineAuthority,
+      {
+        op: "write-file",
+        name: quarantineName,
+        bytesBase64: recoveryBackupBytes.toString("base64"),
+        mode: "exclusive",
+        testExitAfterMutationBeforeResult: exitAfterRecoveryBackupWriteBeforeResult,
+      },
+      { signal },
+    );
   } catch (error) {
-    const rollbackComplete = await quarantine.rollbackCreated().catch(() => false);
+    const mutationError = error instanceof PinnedDirectoryMutationError ? error : null;
+    let retainedBackup = mutationError?.mutated ?? false;
+    if (retainedBackup) {
+      const quarantineStillAuthoritative = await pinnedDirectoryAuthorityStillMatches(
+        quarantineAuthority,
+        repoRoot,
+      ).catch(() => false);
+      if (quarantineStillAuthoritative) {
+        const backupPath = path.join(quarantineAuthority.directory, quarantineName);
+        const observed = await snapshotIntegrationPath(backupPath).catch(() => null);
+        if (observed?.kind === "missing") {
+          retainedBackup = false;
+        }
+      }
+    }
+    const rollbackComplete = !retainedBackup
+      ? await quarantine.rollbackCreated().catch(() => false)
+      : false;
+    const cancelled = signal?.aborted || mutationError?.code === "ABORT_ERR";
     return {
-      status: "blocked",
+      status: cancelled ? "cancelled" : "blocked",
+      // Recovery-control residue blocks integration, but it is not a mutation of
+      // the requested destination and must never increment appliedFiles.
       authoritativeMutation: false,
+      ...(retainedBackup && mutationError && !mutationError.mutationProven
+        ? { mutationProven: false }
+        : {}),
       restored: false,
       warning:
         `could not create a pinned deletion recovery backup (${(error as Error).message})` +
-        (rollbackComplete
-          ? ""
-          : "; quarantine setup cleanup could not be proven complete"),
+        (retainedBackup
+          ? mutationError?.mutationProven
+            ? "; a recovery backup mutation was reported and its residue could not be safely removed"
+            : "; a recovery backup mutation may have occurred and its residue could not be safely removed"
+          : rollbackComplete
+            ? ""
+            : "; quarantine setup cleanup could not be proven complete"),
       reason: "workspace-drift",
     };
   }
@@ -3220,9 +3487,10 @@ async function performPinnedIntegrationDeletion(options: {
         testExitBeforeMutationWithoutResult: exitBeforeNamespaceMoveWithoutResult,
       },
       {
-        beforeExecute: async () => {
+        signal,
+        beforeExecute: async (mutationSignal) => {
           await beforeDelete?.("validated");
-          if (signal?.aborted) {
+          if (signal?.aborted || mutationSignal.aborted) {
             moveBoundaryStatus = "cancelled";
             const error = new Error(
               "Integration deletion was cancelled before namespace move.",
@@ -3230,7 +3498,9 @@ async function performPinnedIntegrationDeletion(options: {
             error.name = "AbortError";
             throw error;
           }
-          const moveSource = await snapshotIntegrationPath(source);
+          const moveSource = await snapshotIntegrationPathWithBudget(source, readBudget, {
+            signal: mutationSignal,
+          });
           if (
             moveSource.kind !== "missing" ||
             moveSource.signature !== expectedSourceSignature
@@ -3273,7 +3543,8 @@ async function performPinnedIntegrationDeletion(options: {
     }
     const backupCleaned = await cleanupBackup();
     return {
-      status: moveBoundaryStatus === "cancelled" ? "cancelled" : "blocked",
+      status:
+        signal?.aborted || moveBoundaryStatus === "cancelled" ? "cancelled" : "blocked",
       authoritativeMutation: false,
       restored: false,
       warning:
@@ -3297,13 +3568,20 @@ async function performPinnedIntegrationDeletion(options: {
 
   try {
     await beforeDelete?.("moved");
+    if (signal?.aborted) {
+      return await rollbackMovedResult(
+        "cancelled",
+        "cancellation was observed after the deletion namespace move",
+        "workspace-drift",
+      );
+    }
     const parentStillAuthoritative = await pinnedDirectoryAuthorityStillMatches(
       destinationParentAuthority,
       workspace,
     );
-    const boundarySource = await snapshotIntegrationPath(source);
+    const boundarySource = await snapshotIntegrationPathWithBudget(source, readBudget);
     const boundaryDestination = parentStillAuthoritative
-      ? await snapshotIntegrationPath(destination)
+      ? await snapshotIntegrationPathWithBudget(destination, readBudget)
       : null;
     const sourceDrifted =
       boundarySource.kind !== "missing" ||
@@ -3320,6 +3598,13 @@ async function performPinnedIntegrationDeletion(options: {
       );
     }
   } catch (error) {
+    if (signal?.aborted) {
+      return await rollbackMovedResult(
+        "cancelled",
+        "cancellation was observed after the deletion namespace move",
+        "workspace-drift",
+      );
+    }
     return await rollbackMovedResult(
       signal?.aborted ? "cancelled" : "blocked",
       `the post-move deletion boundary check failed (${(error as Error).message})`,
@@ -3341,9 +3626,10 @@ async function performPinnedIntegrationDeletion(options: {
         testExitAfterMutationBeforeResult: exitAfterTombstoneUnlinkBeforeResult,
       },
       {
-        beforeExecute: async () => {
+        signal,
+        beforeExecute: async (mutationSignal) => {
           await beforeDelete?.("unlink");
-          if (signal?.aborted) {
+          if (signal?.aborted || mutationSignal.aborted) {
             unlinkBoundaryStatus = "cancelled";
             throw new Error(
               "Integration deletion was cancelled before tombstone unlink.",
@@ -3353,7 +3639,13 @@ async function performPinnedIntegrationDeletion(options: {
             destinationParentAuthority,
             workspace,
           );
-          const unlinkSource = await snapshotIntegrationPath(source);
+          const unlinkSource = await snapshotIntegrationPathWithBudget(
+            source,
+            readBudget,
+            {
+              signal: mutationSignal,
+            },
+          );
           if (
             unlinkSource.kind !== "missing" ||
             unlinkSource.signature !== expectedSourceSignature
@@ -3362,7 +3654,9 @@ async function performPinnedIntegrationDeletion(options: {
             throw new Error("Deletion source changed at the pinned unlink boundary.");
           }
           const unlinkDestination = parentStillAuthoritative
-            ? await snapshotIntegrationPath(destination)
+            ? await snapshotIntegrationPathWithBudget(destination, readBudget, {
+                signal: mutationSignal,
+              })
             : null;
           if (!parentStillAuthoritative || unlinkDestination?.kind !== "missing") {
             unlinkBoundaryStatus = "workspace-drift";
@@ -3375,8 +3669,10 @@ async function performPinnedIntegrationDeletion(options: {
             repoRoot,
           );
           const unlinkBackup = quarantineStillAuthoritative
-            ? await snapshotIntegrationPath(
+            ? await snapshotIntegrationPathWithBudget(
                 path.join(quarantineAuthority.directory, quarantineName),
+                readBudget,
+                { signal: mutationSignal },
               )
             : null;
           if (
@@ -3427,8 +3723,19 @@ async function performPinnedIntegrationDeletion(options: {
           unlinkBoundaryStatus === "source-drift" ? "source-drift" : "workspace-drift",
       };
     }
+    if (
+      signal?.aborted ||
+      unlinkBoundaryStatus === "cancelled" ||
+      (error instanceof PinnedDirectoryMutationError && error.code === "ABORT_ERR")
+    ) {
+      return await rollbackMovedResult(
+        "cancelled",
+        "Integration deletion was cancelled before tombstone unlink",
+        "workspace-drift",
+      );
+    }
     return await rollbackMovedResult(
-      unlinkBoundaryStatus === "cancelled" ? "cancelled" : "blocked",
+      signal?.aborted || unlinkBoundaryStatus === "cancelled" ? "cancelled" : "blocked",
       `pinned tombstone unlink was refused (${(error as Error).message})`,
       unlinkBoundaryStatus === "source-drift" ? "source-drift" : "workspace-drift",
     );
@@ -3459,11 +3766,16 @@ async function summarizeWorktreeEvidence(
     diff: string;
   },
   workingDirectory: string,
+  signal?: AbortSignal,
 ): Promise<{ digest: string; pathSignatures: Map<string, string> }> {
+  const readBudget = new IntegrationReadBudget({}, signal);
   const pathSignatures: Array<[string, string]> = [];
   for (const file of changes.files.filter((entry) => entry.status !== "C-source")) {
     const target = path.join(workingDirectory, ...file.path.split("/"));
-    pathSignatures.push([file.path, (await snapshotIntegrationPath(target)).signature]);
+    pathSignatures.push([
+      file.path,
+      (await snapshotIntegrationPathWithBudget(target, readBudget)).signature,
+    ]);
   }
   const digest = createHash("sha256")
     .update(
@@ -3506,6 +3818,7 @@ async function integrateWorktrees(
   workspace: string,
   emit: EventEmitter,
   signal?: AbortSignal,
+  readLimits?: EvidenceReadLimits,
   beforeWrite?: (context: {
     batchId: string;
     taskId: string;
@@ -3536,12 +3849,15 @@ async function integrateWorktrees(
     maxWriteBytes?: number;
     failAfterTruncate?: boolean;
     failAfterBytes?: number;
+    delayAfterMutationMs?: number;
   },
   pinnedDeleteTest?: {
     failQuarantineCleanup?: boolean;
     failTombstoneCleanup?: boolean;
+    exitAfterRecoveryBackupWriteBeforeResult?: boolean;
     exitBeforeNamespaceMoveWithoutResult?: boolean;
     exitAfterTombstoneUnlinkBeforeResult?: boolean;
+    beforeQuarantineCreate?: () => void | Promise<void>;
   },
 ): Promise<{ fileCount: number; warnings: string[] }> {
   const warnings: string[] = [];
@@ -3573,6 +3889,7 @@ async function integrateWorktrees(
     );
   };
   const plannedPaths = tasks.flatMap((task) => task.result.changedFiles);
+  const integrationReadBudget = new IntegrationReadBudget(readLimits, signal);
 
   return await withWorktreeMetadataAuthority(
     owner.integrationAuthority.repoRoot,
@@ -3643,6 +3960,7 @@ async function integrateWorktrees(
           : await summarizeWorktreeEvidence(
               fresh.changes,
               task.worktree.workingDirectory ?? task.worktree.path,
+              signal,
             );
         if (!summary || summary.digest !== task.worktreeEvidenceDigest) {
           warnings.push(
@@ -3783,8 +4101,11 @@ async function integrateWorktrees(
               });
               continue;
             }
-            const expectedDestination =
-              await snapshotIntegrationPath(validatedDestination);
+            const expectedDestination = await snapshotIntegrationPathWithBudget(
+              validatedDestination,
+              integrationReadBudget,
+              { includeBytes: expectedSourceSignature === "missing" },
+            );
 
             await beforeWrite?.({
               batchId,
@@ -3806,7 +4127,10 @@ async function integrateWorktrees(
               workspace,
               destinationResolver,
             );
-            const currentDestination = await snapshotIntegrationPath(resolvedDestination);
+            const currentDestination = await snapshotIntegrationPathWithBudget(
+              resolvedDestination,
+              integrationReadBudget,
+            );
             if (
               finalDestinationScopeViolations.length > 0 ||
               path.resolve(resolvedDestination) !== path.resolve(validatedDestination) ||
@@ -3827,7 +4151,11 @@ async function integrateWorktrees(
 
             const resolvedSource = defaultRealPathResolver(source);
             const sourceRelative = path.relative(canonicalSourceRoot, resolvedSource);
-            const currentSource = await snapshotIntegrationPath(source);
+            const currentSource = await snapshotIntegrationPathWithBudget(
+              source,
+              integrationReadBudget,
+              { includeBytes: true },
+            );
             if (
               sourceRelative === ".." ||
               sourceRelative.startsWith(`..${path.sep}`) ||
@@ -3869,8 +4197,14 @@ async function integrateWorktrees(
 
             if (currentSource.kind === "missing") {
               const finalDestination = resolveDestination();
-              const finalSnapshot = await snapshotIntegrationPath(finalDestination);
-              const finalSourceSnapshot = await snapshotIntegrationPath(source);
+              const finalSnapshot = await snapshotIntegrationPathWithBudget(
+                finalDestination,
+                integrationReadBudget,
+              );
+              const finalSourceSnapshot = await snapshotIntegrationPathWithBudget(
+                source,
+                integrationReadBudget,
+              );
               if (
                 path.resolve(finalDestination) !== path.resolve(validatedDestination) ||
                 finalSnapshot.signature !== expectedDestination.signature ||
@@ -3903,6 +4237,7 @@ async function integrateWorktrees(
                   source,
                   expectedDestination,
                   expectedSourceSignature,
+                  readBudget: integrationReadBudget,
                   signal,
                   beforeDelete: beforeDelete
                     ? (phase) =>
@@ -3916,10 +4251,13 @@ async function integrateWorktrees(
                     : undefined,
                   failQuarantineCleanup: pinnedDeleteTest?.failQuarantineCleanup,
                   failTombstoneCleanup: pinnedDeleteTest?.failTombstoneCleanup,
+                  exitAfterRecoveryBackupWriteBeforeResult:
+                    pinnedDeleteTest?.exitAfterRecoveryBackupWriteBeforeResult,
                   exitBeforeNamespaceMoveWithoutResult:
                     pinnedDeleteTest?.exitBeforeNamespaceMoveWithoutResult,
                   exitAfterTombstoneUnlinkBeforeResult:
                     pinnedDeleteTest?.exitAfterTombstoneUnlinkBeforeResult,
+                  beforeQuarantineCreate: pinnedDeleteTest?.beforeQuarantineCreate,
                 });
               } catch (error) {
                 warnings.push(
@@ -4019,6 +4357,7 @@ async function integrateWorktrees(
                         pinnedParentTest?.exitBeforeRollbackRmdirWithoutResult
                           ? () => true
                           : undefined,
+                      signal,
                     },
                   );
                   destinationParentAuthority = chain.authority;
@@ -4040,6 +4379,17 @@ async function integrateWorktrees(
                     authoritativeMutation = true;
                     authoritativeMutationProven = false;
                     mutationOutcomeUncertain = true;
+                  }
+                  if (signal?.aborted) {
+                    warnings.push(
+                      rollbackOutcome === "complete"
+                        ? cancellationWarning(task.taskId, file, appliedFiles)
+                        : rollbackOutcome === "residual-proven"
+                          ? `Integration stopped after applying ${appliedFiles + 1} file(s); cancellation was observed while creating destination ancestry for ${file} from ${task.taskId}, and that namespace mutation could not be rolled back.`
+                          : `Integration stopped with ${appliedFiles} confirmed file(s); cancellation was observed while creating destination ancestry for ${file} from ${task.taskId}, but rollback lost authoritative mutation evidence, so the outcome is unknown and is not included in appliedFiles.`,
+                    );
+                    stopIntegration = true;
+                    break;
                   }
                   const rollbackDetail =
                     rollbackOutcome === "residual-proven"
@@ -4104,7 +4454,10 @@ async function integrateWorktrees(
                 break;
               }
               const finalDestination = defaultRealPathResolver(destination);
-              const finalSnapshot = await snapshotIntegrationPath(finalDestination);
+              const finalSnapshot = await snapshotIntegrationPathWithBudget(
+                finalDestination,
+                integrationReadBudget,
+              );
               if (
                 path.resolve(finalDestination) !== path.resolve(validatedDestination) ||
                 finalSnapshot.signature !== expectedDestination.signature
@@ -4151,7 +4504,9 @@ async function integrateWorktrees(
                       mode: "exclusive",
                       testMaxWriteBytes: pinnedWriteTest?.maxWriteBytes,
                       testFailAfterBytes: pinnedWriteTest?.failAfterBytes,
+                      testDelayAfterMutationMs: pinnedWriteTest?.delayAfterMutationMs,
                     },
+                    { signal },
                   );
                   authoritativeMutation = authoritativeMutation || result.mutated;
                   authoritativeMutationProven =
@@ -4208,7 +4563,9 @@ async function integrateWorktrees(
                       testMaxWriteBytes: pinnedWriteTest?.maxWriteBytes,
                       testFailAfterTruncate: pinnedWriteTest?.failAfterTruncate,
                       testFailAfterBytes: pinnedWriteTest?.failAfterBytes,
+                      testDelayAfterMutationMs: pinnedWriteTest?.delayAfterMutationMs,
                     },
+                    { signal },
                   );
                   authoritativeMutation = authoritativeMutation || result.mutated;
                   authoritativeMutationProven =
@@ -4301,6 +4658,13 @@ async function integrateWorktrees(
             warnings.push(
               `Could not integrate ${file} from ${task.taskId}: ${(error as Error).message}`,
             );
+            if (
+              error instanceof EvidenceReadLimitError ||
+              (error instanceof Error && error.name === "AbortError")
+            ) {
+              stopIntegration = true;
+              break;
+            }
           }
         }
 

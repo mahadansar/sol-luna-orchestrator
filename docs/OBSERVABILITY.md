@@ -317,7 +317,8 @@ Workflow telemetry uses allowlisted structural fields and never includes prompts
 Current behaviour, and the thing most likely to trip up anyone parsing the JSONL
 directly.
 
-A normally returned `delegate_task` result is written **twice**:
+A normally returned `delegate_task` or `continue_task` result is
+written **twice**:
 
 - as typed lifecycle events — a synthetic single-mode batch (`mode: "single"`,
   `taskCount: 1`, task id `t1`) plus the worker records, and
@@ -330,7 +331,8 @@ only. A `delegate_tasks` batch also writes typed events only.
 
 `activity` is unaffected — the typeless line fails event validation and is
 dropped, so the CLI counts each delegation once. A consumer reading the raw file
-must reconcile the pair itself or it will double-count every single delegation.
+must reconcile the pair itself or it will double-count each returned single-task
+delegation or continuation.
 Thread identity is the field that links the two, and both representations have
 always carried it.
 

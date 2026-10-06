@@ -10,6 +10,7 @@ import {
   runPinnedDirectoryMutation,
 } from "./fs-authority.js";
 import {
+  assertSharedDirectoryFingerprint,
   captureSharedDirectoryFingerprint,
   cleanupWorktree,
   ConfinedDirectoryChainError,
@@ -63,6 +64,61 @@ test("pinned helper abort before dispatch kills the helper without claiming muta
       assert.equal(error.mutationProven, true);
       return true;
     });
+    assert.equal(await fs.lstat(path.join(root, "child")).catch(() => null), null);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("pinned helper timeout aborts parent-side pre-execution work", async () => {
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "sol-luna-pinned-before-timeout-"),
+  );
+  let callbackObservedAbort = false;
+  try {
+    const authority = await capturePinnedDirectoryAuthority(root, root);
+    let entered!: () => void;
+    const enteredBeforeExecute = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let callbackSettled!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      callbackSettled = resolve;
+    });
+    const pending = runPinnedDirectoryMutation(
+      authority,
+      { op: "mkdir", name: "child" },
+      {
+        timeoutMs: 2_000,
+        beforeExecute: async (signal) => {
+          entered();
+          await new Promise<void>((resolve) => {
+            if (signal.aborted) resolve();
+            else signal.addEventListener("abort", () => resolve(), { once: true });
+          });
+          callbackObservedAbort = signal.aborted;
+          callbackSettled();
+        },
+      },
+    );
+    const rejected = assert.rejects(pending, (error: unknown) => {
+      assert.ok(error instanceof PinnedDirectoryMutationError);
+      assert.equal(error.code, "ETIMEDOUT");
+      assert.equal(error.mutated, false);
+      assert.equal(error.mutationProven, true);
+      return true;
+    });
+    await Promise.race([
+      enteredBeforeExecute,
+      rejected.then(() => {
+        throw new Error(
+          "Pinned helper timed out before entering pre-execution validation.",
+        );
+      }),
+    ]);
+    await rejected;
+    await settled;
+    assert.equal(callbackObservedAbort, true);
     assert.equal(await fs.lstat(path.join(root, "child")).catch(() => null), null);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
@@ -391,6 +447,25 @@ test("shared dependency fingerprint fails closed on file and aggregate evidence 
         },
       }),
       /aggregate safety budget/i,
+    );
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("shared dependency fingerprint revalidation observes cancellation", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "sol-luna-shared-cancel-"));
+  const controller = new AbortController();
+  try {
+    const dependency = path.join(root, "node_modules", "fixture", "index.js");
+    await fs.mkdir(path.dirname(dependency), { recursive: true });
+    await fs.writeFile(dependency, "module.exports = 1;\n", "utf8");
+    const baseline = await captureSharedDirectoryFingerprint(root, ["node_modules"]);
+    controller.abort();
+
+    await assert.rejects(
+      assertSharedDirectoryFingerprint(baseline, { signal: controller.signal }),
+      /Shared dependency evidence was cancelled/i,
     );
   } finally {
     await fs.rm(root, { recursive: true, force: true });

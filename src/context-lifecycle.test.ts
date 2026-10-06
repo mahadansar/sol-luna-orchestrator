@@ -1,4 +1,4 @@
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -26,6 +26,13 @@ import type {
 } from "./contract.js";
 import type { OrchestratorEvent } from "./events.js";
 import { runGit } from "./git.js";
+
+const DEFAULT_CONTEXT_TEST_WORKSPACE = await fs.mkdtemp(
+  path.join(os.tmpdir(), "sol-luna-context-lifecycle-"),
+);
+after(async () => {
+  await fs.rm(DEFAULT_CONTEXT_TEST_WORKSPACE, { recursive: true, force: true });
+});
 
 async function createHermeticGitWorkspace(prefix: string): Promise<string> {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -96,6 +103,7 @@ function makeMinimalTask(overrides: Partial<DelegateTaskInput> = {}): DelegateTa
     automaticRepair: false,
     resultDetail: "handoff",
     previousAttempts: [],
+    workingDirectory: DEFAULT_CONTEXT_TEST_WORKSPACE,
     routingPreflight: {
       seams: ["main-seam"],
       seamSize: "substantial",
@@ -488,7 +496,7 @@ test("lifecycle - live issued, consumed, and expired reference state is respecte
   const ref1 = continuationStore.issue(
     task,
     "th_1",
-    process.cwd(),
+    DEFAULT_CONTEXT_TEST_WORKSPACE,
     false,
     null,
     null,
@@ -498,7 +506,7 @@ test("lifecycle - live issued, consumed, and expired reference state is respecte
   const ref2 = continuationStore.issue(
     task,
     "th_2",
-    process.cwd(),
+    DEFAULT_CONTEXT_TEST_WORKSPACE,
     false,
     null,
     null,
@@ -570,7 +578,11 @@ test("lifecycle - live reference status checks are non-consuming and expiry is t
     tokenFactory: () => `hdf_${"h".repeat(32)}`,
   });
   const task = makeMinimalTask();
-  const continuation = continuationStore.issue(task, "th_status", process.cwd());
+  const continuation = continuationStore.issue(
+    task,
+    "th_status",
+    DEFAULT_CONTEXT_TEST_WORKSPACE,
+  );
   const handoff = handoffStore.issue(
     task,
     makeMinimalOutput({
@@ -593,7 +605,11 @@ test("lifecycle - live reference status checks are non-consuming and expiry is t
   assert.equal(handoffStore.status(handoff), "issued");
   assert.equal(handoffStore.consume(handoff).status, "ready");
 
-  const expiringContinuation = continuationStore.issue(task, "th_expiry", process.cwd());
+  const expiringContinuation = continuationStore.issue(
+    task,
+    "th_expiry",
+    DEFAULT_CONTEXT_TEST_WORKSPACE,
+  );
   const expiringHandoff = handoffStore.issue(task, makeMinimalOutput());
   now = Math.max(CONTINUATION_TTL_MS, HANDOFF_TTL_MS);
   assert.equal(continuationStore.status(expiringContinuation), "unavailable");
@@ -873,7 +889,7 @@ test("lifecycle - production registry isolates unrelated fresh MCP calls", async
       handoffStore,
       contextRegistry: registry,
       delegateToLuna: async (_input, _signal, hooks) => {
-        hooks?.onStarted?.(process.cwd());
+        hooks?.onStarted?.(DEFAULT_CONTEXT_TEST_WORKSPACE);
         return makeMinimalOutput();
       },
       emit,
@@ -889,7 +905,7 @@ test("lifecycle - production registry isolates unrelated fresh MCP calls", async
       handoffStore,
       contextRegistry: registry,
       delegateToLuna: async (_input, _signal, hooks) => {
-        hooks?.onStarted?.(process.cwd());
+        hooks?.onStarted?.(DEFAULT_CONTEXT_TEST_WORKSPACE);
         return makeMinimalOutput();
       },
       emit,
@@ -1059,7 +1075,7 @@ test("lifecycle - continuation restores only its server-owned lineage context", 
   const reference = continuationStore.issue(
     makeMinimalTask({ objective: "owned lineage" }),
     "th_owned",
-    process.cwd(),
+    DEFAULT_CONTEXT_TEST_WORKSPACE,
     false,
     null,
     null,

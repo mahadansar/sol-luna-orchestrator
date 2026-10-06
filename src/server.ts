@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { appendFileSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLogger } from "./log.js";
@@ -96,6 +96,7 @@ import {
   sanitizeEventValue,
   type EventEmitter,
 } from "./events.js";
+import { appendBoundedPrivateFile } from "./telemetry-file.js";
 import {
   admitCompute,
   cloneComputePolicy,
@@ -447,7 +448,7 @@ export const recordEvent = (
         : {}),
       usage: result.usage,
     });
-    appendFileSync(eventsFile, `${JSON.stringify(record)}\n`);
+    appendBoundedPrivateFile(eventsFile, `${JSON.stringify(record)}\n`);
   } catch {
     // Telemetry must never break a delegation.
   }
@@ -1519,7 +1520,7 @@ export async function handleDelegateTask(
           if (gitEvidenceAuthority)
             await assertGitEvidenceAuthority(gitEvidenceAuthority);
           if (sharedDependencyBaseline) {
-            await assertSharedDirectoryFingerprint(sharedDependencyBaseline);
+            await assertSharedDirectoryFingerprint(sharedDependencyBaseline, { signal });
           }
         },
         onStarted: (workingDirectory) => {
@@ -1607,7 +1608,7 @@ export async function handleDelegateTask(
     if (sharedDependencyBaseline) {
       try {
         operationAuthority?.assertHealthy();
-        await assertSharedDirectoryFingerprint(sharedDependencyBaseline);
+        await assertSharedDirectoryFingerprint(sharedDependencyBaseline, { signal });
       } catch (error) {
         const detail = `Single-task dependency evidence failed: ${(error as Error).message}`;
         result.verdict = "FAILED";
@@ -2061,7 +2062,7 @@ export async function handleContinueTask(
       await assertGitEvidenceAuthority(continuationGitAuthority);
     }
     if (entry.sharedDirectoryBaseline) {
-      await assertSharedDirectoryFingerprint(entry.sharedDirectoryBaseline);
+      await assertSharedDirectoryFingerprint(entry.sharedDirectoryBaseline, { signal });
     }
     if (!entry.reconcileFinalGit) {
       continuationWorkspaceBaseline = continuationGitAuthority
@@ -2125,7 +2126,9 @@ export async function handleContinueTask(
             await assertGitEvidenceAuthority(continuationGitAuthority);
           }
           if (continuationSharedBaseline) {
-            await assertSharedDirectoryFingerprint(continuationSharedBaseline);
+            await assertSharedDirectoryFingerprint(continuationSharedBaseline, {
+              signal,
+            });
           }
         },
         onStarted: (workingDirectory) => {
@@ -2210,10 +2213,12 @@ export async function handleContinueTask(
       try {
         operationAuthority?.assertHealthy();
         if (entry.sharedDirectoryBaseline) {
-          await assertSharedDirectoryFingerprint(entry.sharedDirectoryBaseline);
+          await assertSharedDirectoryFingerprint(entry.sharedDirectoryBaseline, {
+            signal,
+          });
         }
         if (continuationSharedBaseline) {
-          await assertSharedDirectoryFingerprint(continuationSharedBaseline);
+          await assertSharedDirectoryFingerprint(continuationSharedBaseline, { signal });
         }
       } catch (error) {
         const detail = `Continuation dependency evidence failed: ${(error as Error).message}`;

@@ -49,7 +49,10 @@ function readyChildExit(
       if (!settled && !ready && stdout.includes(marker)) {
         ready = true;
         clearTimeout(timer);
-        timer = setTimeout(fail, 3_000);
+        // The production shutdown bound is exercised inside the child. This
+        // outer watchdog only prevents a wedged fixture; loaded Windows runners
+        // can need several seconds after readiness for cleanup and process exit.
+        timer = setTimeout(fail, 10_000);
       }
     });
     child.stderr?.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
