@@ -879,13 +879,16 @@ test("current documentation distinguishes diagnostics, activity privacy, and leg
   assert.match(observability, /failure before a normal result[\s\S]*typed/i);
 });
 
-test("acceptance ledger owns the current release baseline", async () => {
+test("acceptance ledger owns its last published release baseline", async () => {
   const [acceptance, changelog] = await Promise.all([
     readDoc("docs/FEATURE_ACCEPTANCE.md"),
     readDoc("CHANGELOG.md"),
   ]);
-  const manifest = JSON.parse(await readDoc("package.json")) as { version: string };
-  const escapedVersion = manifest.version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const baseline = acceptance.match(
+    /current release baseline is\s+`(\d+\.\d+\.\d+)`/i,
+  )?.[1];
+  assert.ok(baseline, "acceptance ledger must name its released baseline");
+  const escapedVersion = baseline.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   assert.match(
     acceptance,
     new RegExp("current release baseline is\\s+`" + escapedVersion + "`", "i"),
@@ -912,6 +915,22 @@ test("acceptance ledger owns the current release baseline", async () => {
     new RegExp("Publication:[\\s\\S]*v" + escapedVersion + "[\\s\\S]*annotated tag", "i"),
   );
   assert.match(changelog, new RegExp("## \\[" + escapedVersion + "\\]"));
+});
+
+test("Dependabot keeps weekly npm and GitHub Actions maintenance enabled", async () => {
+  const dependabot = await readDoc(".github/dependabot.yml");
+  const blocks = dependabot.split(/(?=^\s*-\s+package-ecosystem:)/m);
+  const blockFor = (ecosystem: string): string | undefined =>
+    blocks.find((block) =>
+      new RegExp(`^\\s*-\\s+package-ecosystem:\\s*${ecosystem}\\s*$`, "mi").test(block),
+    );
+
+  for (const ecosystem of ["npm", "github-actions"]) {
+    const block = blockFor(ecosystem);
+    assert.ok(block, `Dependabot must configure ${ecosystem}`);
+    assert.match(block, /^\s+directory:\s*\/\s*$/m);
+    assert.match(block, /^\s+interval:\s*weekly\s*$/m);
+  }
 });
 
 // --- Cheap routing preflight guidance ---------------------------------------

@@ -129,6 +129,19 @@ treated as an empty fresh history. The same rule remains in force after
 unusable, the watch reports the error and exits nonzero instead of continuing
 with a stale snapshot.
 
+`--watch` also exits nonzero if it falls more than one activity read window
+behind, a partial JSONL record grows beyond that window, or the retained latest
+batch history itself would exceed the window. Restarting `activity --watch`
+rebuilds from the bounded current-file tail; the command never skips an unread
+middle segment or silently keeps an unbounded in-memory history.
+
+Telemetry writes also use short-lived owner-specific hard-link markers beside
+the destination so multiple server processes cannot race the size bound.
+Contention is harmless: a record may be dropped because telemetry is best-effort.
+If a writer dies inside that section, a later write reclaims only a uniquely
+named marker whose PID is provably gone; inaccessible or otherwise uncertain
+owners stay fail-closed instead of being guessed stale.
+
 `sol-luna-orchestrator status` shows the effective event path and whether it
 came from the configuration or from a `SOL_LUNA_EVENTS` override in your shell.
 It also shows whether the stored registration points at the current CLI install

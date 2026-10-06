@@ -506,12 +506,25 @@ inherits its normal ACLs. Each stream is bounded to 16 MiB and keeps at most one
 rotated `.1` predecessor. Rotation is deliberately best-effort: if the current
 file cannot be renamed because another process has it open, that append is
 dropped rather than letting a sensitive telemetry file grow without bound.
+Writers sharing a destination also serialize the size-check/rotate/append
+critical section with a short-lived, owner-specific hard-link marker on the
+current telemetry inode. Contention drops the record instead of racing the byte
+bound. Marker names carry the owner PID plus a random generation, so a later
+writer can reclaim only the exact marker of a process that is provably gone;
+unknown or inaccessible owners remain fail-closed. When a missing current file
+must be created, its first bounded record is written privately and then published
+atomically with a hard link, so another process cannot observe a partially
+written current inode; dead owner temp generations are reclaimed by the same
+PID-plus-generation rule. An already oversized legacy current file is discarded
+on the next admitted write rather than being retained wholesale as an oversized
+predecessor.
 They hold different things, which matters when deciding what is safe to share:
 
 - **`SOL_LUNA_LOG`** is the human-readable diagnostics log. It records
-  objective previews for single delegations, paths, thread ids, verdicts and
-  errors. Verification command output is returned in tool-result evidence, not
-  copied into this file. Treat the log as sensitive even without command output.
+  objective previews for single delegations, bounded continuation-instruction
+  previews, paths, thread ids, verdicts and errors. Verification command output
+  is returned in tool-result evidence, not copied into this file. Treat the log
+  as sensitive even without command output.
 
 - **`SOL_LUNA_EVENTS`** is the structured stream `activity` reads, and the
   deliberately less sensitive of the two. Its schema carries opaque task and

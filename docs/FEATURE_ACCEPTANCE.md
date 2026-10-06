@@ -2,6 +2,9 @@
 
 This is the authoritative current capability, evidence, freshness, and
 confidence ledger for the repository. The current release baseline is `0.13.0`.
+That released baseline may intentionally differ from the candidate version in
+`package.json` while a future release is passing its pre-tag validation; advance
+the ledger only after publication and GitHub Release evidence actually exists.
 Release notes from this baseline forward belong in
 [`CHANGELOG.md`](../CHANGELOG.md); future work belongs in
 [`ROADMAP.md`](../ROADMAP.md).

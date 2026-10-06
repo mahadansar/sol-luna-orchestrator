@@ -141,6 +141,260 @@ test("watch startup reconstructs an oversized legacy file from a bounded tail", 
   }
 });
 
+test("watch mode refuses steady-state catch-up beyond the read window without over-reading", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "luna-watch-steady-window-"));
+  const eventsFile = path.join(root, "events.jsonl");
+  const readWindowBytes = 512;
+  await fs.writeFile(
+    eventsFile,
+    `${JSON.stringify({
+      timestamp: "2026-10-07T00:00:00Z",
+      type: "batch.started",
+      batchId: "steady",
+      mode: "single",
+      taskCount: 8,
+      maxParallel: 1,
+    })}\n`,
+    "utf8",
+  );
+
+  const ranges: Array<{ start: number; end: number }> = [];
+  const trackedRead = ((file: string, options: unknown) => {
+    const typed = options as { start?: number; end?: number };
+    ranges.push({ start: typed.start ?? 0, end: typed.end ?? -1 });
+    return createReadStream(file, options as Parameters<typeof createReadStream>[1]);
+  }) as typeof createReadStream;
+  const originalWrite = process.stdout.write;
+  const originalErrorWrite = process.stderr.write;
+  let output = "";
+  let errorOutput = "";
+  let watchPromise: Promise<number> | undefined;
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    output += chunk.toString();
+    return true;
+  }) as typeof process.stdout.write;
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    errorOutput += chunk.toString();
+    return true;
+  }) as typeof process.stderr.write;
+
+  const waitFor = async (condition: () => boolean): Promise<void> => {
+    const deadline = Date.now() + 5_000;
+    while (!condition() && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(condition(), true);
+  };
+
+  try {
+    const { activityCommand } = await import("./cli/activity.js");
+    watchPromise = activityCommand(["--watch", "--json"], {
+      eventsFile,
+      readWindowBytes,
+      readStream: trackedRead,
+      watchHealthIntervalMs: 20,
+    });
+    await waitFor(() => output.includes('"batchId":"steady"'));
+
+    await fs.appendFile(eventsFile, `${"x".repeat(readWindowBytes * 4)}\n`, "utf8");
+    assert.equal(await watchPromise, 1);
+    watchPromise = undefined;
+    assert.match(errorOutput, /beyond the bounded 512-byte watch catch-up window/i);
+
+    assert.ok(
+      ranges.every(
+        ({ start, end }) => end < start || end - start + 1 <= readWindowBytes + 1,
+      ),
+      `watch read exceeded ${readWindowBytes} byte window: ${JSON.stringify(ranges)}`,
+    );
+  } finally {
+    if (watchPromise) {
+      process.emit("SIGINT", "SIGINT");
+      await watchPromise.catch(() => undefined);
+    }
+    process.stdout.write = originalWrite;
+    process.stderr.write = originalErrorWrite;
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("watch mode refuses unbounded retained same-batch history from small appends", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "luna-watch-history-bound-"));
+  const eventsFile = path.join(root, "events.jsonl");
+  const readWindowBytes = 512;
+  await fs.writeFile(
+    eventsFile,
+    `${JSON.stringify({
+      timestamp: "2026-10-07T00:00:00Z",
+      type: "batch.started",
+      batchId: "bounded-history",
+      mode: "single",
+      taskCount: 20,
+      maxParallel: 1,
+    })}\n`,
+    "utf8",
+  );
+
+  const ranges: Array<{ start: number; end: number }> = [];
+  const trackedRead = ((file: string, options: unknown) => {
+    const typed = options as { start?: number; end?: number };
+    ranges.push({ start: typed.start ?? 0, end: typed.end ?? -1 });
+    return createReadStream(file, options as Parameters<typeof createReadStream>[1]);
+  }) as typeof createReadStream;
+  const originalWrite = process.stdout.write;
+  const originalErrorWrite = process.stderr.write;
+  let output = "";
+  let errorOutput = "";
+  let watchPromise: Promise<number> | undefined;
+  let settledCode: number | undefined;
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    output += chunk.toString();
+    return true;
+  }) as typeof process.stdout.write;
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    errorOutput += chunk.toString();
+    return true;
+  }) as typeof process.stderr.write;
+
+  try {
+    const { activityCommand } = await import("./cli/activity.js");
+    watchPromise = activityCommand(["--watch", "--json"], {
+      eventsFile,
+      readWindowBytes,
+      readStream: trackedRead,
+      watchHealthIntervalMs: 20,
+    });
+    void watchPromise.then((code) => {
+      settledCode = code;
+    });
+    const readyDeadline = Date.now() + 5_000;
+    while (
+      !output.includes('"batchId":"bounded-history"') &&
+      Date.now() < readyDeadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.match(output, /"batchId":"bounded-history"/);
+
+    for (let index = 0; index < 20 && settledCode === undefined; index += 1) {
+      await fs.appendFile(
+        eventsFile,
+        `${JSON.stringify({
+          timestamp: `2026-10-07T00:00:${String(index + 1).padStart(2, "0")}Z`,
+          type: "task.queued",
+          batchId: "bounded-history",
+          taskId: `task-${index}`,
+          effort: "high",
+          category: "tests",
+        })}\n`,
+        "utf8",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    }
+
+    assert.equal(await watchPromise, 1);
+    watchPromise = undefined;
+    assert.match(
+      errorOutput,
+      /Retained activity history exceeded the bounded 512-byte watch window/i,
+    );
+    assert.ok(
+      ranges.every(
+        ({ start, end }) => end < start || end - start + 1 <= readWindowBytes + 1,
+      ),
+      `watch read exceeded ${readWindowBytes} byte window: ${JSON.stringify(ranges)}`,
+    );
+  } finally {
+    if (watchPromise) {
+      process.emit("SIGINT", "SIGINT");
+      await watchPromise.catch(() => undefined);
+    }
+    process.stdout.write = originalWrite;
+    process.stderr.write = originalErrorWrite;
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("watch mode coalesces callback storms to bounded read cycles", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "luna-watch-callback-storm-"));
+  const eventsFile = path.join(root, "events.jsonl");
+  await fs.writeFile(
+    eventsFile,
+    `${JSON.stringify({
+      timestamp: "2026-10-07T00:00:00Z",
+      type: "batch.started",
+      batchId: "storm",
+      mode: "single",
+      taskCount: 1,
+      maxParallel: 1,
+    })}\n`,
+    "utf8",
+  );
+
+  let listener:
+    ((eventType: string, filename: string | Buffer | null) => void) | undefined;
+  const fakeWatch = ((
+    _file: string,
+    nextListener: (eventType: string, filename: string | Buffer | null) => void,
+  ) => {
+    listener = nextListener;
+    const watcher = new EventEmitter() as EventEmitter & { close: () => void };
+    watcher.close = () => undefined;
+    return watcher;
+  }) as any;
+  const originalWrite = process.stdout.write;
+  let output = "";
+  let readCycles = 0;
+  let watchPromise: Promise<number> | undefined;
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    output += chunk.toString();
+    return true;
+  }) as typeof process.stdout.write;
+
+  try {
+    const { activityCommand } = await import("./cli/activity.js");
+    watchPromise = activityCommand(["--watch", "--json"], {
+      eventsFile,
+      watchFile: fakeWatch,
+      watchHealthIntervalMs: 60_000,
+      readCycleObserver: () => {
+        readCycles += 1;
+      },
+    });
+    const readyDeadline = Date.now() + 5_000;
+    while (
+      (!listener || !output.includes('"batchId":"storm"')) &&
+      Date.now() < readyDeadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.ok(listener);
+    assert.match(output, /"batchId":"storm"/);
+
+    readCycles = 0;
+    for (let index = 0; index < 5_000; index += 1) {
+      listener("change", "events.jsonl");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.ok(readCycles >= 1, "callback storm should schedule a catch-up read");
+    assert.ok(
+      readCycles <= 3,
+      `callback storm scheduled ${readCycles} read cycles instead of coalescing`,
+    );
+
+    process.emit("SIGINT", "SIGINT");
+    assert.equal(await watchPromise, 0);
+    watchPromise = undefined;
+  } finally {
+    if (watchPromise) {
+      process.emit("SIGINT", "SIGINT");
+      await watchPromise.catch(() => undefined);
+    }
+    process.stdout.write = originalWrite;
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("watch mode recovers from ENOENT during stream iteration and reads recreated history", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "luna-watch-read-race-"));
   const eventsFile = path.join(root, "events.jsonl");

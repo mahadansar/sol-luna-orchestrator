@@ -549,6 +549,7 @@ export async function activityCommand(
     readStream?: typeof createReadStream;
     watchHealthIntervalMs?: number;
     readWindowBytes?: number;
+    readCycleObserver?: () => void;
   } = {},
 ): Promise<number> {
   const parsedArgs = parseActivityArgs(argv);
@@ -624,23 +625,30 @@ export async function activityCommand(
     let missingFilePoll: NodeJS.Timeout | undefined;
     let watchHealthPoll: NodeJS.Timeout | undefined;
     let elapsedTimer: NodeJS.Timeout | undefined;
-    let changeQueue = Promise.resolve();
     let currentSize = 0;
+    let retainedEventBytes = 0;
+    const eventSizes = new WeakMap<object, number>();
     let currentFile: { dev: number; ino: number; mtimeMs: number } | null = null;
     let trailingFragment = "";
     let decoder = new StringDecoder("utf-8");
     let needsInitialTailRead = true;
     let ready = false;
     let pendingChange = false;
-    let pollReadPending = false;
+    let changeReadRunning = false;
+    let changeReadPending = false;
     let closed = false;
+
+    const resetProjectionState = (): void => {
+      trailingFragment = "";
+      decoder = new StringDecoder("utf-8");
+      events.length = 0;
+      retainedEventBytes = 0;
+    };
 
     const resetReadState = (): void => {
       currentSize = 0;
       currentFile = null;
-      trailingFragment = "";
-      decoder = new StringDecoder("utf-8");
-      events.length = 0;
+      resetProjectionState();
       needsInitialTailRead = true;
     };
 
@@ -703,6 +711,7 @@ export async function activityCommand(
       snapshots: ActivitySnapshot[];
       watchTarget: "same" | "missing" | "replaced";
     }> => {
+      options.readCycleObserver?.();
       const info = await fileInfo();
       if (info === null) {
         // Once a pathname disappears, any later file at that path is a new
@@ -729,6 +738,13 @@ export async function activityCommand(
           snapshots: [],
           watchTarget: replaced || rewritten ? "replaced" : "same",
         };
+      }
+
+      const unreadBytes = info.size - currentSize;
+      if (!needsInitialTailRead && unreadBytes > readWindowBytes) {
+        throw new Error(
+          `Activity log advanced by ${unreadBytes} bytes, beyond the bounded ${readWindowBytes}-byte watch catch-up window. Restart activity to rebuild from a bounded tail.`,
+        );
       }
 
       let chunks: Buffer[];
@@ -769,16 +785,12 @@ export async function activityCommand(
       currentFile = info;
       needsInitialTailRead = false;
 
-      // The last element may be a partial line. Keep it, including a split
-      // UTF-8 sequence retained by StringDecoder, until the next append.
-      const parts = raw.split(/\r?\n/);
-      trailingFragment = parts.pop() ?? "";
-
       let changed = false;
       const snapshots: ActivitySnapshot[] = [];
-      for (const line of parts) {
+      const acceptLine = (line: string, captureSnapshot: boolean): void => {
         const event = parseEventLine(line);
         if (event) {
+          const eventBytes = Buffer.byteLength(line, "utf8") + 1;
           const currentBatchId = events.find(
             (candidate) => candidate.type === "batch.started",
           )?.batchId;
@@ -787,22 +799,46 @@ export async function activityCommand(
             currentBatchId !== undefined &&
             event.batchId !== currentBatchId
           ) {
-            continue;
+            return;
           }
           events.push(event);
+          eventSizes.set(event, eventBytes);
           if (event.type === "batch.started") {
             const compacted = selectLatestBatchEvents(events);
-            const retained = compacted.includes(event);
+            const eventRetained = compacted.includes(event);
             events.splice(0, events.length, ...compacted);
-            changed ||= retained;
-            if (retained && captureIncrementalSnapshots) {
+            retainedEventBytes = events.reduce(
+              (total, candidate) => total + (eventSizes.get(candidate) ?? 0),
+              0,
+            );
+            changed ||= eventRetained;
+            if (eventRetained && captureSnapshot) {
               snapshots.push(reduceEvents(events));
             }
           } else {
+            retainedEventBytes += eventBytes;
             changed = true;
-            if (captureIncrementalSnapshots) snapshots.push(reduceEvents(events));
+            if (captureSnapshot) snapshots.push(reduceEvents(events));
+          }
+          if (retainedEventBytes > readWindowBytes) {
+            throw new Error(
+              `Retained activity history exceeded the bounded ${readWindowBytes}-byte watch window. Restart activity to rebuild from a bounded tail.`,
+            );
           }
         }
+      };
+
+      // The last element may be a partial line. Keep it, including a split
+      // UTF-8 sequence retained by StringDecoder, until the next append.
+      const parts = raw.split(/\r?\n/);
+      trailingFragment = parts.pop() ?? "";
+      if (Buffer.byteLength(trailingFragment, "utf8") > readWindowBytes) {
+        throw new Error(
+          `Partial activity record exceeded the bounded ${readWindowBytes}-byte watch window.`,
+        );
+      }
+      for (const line of parts) {
+        acceptLine(line, captureIncrementalSnapshots);
       }
       return {
         changed,
@@ -889,9 +925,21 @@ export async function activityCommand(
         pendingChange = true;
         return;
       }
-      changeQueue = changeQueue
-        .then(() => onFileChange())
-        .catch((error) => finish(1, error));
+      changeReadPending = true;
+      if (changeReadRunning) return;
+      changeReadRunning = true;
+      void (async () => {
+        try {
+          while (!closed && changeReadPending) {
+            changeReadPending = false;
+            await onFileChange();
+          }
+        } catch (error) {
+          finish(1, error);
+        } finally {
+          changeReadRunning = false;
+        }
+      })();
     };
 
     const attachWatcher = (): boolean => {
@@ -953,14 +1001,8 @@ export async function activityCommand(
         // remains a harmless empty state, a readable file stays live, and a
         // directory/permission failure terminates truthfully instead of leaving
         // a stale snapshot on screen forever.
-        if (!ready || pollReadPending) return;
-        pollReadPending = true;
-        changeQueue = changeQueue
-          .then(() => onFileChange())
-          .catch((error) => finish(1, error))
-          .finally(() => {
-            pollReadPending = false;
-          });
+        if (!ready) return;
+        scheduleFileChange();
       }, 100);
     };
 
@@ -971,14 +1013,8 @@ export async function activityCommand(
         // to an unlinked inode and never emit rename/error. Independently re-stat
         // and tail the pathname while a watcher is nominally healthy so silent
         // rotation, delete/recreate, and silent appends cannot freeze the view.
-        if (closed || !ready || !watcher || pollReadPending) return;
-        pollReadPending = true;
-        changeQueue = changeQueue
-          .then(() => onFileChange())
-          .catch((error) => finish(1, error))
-          .finally(() => {
-            pollReadPending = false;
-          });
+        if (closed || !ready || !watcher) return;
+        scheduleFileChange();
       }, watchHealthIntervalMs);
     };
 

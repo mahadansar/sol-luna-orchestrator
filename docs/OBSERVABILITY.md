@@ -12,10 +12,10 @@ Two separate local files, holding deliberately different things.
 
 1. **Diagnostic log (`SOL_LUNA_LOG`)** — line-oriented human-readable
    diagnostics for the server itself: client connections, each delegation as it
-   starts and finishes, objective previews for single delegations, working
-   directories, thread ids, durations, verdicts, and errors. Verification
-   command output is returned in tool-result evidence; it is not copied into
-   this diagnostic log.
+   starts and finishes, objective previews for single delegations, bounded
+   continuation-instruction previews, working directories, thread ids,
+   durations, verdicts, and errors. Verification command output is returned in
+   tool-result evidence; it is not copied into this diagnostic log.
 2. **Activity event stream (`SOL_LUNA_EVENTS`)** — a rotating JSONL file of
    structured orchestration records. This is what `sol-luna-orchestrator activity`
    reads.
@@ -26,11 +26,26 @@ the writer rotates the current file to a single `.1` predecessor and starts a
 new current file. Oversized individual records and appends that cannot rotate
 safely are dropped because observability must remain non-authoritative. New files
 use owner-only permissions on POSIX (Windows uses the account's normal ACLs).
+Concurrent server processes sharing a destination serialize the
+size-check/rotate/append critical section with a short-lived, owner-specific
+hard-link marker on the current telemetry inode. Contention drops the record
+rather than weakening the byte bound. Marker names carry the owner PID and a
+random generation; a later writer removes only an exact dead-owner marker, while
+an unknown/inaccessible owner stays fail-closed. A missing current file is first
+written as a bounded private owner generation and then published atomically with
+a hard link, so another process cannot observe a partial first record; dead owner
+temp generations use the same conservative reclamation rule. A legacy current
+file already above the bound is discarded on the next admitted write instead of
+becoming an oversized `.1` predecessor.
 `activity` also reads at most one 16 MiB current-file window from the tail, so an
 oversized legacy log created before rotation existed cannot force an unbounded
 in-memory history rebuild; a partial first record at the tail boundary is simply
-dropped. Watch mode uses the same bounded catch-up rule before following new
-appends.
+dropped. Watch mode keeps that same byte window for its whole lifetime. If unread
+same-file growth, a partial record, or the retained latest-batch event history
+would exceed the window, the watch exits nonzero rather than skipping/replaying
+history or retaining unbounded state. Filesystem notification storms are
+coalesced to one active catch-up plus one pending pass, so callbacks cannot
+accumulate an unbounded promise queue.
 Representation details below describe what each contains and how consumers
 should interpret it. Sensitivity and sharing boundaries are defined in
 [Security](../SECURITY.md#logs-and-telemetry).
@@ -415,11 +430,15 @@ latest run, so an old log does not scroll past. As soon as a batch start is
 known, the watcher retains only the events belonging to the newest batch under
 the same timestamp/append-order rules used by the reducer. Completed historical
 batches and late stale records therefore do not accumulate for the lifetime of
-a long-running watcher. It attaches its watcher before reading history, and
-records appended during that catch-up are replayed as a normal incremental read
-rather than falling into the gap. Before anything has ever been delegated the
-human view prints `No orchestration activity found.` and keeps waiting; JSON
-watch emits the corresponding empty snapshot and also keeps waiting.
+a long-running watcher. The retained projection is also capped to the configured
+read window even if a legacy or external writer keeps growing one file without
+rotation; crossing that bound terminates the watch explicitly instead of
+discarding history and presenting a degraded projection. It attaches its watcher
+before reading history, and records appended during that catch-up are processed
+through the same bounded/coalesced path rather than falling into the gap.
+Before anything has ever been delegated the human view prints
+`No orchestration activity found.` and keeps waiting; JSON watch emits the
+corresponding empty snapshot and also keeps waiting.
 
 The snapshot also carries a legacy `objective` field. It is always `null`:
 objectives are not persisted, and the field survives only so that older readers

@@ -62,6 +62,21 @@ All notable changes to this project are documented here. Format follows
   a parent model and uninstall output includes the global npm removal command.
 - Legacy single-result telemetry now uses the same bounded private writer as typed
   events, and rotated POSIX predecessors are tightened best-effort before retention.
+- Shared telemetry destinations now serialize concurrent process writers with
+  owner-specific hard-link markers so the size check and append cannot jointly
+  exceed the 16 MiB bound; dead-owner generations are reclaimed without deleting
+  a replacement owner's marker, and newly-created current files publish only
+  after their first bounded record is fully written. Oversized legacy currents
+  are dropped instead of being retained as oversized predecessors.
+- Long-running activity watch keeps steady-state reads, partial records, and
+  retained latest-batch history inside the same bounded window used at startup;
+  it fails explicitly rather than skipping/replaying history when that bound is
+  exceeded, and coalesces filesystem callback storms instead of retaining an
+  unbounded promise queue.
+- Release acceptance checks now keep the last actually published evidence baseline
+  separate from a future candidate package version, so pre-tag manual CI no longer
+  requires claiming publication before it exists. Dependabot's weekly npm and
+  GitHub Actions maintenance policy is regression-tested.
 - Human activity output now includes a privacy-safe workspace/run discriminator
   so concurrent projects sharing one Codex home are distinguishable without
   exposing absolute paths or raw batch identifiers.

@@ -278,6 +278,11 @@ affected canonical document in the same change.
    `gh release create vX.Y.Z --verify-tag ...` so it cannot implicitly create or
    retarget a tag. Supply the reviewed body transiently; do not add a tracked
    release-notes file.
+8. After npm publication and the GitHub Release both exist, update
+   `docs/FEATURE_ACCEPTANCE.md` with the new released baseline and concrete CI,
+   publish, tag, and release evidence in a follow-up documentation commit. The
+   release candidate must never claim that unpublished version as the ledger's
+   current release merely to satisfy pre-tag CI.
 
 Only tags matching `vX.Y.Z` trigger a publish. Branches and pull requests never
 can. Pre-release tags such as `v1.0.0-rc.1` deliberately do not match; publishing
